@@ -65,6 +65,30 @@ def _load_plugins(plugin_mapping, event_hooks):
         plugin.awscli_initialize(event_hooks)
 
 
+TRACE_LOAD_PLUGINS = os.environ.get('AWSCLI_TRACE_PLUGINS', '') == '1'
+
+
+def _load_plugins_traced(plugin_mapping, event_hooks):
+    import time as _time
+
+    t0 = _time.perf_counter()
+    modules = _import_plugins(plugin_mapping)
+    t_import = _time.perf_counter()
+    for name, plugin in zip(plugin_mapping.keys(), modules):
+        log.debug("Initializing plugin %s: %s", name, plugin)
+        plugin.awscli_initialize(event_hooks)
+    t_init = _time.perf_counter()
+    sys.stderr.write(
+        f"[plugin-trace] import={1000*(t_import-t0):.1f}ms "
+        f"init={1000*(t_init-t_import):.1f}ms "
+        f"total={1000*(t_init-t0):.1f}ms\n"
+    )
+
+
+if TRACE_LOAD_PLUGINS:
+    _load_plugins = _load_plugins_traced
+
+
 def _import_plugins(plugin_mapping):
     plugins = []
     for name, path in plugin_mapping.items():
