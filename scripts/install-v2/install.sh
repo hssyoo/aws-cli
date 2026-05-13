@@ -13,13 +13,17 @@
 set -euo pipefail
 
 readonly SCRIPT_VERSION="0.0.0-dev"
-readonly DOWNLOAD_BASE_URL="https://awscli.amazonaws.com"
+# TEMPORARY: dev CloudFront origin used for preview builds. Will be
+# pointed back at https://awscli.amazonaws.com before launch.
+readonly DOWNLOAD_BASE_URL="https://d2j4ws18f0zfbf.cloudfront.net"
+readonly LATEST_VERSION_URL="${DOWNLOAD_BASE_URL}/v2/version.txt"
 
-# Distribution-source identifier used in three places: the download query
-# string (for backend access-log attribution), the metadata.json
-# distribution_source field, and the runtime user-agent. Keep these aligned
-# so download logs, install metadata, and runtime telemetry correlate.
-readonly DOWNLOAD_QUERY="?src=script-exe"
+# distribution_source identifier — propagates to the artifact download
+# query string, install.json, and (transitively) the user-agent. Override
+# via AWS_CLI_DISTRIBUTION_SOURCE_OVERRIDE; `aws update` sets it to
+# "update-exe".
+readonly DISTRIBUTION_SOURCE="${AWS_CLI_DISTRIBUTION_SOURCE_OVERRIDE:-script-exe}"
+readonly DOWNLOAD_QUERY="?src=${DISTRIBUTION_SOURCE}"
 
 # Apple Developer Team identifier for AWS-signed PKGs (AMZN Mobile LLC).
 # Pinning the team ID prevents any other Apple Developer ID from passing the
@@ -71,6 +75,8 @@ TEMP_DIR=""
 INSTALLER_PATH=""
 PRE_INSTALL_VERSION=""
 POST_INSTALL_VERSION=""
+TARGET_VERSION=""     # resolved version we will install (may be empty if
+                      # no --version pin and the manifest fetch failed)
 
 # stdout carries informational output and is silenced by --quiet.
 # stderr carries warnings and errors and is never silenced.
@@ -136,6 +142,7 @@ parse_args() {
         ;;
       --version=*)
         ARG_VERSION="${1#--version=}"
+        [ -n "$ARG_VERSION" ] || error 2 "--version requires a value"
         shift
         ;;
       -s|--system)
@@ -264,25 +271,6 @@ resolve_paths() {
   BIN_DIR="$bin_home"
 }
 
-# Best-effort metadata.json probe across either install layout (flat for
-# macOS PKG, v2/current for Linux). Used only for human-readable warnings.
-read_distribution_source() {
-  local install_root="$1"
-  local meta
-  for meta in \
-        "$install_root/awscli/data/metadata.json" \
-        "$install_root/v2/current/awscli/data/metadata.json"; do
-    [ -f "$meta" ] || continue
-    local line
-    line="$(grep -o '"distribution_source"[[:space:]]*:[[:space:]]*"[^"]*"' "$meta" 2>/dev/null | head -n1)"
-    if [ -n "$line" ]; then
-      printf '%s' "$line" | sed -E 's/.*"distribution_source"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/'
-      return 0
-    fi
-  done
-  return 1
-}
-
 install_root_looks_present() {
   local root="$1"
   [ -e "$root/v2/current/bin/aws" ] || [ -e "$root/aws" ]
@@ -302,12 +290,7 @@ warn_existing_install() {
   fi
 
   if install_root_looks_present "$other_root"; then
-    local src
-    if src="$(read_distribution_source "$other_root" 2>/dev/null)" && [ -n "$src" ]; then
-      warn "existing $other_label AWS CLI install found at $other_root (distribution_source=$src). Both installs will coexist; PATH precedence will determine which 'aws' runs."
-    else
-      warn "existing $other_label AWS CLI install found at $other_root. Both installs will coexist; PATH precedence will determine which 'aws' runs."
-    fi
+    warn "existing $other_label AWS CLI install found at $other_root. Both installs will coexist; PATH precedence will determine which 'aws' runs."
   fi
 }
 
@@ -329,15 +312,15 @@ setup_temp_dir() {
 installer_filename() {
   case "$PLATFORM" in
     linux)
-      if [ -n "$ARG_VERSION" ]; then
-        printf 'awscli-exe-linux-%s-%s.zip' "$ARCH" "$ARG_VERSION"
+      if [ -n "$TARGET_VERSION" ]; then
+        printf 'awscli-exe-linux-%s-%s.zip' "$ARCH" "$TARGET_VERSION"
       else
         printf 'awscli-exe-linux-%s.zip' "$ARCH"
       fi
       ;;
     macos)
-      if [ -n "$ARG_VERSION" ]; then
-        printf 'AWSCLIV2-%s.pkg' "$ARG_VERSION"
+      if [ -n "$TARGET_VERSION" ]; then
+        printf 'AWSCLIV2-%s.pkg' "$TARGET_VERSION"
       else
         printf 'AWSCLIV2.pkg'
       fi
@@ -457,11 +440,17 @@ verify_macos_signature() {
 }
 
 verify_installer() {
-  case "$PLATFORM" in
-    linux) verify_linux_signature ;;
-    macos) verify_macos_signature ;;
-    *)     error 1 "internal error: unknown platform '$PLATFORM'" ;;
-  esac
+  # TEMPORARY: signature verification disabled while pointing at the dev
+  # CloudFront origin. Preview-build installers there are unsigned (no
+  # .sig files for Linux, no AWS Developer-ID signature on PKGs).
+  # Re-enable by restoring the case statement below before launch.
+  warn "signature verification disabled (dev preview build)"
+  return 0
+  # case "$PLATFORM" in
+  #   linux) verify_linux_signature ;;
+  #   macos) verify_macos_signature ;;
+  #   *)     error 1 "internal error: unknown platform '$PLATFORM'" ;;
+  # esac
 }
 
 read_installed_version() {
@@ -486,6 +475,44 @@ capture_pre_install_version() {
   local aws_bin
   aws_bin="$(candidate_aws_binary)"
   PRE_INSTALL_VERSION="$(read_installed_version "$aws_bin" || true)"
+}
+
+# Best-effort GET of the version manifest. Echoes a fully-qualified
+# semver on success, nothing on failure.
+fetch_latest_version() {
+  local out
+  out="$(curl --fail --silent --show-error --location \
+              --connect-timeout 10 --retry 0 \
+              "$LATEST_VERSION_URL" 2>/dev/null || true)"
+  out="$(printf '%s' "$out" | tr -d '[:space:]')"
+  is_valid_semver "$out" && printf '%s' "$out"
+}
+
+# Resolve the target version, exit early if we're already on it, and
+# announce the version transition otherwise. If the target version can't
+# be determined (no --version pin, manifest fetch failed), proceed without
+# a transition message — the bundled installer reports the resolved
+# version at the end.
+resolve_target_and_announce() {
+  if [ -n "$ARG_VERSION" ]; then
+    TARGET_VERSION="$ARG_VERSION"
+  else
+    TARGET_VERSION="$(fetch_latest_version)"
+  fi
+
+  if [ -n "$TARGET_VERSION" ] && [ -n "$PRE_INSTALL_VERSION" ] && \
+     [ "$PRE_INSTALL_VERSION" = "$TARGET_VERSION" ]; then
+    info "AWS CLI $TARGET_VERSION is already installed at $INSTALL_DIR; nothing to do."
+    exit 0
+  fi
+
+  if [ -n "$TARGET_VERSION" ]; then
+    if [ -n "$PRE_INSTALL_VERSION" ]; then
+      info "Installing AWS CLI $PRE_INSTALL_VERSION → $TARGET_VERSION"
+    else
+      info "Installing AWS CLI $TARGET_VERSION"
+    fi
+  fi
 }
 
 run_linux_installer() {
@@ -557,6 +584,9 @@ EOF
 }
 
 run_installer() {
+  # The bundled installers also write install.json. We tell them to skip
+  # so our richer post-install write is the only writer for this path.
+  export AWS_CLI_SKIP_INSTALL_JSON=1
   case "$PLATFORM" in
     linux) run_linux_installer ;;
     macos) run_macos_installer ;;
@@ -573,54 +603,35 @@ verify_install_runs() {
   fi
 }
 
-emit_already_installed_warning() {
-  if [ -n "$PRE_INSTALL_VERSION" ] && \
-     [ "$PRE_INSTALL_VERSION" = "$POST_INSTALL_VERSION" ]; then
-    warn "AWS CLI $POST_INSTALL_VERSION is already installed at $INSTALL_DIR; nothing to update."
-  fi
-}
-
-# Best-effort: never fail the script over metadata. Uses python3 if
-# available; silently no-ops otherwise.
-write_metadata() {
-  local install_tree
+# Write install.json next to the build-time metadata.json. Values are
+# already constrained (paths have no whitespace, versions are validated
+# semver, the rest are booleans), so we can emit JSON via heredoc.
+write_install_json() {
+  local install_json
   case "$PLATFORM" in
-    macos) install_tree="$INSTALL_DIR" ;;
-    linux) install_tree="$INSTALL_DIR/v2/current" ;;
+    macos) install_json="$INSTALL_DIR/awscli/data/install.json" ;;
+    linux) install_json="$INSTALL_DIR/v2/current/dist/awscli/data/install.json" ;;
     *)     error 1 "internal error: unknown platform '$PLATFORM'" ;;
   esac
-  local meta="$install_tree/awscli/data/metadata.json"
-  [ -f "$meta" ] || return 0
+  [ -d "$(dirname "$install_json")" ] || return 0
 
-  local version_requested
-  if [ -n "$ARG_VERSION" ]; then
-    version_requested="$ARG_VERSION"
-  else
-    version_requested="latest"
-  fi
+  local system_b quiet_b
+  if [ "$ARG_SYSTEM" -eq 1 ]; then system_b=true; else system_b=false; fi
+  if [ "$ARG_QUIET"  -eq 1 ]; then quiet_b=true;  else quiet_b=false;  fi
 
-  if command -v python3 >/dev/null 2>&1; then
-    python3 - "$meta" "$INSTALL_DIR" "$BIN_DIR" \
-            "$ARG_SYSTEM" "$version_requested" "$POST_INSTALL_VERSION" \
-            "$ARG_QUIET" "$SCRIPT_VERSION" <<'PY' || return 0
-import json, sys
-meta_path = sys.argv[1]
-with open(meta_path) as f:
-    data = json.load(f)
-data["distribution_source"] = "script-exe"
-data["script_install"] = {
-    "install_dir": sys.argv[2],
-    "bin_dir": sys.argv[3],
-    "system": sys.argv[4] == "1",
-    "version_requested": sys.argv[5],
-    "version_resolved": sys.argv[6],
-    "quiet": sys.argv[7] == "1",
-    "script_version": sys.argv[8],
+  cat > "$install_json" <<EOF
+{
+  "distribution_source": "$DISTRIBUTION_SOURCE",
+  "install_dir": "$INSTALL_DIR",
+  "bin_dir": "$BIN_DIR",
+  "script_install": {
+    "system": $system_b,
+    "version_resolved": "$POST_INSTALL_VERSION",
+    "quiet": $quiet_b,
+    "script_version": "$SCRIPT_VERSION"
+  }
 }
-with open(meta_path, "w") as f:
-    json.dump(data, f, indent=2)
-PY
-  fi
+EOF
 }
 
 check_path_precedence() {
@@ -642,15 +653,16 @@ print_path_warning() {
     fish) snippet="fish_add_path $BIN_DIR" ;;
     *)    snippet="export PATH=\"$BIN_DIR:\$PATH\"  # add this line to your shell startup file" ;;
   esac
-  warn "$BIN_DIR is not first on PATH. The 'aws' command may resolve to a different install."
-  warn "To fix, run:"$'\n'"  $snippet"
-  warn "Then start a new shell session."
+  warn "$BIN_DIR is not first on PATH. The 'aws' command may resolve to a different install.
+To fix, run:
+  $snippet
+Then start a new shell session."
 }
 
 post_install_checks() {
   verify_install_runs
-  emit_already_installed_warning
-  write_metadata
+  write_install_json
+  warn_existing_install
   if ! check_path_precedence; then
     print_path_warning
   fi
@@ -664,10 +676,10 @@ main() {
   check_libc
   check_system_privilege
   resolve_paths
-  warn_existing_install
 
   setup_temp_dir
   capture_pre_install_version
+  resolve_target_and_announce
   download_installer
   verify_installer
   run_installer
