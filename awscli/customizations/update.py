@@ -12,27 +12,35 @@
 # language governing permissions and limitations under the License.
 """``aws update`` — update the AWS CLI to the latest release in place.
 
-Reads install.json to recover the install/bin directories, then runs
-install.sh against the same paths. install.sh handles the actual
-download, verification, and install.
-
-Currently the install.sh location is supplied via the dev-only
-``--dev-install-script`` flag. Network download will be added back
-once install.sh is hosted at a stable URL.
-
-Source-based installs are intentionally unsupported.
+Delegates to install.sh / install.ps1 to do the actual install. Source
+distributions are unsupported.
 """
 
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
 
+from awscli.clidriver import (
+    INSTALL_FILENAME,
+    _get_distribution_source,
+)
+from awscli.compat import is_windows
 from awscli.customizations.commands import BasicCommand
 
 
-_SUPPORTED_SOURCES = ('exe', 'script-exe', 'update-exe')
-_SYSTEM_INSTALL_DIR = '/usr/local/aws-cli'
+@dataclass
+class InstallScriptConfig:
+    """Inputs that vary across install modes. Extend with sensible defaults."""
+
+    is_system: bool
+    install_dir: str = None
+    bin_dir: str = None
 
 
 class UpdateCommand(BasicCommand):
@@ -43,55 +51,130 @@ class UpdateCommand(BasicCommand):
         'by the official installers or the curl|bash install script.'
     )
     SYNOPSIS = 'aws update'
-    ARG_TABLE = [
-        {
-            # TEMPORARY: required while install.sh has no public URL. Once
-            # install.sh is hosted, the command will fetch it automatically
-            # and this flag will be removed.
-            'name': 'dev-install-script',
-            'help_text': (
-                '(Development only) Path to a local install.sh to run. '
-                'Required until network download is implemented.'
-            ),
-            'cli_type_name': 'string',
-            'required': True,
-        },
-    ]
+    ARG_TABLE = []
+
+    # TEMPORARY: dev CloudFront origin used for preview builds. Will be
+    # pointed back at https://awscli.amazonaws.com before launch.
+    DOWNLOAD_BASE_URL = 'https://d2j4ws18f0zfbf.cloudfront.net'
+    WINDOWS_SCRIPT_URL = f'{DOWNLOAD_BASE_URL}/v2/install.ps1'
+    UNIX_SCRIPT_URL = f'{DOWNLOAD_BASE_URL}/v2/install.sh'
+    SUPPORTED_SOURCES = ('exe', 'script-exe', 'update-exe')
+    UNIX_SYSTEM_INSTALL_DIR = '/usr/local/aws-cli'
 
     def _run_main(self, parsed_args, parsed_globals):
-        install = _read_install_json()
-        metadata = _read_metadata()
-        source = install.get(
-            'distribution_source',
-            metadata.get('distribution_source', 'other'),
-        )
-        if source not in _SUPPORTED_SOURCES:
+        source = _get_distribution_source()
+        if source not in self.SUPPORTED_SOURCES:
             raise UpdateError(
                 f"'aws update' does not support installations with "
                 f"distribution_source={source!r}. Supported sources are: "
-                f"{', '.join(_SUPPORTED_SOURCES)}."
+                f"{', '.join(self.SUPPORTED_SOURCES)}."
             )
 
-        install_dir, bin_dir = _resolve_install_paths(install)
-        is_system = install_dir == _SYSTEM_INSTALL_DIR
+        config = self._build_config()
+        sys.stdout.write(f"Updating AWS CLI (source: {source})\n")
 
-        if is_system and os.geteuid() != 0:
-            raise UpdateError(
-                'Updating a system-wide AWS CLI install requires root. '
-                'Re-run with sudo.'
-            )
-
-        local_script = parsed_args.dev_install_script
-        if not os.path.isfile(local_script):
-            raise UpdateError(
-                f"--dev-install-script: file not found: {local_script}"
-            )
-
-        sys.stdout.write(
-            f"Updating AWS CLI at {install_dir} (source: {source})\n"
-        )
-        _run_install_script(local_script, install_dir, bin_dir, is_system)
+        with tempfile.TemporaryDirectory() as tmp:
+            script_path = self._download_install_script(tmp)
+            sys.stdout.write('Running install script...\n')
+            self._run_install_script(script_path, config)
+        # Do not add logic past this point: install script has rewritten
+        # the running binary; the awscli package in memory is now stale.
         return 0
+
+    def _build_config(self):
+        if is_windows:
+            return InstallScriptConfig(
+                is_system=self._is_windows_system_install(),
+            )
+        install_dir, bin_dir = self._read_unix_install_paths()
+        return InstallScriptConfig(
+            is_system=(install_dir == self.UNIX_SYSTEM_INSTALL_DIR),
+            install_dir=install_dir,
+            bin_dir=bin_dir,
+        )
+
+    def _is_windows_system_install(self):
+        program_files = os.environ.get('ProgramFiles')
+        if not program_files:
+            return False
+        canonical = os.path.join(
+            program_files, 'Amazon', 'AWSCLIV2', 'aws.exe'
+        )
+        return os.path.normcase(
+            os.path.realpath(sys.executable)
+        ) == os.path.normcase(canonical)
+
+    def _read_unix_install_paths(self):
+        import awscli  # local import to avoid a top-level cycle
+
+        path = os.path.join(
+            os.path.dirname(os.path.abspath(awscli.__file__)),
+            'data',
+            INSTALL_FILENAME,
+        )
+        try:
+            with open(path) as f:
+                install = json.load(f)
+            return install['install_dir'], install['bin_dir']
+        except (OSError, KeyError, ValueError):
+            raise UpdateError(
+                'install.json is missing or incomplete. This CLI install '
+                'was either not produced by a supported installer or its '
+                'install directory has been modified. Reinstall via the '
+                'official installer or install script and try again.'
+            )
+
+    def _download_install_script(self, tmp_dir):
+        url = self.WINDOWS_SCRIPT_URL if is_windows else self.UNIX_SCRIPT_URL
+        ext = '.ps1' if is_windows else '.sh'
+        dest = os.path.join(tmp_dir, f'install{ext}')
+        self._download_with_retry(url, dest, retries=1)
+        return dest
+
+    def _download_with_retry(self, url, dest, retries):
+        sys.stdout.write(f"Downloading {url}\n")
+        for attempt in range(retries + 1):
+            try:
+                with (
+                    urllib.request.urlopen(url, timeout=30) as resp,
+                    open(dest, 'wb') as out,
+                ):
+                    shutil.copyfileobj(resp, out)
+                return
+            except (urllib.error.URLError, OSError) as exc:
+                if attempt == retries:
+                    raise UpdateError(f"failed to download {url}: {exc}")
+                sys.stderr.write(f"download failed ({exc}); retrying...\n")
+
+    def _run_install_script(self, script_path, config):
+        env = os.environ.copy()
+        env['AWS_CLI_DISTRIBUTION_SOURCE_OVERRIDE'] = 'update-exe'
+        if is_windows:
+            cmd = self._windows_install_cmd(script_path, config)
+        else:
+            cmd = self._unix_install_cmd(script_path, config)
+            if not config.is_system:
+                # install.sh appends "/aws-cli" to XDG_DATA_HOME.
+                env['XDG_DATA_HOME'] = os.path.dirname(config.install_dir)
+                env['XDG_BIN_HOME'] = config.bin_dir
+        subprocess.run(cmd, env=env, check=True)
+
+    def _unix_install_cmd(self, script_path, config):
+        cmd = ['bash', script_path]
+        if config.is_system:
+            cmd.append('--system')
+        return cmd
+
+    def _windows_install_cmd(self, script_path, config):
+        ps_exe = (
+            shutil.which('pwsh')
+            or shutil.which('powershell')
+            or 'powershell.exe'
+        )
+        cmd = [ps_exe, '-NoProfile', '-File', script_path]
+        if config.is_system:
+            cmd.append('-System')
+        return cmd
 
 
 def register_update_command(event_handlers):
@@ -100,61 +183,5 @@ def register_update_command(event_handlers):
     )
 
 
-def _read_install_json():
-    return _read_data_file('install.json')
-
-
-def _read_metadata():
-    return _read_data_file('metadata.json')
-
-
-def _read_data_file(filename):
-    import awscli  # local import to avoid a top-level cycle
-    path = os.path.join(
-        os.path.dirname(os.path.abspath(awscli.__file__)), 'data', filename,
-    )
-    if not os.path.isfile(path):
-        return {}
-    with open(path) as f:
-        return json.load(f)
-
-
-def _resolve_install_paths(install):
-    """Return (install_dir, bin_dir) from install.json.
-
-    install.json is written by every supported installer. A missing file
-    or missing fields means the CLI is in an unsupported state — either
-    not installed via an official installer, or its install directory
-    has been tampered with. We refuse to update rather than guess.
-    """
-    install_dir = install.get('install_dir')
-    bin_dir = install.get('bin_dir')
-    if not install_dir or not bin_dir:
-        raise UpdateError(
-            'install.json is missing or incomplete. This CLI install was '
-            'either not produced by a supported installer or its install '
-            'directory has been modified. Reinstall via the official '
-            'installer or install.sh and try again.'
-        )
-    return install_dir, bin_dir
-
-
-def _run_install_script(script_path, install_dir, bin_dir, is_system):
-    env = os.environ.copy()
-    env['AWS_CLI_DISTRIBUTION_SOURCE_OVERRIDE'] = 'update-exe'
-
-    cmd = ['bash', script_path]
-    if is_system:
-        cmd.append('--system')
-    else:
-        # install.sh appends "/aws-cli" to XDG_DATA_HOME, so we hand it the
-        # parent of the resolved install_dir.
-        env['XDG_DATA_HOME'] = os.path.dirname(install_dir)
-        env['XDG_BIN_HOME'] = bin_dir
-
-    sys.stdout.write('Running install.sh...\n')
-    subprocess.run(cmd, env=env, check=True)
-
-
 class UpdateError(Exception):
-    """Raised when the update flow cannot proceed."""
+    pass
