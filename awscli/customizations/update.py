@@ -171,10 +171,13 @@ class UpdateCommand(BasicCommand):
         return cmd
 
     def _windows_install_cmd(self, script_path, config):
-        ps_exe = (
-            shutil.which('pwsh')
-            or shutil.which('powershell')
-            or 'powershell.exe'
+        # Absolute path to Windows PowerShell 5.1 (always present on
+        # supported Windows). A bare name would let CreateProcess search the
+        # current directory first, a code-execution risk under -System.
+        system_root = os.environ.get('SystemRoot', r'C:\Windows')
+        ps_exe = os.path.join(
+            system_root, 'System32', 'WindowsPowerShell', 'v1.0',
+            'powershell.exe',
         )
         cmd = [ps_exe, '-NoProfile', '-File', script_path]
         if config.is_system:
