@@ -18,14 +18,13 @@ distributions are unsupported.
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 
+from awscli.botocore.awsrequest import AWSRequest
+from awscli.botocore.httpsession import URLLib3Session
 from awscli.clidriver import (
     INSTALL_FILENAME,
     _get_distribution_source,
@@ -132,16 +131,22 @@ class UpdateCommand(BasicCommand):
         return dest
 
     def _download_with_retry(self, url, dest, retries):
+        # Use botocore's session for its bundled CA store, so verification
+        # works without relying on the OS cert store.
         sys.stdout.write(f"Downloading {url}\n")
+        session = URLLib3Session()
+        request = AWSRequest(method='GET', url=url).prepare()
         for attempt in range(retries + 1):
             try:
-                with (
-                    urllib.request.urlopen(url, timeout=30) as resp,
-                    open(dest, 'wb') as out,
-                ):
-                    shutil.copyfileobj(resp, out)
+                response = session.send(request)
+                if response.status_code != 200:
+                    raise UpdateError(
+                        f"unexpected HTTP status {response.status_code}"
+                    )
+                with open(dest, 'wb') as out:
+                    out.write(response.content)
                 return
-            except (urllib.error.URLError, OSError) as exc:
+            except Exception as exc:
                 if attempt == retries:
                     raise UpdateError(f"failed to download {url}: {exc}")
                 sys.stderr.write(f"download failed ({exc}); retrying...\n")
