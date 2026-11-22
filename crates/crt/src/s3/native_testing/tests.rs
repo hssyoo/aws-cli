@@ -995,6 +995,128 @@ fn serve_empty_listing(listener: &TcpListener) -> std::io::Result<String> {
     stream.write_all(body)?;
     Ok(String::from_utf8_lossy(&request).into_owned())
 }
+/// Takes every connection and answers none, until `done`, holding each
+/// one open; returns the request heads it read.
+fn silent_proxy(
+    listener: TcpListener,
+    done: std::sync::mpsc::Receiver<()>,
+) -> std::thread::JoinHandle<std::io::Result<Vec<String>>> {
+    std::thread::spawn(move || {
+        listener.set_nonblocking(true)?;
+        let mut held = Vec::new();
+        let mut heads = Vec::new();
+        while done.try_recv().is_err() {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream.set_nonblocking(false)?;
+                    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+                    let mut head = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk)? {
+                            0 => break,
+                            count => head.extend_from_slice(&chunk[..count]),
+                        }
+                    }
+                    heads.push(String::from_utf8_lossy(&head).into_owned());
+                    held.push(stream);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(heads)
+    })
+}
+/// Lists `https://127.0.0.1:9/bucket` through the proxy at `proxy`, with
+/// 2 attempts and a 300 ms connect timeout, and releases the runtime;
+/// returns the listing's error code.
+fn list_through_tunnel_proxy(proxy: std::net::SocketAddr) -> Result<i32, String> {
+    crate::Runtime::new(crate::RuntimeOptions {
+        endpoint_url: "https://127.0.0.1:9/bucket".into(),
+        proxy_url: Some(format!("http://{proxy}")),
+        no_sign_request: true,
+        max_attempts: Some(2),
+        connect_timeout_ms: 300,
+        event_loop_count: 1,
+        ..crate::RuntimeOptions::default()
+    })
+    .map(|runtime| {
+        let options = ListOptions {
+            object_conditions: false,
+            prefetch: false,
+            bucket: b"bucket",
+            prefix: b"",
+            request_payer: b"",
+            recursive: true,
+            page_size: 1000,
+            user_agent: None,
+        };
+        let error_code = runtime
+            .list_objects(options, None, &mut |_| 0)
+            .transfer
+            .error_code;
+        drop(runtime);
+        error_code
+    })
+    .map_err(|error| error.to_string())
+}
+/// The S3 client's tunnel gives up a proxy that never answers CONNECT
+/// after its connect timeout, as aws-c-http alone would not: the listing
+/// fails, and the runtime's release does not wait for the proxy, which
+/// still holds every connection.
+///
+/// The listing and the release run on a worker the test waits on for a
+/// bounded time, so a CONNECT left untimed fails the test rather than
+/// hanging it. The proxy is let go either way, which ends such a listing.
+#[test]
+fn a_silent_tunnel_proxy_fails_the_listing_and_does_not_hold_the_release()
+-> Result<(), Box<dyn std::error::Error>> {
+    const BOUND: Duration = Duration::from_secs(20);
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+    let (done, held) = std::sync::mpsc::channel();
+    let proxy = silent_proxy(listener, held);
+    let (finished, finish) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let _ = finished.send(list_through_tunnel_proxy(address));
+    });
+    let outcome = finish.recv_timeout(BOUND);
+    let _ = done.send(());
+    let heads = proxy.join().map_err(|_| "proxy panic")??;
+    let listed = match outcome {
+        Ok(listed) => listed,
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            return Err(worker
+                .join()
+                .map_or("worker panic", |()| "no outcome")
+                .into());
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            // Let go, the proxy's connections close and the listing ends;
+            // the worker is joined only if it then finishes within the bound.
+            if finish.recv_timeout(BOUND).is_ok() {
+                worker.join().map_err(|_| "worker panic")?;
+            }
+            return Err(format!(
+                "the listing and the release did not finish within {BOUND:?} of a silent proxy"
+            )
+            .into());
+        }
+    };
+    worker.join().map_err(|_| "worker panic")?;
+    assert_ne!(listed?, 0);
+    assert!(!heads.is_empty());
+    for head in heads {
+        assert!(
+            head.starts_with("CONNECT 127.0.0.1:9 HTTP/1.1\r\n"),
+            "{head}"
+        );
+    }
+    Ok(())
+}
 #[test]
 fn listings_name_the_proxy_only_when_they_fail() -> Result<(), Box<dyn std::error::Error>> {
     let list = |proxy: &str| -> Result<ListResult, Box<TransferResult>> {

@@ -283,6 +283,8 @@ fn refreshed_credentials_sign_the_next_request() -> TestResult {
         method: "GET",
         target: "/2015-03-31/functions",
         headers: &headers,
+        body: &[],
+        tunnel: None,
         signing: Some(crt::http::Signing {
             region: "us-west-2",
             service: "lambda",
@@ -629,6 +631,41 @@ fn a_walk_that_found_nothing_fails_every_query() -> TestResult {
     }));
     assert!(!answers.recv_timeout(PATIENCE)?);
     assert_eq!((chain.method(), chain.refresh_error()), (None, None));
+    Ok(())
+}
+
+/// The Host a request is signed with is the one the transport sends: the
+/// Host header botocore signs (`_host_from_url`, `sigv4::host_header`)
+/// equals the one `http.client` writes for the URL the transport reads
+/// (`credentials::Location`), for IPv6 literals and for default and
+/// explicit ports.
+#[test]
+fn the_signed_host_is_the_host_the_transport_sends() -> TestResult {
+    for (url, host) in [
+        ("https://[::1]/", "[::1]"),
+        ("https://[::1]:443/", "[::1]"),
+        ("https://[::1]:8443/", "[::1]:8443"),
+        ("http://[fe80::1]:80/", "[fe80::1]"),
+        ("http://[2001:db8::1]:8080/path", "[2001:db8::1]:8080"),
+        (
+            "https://sts.us-east-1.amazonaws.com/",
+            "sts.us-east-1.amazonaws.com",
+        ),
+        (
+            "https://sts.us-east-1.amazonaws.com:443/",
+            "sts.us-east-1.amazonaws.com",
+        ),
+        ("https://STS.Example.com:8443/", "sts.example.com:8443"),
+        ("http://127.0.0.1:80/", "127.0.0.1"),
+        ("http://127.0.0.1:8080/", "127.0.0.1:8080"),
+        ("http://localhost:443/", "localhost:443"),
+    ] {
+        let location = ::credentials::Location::parse(url, false).ok_or(url)?;
+        let (scheme, rest) = url.split_once("://").ok_or(url)?;
+        let authority = rest.split('/').next().unwrap_or(rest);
+        assert_eq!(location.host_header, host, "{url}");
+        assert_eq!(sigv4::host_header(scheme, authority), host, "{url}");
+    }
     Ok(())
 }
 

@@ -23,11 +23,25 @@ fn first_signing_scheme_and_optional_region() {
     assert!(parse_signing_region(br#"{"authSchemes":[{},4]}"#).is_err());
     assert!(parse_signing_region(br#"{"authSchemes":[{},{"signingRegion":4}]}"#).is_err());
 }
+/// The value `parameters` gives the rule parameter `name`, if any.
+fn parameter<'a>(
+    parameters: &[(&str, crt::endpoints::ParamValue<'a>)],
+    name: &str,
+) -> Option<crt::endpoints::ParamValue<'a>> {
+    parameters
+        .iter()
+        .find(|(given, _)| *given == name)
+        .map(|(_, value)| *value)
+}
 #[test]
 fn explicit_endpoint_presence_alone_forces_path_style() {
+    use crt::endpoints::ParamValue::{Boolean, String};
     assert_eq!(
-        parameters("us-east-1", Some("b"), Options::default()).force_path_style,
-        Some(false)
+        parameter(
+            &parameters("us-east-1", Some("b"), Options::default()),
+            "ForcePathStyle"
+        ),
+        Some(Boolean(false))
     );
     for endpoint in ["", "http://localhost:4566/base"] {
         let params = parameters(
@@ -38,9 +52,51 @@ fn explicit_endpoint_presence_alone_forces_path_style() {
                 ..Options::default()
             },
         );
-        assert_eq!(params.force_path_style, Some(true));
-        assert_eq!(params.endpoint, Some(endpoint));
+        assert_eq!(parameter(&params, "ForcePathStyle"), Some(Boolean(true)));
+        assert_eq!(parameter(&params, "Endpoint"), Some(String(endpoint)));
     }
+}
+/// The S3 rule parameters, by name and in the order the engine is given
+/// them: the region, the bucket when there is one, FIPS and dual-stack, the
+/// endpoint when one is configured, then the S3 client's settings. Those
+/// the client leaves unset, such as `UseArnRegion`, are absent.
+#[test]
+fn the_s3_rule_parameters_are_a_named_list() {
+    use crt::endpoints::ParamValue::{Boolean, String};
+    assert_eq!(
+        parameters("us-east-1", None, Options::default()),
+        [
+            ("Region", String("us-east-1")),
+            ("UseFIPS", Boolean(false)),
+            ("UseDualStack", Boolean(false)),
+            ("ForcePathStyle", Boolean(false)),
+            ("Accelerate", Boolean(false)),
+            ("UseGlobalEndpoint", Boolean(false)),
+            ("DisableMultiRegionAccessPoints", Boolean(false)),
+        ]
+    );
+    let options = Options {
+        use_fips: true,
+        use_dual_stack: true,
+        accelerate: true,
+        endpoint: Some("http://localhost:4566"),
+        ..Options::default()
+    };
+    assert_eq!(
+        parameters("eu-west-1", Some("bucket"), options),
+        [
+            ("Region", String("eu-west-1")),
+            ("Bucket", String("bucket")),
+            ("UseFIPS", Boolean(true)),
+            ("UseDualStack", Boolean(true)),
+            ("Endpoint", String("http://localhost:4566")),
+            // Acceleration takes the bucket out of the path.
+            ("ForcePathStyle", Boolean(false)),
+            ("Accelerate", Boolean(true)),
+            ("UseGlobalEndpoint", Boolean(false)),
+            ("DisableMultiRegionAccessPoints", Boolean(false)),
+        ]
+    );
 }
 #[test]
 fn client_netloc_is_selected_only_for_a_bypass_list() {

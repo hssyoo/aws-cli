@@ -451,7 +451,7 @@ fn each_trust_store_reaches_the_shim_as_one_source() -> Result<(), Box<dyn std::
             trust: trust.clone(),
             ..RuntimeOptions::default()
         };
-        let ops = NativeOps::new(&options, None)?;
+        let ops = NativeOps::new(&options, None, true)?;
         let bundle = ca_bundle(&options)?;
         let shim = ops.shim_options(&options, bundle.as_ref());
         // SAFETY: both pointers borrow `bundle` and `options`, live here.
