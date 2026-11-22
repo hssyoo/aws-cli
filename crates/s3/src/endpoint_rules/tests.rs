@@ -27,8 +27,13 @@ fn rule_loading_failures_keep_their_rules_errors() -> Result<(), Box<dyn std::er
     ));
     let plain = testing::entry(name, rules, flags::RESOURCE);
     let blob = testing::blob(&[plain], false, 2);
-    let error = Rules::load(View::new(&blob)?, "s3").err().ok_or("no partitions loaded")?;
-    assert!(matches!(error, RulesError::MissingEndpointRules), "{error:?}");
+    let error = Rules::load(View::new(&blob)?, "s3")
+        .err()
+        .ok_or("no partitions loaded")?;
+    assert!(
+        matches!(error, RulesError::MissingEndpointRules),
+        "{error:?}"
+    );
     Ok(())
 }
 pub(crate) fn payload() -> Result<Vec<u8>, Box<dyn std::error::Error>> {

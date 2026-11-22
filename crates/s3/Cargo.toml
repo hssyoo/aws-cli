@@ -16,6 +16,7 @@ numa = { path = "../numa" }
 crt = { path = "../crt" }
 credentials = { path = "../credentials" }
 pyload = { path = "../pyload" }
+model = { path = "../model" }
 cli-core = { path = "../cli-core" }
 awscli-config = { path = "../awscli-config" }
 awscli-argparse = { path = "../awscli-argparse" }
