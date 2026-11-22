@@ -414,3 +414,30 @@ fn service_resources_overlapping_the_prefix_are_not_models() -> Result<(), crate
     );
     Ok(())
 }
+
+/// The inspector hashes with the `sha256` leaf crate, so the payload
+/// builds without the request signer: `sigv4` is not among the packages
+/// pyload builds with, directly or through another.
+#[test]
+#[cfg_attr(miri, ignore = "runs cargo, which Miri cannot")]
+fn the_payload_builds_without_the_signer() -> Result<(), Box<dyn std::error::Error>> {
+    let output = std::process::Command::new(env!("CARGO"))
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .args(["tree", "--offline", "--locked", "-p", "pyload"])
+        .args(["-e", "normal,build", "--prefix", "none", "--format", "{p}"])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let tree = String::from_utf8(output.stdout)?;
+    let packages: Vec<&str> = tree
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    assert!(packages.contains(&"pyload"), "{tree}");
+    assert!(packages.contains(&"sha256"), "{tree}");
+    assert!(!packages.contains(&"sigv4"), "{tree}");
+    Ok(())
+}
