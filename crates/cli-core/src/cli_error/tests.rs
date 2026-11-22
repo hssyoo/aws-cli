@@ -411,7 +411,7 @@ fn framing_cases() -> Vec<(FailureKind, ErrorFormat, String)> {
             "\naws: [ERROR]: Unknown options: --a, b\n".into(),
         ),
         (
-            FailureKind::TooFewArguments(vec!["s3"]),
+            FailureKind::TooFewArguments(vec!["s3".into()]),
             ErrorFormat::Enhanced,
             "\naws: [ERROR]: An error occurred (ParamValidation): usage: aws [options] s3 \
              <subcommand> [parameters]\naws: [ERROR]: too few arguments\n"
@@ -972,4 +972,16 @@ fn environment_values_that_are_not_unicode_are_present() {
             }
         )
     );
+}
+#[test]
+fn the_registry_s_reasons_have_their_refusal_names() {
+    for (reason, name) in [
+        (PythonReason::CommandAlias, "command_alias"),
+        (PythonReason::UnsupportedProtocol, "unsupported_protocol"),
+        (PythonReason::UnsupportedTrait, "unsupported_trait"),
+        (PythonReason::UnportedCustomization, "unported_customization"),
+        (PythonReason::OutputFormat, "output_format"),
+    ] {
+        assert_eq!(reason.name(), name);
+    }
 }

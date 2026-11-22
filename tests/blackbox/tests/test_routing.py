@@ -214,6 +214,27 @@ async def test_forced_native_refuses_a_python_setting(
     await assert_refused(aws_cli, server, env, arguments, reason, cwd=tmp_path)
 
 
+# An alias file that names a root replaces or extends its grammar before
+# Python parses argv, so the root's commands are Python's.
+@pytest.mark.native_only
+@pytest.mark.parametrize(
+    "alias",
+    ["[toplevel]\ns3 = !echo replaced\n", "[command s3]\nlisting = ls\n"],
+    ids=["toplevel", "subcommand"],
+)
+async def test_forced_native_refuses_an_alias_of_a_native_root(
+    aws_cli: str, tmp_path: Path, alias: str
+) -> None:
+    async with credential_runtime(tmp_path, temp_home=True) as (server, env):
+        env.update(AWS_ACCESS_KEY_ID="test", AWS_SECRET_ACCESS_KEY="test")
+        aliases = tmp_path / ".aws" / "cli" / "alias"
+        aliases.parent.mkdir(parents=True, exist_ok=True)
+        aliases.write_text(alias, encoding="utf-8")
+        await assert_refused(
+            aws_cli, server, env, ["s3", "ls"], "command_alias", cwd=tmp_path
+        )
+
+
 # Python honors a mixed-case spelling in `os.environ` order, which the
 # native reader does not model. Windows names have no case.
 @pytest.mark.native_only

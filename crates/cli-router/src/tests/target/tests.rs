@@ -482,7 +482,7 @@ fn aliases_replace_or_extend_s3_before_parameter_files_are_read() {
         ] {
             assert_eq!(
                 evaluate(argv, &BTreeMap::new(), &shared),
-                Verdict::Python(PythonReason::S3Alias),
+                Verdict::Python(PythonReason::CommandAlias),
                 "{alias:?} {argv:?}"
             );
         }
@@ -623,6 +623,7 @@ fn injected_platform_selects_tuned_transfer_persona() {
             shared_files: &files,
             boto_config_credentials: false,
             embedded_trust: true,
+            registry: &PINNED_REGISTRY,
         },
         cli_core::client_config::Platform {
             optimized: true,
@@ -679,6 +680,7 @@ fn platform_probe_waits_for_route_and_transfer_admission() {
                 shared_files: &shared,
                 boto_config_credentials: false,
                 embedded_trust: true,
+                registry: &PINNED_REGISTRY,
             },
             || {
                 calls.set(calls.get() + 1);

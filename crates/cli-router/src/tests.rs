@@ -8,6 +8,29 @@ use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
 };
+/// The registry the pinned tables parse with: the `s3` tree, no
+/// hand-written commands and no model source.
+const PINNED_REGISTRY: ::command::Registry<'static> =
+    ::command::Registry::new(&[&tables::S3], &[], None);
+/// The assertions compare verdicts whole. A `Run` holds a boxed
+/// invocation, which has no equality of its own, so two runs are equal
+/// when their fields are and their invocations print alike.
+impl PartialEq for Verdict {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Native(a), Self::Native(b)) => a == b,
+            (Self::Run(a), Self::Run(b)) => {
+                a.globals == b.globals
+                    && a.needs == b.needs
+                    && a.streams == b.streams
+                    && format!("{:?}", a.invocation) == format!("{:?}", b.invocation)
+            }
+            (Self::Failure(a), Self::Failure(b)) => a == b,
+            (Self::Python(a), Self::Python(b)) => a == b,
+            _ => false,
+        }
+    }
+}
 #[derive(Debug)]
 enum Expected {
     Native(bool),
@@ -44,6 +67,7 @@ fn evaluate(args: &[&str], env: &impl EnvMap, files: &ParsedFiles) -> Verdict {
             shared_files: files,
             boto_config_credentials: false,
             embedded_trust: true,
+            registry: &PINNED_REGISTRY,
         },
     )
 }
@@ -84,6 +108,7 @@ mod os {
                 shared_files: &files(""),
                 boto_config_credentials: false,
                 embedded_trust: true,
+                registry: &PINNED_REGISTRY,
             },
         )
     }
@@ -1407,6 +1432,7 @@ fn bound_values_preserve_raw_namespace() {
             shared_files: &files(""),
             boto_config_credentials: false,
             embedded_trust: true,
+            registry: &PINNED_REGISTRY,
         },
     ) else {
         panic!()
@@ -1663,6 +1689,7 @@ fn configured_fallback_preserves_original_argv() {
                 shared_files: &files("[default]\ncli_history = enabled\n"),
                 boto_config_credentials: false,
                 embedded_trust: true,
+                registry: &PINNED_REGISTRY,
             }
         ),
         Verdict::Python(PythonReason::HistoryEnabled)
@@ -1807,6 +1834,7 @@ fn expect_with_paramfiles(paramfiles: &dyn unpack::Paramfiles, argv: &[&str], ex
             shared_files: &files(""),
             boto_config_credentials: false,
             embedded_trust: true,
+            registry: &PINNED_REGISTRY,
         },
     );
     match expected {
@@ -2325,6 +2353,7 @@ fn evaluate_locked(
             shared_files: files,
             boto_config_credentials: false,
             embedded_trust: true,
+            registry: &PINNED_REGISTRY,
         },
         || platform,
         acquire_process_lock,
@@ -2413,5 +2442,6 @@ fn only_a_transfer_the_native_crt_client_runs_takes_the_crt_process_lock() {
 
 mod credentials;
 mod endpoint;
+mod registry;
 mod session;
 mod target;

@@ -1,0 +1,15 @@
+[package]
+name = "command"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+awscli-argparse = { path = "../awscli-argparse" }
+awscli-config = { path = "../awscli-config" }
+cli-core = { path = "../cli-core" }

@@ -791,9 +791,10 @@ fn leftover_and_usage_failures_keep_handler_class_and_separator() {
         arguments: &[],
         subcommands: Some(&[OPERATION]),
     };
+    let roots = tables::Pinned(&[&ROOT]);
     let tables = Tables {
         globals: tables::GLOBALS,
-        s3: &ROOT,
+        roots: &roots,
     };
     let vars = HashMap::new();
     let files = unpack::FsParamfiles;
@@ -836,4 +837,192 @@ fn leftover_and_usage_failures_keep_handler_class_and_separator() {
         failure.error_text(Color::default()),
         "Unknown options: --bogus, y"
     );
+}
+/// A lookup that derives one service root, as a model source does, beside
+/// the pinned `s3` tree: `zsvc` with an operation that has required options
+/// and one that has none, both with owned tables.
+#[derive(Debug)]
+struct Derived;
+const DERIVED_ARGUMENTS: &[Argument] = &[
+    Argument {
+        required: true,
+        ..Argument::new("role-arn")
+    },
+    Argument {
+        required: true,
+        ..Argument::new("role-session-name")
+    },
+    Argument::new("policy"),
+];
+impl<'a> Roots<'a> for Derived {
+    fn root(&self, name: &str) -> Option<Node<'a>> {
+        if name != "zsvc" {
+            return tables::PINNED.root(name);
+        }
+        Some(Node {
+            name: name.to_owned().into(),
+            kind: CommandKind::Service,
+            arguments: Vec::new().into(),
+            subcommands: Some(vec!["assume-role", "get-caller-identity"].into()),
+        })
+    }
+    fn subcommand(&self, lineage: &[&str], name: &str) -> Option<Node<'a>> {
+        let arguments = match (lineage, name) {
+            (["zsvc"], "assume-role") => DERIVED_ARGUMENTS.to_vec(),
+            (["zsvc"], "get-caller-identity") => Vec::new(),
+            _ => return tables::PINNED.subcommand(lineage, name),
+        };
+        Some(Node {
+            name: name.to_owned().into(),
+            kind: CommandKind::Operation,
+            arguments: arguments.into(),
+            subcommands: None,
+        })
+    }
+}
+const DERIVED: Tables<'static> = Tables {
+    globals: tables::GLOBALS,
+    roots: &Derived,
+};
+fn derived(args: &[&str]) -> ParseResult<'static> {
+    let argv: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
+    let mut result = parse(&argv, &Options::default(), &DERIVED);
+    if result.outcome == Outcome::Parsed {
+        let vars = HashMap::new();
+        let files = unpack::FsParamfiles;
+        assert!(!complete(&mut result, &fixture_environment(&vars, &files)));
+    }
+    result
+}
+fn derived_failure(args: &[&str]) -> Failure {
+    match derived(args).outcome {
+        Outcome::Failure(failure) => failure,
+        outcome => panic!("{args:?}: {outcome:?}, expected a failure"),
+    }
+}
+#[test]
+fn a_derived_root_parses_its_operation_s_owned_table() {
+    let result = derived(&[
+        "zsvc",
+        "assume-role",
+        "--role-arn",
+        "arn",
+        "--role-session-name",
+        "name",
+    ]);
+    assert_eq!(result.outcome, Outcome::Parsed);
+    let lineage: Vec<_> = result.lineage.iter().map(|node| &*node.name).collect();
+    assert_eq!(lineage, ["zsvc", "assume-role"]);
+    assert_eq!(result.lineage[1].kind, CommandKind::Operation);
+    assert_eq!(result.values.string("role_arn"), Some("arn"));
+    assert_eq!(result.values.string("role_session_name"), Some("name"));
+    assert_eq!(result.values.value("policy"), Some(&Value::Null));
+    // The operation parser's `help` positional is ServiceOperation's own
+    // (`_add_help`), not one of the table's arguments.
+    assert_eq!(result.values.value("help"), None);
+}
+#[test]
+fn a_word_no_lookup_defines_is_unresolved_and_s3_still_parses() {
+    let unresolved = derived(&["ec2", "describe-instances"]);
+    assert!(matches!(
+        unresolved.outcome,
+        Outcome::Unresolved { ref command, .. } if command == "ec2"
+    ));
+    let pinned = derived(&["s3", "ls"]);
+    assert_eq!(pinned.outcome, Outcome::Parsed);
+    let lineage: Vec<_> = pinned.lineage.iter().map(|node| &*node.name).collect();
+    assert_eq!(lineage, ["s3", "ls"]);
+}
+/// The texts the Python route prints for `aws sts nosuch`, `aws sts`, `aws
+/// sts get-caler-identity` and `aws sts assume-role --role-arn x`, before
+/// the error handler frames them (ServiceArgParser, ArgTableArgParser).
+#[test]
+fn service_and_operation_parse_failures_match_python() {
+    for (args, text) in [
+        (
+            &["zsvc", "nosuch"][..],
+            "argument operation: Found invalid choice 'nosuch'\n\n\nusage: ",
+        ),
+        (
+            &["zsvc"],
+            "the following arguments are required: operation\n\nusage: ",
+        ),
+        (
+            &["zsvc", "get-caler-identity"],
+            "argument operation: Found invalid choice 'get-caler-identity'\n\nMaybe you meant:\
+             \n\n  * get-caller-identity\n\nusage: ",
+        ),
+        (
+            &["zsvc", "assume-role", "--role-arn", "x"],
+            "the following arguments are required: --role-session-name\n\nusage: ",
+        ),
+        (
+            &["zsvc", "assume-role", "--role-arn", "x", "help"],
+            "the following arguments are required: --role-session-name\n\nusage: ",
+        ),
+        (
+            &["zsvc", "--role-arn", "x", "get-caller-identity"],
+            "argument operation: Found invalid choice 'x'\n\n\nusage: ",
+        ),
+    ] {
+        let failure = derived_failure(args);
+        assert_eq!(failure.class, FailureClass::ParamValidation, "{args:?}");
+        let rendered = failure.error_text(Color::default());
+        assert!(rendered.starts_with(text), "{args:?}: {rendered:?}");
+    }
+}
+/// ServiceOperation.__call__: the `help` positional's value joins the end
+/// of the leftovers, and the leftovers are an UnknownArgumentError raised
+/// before any parameter is processed.
+#[test]
+fn operation_leftovers_are_unknown_arguments_before_parameter_files() {
+    for (args, text) in [
+        (
+            &["zsvc", "get-caller-identity", "--nosuch"][..],
+            "Unknown options: --nosuch",
+        ),
+        (
+            &["zsvc", "get-caller-identity", "extra", "--nosuch=1"],
+            "Unknown options: --nosuch=1, extra",
+        ),
+        (
+            &[
+                "zsvc",
+                "assume-role",
+                "--role-arn",
+                "file://missing",
+                "--role-session-name",
+                "b",
+                "--polcy",
+                "x",
+            ],
+            "Unknown options: --polcy, x\n\nMaybe you meant:\n  * --policy (instead of --polcy)",
+        ),
+    ] {
+        let failure = derived_failure(args);
+        assert_eq!(failure.kind.name(), "unknown_options", "{args:?}");
+        assert_eq!(failure.class, FailureClass::UnknownArgument, "{args:?}");
+        assert_eq!(failure.error_text(Color::default()), text, "{args:?}");
+    }
+}
+#[test]
+fn help_at_a_derived_level_is_a_help_outcome() {
+    for args in [
+        &["zsvc", "help"][..],
+        &["zsvc", "--help"],
+        &["--help", "zsvc"],
+        &["zsvc", "get-caller-identity", "help"],
+        &["zsvc", "assume-role", "--help"],
+        &[
+            "zsvc",
+            "assume-role",
+            "--role-arn",
+            "x",
+            "--role-session-name",
+            "y",
+            "help",
+        ],
+    ] {
+        assert_eq!(derived(args).outcome, Outcome::Help, "{args:?}");
+    }
 }
