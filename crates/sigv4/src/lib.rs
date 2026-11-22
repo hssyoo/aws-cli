@@ -147,6 +147,9 @@ pub struct SignedRequest<'a> {
     /// have a token, and `X-Amz-Content-SHA256` with [`Self::content_sha256`].
     /// Without those, a request's own `X-Amz-Security-Token` is signed and
     /// its own `X-Amz-Content-SHA256` is the payload hash signed, as there.
+    /// Not ported: botocore's `Date` case (`_set_necessary_date_headers`),
+    /// where a request's own `Date` is rewritten and sent in place of
+    /// `X-Amz-Date`; here a `Date` is signed as any other header.
     pub headers: &'a [(&'a str, &'a str)],
     pub payload: Payload<'a>,
     /// Also sends the payload's hash as `X-Amz-Content-SHA256`, as S3
