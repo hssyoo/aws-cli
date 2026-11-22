@@ -1,6 +1,7 @@
 use fearless_simd as _;
 use pyload::{container, inspect};
 use ruzstd as _;
+use sha256 as _;
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::process::ExitCode;

@@ -222,6 +222,7 @@ version = "0.1.0"
 dependencies = [
  "fearless_simd",
  "ruzstd",
+ "sha256",
 ]
 
 [[package]]
@@ -328,6 +329,10 @@ dependencies = [
  "cpufeatures",
  "digest",
 ]
+
+[[package]]
+name = "sha256"
+version = "0.1.0"
 
 [[package]]
 name = "syn"

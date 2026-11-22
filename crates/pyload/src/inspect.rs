@@ -1,7 +1,6 @@
 //! Payload inspector modes and byte-exact output shared by the standalone tool.
 #![forbid(unsafe_code)]
 mod diagnostics;
-mod sha256;
 use crate::{Payload, container, format};
 use std::ffi::OsString;
 use std::io::{self, Write};

@@ -1,3 +1,11 @@
+//! SHA-256 (FIPS 180-4) and HMAC-SHA256 (RFC 2104), hand-rolled to keep the
+//! dependency set small. A leaf crate: the payload inspector hashes with it,
+//! and the SigV4 signer derives its keys with it.
+//!
+//! ```
+//! assert_eq!(sha256::digest(b"abc")[..4], [0xba, 0x78, 0x16, 0xbf]);
+//! ```
+#![forbid(unsafe_code)]
 const K: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -8,7 +16,8 @@ const K: [u32; 64] = [
     0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
-pub(super) fn digest(bytes: &[u8]) -> [u8; 32] {
+/// The SHA-256 digest of `bytes`.
+pub fn digest(bytes: &[u8]) -> [u8; 32] {
     let mut state = [
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
         0x5be0cd19,
@@ -64,3 +73,23 @@ fn compress(state: &mut [u32; 8], block: &[u8]) {
         *state = state.wrapping_add(value);
     }
 }
+
+const BLOCK: usize = 64;
+
+/// `HMAC-SHA256(key, message)`.
+pub fn hmac(key: &[u8], message: &[u8]) -> [u8; 32] {
+    let mut block = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        block[..32].copy_from_slice(&digest(key));
+    } else {
+        block[..key.len()].copy_from_slice(key);
+    }
+    let mut inner: Vec<u8> = block.iter().map(|byte| byte ^ 0x36).collect();
+    inner.extend_from_slice(message);
+    let mut outer: Vec<u8> = block.iter().map(|byte| byte ^ 0x5c).collect();
+    outer.extend_from_slice(&digest(&inner));
+    digest(&outer)
+}
+
+#[cfg(test)]
+mod tests;
