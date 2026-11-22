@@ -56,7 +56,7 @@ pub(super) fn route<E: EnvMap>(
     if let Outcome::Failure(failure) = &result.outcome {
         return session_start(result, config).unwrap_or(Verdict::Failure(failure.clone()));
     }
-    let verdict = admit(result, config, bound);
+    let verdict = admit(result, config, bound, unpack.directory);
     if matches!(verdict, Verdict::Run(_))
         && let Some(started) = session_start(result, config)
     {
@@ -70,6 +70,7 @@ fn admit<E: EnvMap>(
     result: &ParseResult<'_>,
     config: &Configuration<'_, E>,
     bound: Bound<'_>,
+    directory: &std::path::Path,
 ) -> Verdict {
     let bind = match bound {
         Bound::Spec(CommandSpec {
@@ -98,17 +99,32 @@ fn admit<E: EnvMap>(
     if let Some(reason) = endpoint_refusal(config, &globals, ns, service) {
         return Verdict::Python(reason);
     }
-    Verdict::Run(Box::new(Run {
-        globals,
-        invocation,
-        needs,
-        streams,
-    }))
+    let command = lineage_names(result).join(".");
+    let resolved = client_config::resolve_settings(&client_config::SettingsInputs {
+        env: config.env,
+        files: config.shared_files,
+        globals: &globals,
+        directory,
+        embedded_trust: config.embedded_trust,
+        service,
+        command: &command,
+    });
+    match resolved {
+        Ok(settings) => Verdict::Run(Box::new(Run {
+            globals,
+            invocation,
+            needs,
+            streams,
+            settings,
+        })),
+        Err(reason) => Verdict::Python(reason),
+    }
 }
 
-/// The settings stage: the decision table, which no registry command reads
-/// with a transfer manager, then the output format a formatting command
-/// would print with.
+/// The settings stage: the decision table's rows for a model operation's
+/// client (`Scope::Service`), then the output format a formatting command
+/// would print with. The client's own settings resolve after the endpoint
+/// checks, in the s3 commands' order.
 fn settings_refusal<E: EnvMap>(
     config: &Configuration<'_, E>,
     globals: &Globals,
@@ -120,7 +136,7 @@ fn settings_refusal<E: EnvMap>(
         shared_files: config.shared_files,
         cli_profile: globals.profile.as_deref(),
         cli_error_format: ns.string("cli_error_format"),
-        transfers: false,
+        scope: effective_config::Scope::Service,
         boto_config_credentials: config.boto_config_credentials,
     });
     if refused.is_some() {

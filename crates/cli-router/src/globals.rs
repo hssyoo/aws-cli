@@ -19,6 +19,11 @@ enum GlobalSupport {
     Presentation,
     ErrorFormat,
     ConnectTimeout,
+    /// `--cli-read-timeout`: a formatting command's client honors it as its
+    /// transport's read timeout (`crt::http::Request::read_timeout`); the
+    /// CRT S3 client has no such setting, so the s3 commands leave it to
+    /// Python.
+    ReadTimeout,
     PythonOnly,
 }
 /// What the command a parse reached does with its output.
@@ -68,7 +73,7 @@ const GLOBAL_CLASSES: &[GlobalClass] = &[
     GlobalClass::new("color", GlobalSupport::Presentation),
     GlobalClass::new("no-sign-request", GlobalSupport::Native),
     GlobalClass::new("ca-bundle", GlobalSupport::Native),
-    GlobalClass::new("cli-read-timeout", GlobalSupport::PythonOnly),
+    GlobalClass::new("cli-read-timeout", GlobalSupport::ReadTimeout),
     GlobalClass::new("cli-connect-timeout", GlobalSupport::ConnectTimeout),
     GlobalClass::new("cli-binary-format", GlobalSupport::PythonOnly),
     GlobalClass::new("no-cli-pager", GlobalSupport::Presentation),
@@ -161,6 +166,11 @@ fn is_native_global(support: GlobalSupport, target: Target, level: &Level<'_>) -
         GlobalSupport::ConnectTimeout => {
             let timeout = bind_timeout(&level.namespace, "connect_timeout");
             client_config::timeout_milliseconds(timeout).is_some()
+        }
+        GlobalSupport::ReadTimeout => {
+            let timeout = bind_timeout(&level.namespace, "read_timeout");
+            streams == Some(StreamPolicy::Formatted)
+                && client_config::timeout_milliseconds(timeout).is_some()
         }
         GlobalSupport::PythonOnly => false,
     }

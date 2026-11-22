@@ -25,7 +25,11 @@ fn admit_with(
         shared_files: files,
         cli_profile,
         cli_error_format: None,
-        transfers: cp,
+        scope: if cp {
+            effective_config::Scope::Transfer
+        } else {
+            effective_config::Scope::S3
+        },
         boto_config_credentials: false,
     })
 }
@@ -280,7 +284,7 @@ fn boto_era_credential_sources_are_python_s() {
         shared_files: &files,
         cli_profile: None,
         cli_error_format: None,
-        transfers: true,
+        scope: effective_config::Scope::Transfer,
         boto_config_credentials: true,
     });
     assert_eq!(boto, Some(PythonReason::CredentialForm));
@@ -390,7 +394,7 @@ fn non_unicode_environment_values_are_python_s() {
             shared_files: files,
             cli_profile: None,
             cli_error_format: None,
-            transfers: false,
+            scope: effective_config::Scope::S3,
             boto_config_credentials: false,
         });
         assert_eq!(

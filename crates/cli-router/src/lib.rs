@@ -75,6 +75,8 @@ pub struct Run {
     pub needs: ::command::Needs,
     /// How the command's streams are buffered.
     pub streams: ::command::StreamPolicy,
+    /// The settings the command's client runs with, resolved once.
+    pub settings: client_config::ClientSettings,
 }
 /// The router's decision. A failure is an owned copy of the parse result's.
 /// `Native` is a pinned `s3` command of the router's own enum path; `Run`
@@ -382,7 +384,11 @@ fn route_admitted<E: EnvMap>(
         shared_files: config.shared_files,
         cli_profile: globals.profile.as_deref(),
         cli_error_format: ns.string("cli_error_format"),
-        transfers: client_command.transfers(),
+        scope: if client_command.transfers() {
+            effective_config::Scope::Transfer
+        } else {
+            effective_config::Scope::S3
+        },
         boto_config_credentials: config.boto_config_credentials,
     });
     if let Some(reason) = configured {

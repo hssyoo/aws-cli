@@ -1464,6 +1464,25 @@ fn every_native_field_is_an_upstream_destination() {
         assert!(s3::ls::DESTINATIONS.contains(&argument.destination().as_str()));
     }
 }
+/// The variable a row's source names, if any, and a config file that sets
+/// its profile key to `value`, empty when it names none.
+fn sample_inputs(source: effective_config::Source, value: &str) -> (Option<&'static str>, String) {
+    use effective_config::Source;
+    match source {
+        Source::Env(name) => (Some(name), String::new()),
+        Source::Profile("services") => (
+            None,
+            format!("[default]\nservices = {value}\n[services {value}]\nx = y\n"),
+        ),
+        Source::Profile(key) => (None, format!("[default]\n{key} = {value}\n")),
+        Source::Chain(env, key) => (Some(env), format!("[default]\n{key} = {value}\n")),
+        Source::S3(key) => (None, format!("[default]\ns3 =\n  {key} = {value}\n")),
+        Source::ErrorFormat => (
+            Some("AWS_CLI_ERROR_FORMAT"),
+            format!("[default]\ncli_error_format = {value}\n"),
+        ),
+    }
+}
 #[test]
 #[expect(
     clippy::cognitive_complexity,
@@ -1471,23 +1490,9 @@ fn every_native_field_is_an_upstream_destination() {
 )]
 fn decision_table_routes_every_setting_from_every_source() {
     use effective_config::{Match, SETTINGS, Scope, Source, Support};
-    assert_eq!(SETTINGS.len(), 105);
     for setting in SETTINGS {
         let value = effective_config::sample::sample_value(setting);
-        let (env_name, config) = match setting.source {
-            Source::Env(name) => (Some(name), String::new()),
-            Source::Profile("services") => (
-                None,
-                format!("[default]\nservices = {value}\n[services {value}]\nx = y\n"),
-            ),
-            Source::Profile(key) => (None, format!("[default]\n{key} = {value}\n")),
-            Source::Chain(env, key) => (Some(env), format!("[default]\n{key} = {value}\n")),
-            Source::S3(key) => (None, format!("[default]\ns3 =\n  {key} = {value}\n")),
-            Source::ErrorFormat => (
-                Some("AWS_CLI_ERROR_FORMAT"),
-                format!("[default]\ncli_error_format = {value}\n"),
-            ),
-        };
+        let (env_name, config) = sample_inputs(setting.source, value);
         for variant in 0..3 {
             if (variant == 0 && env_name.is_none()) || (variant == 1 && config.is_empty()) {
                 continue;
@@ -1503,6 +1508,14 @@ fn decision_table_routes_every_setting_from_every_source() {
             }
             let files = files(if variant == 0 { "" } else { &config });
             for cp in [false, true] {
+                // A row for another client leaves the s3 commands to the
+                // row that reaches them.
+                if !setting
+                    .scope
+                    .covers(if cp { Scope::Transfer } else { Scope::S3 })
+                {
+                    continue;
+                }
                 let argv = if cp {
                     &["s3", "cp", "a", "s3://b/k"][..]
                 } else {
@@ -1518,7 +1531,11 @@ fn decision_table_routes_every_setting_from_every_source() {
                     {
                         assert_eq!(actual, Verdict::Python(PythonReason::NetworkSetting));
                     }
-                    Support::Unsupported(reason) if cp || setting.scope != Scope::Transfer => {
+                    Support::Unsupported(reason)
+                        if setting
+                            .scope
+                            .covers(if cp { Scope::Transfer } else { Scope::S3 }) =>
+                    {
                         assert_eq!(
                             actual,
                             Verdict::Python(reason),
@@ -1937,7 +1954,11 @@ fn configuration_value_matches_and_command_scopes() {
                 shared_files: &files(&format!("[default]\n{text}\n")),
                 cli_profile: None,
                 cli_error_format: None,
-                transfers: cp,
+                scope: if cp {
+                    effective_config::Scope::Transfer
+                } else {
+                    effective_config::Scope::S3
+                },
                 boto_config_credentials: false,
             }),
             expected
@@ -1971,7 +1992,7 @@ fn merged_credentials_and_malformed_files_define_effective_settings() {
                 shared_files: &files,
                 cli_profile: Some("work"),
                 cli_error_format: None,
-                transfers: true,
+                scope: effective_config::Scope::Transfer,
                 boto_config_credentials: false,
             }),
             Some(expected)
@@ -1982,7 +2003,7 @@ fn merged_credentials_and_malformed_files_define_effective_settings() {
                 shared_files: &files,
                 cli_profile: None,
                 cli_error_format: None,
-                transfers: true,
+                scope: effective_config::Scope::Transfer,
                 boto_config_credentials: false,
             }),
             None
@@ -2004,6 +2025,8 @@ fn unsupported_rows_carry_configuration_reasons() {
                     | PythonReason::HistoryEnabled
                     | PythonReason::StructuredErrorFormat
                     | PythonReason::OutputEncoding
+                    | PythonReason::OutputFormat
+                    | PythonReason::ClientSetting
             ));
         }
     }

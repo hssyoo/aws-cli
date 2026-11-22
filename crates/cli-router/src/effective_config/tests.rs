@@ -118,6 +118,21 @@ const UNSUPPORTED_ROWS: &[(Source, PythonReason)] = &[
     ),
     (Source::Profile("cli_history"), PythonReason::HistoryEnabled),
     (
+        Source::Profile("cli_timestamp_format"),
+        PythonReason::OutputFormat,
+    ),
+    (
+        Source::Profile("cli_binary_format"),
+        PythonReason::ClientSetting,
+    ),
+    (
+        Source::Chain(
+            "AWS_S3_DISABLE_EXPRESS_SESSION_AUTH",
+            "s3_disable_express_session_auth",
+        ),
+        PythonReason::ClientSetting,
+    ),
+    (
         Source::S3("force_path_style"),
         PythonReason::EndpointSetting,
     ),
@@ -129,6 +144,36 @@ const UNSUPPORTED_ROWS: &[(Source, PythonReason)] = &[
     (
         Source::S3("payload_signing_enabled"),
         PythonReason::TransferSetting,
+    ),
+    (
+        Source::Chain(
+            "AWS_REQUEST_MIN_COMPRESSION_SIZE_BYTES",
+            "request_min_compression_size_bytes",
+        ),
+        PythonReason::ClientSetting,
+    ),
+    (
+        Source::Chain("AWS_AUTH_SCHEME_PREFERENCE", "auth_scheme_preference"),
+        PythonReason::ClientSetting,
+    ),
+    (
+        Source::Chain("AWS_ACCOUNT_ID_ENDPOINT_MODE", "account_id_endpoint_mode"),
+        PythonReason::EndpointSetting,
+    ),
+    (
+        Source::Chain(
+            "AWS_DISABLE_HOST_PREFIX_INJECTION",
+            "disable_host_prefix_injection",
+        ),
+        PythonReason::ClientSetting,
+    ),
+    (
+        Source::Chain("AWS_CSM_ENABLED", "csm_enabled"),
+        PythonReason::ClientSetting,
+    ),
+    (
+        Source::Profile("parameter_validation"),
+        PythonReason::ClientSetting,
     ),
 ];
 
@@ -295,7 +340,9 @@ fn the_transfer_and_memory_limit_rows_are_the_record_s_cp_only() {
     );
     assert!(memory.iter().all(|row| row.scope == Scope::Transfer));
     for setting in SETTINGS {
-        if setting.source == Source::S3("payload_signing_enabled") {
+        if setting.source == Source::S3("payload_signing_enabled")
+            && setting.scope.covers(Scope::Transfer)
+        {
             assert_eq!(
                 setting.support,
                 Support::Unsupported(PythonReason::TransferSetting)
@@ -315,7 +362,7 @@ fn the_s3_block_s_endpoint_rows_are_the_record_s_for_both_commands() {
     assert_eq!(rows.len(), keys.len());
     for (row, key) in rows.iter().zip(keys) {
         assert_eq!(row.source, Source::S3(key));
-        assert_eq!(row.scope, Scope::All);
+        assert!(row.scope.covers(Scope::S3) && row.scope.covers(Scope::Transfer));
     }
     let config = "[default]\ns3 =\n  addressing_style = bogus\n  use_accelerate_endpoint = true\n\
                   [profile scalar]\ns3 = virtual\n[profile bare]\ns3 =\n";

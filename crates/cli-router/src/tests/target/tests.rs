@@ -81,7 +81,11 @@ fn proxy_environments_the_native_reader_cannot_reproduce_are_pythons() {
                 shared_files: &shared,
                 cli_profile: None,
                 cli_error_format: None,
-                transfers: cp,
+                scope: if cp {
+                    effective_config::Scope::Transfer
+                } else {
+                    effective_config::Scope::S3
+                },
                 boto_config_credentials: false,
             });
             assert_eq!(actual, expected, "{entries:?} cp={cp}");
@@ -117,7 +121,11 @@ fn proxy_urls_that_are_not_unicode_are_pythons() {
                 shared_files: &shared,
                 cli_profile: None,
                 cli_error_format: None,
-                transfers: cp,
+                scope: if cp {
+                    effective_config::Scope::Transfer
+                } else {
+                    effective_config::Scope::S3
+                },
                 boto_config_credentials: false,
             });
             assert_eq!(actual, Some(PythonReason::NetworkSetting), "{name} cp={cp}");
