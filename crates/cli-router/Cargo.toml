@@ -13,5 +13,6 @@ workspace = true
 awscli-argparse = { path = "../awscli-argparse" }
 awscli-config = { path = "../awscli-config" }
 cli-core = { path = "../cli-core" }
+command = { path = "../command" }
 credentials = { path = "../credentials" }
 s3 = { path = "../s3" }

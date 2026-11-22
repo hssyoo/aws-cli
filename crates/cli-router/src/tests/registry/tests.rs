@@ -3,13 +3,11 @@
 //! `s3` commands, to `Verdict::Run`.
 use super::*;
 use ::command::{
-    Admission, CommandSpec, Context, Invocation, Needs, OperationSource, Registry,
-    StreamPolicy,
+    Admission, CommandSpec, Context, Invocation, Needs, OperationSource, Registry, StreamPolicy,
 };
 use awscli_argparse::Argument;
 use cli_core::cli_error::{Category, CommandFailure, Rendering};
 use std::borrow::Cow;
-use std::io::Write;
 
 /// An invocation that writes what it was bound with.
 #[derive(Debug)]
@@ -198,7 +196,11 @@ fn a_root_only_the_registry_knows_parses_binds_and_runs() {
 
 #[test]
 fn a_hand_written_spec_runs_and_one_without_a_handler_is_python_s() {
-    let run = run_of(evaluate_with(&["zlocal", "show"], &BTreeMap::new(), &files("")));
+    let run = run_of(evaluate_with(
+        &["zlocal", "show"],
+        &BTreeMap::new(),
+        &files(""),
+    ));
     assert_eq!(
         run.needs,
         Needs::Client {
@@ -211,7 +213,11 @@ fn a_hand_written_spec_runs_and_one_without_a_handler_is_python_s() {
         Verdict::Python(PythonReason::UnsupportedSubcommand)
     ));
     assert!(matches!(
-        evaluate_with(&["zlocal", "unbound", "--bogus"], &BTreeMap::new(), &files("")),
+        evaluate_with(
+            &["zlocal", "unbound", "--bogus"],
+            &BTreeMap::new(),
+            &files("")
+        ),
         Verdict::Python(PythonReason::UnsupportedSubcommand)
     ));
     match evaluate_with(&["zlocal"], &BTreeMap::new(), &files("")) {
@@ -293,67 +299,174 @@ fn an_alias_naming_the_root_hands_it_to_python() {
         "[command sts]\n",
         "[command STS]\nfoo = bar\n",
     ] {
-        let verdict = evaluate_with(&["sts", "get-caller-identity"], &BTreeMap::new(), &aliases(alias));
+        let verdict = evaluate_with(
+            &["sts", "get-caller-identity"],
+            &BTreeMap::new(),
+            &aliases(alias),
+        );
         assert!(matches!(verdict, Verdict::Run(_)), "{alias:?}: {verdict:?}");
     }
 }
 
-/// Every stage of the route refuses ahead of `Run`, in the order the s3
-/// commands meet them.
-#[test]
-fn each_stage_s_refusal_precedes_run() {
-    let unset = BTreeMap::new();
-    let env = |pairs: &[(&str, &str)]| {
-        pairs
+/// One refusal: argv, the environment, the config file, and the reason.
+type Refusal<'a> = (
+    &'a [&'a str],
+    &'a [(&'a str, &'a str)],
+    &'a str,
+    PythonReason,
+);
+const IDENTITY: &[&str] = &["sts", "get-caller-identity"];
+fn assert_refused(cases: &[Refusal<'_>]) {
+    for &(args, variables, config, reason) in cases {
+        let env = variables
             .iter()
             .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
-            .collect::<BTreeMap<_, _>>()
-    };
-    let identity = &["sts", "get-caller-identity"][..];
-    let with = |globals: &[&'static str]| [globals, identity].concat();
-    for (args, env, config, reason) in [
-        (identity.to_vec(), unset.clone(), "[plugins]\nx = y\n", PythonReason::Plugins),
-        (identity.to_vec(), unset.clone(), "[broken", PythonReason::ConfigParseFailure),
-        (vec!["ec2", "describe-instances"], unset.clone(), "", PythonReason::UnsupportedCommand),
-        (vec!["sts", "help"], unset.clone(), "", PythonReason::HelpRequested),
-        (with(&["--help"]), unset.clone(), "", PythonReason::HelpRequested),
-        (with(&["--query", "Account"]), unset.clone(), "", PythonReason::PythonOnlyGlobal),
-        (with(&["--no-paginate"]), unset.clone(), "", PythonReason::PythonOnlyGlobal),
-        (with(&["--no-verify-ssl"]), unset.clone(), "", PythonReason::PythonOnlyGlobal),
-        (with(&["--output", "table"]), unset.clone(), "", PythonReason::OutputFormat),
-        (with(&["--output", "yaml"]), unset.clone(), "", PythonReason::OutputFormat),
+            .collect();
+        let verdict = evaluate_with(args, &env, &files(config));
+        assert!(
+            matches!(verdict, Verdict::Python(actual) if actual == reason),
+            "{args:?} {variables:?} {config:?}: {verdict:?}, expected {reason:?}"
+        );
+    }
+}
+
+/// Each stage of the route refuses ahead of `Run`, in the order the s3
+/// commands meet them; these are the stages argv decides, after the
+/// session fallback.
+#[test]
+fn the_prologue_and_the_command_line_refuse_before_run() {
+    assert_refused(&[
+        (IDENTITY, &[], "[plugins]\nx = y\n", PythonReason::Plugins),
+        (IDENTITY, &[], "[broken", PythonReason::ConfigParseFailure),
         (
-            vec!["sts", "assume-role", "--role-arn", "fileb://arn", "--role-session-name", "s"],
-            unset.clone(),
+            &["ec2", "describe-instances"],
+            &[],
             "",
-            PythonReason::UnsupportedValue,
+            PythonReason::UnsupportedCommand,
+        ),
+        (&["sts", "help"], &[], "", PythonReason::HelpRequested),
+        (
+            &["--help", "sts", "get-caller-identity"],
+            &[],
+            "",
+            PythonReason::HelpRequested,
         ),
         (
-            vec!["sts", "assume-role", "--role-arn", "a", "--role-session-name", "refused"],
-            unset.clone(),
+            &["--query", "Account", "sts", "get-caller-identity"],
+            &[],
             "",
-            PythonReason::UnsupportedOption,
+            PythonReason::PythonOnlyGlobal,
         ),
         (
-            identity.to_vec(),
-            env(&[("AWS_CONFIG_FILE", "$HOME/config")]),
+            &["--no-paginate", "sts", "get-caller-identity"],
+            &[],
+            "",
+            PythonReason::PythonOnlyGlobal,
+        ),
+        (
+            &["--no-verify-ssl", "sts", "get-caller-identity"],
+            &[],
+            "",
+            PythonReason::PythonOnlyGlobal,
+        ),
+    ]);
+}
+
+/// Completion defers a value, then binding refuses.
+#[test]
+fn completion_and_binding_refuse_before_run() {
+    let deferred = [
+        "sts",
+        "assume-role",
+        "--role-arn",
+        "fileb://Cargo.toml",
+        "--role-session-name",
+        "s",
+    ];
+    let refused = [
+        "sts",
+        "assume-role",
+        "--role-arn",
+        "a",
+        "--role-session-name",
+        "refused",
+    ];
+    assert_refused(&[
+        (&deferred, &[], "", PythonReason::UnsupportedValue),
+        (&refused, &[], "", PythonReason::UnsupportedOption),
+    ]);
+}
+
+/// The settings stage, the output format, then the endpoint checks for
+/// the service the bound command needs.
+#[test]
+fn settings_output_and_endpoint_refuse_before_run() {
+    let output = PythonReason::OutputFormat;
+    let endpoint = PythonReason::EndpointSetting;
+    assert_refused(&[
+        (
+            IDENTITY,
+            &[("AWS_CONFIG_FILE", "$HOME/config")],
             "",
             PythonReason::SharedFilePath,
         ),
-        (identity.to_vec(), unset.clone(), "[default]\ncli_history = enabled\n", PythonReason::HistoryEnabled),
-        (identity.to_vec(), unset.clone(), "[default]\noutput = table\n", PythonReason::OutputFormat),
-        (identity.to_vec(), env(&[("AWS_DEFAULT_OUTPUT", "yaml-stream")]), "", PythonReason::OutputFormat),
-        (with(&["--region", "not a region"]), unset.clone(), "", PythonReason::EndpointSetting),
-        (identity.to_vec(), env(&[("AWS_ENDPOINT_URL_STS", "http://")]), "", PythonReason::EndpointSetting),
-        (identity.to_vec(), env(&[("AWS_ENDPOINT_URL_STS", "ftp://host")]), "", PythonReason::EndpointSetting),
-        (identity.to_vec(), unset.clone(), "[default]\nservices = missing\n", PythonReason::EndpointSetting),
-    ] {
-        let verdict = evaluate_with(&args, &env, &files(config));
-        assert!(
-            matches!(verdict, Verdict::Python(actual) if actual == reason),
-            "{args:?} {config:?}: {verdict:?}, expected {reason:?}"
-        );
-    }
+        (
+            IDENTITY,
+            &[],
+            "[default]\ncli_history = enabled\n",
+            PythonReason::HistoryEnabled,
+        ),
+        (
+            &["--output", "table", "sts", "get-caller-identity"],
+            &[],
+            "",
+            output,
+        ),
+        (
+            &["--output", "yaml", "sts", "get-caller-identity"],
+            &[],
+            "",
+            output,
+        ),
+        (IDENTITY, &[], "[default]\noutput = table\n", output),
+        (
+            IDENTITY,
+            &[],
+            "[default]\noutput =\n  nested = yes\n",
+            output,
+        ),
+        (
+            IDENTITY,
+            &[("AWS_DEFAULT_OUTPUT", "yaml-stream")],
+            "",
+            output,
+        ),
+        (
+            IDENTITY,
+            &[("AWS_DEFAULT_OUTPUT", "")],
+            "[default]\noutput = json\n",
+            output,
+        ),
+        (
+            &["--region", "not a region", "sts", "get-caller-identity"],
+            &[],
+            "",
+            endpoint,
+        ),
+        (
+            IDENTITY,
+            &[("AWS_ENDPOINT_URL_STS", "http://")],
+            "",
+            endpoint,
+        ),
+        (
+            IDENTITY,
+            &[("AWS_ENDPOINT_URL_STS", "ftp://host")],
+            "",
+            endpoint,
+        ),
+        (IDENTITY, &[], "[default]\nservices = missing\n", endpoint),
+    ]);
 }
 
 #[test]
@@ -374,7 +487,11 @@ fn globals_are_classified_for_a_formatted_command() {
         assert!(matches!(verdict, Verdict::Run(_)), "{args:?}: {verdict:?}");
     }
     let config = "[default]\noutput = text\n";
-    let verdict = evaluate_with(&["sts", "get-caller-identity"], &BTreeMap::new(), &files(config));
+    let verdict = evaluate_with(
+        &["sts", "get-caller-identity"],
+        &BTreeMap::new(),
+        &files(config),
+    );
     assert!(matches!(verdict, Verdict::Run(_)), "{verdict:?}");
     // The command line's format outranks the profile's.
     let verdict = evaluate_with(
@@ -393,7 +510,14 @@ fn the_session_s_start_precedes_a_derived_command_s_failure_and_its_run() {
         &["sts", "get-caller-identity", "--nosuch"],
         &["sts", "assume-role"],
         &["sts", "nosuch"],
-        &["sts", "assume-role", "--role-arn", "file://missing", "--role-session-name", "s"],
+        &[
+            "sts",
+            "assume-role",
+            "--role-arn",
+            "file://missing",
+            "--role-session-name",
+            "s",
+        ],
     ] {
         match evaluate_with(args, &env, &files("")) {
             Verdict::Failure(failure) => {
@@ -402,7 +526,14 @@ fn the_session_s_start_precedes_a_derived_command_s_failure_and_its_run() {
             other => panic!("{args:?}: {other:?}"),
         }
     }
-    let args = ["sts", "assume-role", "--role-arn", "file://missing", "--role-session-name", "s"];
+    let args = [
+        "sts",
+        "assume-role",
+        "--role-arn",
+        "file://missing",
+        "--role-session-name",
+        "s",
+    ];
     match evaluate_with(&args, &BTreeMap::new(), &files("")) {
         Verdict::Failure(failure) => assert_eq!(failure.kind, "paramfile_load"),
         other => panic!("{other:?}"),

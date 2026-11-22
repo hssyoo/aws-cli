@@ -1,13 +1,47 @@
 use super::*;
+use ::command::StreamPolicy;
 use awscli_argparse::chain::Level;
+/// How a global is honored, which for the output globals depends on what
+/// the command does with its output ([`Target`]).
 #[derive(Debug, Clone, Copy)]
 enum GlobalSupport {
     Native,
-    IgnoredS3Ls,
-    IgnoredS3Subcommands,
+    /// `--output`: a listing ignores it, and a formatting command honors
+    /// it, whose format the settings stage judges with the environment's
+    /// and the profile's (`generic::output_format_refusal`).
+    Output,
+    /// `--no-paginate`: a listing ignores it. A model operation that
+    /// paginates is Python's, and whether one does is not known here.
+    Pagination,
+    /// `--color` and `--no-cli-pager`: a command below a root writes no
+    /// colored text and starts no pager it would change, or starts one it
+    /// honors; a root that only prints its usage failure is Python's.
+    Presentation,
     ErrorFormat,
     ConnectTimeout,
     PythonOnly,
+}
+/// What the command a parse reached does with its output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Target {
+    /// A root with subcommands and no handler of its own.
+    Group,
+    /// A command, buffered and formatted as its policy says.
+    Streams(StreamPolicy),
+}
+impl Target {
+    /// The target of a pinned `s3` lineage: `s3 ls` is a listing and the
+    /// other handlers transfer.
+    pub(super) fn of_lineage(lineage: NativeLineage) -> Self {
+        match lineage {
+            NativeLineage::S3 => Self::Group,
+            NativeLineage::S3Ls => Self::Streams(StreamPolicy::Listing),
+            NativeLineage::S3Cp
+            | NativeLineage::S3Mv
+            | NativeLineage::S3Rm
+            | NativeLineage::S3Sync => Self::Streams(StreamPolicy::Transfer),
+        }
+    }
 }
 #[derive(Debug, Clone, Copy)]
 struct GlobalClass {
@@ -23,21 +57,21 @@ const GLOBAL_CLASSES: &[GlobalClass] = &[
     GlobalClass::new("debug", GlobalSupport::Native),
     GlobalClass::new("endpoint-url", GlobalSupport::Native),
     GlobalClass::new("no-verify-ssl", GlobalSupport::PythonOnly),
-    GlobalClass::new("no-paginate", GlobalSupport::IgnoredS3Ls),
-    GlobalClass::new("output", GlobalSupport::IgnoredS3Ls),
+    GlobalClass::new("no-paginate", GlobalSupport::Pagination),
+    GlobalClass::new("output", GlobalSupport::Output),
     // Upstream compiles the expression before it ignores it, so an invalid one
     // fails ahead of the command and of any later parse failure; native does
     // not compile JMESPath.
     GlobalClass::new("query", GlobalSupport::PythonOnly),
     GlobalClass::new("profile", GlobalSupport::Native),
     GlobalClass::new("region", GlobalSupport::Native),
-    GlobalClass::new("color", GlobalSupport::IgnoredS3Subcommands),
+    GlobalClass::new("color", GlobalSupport::Presentation),
     GlobalClass::new("no-sign-request", GlobalSupport::Native),
     GlobalClass::new("ca-bundle", GlobalSupport::Native),
     GlobalClass::new("cli-read-timeout", GlobalSupport::PythonOnly),
     GlobalClass::new("cli-connect-timeout", GlobalSupport::ConnectTimeout),
     GlobalClass::new("cli-binary-format", GlobalSupport::PythonOnly),
-    GlobalClass::new("no-cli-pager", GlobalSupport::IgnoredS3Subcommands),
+    GlobalClass::new("no-cli-pager", GlobalSupport::Presentation),
     GlobalClass::new("cli-auto-prompt", GlobalSupport::PythonOnly),
     GlobalClass::new("no-cli-auto-prompt", GlobalSupport::PythonOnly),
     GlobalClass::new("cli-error-format", GlobalSupport::ErrorFormat),
@@ -89,8 +123,8 @@ const fn same(a: &str, b: &str) -> bool {
     reason = "const table audit proves every global is classified"
 )]
 pub(super) fn route_parsed_unsupported_global(
-    result: &ParseResult,
-    lineage: NativeLineage,
+    result: &ParseResult<'_>,
+    target: Target,
 ) -> Option<PythonReason> {
     let level = &result.globals;
     level
@@ -102,15 +136,23 @@ pub(super) fn route_parsed_unsupported_global(
                 return false;
             }
             let support = classify_global(argument.name).expect("all pinned globals classified");
-            !is_native_global(support, lineage, level)
+            !is_native_global(support, target, level)
         })
         .then_some(PythonReason::PythonOnlyGlobal)
 }
-fn is_native_global(support: GlobalSupport, lineage: NativeLineage, level: &Level) -> bool {
+fn is_native_global(support: GlobalSupport, target: Target, level: &Level<'_>) -> bool {
+    let streams = match target {
+        Target::Group => None,
+        Target::Streams(policy) => Some(policy),
+    };
     match support {
         GlobalSupport::Native => true,
-        GlobalSupport::IgnoredS3Ls => lineage == NativeLineage::S3Ls,
-        GlobalSupport::IgnoredS3Subcommands => lineage != NativeLineage::S3,
+        GlobalSupport::Output => matches!(
+            streams,
+            Some(StreamPolicy::Listing | StreamPolicy::Formatted)
+        ),
+        GlobalSupport::Pagination => streams == Some(StreamPolicy::Listing),
+        GlobalSupport::Presentation => streams.is_some(),
         GlobalSupport::ErrorFormat => level
             .namespace
             .string("cli_error_format")

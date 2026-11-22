@@ -29,10 +29,12 @@ pub enum PythonReason {
     VersionRequested,
     /// A command parser matched its `help` sentinel.
     HelpRequested,
-    /// The command is not `s3`, or a main-parse failure came after a
-    /// command other than `s3` was consumed.
+    /// The command word is no root of the registry (`command::Registry`),
+    /// or a main-parse failure came after such a word was consumed.
     UnsupportedCommand,
-    /// An `s3` subcommand without a native handler, whatever its outcome.
+    /// A command of a registered root without a native handler, whatever
+    /// its outcome: an `s3` subcommand the enum path does not bind, or a
+    /// hand-written command whose spec has no `bind`.
     UnsupportedSubcommand,
     /// A global option the native handlers do not implement (`--no-verify-ssl`,
     /// `--cli-read-timeout`, `--cli-binary-format`, the auto-prompt switches,
@@ -140,10 +142,10 @@ pub enum PythonReason {
     /// or because it exceeds the native size limit; or the alias path is a
     /// directory, which AliasLoader opens anyway and botocore refuses.
     ConfigParseFailure,
-    /// The alias file names `s3` in its `toplevel` section or defines aliases
-    /// under the `s3` command tree, which replace or extend the pinned `s3`
-    /// grammar before Python parses it.
-    S3Alias,
+    /// The alias file names the invocation's root in its `toplevel` section
+    /// or defines aliases under the root's command tree, which replace or
+    /// extend the root's grammar before Python parses it.
+    CommandAlias,
     /// The config file has a `[plugins]` section, whose
     /// `cli_legacy_plugin_path` loads plugins that can replace or extend any
     /// command, or hook any stage, before Python parses argv.
@@ -152,6 +154,25 @@ pub enum PythonReason {
     /// through its codec registry and validates the codec name after the
     /// top-level args; the native renderer writes UTF-8 and does neither.
     OutputEncoding,
+    /// The operation's service uses a protocol the native client does not
+    /// implement (botocore's `metadata.protocol`).
+    UnsupportedProtocol,
+    /// The operation uses a model trait the native client does not
+    /// implement: an event stream, a streaming blob, endpoint discovery, an
+    /// auth scheme other than SigV4 or none, `httpChecksum`, request
+    /// compression, or a paginator.
+    UnsupportedTrait,
+    /// A Python customization whose event pattern matches the service or
+    /// the operation (`handlers_registry.PLUGIN_REGISTRY`, botocore's
+    /// `BUILTIN_HANDLERS`) is named in no native customization's
+    /// `replaces`.
+    UnportedCustomization,
+    /// The output format a formatting command would print with is one the
+    /// native formatters do not write: anything but `json`, `text` and
+    /// `off`. It is `--output`, else `AWS_DEFAULT_OUTPUT`, else the
+    /// profile's `output` (`CLIDriver._construct_cli_output_chain`), which
+    /// `CLIOperationCaller._display_response` hands `get_formatter`.
+    OutputFormat,
 }
 impl PythonReason {
     pub const fn name(self) -> &'static str {
@@ -178,9 +199,13 @@ impl PythonReason {
             Self::UserAgentSetting => "user_agent_setting",
             Self::HistoryEnabled => "history_enabled",
             Self::ConfigParseFailure => "config_parse_failure",
-            Self::S3Alias => "s3_alias",
+            Self::CommandAlias => "command_alias",
             Self::Plugins => "plugins",
             Self::OutputEncoding => "output_encoding",
+            Self::UnsupportedProtocol => "unsupported_protocol",
+            Self::UnsupportedTrait => "unsupported_trait",
+            Self::UnportedCustomization => "unported_customization",
+            Self::OutputFormat => "output_format",
         }
     }
 }
