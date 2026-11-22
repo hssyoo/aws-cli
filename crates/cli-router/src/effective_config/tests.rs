@@ -23,6 +23,16 @@ fn admit_with(
     cp: bool,
     profile: Option<&str>,
 ) -> Option<PythonReason> {
+    let scope = if cp { Scope::Transfer } else { Scope::S3 };
+    admit_in(env, config, scope, profile)
+}
+
+fn admit_in(
+    env: &[(&str, &str)],
+    config: &str,
+    scope: Scope,
+    profile: Option<&str>,
+) -> Option<PythonReason> {
     let env = env
         .iter()
         .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
@@ -32,7 +42,7 @@ fn admit_with(
         shared_files: &files(config),
         cli_profile: profile,
         cli_error_format: None,
-        transfers: cp,
+        scope,
         boto_config_credentials: false,
     })
 }
@@ -365,5 +375,96 @@ fn samples_follow_the_row_s_consumer() {
             Source::Env(_) | Source::Profile(_) | Source::Chain(..) | Source::ErrorFormat => None,
         };
         assert!(key.and_then(sample_transfer_value).is_some(), "{row:?}");
+    }
+}
+
+/// The scopes a command can run in: an `s3` listing, an `s3` transfer, and
+/// a model operation's client.
+const COMMAND_SCOPES: [Scope; 3] = [Scope::S3, Scope::Transfer, Scope::Service];
+
+/// No command meets two rows for one setting: a setting whose verdict
+/// differs between clients has one row per scope, and the scopes are
+/// disjoint for every command.
+#[test]
+fn every_row_is_unique_for_every_command_it_reaches() {
+    for (index, row) in SETTINGS.iter().enumerate() {
+        assert!(
+            COMMAND_SCOPES
+                .iter()
+                .any(|&command| row.scope.covers(command)),
+            "{row:?} reaches no command"
+        );
+        for later in &SETTINGS[index + 1..] {
+            if later.source != row.source || later.matching != row.matching {
+                continue;
+            }
+            let shared = COMMAND_SCOPES
+                .iter()
+                .find(|&&command| row.scope.covers(command) && later.scope.covers(command));
+            assert!(
+                shared.is_none(),
+                "{row:?} and {later:?} both reach {shared:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn scopes_cover_the_commands_they_name() {
+    assert!(
+        COMMAND_SCOPES
+            .iter()
+            .all(|&command| Scope::All.covers(command))
+    );
+    assert!(Scope::S3.covers(Scope::S3) && Scope::S3.covers(Scope::Transfer));
+    assert!(!Scope::S3.covers(Scope::Service));
+    assert!(Scope::Transfer.covers(Scope::Transfer));
+    assert!(!Scope::Transfer.covers(Scope::S3) && !Scope::Transfer.covers(Scope::Service));
+    assert!(Scope::Service.covers(Scope::Service));
+    assert!(!Scope::Service.covers(Scope::S3) && !Scope::Service.covers(Scope::Transfer));
+}
+
+/// The four `s3` block keys only an S3 client reads (`compute_s3_config`
+/// feeds the S3 endpoint rules and the S3 signer) refuse the s3 commands
+/// alone.
+#[test]
+fn the_s3_block_s_unsupported_keys_reach_the_s3_commands_only() {
+    for (key, reason) in [
+        ("force_path_style", PythonReason::EndpointSetting),
+        ("accelerate", PythonReason::EndpointSetting),
+        (
+            "disable_multi_region_access_points",
+            PythonReason::EndpointSetting,
+        ),
+        ("payload_signing_enabled", PythonReason::TransferSetting),
+    ] {
+        let config = format!("[default]\ns3 =\n  {key} = true\n");
+        assert_eq!(
+            admit_in(&[], &config, Scope::S3, None),
+            Some(reason),
+            "{key}"
+        );
+        assert_eq!(
+            admit_in(&[], &config, Scope::Transfer, None),
+            Some(reason),
+            "{key}"
+        );
+        assert_eq!(admit_in(&[], &config, Scope::Service, None), None, "{key}");
+    }
+}
+
+/// A validating match refuses a nested block where botocore's conversion
+/// fails on a dictionary, and reads one as false where `ensure_boolean`
+/// does.
+#[test]
+fn validating_matches_judge_a_nested_block_as_botocore_converts_it() {
+    for (key, refused) in [
+        ("request_min_compression_size_bytes", true),
+        ("parameter_validation", true),
+        ("csm_enabled", false),
+    ] {
+        let config = format!("[default]\n{key} =\n  nested = 1\n");
+        let verdict = admit_in(&[], &config, Scope::Service, None);
+        assert_eq!(verdict.is_some(), refused, "{key}");
     }
 }

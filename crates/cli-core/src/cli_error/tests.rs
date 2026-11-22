@@ -988,3 +988,57 @@ fn the_registry_s_reasons_have_their_refusal_names() {
         assert_eq!(reason.name(), name);
     }
 }
+/// Auto-prompt is decided from the literal argv whatever the command, so a
+/// model operation's run meets it as the s3 commands do.
+#[test]
+fn auto_prompt_hands_a_model_operation_to_python() {
+    let files = inputs("");
+    let (argv, _) = parse(&["sts", "get-caller-identity"]);
+    let env = SnapshotEnv::from_pairs([("AWS_CLI_AUTO_PROMPT", "on")]);
+    let environment = Environment {
+        argv: &argv,
+        env: &env,
+        stdout_is_tty: false,
+        shared_files: &files,
+    };
+    assert_eq!(dispose_native(&environment), Some(PythonReason::AutoPrompt));
+}
+/// `OutputStreamFactory.get_output_stream` pages a formatted response when
+/// stdout is a terminal and the pager chain (`AWS_PAGER`, `cli_pager`,
+/// `PAGER`, then `less`) names a pager, which `--no-cli-pager` clears; the
+/// native formatter starts no pager.
+#[test]
+fn a_formatted_response_is_python_s_only_when_it_would_be_paged() {
+    let files = inputs("[default]\ncli_pager = more\n[profile quiet]\ncli_pager =\n");
+    let dispose = |pairs: &[(&str, &str)], args: &[&str], tty: bool| {
+        let (argv, parsed) = parse(args);
+        let env = SnapshotEnv::from_pairs(pairs.iter().copied());
+        dispose_formatted(
+            &Environment {
+                argv: &argv,
+                env: &env,
+                stdout_is_tty: tty,
+                shared_files: &files,
+            },
+            &parsed,
+        )
+    };
+    let paged = Some(PythonReason::Pager);
+    let identity = ["sts", "get-caller-identity"];
+    assert_eq!(dispose(&[], &identity, false), None);
+    assert_eq!(dispose(&[], &identity, true), paged);
+    assert_eq!(dispose(&[("AWS_PAGER", "")], &identity, true), None);
+    assert_eq!(dispose(&[("AWS_PAGER", "cat")], &identity, true), paged);
+    assert_eq!(
+        dispose(
+            &[("AWS_PROFILE", "quiet"), ("PAGER", "less")],
+            &identity,
+            true
+        ),
+        None
+    );
+    let unpaged = ["--no-cli-pager", "sts", "get-caller-identity"];
+    assert_eq!(dispose(&[], &unpaged, true), None);
+    let other = ["--profile", "quiet", "sts", "get-caller-identity"];
+    assert_eq!(dispose(&[], &other, true), None);
+}

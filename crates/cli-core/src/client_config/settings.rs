@@ -428,3 +428,6 @@ pub(super) fn resolve_proxy<E: EnvMap>(inputs: &SettingsInputs<'_, E>) -> Result
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
