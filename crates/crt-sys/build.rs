@@ -104,8 +104,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             "CRT dependency output is incomplete; prepare the selected native link mode".into(),
         );
     }
-    let proxy_state = proxy_state(&include, system, crt_static)?;
-    compile_shim(&include, &cc, &ar, &out, target, proxy_state)?;
+    let shim = Shim {
+        proxy_state: proxy_state(&include, system, crt_static)?,
+        testing: testing(target),
+    };
+    compile_shim(&include, &cc, &ar, &out, target, shim)?;
     link_libraries(&library_dir, &out, target, system, crt_static)?;
     link_sanitizer()
 }
@@ -133,30 +136,49 @@ fn proxy_state(include: &Path, system: bool, crt_static: bool) -> Result<bool, B
     Ok(crt_static && present)
 }
 
+/// What the shim is compiled with beyond its fixed sources.
+#[derive(Clone, Copy)]
+struct Shim {
+    /// Against aws-c-http's private proxy state ([`proxy_state`]).
+    proxy_state: bool,
+    /// With the TLS end of the tests' loopback HTTPS server ([`testing`]).
+    testing: bool,
+}
+
+/// Whether the shim has its test TLS server, `shim/testing.c`: only for
+/// crt-sys's `testing` feature, which crt's tests enable, so no product
+/// build compiles it; and never for Windows, which has no s2n.
+fn testing(target: NativeTarget) -> bool {
+    env::var_os("CARGO_FEATURE_TESTING").is_some() && target != NativeTarget::WindowsMsvc
+}
+
 fn compile_shim(
     include: &Path,
     cc: &Path,
     ar: &Path,
     out: &Path,
     target: NativeTarget,
-    proxy_state: bool,
+    shim: Shim,
 ) -> Result<(), Box<dyn Error>> {
-    let sources = [
+    let mut sources = vec![
         "shim/allocator.c",
         "shim/crt_shim.c",
         "shim/native.c",
         "shim/sigcheck.c",
-        // Test-only, and empty on Windows: nothing the product links calls
-        // it, so the linker leaves its object out of the product.
-        "shim/testing.c",
     ];
+    if shim.testing {
+        sources.push("shim/testing.c");
+    }
     let mut objects = Vec::new();
     emit("rerun-if-changed=shim")?;
     for (index, source) in sources.iter().enumerate() {
         let object = out.join(format!("crt-{index}.o"));
         let mut arguments = shim_arguments(source, &object, include, target)?;
-        if proxy_state {
+        if shim.proxy_state {
             arguments.push("-DZAWS_PROXY_STATE=1".into());
+        }
+        if shim.testing {
+            arguments.push("-DZAWS_TESTING=1".into());
         }
         run(cc, &arguments)?;
         objects.push(object.into_os_string());

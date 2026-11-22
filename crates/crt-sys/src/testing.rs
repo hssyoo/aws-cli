@@ -1,5 +1,6 @@
-//! The TLS end of a loopback HTTPS server, for tests (`shim/testing.h`).
-//! Not built for Windows, which has no s2n.
+//! The TLS end of a loopback HTTPS server, for tests (`shim/testing.h`),
+//! which build.rs compiles only for this crate's `testing` feature and never
+//! for Windows, which has no s2n; this module is gated the same way.
 use crate::AwsByteCursor;
 use std::ffi::c_int;
 

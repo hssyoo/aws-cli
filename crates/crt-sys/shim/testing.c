@@ -1,4 +1,3 @@
-#ifndef _WIN32
 #include "testing.h"
 #include "crt_shim.h"
 #include <openssl/evp.h>
@@ -171,4 +170,3 @@ bool zaws_test_tls_serve(struct zaws_test_tls *tls, int fd, struct aws_byte_curs
     if (conn) s2n_connection_free(conn);
     return served;
 }
-#endif

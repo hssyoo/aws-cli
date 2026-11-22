@@ -90,7 +90,7 @@ CHECK(zaws_credentials_complete, void,aws_on_get_credentials_callback_fn *,void 
 CHECK(zaws_http_request, struct zaws_http_call *,struct zaws_runtime *,const struct zaws_http_options *,zaws_http_event_fn *,zaws_http_finish_fn *,void *);
 CHECK(zaws_http_cancel, void,struct zaws_http_call *);
 CHECK(zaws_http_release, void,struct zaws_http_call *);
-#ifndef _WIN32
+#ifdef ZAWS_TESTING
 CHECK(zaws_test_tls_new, struct zaws_test_tls *,void);
 CHECK(zaws_test_tls_ca, struct aws_byte_cursor,const struct zaws_test_tls *);
 CHECK(zaws_test_tls_serve, bool,struct zaws_test_tls *,int,struct aws_byte_cursor,uint8_t *,size_t,size_t *);

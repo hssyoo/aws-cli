@@ -5,8 +5,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* The TLS end of a loopback HTTPS server for tests: nothing the CLI links calls it, so the linker
- * leaves this object out of the product. Not built for Windows, which has no s2n.
+/* The TLS end of a loopback HTTPS server for tests. build.rs compiles it, with ZAWS_TESTING
+ * defined, only for crt-sys's `testing` feature, so no product build contains it, and never for
+ * Windows, which has no s2n.
  *
  * It serves with s2n directly, not through aws-c-io: on macOS aws-c-io's server TLS is Secure
  * Transport, which imports a server's identity into the user's keychain. Its certificates are made
