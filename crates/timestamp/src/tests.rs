@@ -248,6 +248,16 @@ fn epoch_seconds_parse_to_the_microsecond() -> TestResult {
         ("1.0000015", 1_000_002),
         ("1.00000051", 1_000_001),
         ("0.9999999", 1_000_000),
+        // Exponents, as `repr` writes them below 1e-4.
+        ("1e9", 1_000_000_000_000_000),
+        ("1E+9", 1_000_000_000_000_000),
+        ("1e-06", 1),
+        ("-1e-06", -1),
+        ("9.9e-05", 99),
+        ("1.5e-6", 2),
+        ("14409381.605e2", SUITE * 1_000_000 + 500_000),
+        ("0e999999", 0),
+        ("1e-99999", 0),
     ] {
         assert_eq!(
             Timestamp::parse_epoch_seconds(text),
@@ -256,13 +266,16 @@ fn epoch_seconds_parse_to_the_microsecond() -> TestResult {
         );
     }
     for text in [
-        "", "-", ".", "abc", "1e9", " 1", "1 ", "1.5.5", "0x10", "1_000",
+        "", "-", ".", "abc", "e9", "1e", "1e+", "1e1.5", ".e1", " 1", "1 ", "1.5.5", "0x10",
+        "1_000", "inf", "nan",
     ] {
         assert_eq!(Timestamp::parse_epoch_seconds(text), None, "{text}");
     }
     let past_the_range = (LAST + 1).to_string();
     assert_eq!(Timestamp::parse_epoch_seconds(&past_the_range), None);
     assert_eq!(Timestamp::parse_epoch_seconds("99999999999999999999"), None);
+    assert_eq!(Timestamp::parse_epoch_seconds("1e12"), None);
+    assert_eq!(Timestamp::parse_epoch_seconds("1e99999"), None);
     Ok(())
 }
 
