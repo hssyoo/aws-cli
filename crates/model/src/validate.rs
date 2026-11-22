@@ -226,7 +226,7 @@ impl Validator<'_> {
                 )
             });
         }
-        for required in &traits.required {
+        for required in traits.required.iter() {
             if !map.contains_key(required) {
                 self.error(format!(
                     "Missing required parameter in {}: \"{required}\"",

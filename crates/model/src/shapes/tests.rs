@@ -173,8 +173,8 @@ fn members_keep_model_order_and_references_overlay_their_targets() -> Result<()>
     checks.eq("members", &member_names(&model, input)[..], &expected[..]);
     checks.eq(
         "required",
-        &model.shape(input).traits.required,
-        &texts(&["Name", "Token"]),
+        &*model.shape(input).traits.required,
+        &*texts(&["Name", "Token"]),
     );
     checks.eq("Plain is Str", &member(&model, input, "Plain")?, &str_id);
     checks.eq(
@@ -197,7 +197,11 @@ fn members_keep_model_order_and_references_overlay_their_targets() -> Result<()>
     checks.eq("Name min", &name.traits.min, &Some(Bound::Integer(1)));
     checks.eq("Name max", &name.traits.max, &Some(Bound::Integer(64)));
     checks.eq("Name pattern", &name.traits.pattern, &text("^a+$"));
-    checks.eq("Name enum", &name.traits.enum_values, &texts(&["a", "aa"]));
+    checks.eq(
+        "Name enum",
+        &*name.traits.enum_values,
+        &*texts(&["a", "aa"]),
+    );
     checks.is(
         "Str keeps no hostLabel",
         !model.shape(str_id).traits.is(Flag::HostLabel),

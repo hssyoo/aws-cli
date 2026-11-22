@@ -1,7 +1,7 @@
 //! Builds a [`Model`] from a service description in three passes: named
 //! shapes and their own traits, then their children, then the kinds of the
 //! shapes references derive.
-use super::traits::{strings, truthy};
+use super::traits::{has_trait_keys, strings, truthy};
 use super::*;
 use serde_json::{Map as JsonMap, Value as Json};
 
@@ -162,7 +162,7 @@ impl Builder<'_> {
             .get(target_name)
             .map(|index| id(*index))
             .ok_or_else(|| ModelError::NoShapeFound(target_name.into()))?;
-        if object.len() == 1 {
+        if !has_trait_keys(object) {
             return Ok(target);
         }
         let shape = &self.shapes[target.index()];

@@ -4,6 +4,7 @@
 use super::ModelError;
 use crate::pyrepr::float_repr;
 use serde_json::Value as Json;
+use std::sync::Arc;
 
 /// A boolean trait. Each is set when its key holds a value Python finds
 /// true, as botocore's `serialization.get(...)` and `metadata.get(...)`
@@ -68,7 +69,8 @@ pub struct Retryable {
     pub throttling: bool,
 }
 
-/// The resolved traits of a shape as one reference sees it.
+/// The resolved traits of a shape as one reference sees it. The lists are
+/// shared, so a reference that overlays a few keys copies little.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Traits {
     flags: u32,
@@ -80,10 +82,10 @@ pub struct Traits {
     pub timestamp_format: Option<Box<str>>,
     pub xml_namespace: Option<XmlNamespace>,
     pub result_wrapper: Option<Box<str>>,
-    pub required: Box<[Box<str>]>,
+    pub required: Arc<[Box<str>]>,
     pub min: Option<Bound>,
     pub max: Option<Bound>,
-    pub enum_values: Box<[Box<str>]>,
+    pub enum_values: Arc<[Box<str>]>,
     pub error: Option<ErrorTrait>,
     pub retryable: Option<Retryable>,
     /// `contextParam.name`, read only when present, as
@@ -127,35 +129,74 @@ impl Traits {
 
     /// Applies every trait key present in `object` over the traits already
     /// held, as `ShapeResolver.get_shape_by_name` updates the target's model
-    /// with a reference's keys.
+    /// with a reference's keys. Other keys are ignored.
     pub(super) fn apply(
         &mut self,
         object: &serde_json::Map<String, Json>,
         shape: &str,
     ) -> Result<(), ModelError> {
-        for (key, flag) in FLAG_KEYS {
-            if let Some(value) = object.get(key) {
-                self.set(flag, truthy(value));
-            }
+        for (key, value) in object {
+            self.apply_key(key, value)
+                .map_err(|name| ModelError::InvalidTrait {
+                    shape: shape.into(),
+                    name,
+                })?;
         }
-        let read = Reader { object, shape };
-        read.text("locationName", &mut self.name)?;
-        read.text("queryName", &mut self.query_name)?;
-        read.text("location", &mut self.location)?;
-        read.text("payload", &mut self.payload)?;
-        read.text("timestampFormat", &mut self.timestamp_format)?;
-        read.text("resultWrapper", &mut self.result_wrapper)?;
-        read.text("pattern", &mut self.pattern)?;
-        read.texts("required", &mut self.required)?;
-        read.texts("enum", &mut self.enum_values)?;
-        read.bound("min", &mut self.min)?;
-        read.bound("max", &mut self.max)?;
-        read.namespace(&mut self.xml_namespace)?;
-        read.error(&mut self.error)?;
-        read.retryable(&mut self.retryable)?;
-        read.context_param(&mut self.context_param)
+        Ok(())
+    }
+
+    /// One key; `Err` names a trait whose value has the wrong JSON type.
+    fn apply_key(&mut self, key: &str, value: &Json) -> Result<(), &'static str> {
+        if let Some((_, flag)) = FLAG_KEYS.iter().find(|(name, _)| *name == key) {
+            self.set(*flag, truthy(value));
+            return Ok(());
+        }
+        match key {
+            "locationName" => self.name = Some(text(value, "locationName")?),
+            "queryName" => self.query_name = Some(text(value, "queryName")?),
+            "location" => self.location = Some(text(value, "location")?),
+            "payload" => self.payload = Some(text(value, "payload")?),
+            "timestampFormat" => self.timestamp_format = Some(text(value, "timestampFormat")?),
+            "resultWrapper" => self.result_wrapper = Some(text(value, "resultWrapper")?),
+            "pattern" => self.pattern = Some(text(value, "pattern")?),
+            "required" => self.required = strings(value).ok_or("required")?.into(),
+            "enum" => self.enum_values = strings(value).ok_or("enum")?.into(),
+            "min" => self.min = Some(bound(value).ok_or("min")?),
+            "max" => self.max = Some(bound(value).ok_or("max")?),
+            "xmlNamespace" => self.xml_namespace = Some(namespace(object(value, "xmlNamespace")?)),
+            "error" => self.error = Some(error(object(value, "error")?)),
+            "retryable" => self.retryable = Some(retryable(object(value, "retryable")?)),
+            "contextParam" => self.context_param = context_param(object(value, "contextParam")?),
+            _ => {}
+        }
+        Ok(())
     }
 }
+
+/// Whether a reference holds any key [`Traits::apply`] reads.
+pub(super) fn has_trait_keys(object: &serde_json::Map<String, Json>) -> bool {
+    object.keys().any(|key| {
+        FLAG_KEYS.iter().any(|(name, _)| name == key) || TEXT_KEYS.contains(&key.as_str())
+    })
+}
+
+const TEXT_KEYS: [&str; 15] = [
+    "locationName",
+    "queryName",
+    "location",
+    "payload",
+    "timestampFormat",
+    "resultWrapper",
+    "pattern",
+    "required",
+    "enum",
+    "min",
+    "max",
+    "xmlNamespace",
+    "error",
+    "retryable",
+    "contextParam",
+];
 
 /// Python truthiness of a JSON value.
 pub(super) fn truthy(value: &Json) -> bool {
@@ -169,94 +210,53 @@ pub(super) fn truthy(value: &Json) -> bool {
     }
 }
 
-struct Reader<'a> {
-    object: &'a serde_json::Map<String, Json>,
-    shape: &'a str,
+fn text(value: &Json, key: &'static str) -> Result<Box<str>, &'static str> {
+    value.as_str().map(Box::from).ok_or(key)
 }
 
-impl Reader<'_> {
-    fn invalid(&self, name: &'static str) -> ModelError {
-        ModelError::InvalidTrait {
-            shape: self.shape.into(),
-            name,
+fn object<'a>(
+    value: &'a Json,
+    key: &'static str,
+) -> Result<&'a serde_json::Map<String, Json>, &'static str> {
+    value.as_object().ok_or(key)
+}
+
+/// A number as the model wrote it: integer text stays an integer.
+fn bound(value: &Json) -> Option<Bound> {
+    let number = value.as_number()?;
+    match number.as_i64() {
+        Some(integer) if !number.as_str().contains(['.', 'e', 'E']) => {
+            Some(Bound::Integer(integer))
         }
+        _ => number.as_f64().map(Bound::Float),
     }
+}
 
-    fn text(&self, key: &'static str, slot: &mut Option<Box<str>>) -> Result<(), ModelError> {
-        if let Some(value) = self.object.get(key) {
-            *slot = Some(value.as_str().ok_or_else(|| self.invalid(key))?.into());
-        }
-        Ok(())
+fn namespace(object: &serde_json::Map<String, Json>) -> XmlNamespace {
+    let field = |name| object.get(name).and_then(Json::as_str).map(Box::from);
+    XmlNamespace {
+        uri: field("uri"),
+        prefix: field("prefix"),
     }
+}
 
-    fn texts(&self, key: &'static str, slot: &mut Box<[Box<str>]>) -> Result<(), ModelError> {
-        if let Some(value) = self.object.get(key) {
-            *slot = strings(value).ok_or_else(|| self.invalid(key))?;
-        }
-        Ok(())
+fn error(object: &serde_json::Map<String, Json>) -> ErrorTrait {
+    let status = object.get("httpStatusCode").and_then(Json::as_u64);
+    ErrorTrait {
+        code: object.get("code").and_then(Json::as_str).map(Box::from),
+        http_status_code: status.and_then(|code| u16::try_from(code).ok()),
+        sender_fault: object.get("senderFault").is_some_and(truthy),
     }
+}
 
-    fn bound(&self, key: &'static str, slot: &mut Option<Bound>) -> Result<(), ModelError> {
-        let Some(value) = self.object.get(key) else {
-            return Ok(());
-        };
-        let number = value.as_number().ok_or_else(|| self.invalid(key))?;
-        let bound = match number.as_i64() {
-            Some(integer) if !number.as_str().contains(['.', 'e', 'E']) => Bound::Integer(integer),
-            _ => Bound::Float(number.as_f64().ok_or_else(|| self.invalid(key))?),
-        };
-        *slot = Some(bound);
-        Ok(())
+fn retryable(object: &serde_json::Map<String, Json>) -> Retryable {
+    Retryable {
+        throttling: object.get("throttling").is_some_and(truthy),
     }
+}
 
-    fn object(
-        &self,
-        key: &'static str,
-    ) -> Result<Option<&serde_json::Map<String, Json>>, ModelError> {
-        self.object
-            .get(key)
-            .map(|value| value.as_object().ok_or_else(|| self.invalid(key)))
-            .transpose()
-    }
-
-    fn namespace(&self, slot: &mut Option<XmlNamespace>) -> Result<(), ModelError> {
-        if let Some(object) = self.object("xmlNamespace")? {
-            let field = |name| object.get(name).and_then(Json::as_str).map(Box::from);
-            *slot = Some(XmlNamespace {
-                uri: field("uri"),
-                prefix: field("prefix"),
-            });
-        }
-        Ok(())
-    }
-
-    fn error(&self, slot: &mut Option<ErrorTrait>) -> Result<(), ModelError> {
-        if let Some(object) = self.object("error")? {
-            let status = object.get("httpStatusCode").and_then(Json::as_u64);
-            *slot = Some(ErrorTrait {
-                code: object.get("code").and_then(Json::as_str).map(Box::from),
-                http_status_code: status.and_then(|code| u16::try_from(code).ok()),
-                sender_fault: object.get("senderFault").is_some_and(truthy),
-            });
-        }
-        Ok(())
-    }
-
-    fn retryable(&self, slot: &mut Option<Retryable>) -> Result<(), ModelError> {
-        if let Some(object) = self.object("retryable")? {
-            *slot = Some(Retryable {
-                throttling: object.get("throttling").is_some_and(truthy),
-            });
-        }
-        Ok(())
-    }
-
-    fn context_param(&self, slot: &mut Option<Box<str>>) -> Result<(), ModelError> {
-        if let Some(object) = self.object("contextParam")? {
-            *slot = object.get("name").and_then(Json::as_str).map(Box::from);
-        }
-        Ok(())
-    }
+fn context_param(object: &serde_json::Map<String, Json>) -> Option<Box<str>> {
+    object.get("name").and_then(Json::as_str).map(Box::from)
 }
 
 /// A JSON list of strings.
