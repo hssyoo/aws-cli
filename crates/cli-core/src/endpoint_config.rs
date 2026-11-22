@@ -76,12 +76,9 @@ pub fn resolve(
             "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS",
             property("ignore_configured_endpoint_urls"),
         ),
-        use_fips: switch(env, "AWS_USE_FIPS_ENDPOINT", property("use_fips_endpoint")),
-        use_dual_stack: switch(
-            env,
-            "AWS_USE_DUALSTACK_ENDPOINT",
-            property("use_dualstack_endpoint"),
-        ),
+        use_fips: variant(env, files, profile, Variant::Fips).is_some_and(|switch| switch.on),
+        use_dual_stack: variant(env, files, profile, Variant::DualStack)
+            .is_some_and(|switch| switch.on),
         endpoint: cli_endpoint.map(str::to_owned),
     };
     if values.endpoint.is_none() && !values.ignore_configured {
@@ -107,6 +104,63 @@ pub fn resolve(
 /// `ensure_boolean` reads a string.
 pub fn bool_value(value: Option<&str>) -> bool {
     value.is_some_and(|value| value.eq_ignore_ascii_case("true"))
+}
+/// An endpoint variant every botocore client reads, from its variable, else
+/// the selected profile's key (`BOTOCORE_DEFAUT_SESSION_VARIABLES`, through
+/// `ClientEndpointBridge._resolve_endpoint_variant_config_var`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Variant {
+    /// `AWS_USE_FIPS_ENDPOINT`, then `use_fips_endpoint`.
+    Fips,
+    /// `AWS_USE_DUALSTACK_ENDPOINT`, then `use_dualstack_endpoint`.
+    DualStack,
+}
+impl Variant {
+    /// The environment variable, which outranks the profile's key.
+    pub const fn variable(self) -> &'static str {
+        match self {
+            Self::Fips => "AWS_USE_FIPS_ENDPOINT",
+            Self::DualStack => "AWS_USE_DUALSTACK_ENDPOINT",
+        }
+    }
+    /// The profile's key.
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::Fips => "use_fips_endpoint",
+            Self::DualStack => "use_dualstack_endpoint",
+        }
+    }
+}
+/// A variant's configured value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Switch {
+    /// The value after `ensure_boolean`.
+    pub on: bool,
+    /// Whether the variable supplied it, rather than the profile.
+    pub from_variable: bool,
+}
+/// The variant as the selected `profile` and the environment configure it,
+/// or `None` when neither does, which botocore keeps apart from `false`.
+/// The variable counts whenever it is set, even empty. A profile key holding
+/// a nested block is no value: `profile_property` reads text only, and
+/// `ensure_boolean` reads anything but text as false.
+pub fn variant(
+    env: &impl EnvMap,
+    files: &ParsedFiles,
+    profile: &OsStr,
+    variant: Variant,
+) -> Option<Switch> {
+    if let Some(value) = env.var_os(variant.variable()) {
+        return Some(Switch {
+            on: bool_value(value.to_str()),
+            from_variable: true,
+        });
+    }
+    let value = shared_config::profile_property(files, profile, variant.key())?;
+    Some(Switch {
+        on: bool_value(Some(value)),
+        from_variable: false,
+    })
 }
 fn switch(env: &impl EnvMap, variable: &str, setting: Option<&str>) -> bool {
     match env.var_os(variable) {

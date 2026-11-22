@@ -364,16 +364,19 @@ fn client_record_retains_chain_and_nested_sources_after_routing() {
         panic!("native record")
     };
     assert_eq!(
-        native.client.trust.value,
+        native.client.settings.trust.value,
         Trust::File(Path::new("testdata/ca.pem").to_owned())
     );
-    assert_eq!(native.client.trust.source, Source::Profile("ca_bundle"));
     assert_eq!(
-        native.client.request_checksum.value,
+        native.client.settings.trust.source,
+        Source::Profile("ca_bundle")
+    );
+    assert_eq!(
+        native.client.settings.request_checksum.value,
         ChecksumMode::WhenSupported
     );
     assert_eq!(
-        native.client.request_checksum.source,
+        native.client.settings.request_checksum.source,
         Source::Env("AWS_REQUEST_CHECKSUM_CALCULATION")
     );
     assert_eq!(native.client.addressing_style.value, AddressingStyle::Path);
@@ -400,9 +403,9 @@ fn new_global_support_binds_sources_and_checks_invalid_values() {
         let Verdict::Native(native) = evaluate(argv, &BTreeMap::new(), &files("")) else {
             panic!("{argv:?}")
         };
-        assert!(!native.client.signing.value);
+        assert!(!native.client.settings.signing.value);
         assert_eq!(
-            native.client.signing.source,
+            native.client.settings.signing.source,
             cli_core::client_config::Source::Flag("--no-sign-request")
         );
     }
@@ -411,7 +414,7 @@ fn new_global_support_binds_sources_and_checks_invalid_values() {
         let Verdict::Native(native) = evaluate(&argv, &BTreeMap::new(), &files("")) else {
             panic!("{argv:?}")
         };
-        assert_eq!(native.client.connect_timeout_ms.value, millis);
+        assert_eq!(native.client.settings.connect_timeout_ms.value, millis);
     }
     for value in ["-1", "9223372037"] {
         expect(
@@ -693,14 +696,20 @@ fn platform_probe_waits_for_route_and_transfer_admission() {
 
 fn assert_common_record(client: &cli_core::client_config::ClientConfig) {
     use cli_core::client_config::{ChecksumMode, Source};
-    assert_eq!(client.trust.source, Source::Env("AWS_CA_BUNDLE"));
-    assert_eq!(client.keep_alive.source, Source::Profile("tcp_keepalive"));
-    assert!(client.keep_alive.value);
+    assert_eq!(client.settings.trust.source, Source::Env("AWS_CA_BUNDLE"));
     assert_eq!(
-        client.request_checksum.source,
+        client.settings.keep_alive.source,
+        Source::Profile("tcp_keepalive")
+    );
+    assert!(client.settings.keep_alive.value);
+    assert_eq!(
+        client.settings.request_checksum.source,
         Source::Env("AWS_REQUEST_CHECKSUM_CALCULATION")
     );
-    assert_eq!(client.request_checksum.value, ChecksumMode::WhenSupported);
+    assert_eq!(
+        client.settings.request_checksum.value,
+        ChecksumMode::WhenSupported
+    );
 }
 
 fn assert_command_record(client: &cli_core::client_config::ClientConfig, copy: bool) {

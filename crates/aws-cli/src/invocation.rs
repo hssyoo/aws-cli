@@ -314,7 +314,7 @@ fn log_credential_source(
     native: &cli_router::Native,
     context: &command::CommandContext<'_, SnapshotEnv>,
 ) {
-    let signing = &native.client.signing;
+    let signing = &native.client.settings.signing;
     let credentials = if signing.value {
         let profile = cli_core::aws_profile::select_or_default(
             context.env,

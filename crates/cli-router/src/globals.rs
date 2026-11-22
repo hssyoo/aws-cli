@@ -159,8 +159,8 @@ fn is_native_global(support: GlobalSupport, target: Target, level: &Level<'_>) -
             .and_then(ErrorFormat::from_name)
             .is_some(),
         GlobalSupport::ConnectTimeout => {
-            let timeout = bind_connect_timeout(&level.namespace);
-            client_config::connect_timeout_milliseconds(timeout).is_some()
+            let timeout = bind_timeout(&level.namespace, "connect_timeout");
+            client_config::timeout_milliseconds(timeout).is_some()
         }
         GlobalSupport::PythonOnly => false,
     }

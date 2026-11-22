@@ -147,8 +147,11 @@ fn checksum_and_user_agent_sources_are_bounded() -> Result<(), PythonReason> {
         &[("AWS_SDK_UA_APP_ID", ""), ("AWS_EXECUTION_ENV", "test env")],
         Command::Ls,
     )?;
-    assert_eq!(config.request_checksum.value, ChecksumMode::WhenRequired);
-    assert_eq!(config.app_id.map(|v| v.value), Some(Vec::new()));
+    assert_eq!(
+        config.settings.request_checksum.value,
+        ChecksumMode::WhenRequired
+    );
+    assert_eq!(config.settings.app_id.map(|v| v.value), Some(Vec::new()));
     assert_eq!(
         resolved("", &[("AWS_EXECUTION_ENV", &"x".repeat(2049))], Command::Ls),
         Err(PythonReason::UserAgentSetting)
@@ -177,11 +180,11 @@ fn app_id_follows_the_chain_within_the_header_bound() -> Result<(), PythonReason
     for command in [Command::Ls, Command::Cp] {
         let profile = resolved(text, &[], command)?;
         let from_profile = Resolved::new(b"fromprofile".to_vec(), Source::Profile("sdk_ua_app_id"));
-        assert_eq!(profile.app_id, Some(from_profile));
-        assert_eq!(profile.execution_env, None);
+        assert_eq!(profile.settings.app_id, Some(from_profile));
+        assert_eq!(profile.settings.execution_env, None);
         let cleared = resolved(text, &[("AWS_SDK_UA_APP_ID", "")], command)?;
         let empty = Resolved::new(Vec::new(), Source::Env("AWS_SDK_UA_APP_ID"));
-        assert_eq!(cleared.app_id, Some(empty));
+        assert_eq!(cleared.settings.app_id, Some(empty));
         assert_eq!(
             customized(text, &[], command, &nested, Platform::default()),
             Err(PythonReason::UserAgentSetting)
@@ -198,7 +201,7 @@ fn app_id_follows_the_chain_within_the_header_bound() -> Result<(), PythonReason
             ];
             let bounded = resolved(text, &entries, command);
             if admitted {
-                let value = bounded?.execution_env.map(|v| v.value);
+                let value = bounded?.settings.execution_env.map(|v| v.value);
                 assert_eq!(value, Some(execution_env.as_bytes().to_vec()));
             } else {
                 assert_eq!(bounded, Err(PythonReason::UserAgentSetting));
@@ -252,14 +255,14 @@ fn environment_values_that_are_not_unicode_are_present() -> Result<(), PythonRea
         Command::Ls,
     )?;
     assert_eq!(
-        config.app_id,
+        config.settings.app_id,
         Some(Resolved::new(
             b"\xff".to_vec(),
             Source::Env("AWS_SDK_UA_APP_ID")
         ))
     );
     assert_eq!(
-        config.execution_env.map(|v| v.value),
+        config.settings.execution_env.map(|v| v.value),
         Some(b"ci\xff".to_vec())
     );
     let long = |count| {
@@ -275,11 +278,11 @@ fn environment_values_that_are_not_unicode_are_present() -> Result<(), PythonRea
 }
 #[test]
 fn connect_timeout_reproduces_disabled_and_saturating_values() {
-    assert_eq!(connect_timeout_milliseconds(None), Some(60_000));
-    assert_eq!(connect_timeout_milliseconds(Some(0)), Some(u32::MAX));
-    assert_eq!(connect_timeout_milliseconds(Some(12)), Some(12000));
-    assert_eq!(connect_timeout_milliseconds(Some(-1)), None);
-    assert_eq!(connect_timeout_milliseconds(Some(i64::MAX)), None);
+    assert_eq!(timeout_milliseconds(None), Some(60_000));
+    assert_eq!(timeout_milliseconds(Some(0)), Some(u32::MAX));
+    assert_eq!(timeout_milliseconds(Some(12)), Some(12000));
+    assert_eq!(timeout_milliseconds(Some(-1)), None);
+    assert_eq!(timeout_milliseconds(Some(i64::MAX)), None);
 }
 
 mod coercion;
@@ -547,7 +550,7 @@ fn trust_for(
         platform: Platform::default(),
         embedded_trust,
     })?;
-    Ok(config.trust)
+    Ok(config.settings.trust)
 }
 #[test]
 fn default_trust_follows_the_payload_and_configured_bundles_win() -> Result<(), PythonReason> {
@@ -560,7 +563,10 @@ fn default_trust_follows_the_payload_and_configured_bundles_win() -> Result<(), 
     assert_eq!(platform, Resolved::new(Trust::Platform, Source::Default));
     let mut lines = Vec::new();
     ClientConfig {
-        trust: platform,
+        settings: ClientSettings {
+            trust: platform,
+            ..ClientConfig::new(Command::Ls).settings
+        },
         ..ClientConfig::new(Command::Ls)
     }
     .log_resolved(crate::proxy::Environment::default(), |line| {

@@ -244,9 +244,9 @@ fn run_loopback(
     };
     let server = std::thread::spawn(move || serve(&listener, request_count));
     let mut client = ClientConfig::new(Command::Cp);
-    client.signing.value = false;
-    client.request_checksum.value = ChecksumMode::WhenRequired;
-    client.response_checksum.value = ChecksumMode::WhenRequired;
+    client.settings.signing.value = false;
+    client.settings.request_checksum.value = ChecksumMode::WhenRequired;
+    client.settings.response_checksum.value = ChecksumMode::WhenRequired;
     let env = BTreeMap::<String, String>::new();
     let files = awscli_config::ParsedFiles::parse(Default::default());
     let payload_started = Instant::now();

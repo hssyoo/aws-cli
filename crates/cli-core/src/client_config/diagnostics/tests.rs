@@ -1,5 +1,5 @@
 use super::*;
-use crate::client_config::{Command, Resolved, Source};
+use crate::client_config::{ClientSettings, Command, Resolved, Source};
 
 fn records(config: &ClientConfig, environment: proxy::Environment<'_>) -> Vec<Vec<u8>> {
     let mut lines = Vec::new();
@@ -18,13 +18,11 @@ fn messages(config: &ClientConfig, environment: proxy::Environment<'_>) -> Vec<S
 #[test]
 fn trust_file_line_keeps_path_bytes() {
     use std::os::unix::ffi::OsStrExt;
-    let config = ClientConfig {
-        trust: Resolved::new(
-            Trust::File(std::ffi::OsStr::from_bytes(b"ca\xff.pem").into()),
-            Source::Env("AWS_CA_BUNDLE"),
-        ),
-        ..ClientConfig::new(Command::Ls)
-    };
+    let mut config = ClientConfig::new(Command::Ls);
+    config.settings.trust = Resolved::new(
+        Trust::File(std::ffi::OsStr::from_bytes(b"ca\xff.pem").into()),
+        Source::Env("AWS_CA_BUNDLE"),
+    );
     let expected = b"TLS trust: ca\xff.pem (from environment variable AWS_CA_BUNDLE)";
     assert!(
         records(&config, proxy::Environment::default())
@@ -96,21 +94,24 @@ fn configured() -> ClientConfig {
             MemoryLimit::Override(512 << 20),
             Source::Env("AWS_CRT_S3_MEMORY_LIMIT_IN_MB"),
         ),
-        trust: Resolved::new(
-            Trust::File("/tmp/trust.pem".into()),
-            Source::Flag("--ca-bundle"),
-        ),
-        signing: Resolved::new(false, Source::Flag("--no-sign-request")),
-        connect_timeout_ms: Resolved::new(5000, Source::Flag("--cli-connect-timeout")),
+        settings: ClientSettings {
+            trust: Resolved::new(
+                Trust::File("/tmp/trust.pem".into()),
+                Source::Flag("--ca-bundle"),
+            ),
+            signing: Resolved::new(false, Source::Flag("--no-sign-request")),
+            connect_timeout_ms: Resolved::new(5000, Source::Flag("--cli-connect-timeout")),
+            app_id: Some(Resolved::new(
+                "demo".into(),
+                Source::Profile("sdk_ua_app_id"),
+            )),
+            execution_env: Some(Resolved::new(
+                "runner".into(),
+                Source::Env("AWS_EXECUTION_ENV"),
+            )),
+            ..ClientSettings::new(Command::Ls.label())
+        },
         retry_attempts: Resolved::new(None, Source::Default),
-        app_id: Some(Resolved::new(
-            "demo".into(),
-            Source::Profile("sdk_ua_app_id"),
-        )),
-        execution_env: Some(Resolved::new(
-            "runner".into(),
-            Source::Env("AWS_EXECUTION_ENV"),
-        )),
         ..ClientConfig::new(Command::Ls)
     }
 }
@@ -178,10 +179,8 @@ fn configured_diagnostics_preserve_sources_and_hide_proxy_contents() {
 
 #[test]
 fn trust_line_names_the_platform_store_and_the_embedded_entry() {
-    let platform = ClientConfig {
-        trust: Resolved::new(Trust::Platform, Source::Default),
-        ..ClientConfig::new(Command::Cp)
-    };
+    let mut platform = ClientConfig::new(Command::Cp);
+    platform.settings.trust = Resolved::new(Trust::Platform, Source::Default);
     let lines = messages(&platform, proxy::Environment::default());
     assert!(
         lines

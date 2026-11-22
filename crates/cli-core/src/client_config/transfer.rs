@@ -9,7 +9,7 @@ pub(super) fn resolve<E: EnvMap>(
     if !inputs.command.transfers() {
         return Ok(());
     }
-    let raw = coerce::TransferInputs::read(|key| inputs.nested(key));
+    let raw = coerce::TransferInputs::read(|key| inputs.settings().nested(key));
     let block = coerce::transfer(&raw)?;
     let crt_preferred = match block.preferred_transfer_client {
         TransferClient::Classic => return Err(PythonReason::TransferSetting),

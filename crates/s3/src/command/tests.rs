@@ -25,18 +25,21 @@ fn listing_memory_is_explicit_while_transfers_delegate_the_environment() {
 fn client_record_preserves_transfer_socket_credentials_and_checksum_options() {
     use cli_core::client_config::{ChecksumMode, Trust};
     let client = ClientConfig {
-        trust: Resolved::new(Trust::File("trust.pem".into()), Source::Flag("--ca-bundle")),
-        signing: Resolved::new(false, Source::Flag("--no-sign-request")),
-        keep_alive: Resolved::new(true, Source::Profile("tcp_keepalive")),
-        connect_timeout_ms: Resolved::new(5000, Source::Flag("--cli-connect-timeout")),
+        settings: cli_core::client_config::ClientSettings {
+            trust: Resolved::new(Trust::File("trust.pem".into()), Source::Flag("--ca-bundle")),
+            signing: Resolved::new(false, Source::Flag("--no-sign-request")),
+            keep_alive: Resolved::new(true, Source::Profile("tcp_keepalive")),
+            connect_timeout_ms: Resolved::new(5000, Source::Flag("--cli-connect-timeout")),
+            request_checksum: Resolved::new(ChecksumMode::WhenRequired, Source::Default),
+            response_checksum: Resolved::new(ChecksumMode::WhenRequired, Source::Default),
+            ..ClientConfig::new(Command::Cp).settings
+        },
         retry_attempts: Resolved::new(Some(4), Source::Env("AWS_MAX_ATTEMPTS")),
         target_gbps: Resolved::new(25.0, Source::S3("target_bandwidth")),
         part_size: Resolved::new(16 << 20, Source::S3("multipart_chunksize")),
         multipart_threshold: Some(Resolved::new(32 << 20, Source::S3("multipart_threshold"))),
         max_connections: Some(Resolved::new(3, Source::S3("max_concurrent_requests"))),
         direct_io: Some(Resolved::new(true, Source::S3("direct_io"))),
-        request_checksum: Resolved::new(ChecksumMode::WhenRequired, Source::Default),
-        response_checksum: Resolved::new(ChecksumMode::WhenRequired, Source::Default),
         ..ClientConfig::new(Command::Cp)
     };
     let options = client_options(&client, true);
@@ -55,7 +58,10 @@ fn client_record_preserves_non_unicode_trust_path_bytes() {
     use std::os::unix::ffi::OsStrExt;
     let path = std::path::Path::new(std::ffi::OsStr::from_bytes(b"ca\xff.pem"));
     let client = ClientConfig {
-        trust: Resolved::new(Trust::File(path.into()), Source::Env("AWS_CA_BUNDLE")),
+        settings: cli_core::client_config::ClientSettings {
+            trust: Resolved::new(Trust::File(path.into()), Source::Env("AWS_CA_BUNDLE")),
+            ..ClientConfig::new(Command::Ls).settings
+        },
         ..ClientConfig::new(Command::Ls)
     };
     assert_eq!(
@@ -514,7 +520,10 @@ fn a_signing_client_walks_the_credential_chain_as_it_is_prepared()
     };
     let signed = ClientConfig::new(Command::Ls);
     let unsigned = ClientConfig {
-        signing: Resolved::new(false, Source::Flag("--no-sign-request")),
+        settings: cli_core::client_config::ClientSettings {
+            signing: Resolved::new(false, Source::Flag("--no-sign-request")),
+            ..ClientConfig::new(Command::Ls).settings
+        },
         ..ClientConfig::new(Command::Ls)
     };
     let partial = cli_core::SnapshotEnv::from_pairs([("AWS_ACCESS_KEY_ID", "AKIDENV")]);

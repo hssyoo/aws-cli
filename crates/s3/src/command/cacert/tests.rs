@@ -129,7 +129,10 @@ fn only_an_embedded_trust_takes_the_payload_bundle() {
         ),
     ] {
         let client = ClientConfig {
-            trust: Resolved::new(trust, source),
+            settings: cli_core::client_config::ClientSettings {
+                trust: Resolved::new(trust, source),
+                ..ClientConfig::new(Command::Ls).settings
+            },
             ..ClientConfig::new(Command::Ls)
         };
         let context = cli_core::command::CommandContext {
@@ -142,6 +145,6 @@ fn only_an_embedded_trust_takes_the_payload_bundle() {
         };
         let mut options = super::super::client_options(&client, false);
         super::super::embedded_ca(&context, &mut options);
-        assert_eq!(options.trust, expected, "{:?}", client.trust);
+        assert_eq!(options.trust, expected, "{:?}", client.settings.trust);
     }
 }
