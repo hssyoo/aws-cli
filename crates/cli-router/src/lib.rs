@@ -19,6 +19,7 @@ use cli_core::{EnvMap, cli_error::ErrorFormat};
 #[doc(inline)]
 pub use cli_core::{cli_error::PythonReason, command::Globals};
 pub mod effective_config;
+mod generic;
 mod globals;
 
 /// The native command and its owned, checked arguments.
@@ -31,6 +32,16 @@ pub enum Command {
     S3Sync(Box<s3::sync::Args>),
 }
 impl Command {
+    /// How the handler's streams are buffered: `s3 ls` lists, and the other
+    /// handlers transfer.
+    pub fn streams(&self) -> ::command::StreamPolicy {
+        match self {
+            Self::S3Ls(_) => ::command::StreamPolicy::Listing,
+            Self::S3Cp(_) | Self::S3Mv(_) | Self::S3Rm(_) | Self::S3Sync(_) => {
+                ::command::StreamPolicy::Transfer
+            }
+        }
+    }
     /// The record command whose client settings the handler runs with.
     pub fn client_command(&self) -> client_config::Command {
         match self {
@@ -52,10 +63,26 @@ pub struct Native {
     /// The client settings the handler runs with, resolved once.
     pub client: client_config::ClientConfig,
 }
+/// The dispatch payload of a registry command's verdict: a command a
+/// hand-written spec or a model source bound, admitted by every stage.
+#[derive(Debug)]
+pub struct Run {
+    /// Global overrides shared by every native command.
+    pub globals: Globals,
+    /// The bound command.
+    pub invocation: Box<dyn ::command::Invocation>,
+    /// What the command needs before it runs; the stages checked it.
+    pub needs: ::command::Needs,
+    /// How the command's streams are buffered.
+    pub streams: ::command::StreamPolicy,
+}
 /// The router's decision. A failure is an owned copy of the parse result's.
-#[derive(Debug, Clone, PartialEq)]
+/// `Native` is a pinned `s3` command of the router's own enum path; `Run`
+/// is a command the registry resolves.
+#[derive(Debug)]
 pub enum Verdict {
     Native(Box<Native>),
+    Run(Box<Run>),
     Failure(Failure),
     Python(PythonReason),
 }
@@ -76,6 +103,9 @@ pub struct Configuration<'a, E: EnvMap> {
     /// ([`client_config::Inputs::embedded_trust`]). The entrypoint asks the
     /// payload; tests state the answer.
     pub embedded_trust: bool,
+    /// The roots the parse resolved its commands through, which resolve and
+    /// bind the lineage it reached.
+    pub registry: &'a ::command::Registry<'a>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NativeLineage {
@@ -123,7 +153,7 @@ pub fn forced_route(value: Option<&str>) -> Option<PythonReason> {
 /// CRT process lock is one no other process holds, so routing stays
 /// deterministic; [`route_with_process_lock`] takes the host's probe and lock.
 pub fn route<E: EnvMap>(
-    result: &mut ParseResult,
+    result: &mut ParseResult<'_>,
     unpack: &unpack::Environment<'_>,
     config: &Configuration<'_, E>,
 ) -> Verdict {
@@ -132,7 +162,7 @@ pub fn route<E: EnvMap>(
 
 /// Resolve the command using caller-supplied platform facts; no probe runs in tests.
 pub fn route_with_platform<E: EnvMap>(
-    result: &mut ParseResult,
+    result: &mut ParseResult<'_>,
     unpack: &unpack::Environment<'_>,
     config: &Configuration<'_, E>,
     platform: client_config::Platform,
@@ -144,7 +174,7 @@ pub fn route_with_platform<E: EnvMap>(
 /// require platform facts. The CRT process lock is one no other process
 /// holds, so routing stays deterministic.
 pub fn route_with_probe<E: EnvMap>(
-    result: &mut ParseResult,
+    result: &mut ParseResult<'_>,
     unpack: &unpack::Environment<'_>,
     config: &Configuration<'_, E>,
     probe: impl FnOnce() -> client_config::Platform,
@@ -172,7 +202,7 @@ pub fn process_lock_uncontended() -> bool {
 /// CLIDriver.main then loads the alias file before its main parse. A failure
 /// raised before a file is read renders natively whatever the file holds.
 pub fn route_with_process_lock<E: EnvMap>(
-    result: &mut ParseResult,
+    result: &mut ParseResult<'_>,
     unpack: &unpack::Environment<'_>,
     config: &Configuration<'_, E>,
     probe: impl FnOnce() -> client_config::Platform,
@@ -200,7 +230,7 @@ pub fn route_with_process_lock<E: EnvMap>(
         Outcome::Parsed => route_parsed(result, unpack, config, probe, acquire_process_lock),
     }
 }
-fn early_failure(result: &ParseResult, stage: Stage) -> Option<Failure> {
+fn early_failure(result: &ParseResult<'_>, stage: Stage) -> Option<Failure> {
     assert!(matches!(stage, Stage::FirstPass | Stage::AutoPrompt));
     if result.stage != stage {
         return None;
@@ -211,21 +241,26 @@ fn early_failure(result: &ParseResult, stage: Stage) -> Option<Failure> {
     }
 }
 fn route_failure<E: EnvMap>(
-    result: &ParseResult,
+    result: &ParseResult<'_>,
     failure: Failure,
     config: &Configuration<'_, E>,
 ) -> Verdict {
     let files = config.shared_files;
+    let names = lineage_names(result);
     let reason = match result.stage {
         Stage::AutoPrompt | Stage::FirstPass => None,
         Stage::Main => result
             .failed
             .as_ref()
             .and_then(|n| n.string("command"))
-            .filter(|c| *c != "s3")
+            .filter(|c| !config.registry.is_root(c))
             .map(|_| PythonReason::UnsupportedCommand),
-        _ if defines_s3_alias(files) => Some(PythonReason::S3Alias),
-        _ if native_lineage(result).is_none() => Some(PythonReason::UnsupportedSubcommand),
+        _ if names.first().is_some_and(|root| defines_alias(files, root)) => {
+            Some(PythonReason::CommandAlias)
+        }
+        _ if native_lineage(result).is_none() && !config.registry.reproduces_failures(&names) => {
+            Some(PythonReason::UnsupportedSubcommand)
+        }
         _ => None,
     };
     if let Some(reason) = reason {
@@ -247,7 +282,7 @@ fn route_failure<E: EnvMap>(
 /// whichever provider would answer, and for a command that signs nothing.
 /// The refusal is rendered natively, as the general handler renders it.
 fn session_start<E: EnvMap>(
-    result: &ParseResult,
+    result: &ParseResult<'_>,
     config: &Configuration<'_, E>,
 ) -> Option<Verdict> {
     let (env, files) = (config.env, config.shared_files);
@@ -264,19 +299,21 @@ fn session_start<E: EnvMap>(
     Some(Verdict::Failure(Failure::new(kind)))
 }
 fn route_parsed<E: EnvMap>(
-    result: &mut ParseResult,
+    result: &mut ParseResult<'_>,
     unpack: &unpack::Environment<'_>,
     config: &Configuration<'_, E>,
     probe: impl FnOnce() -> client_config::Platform,
     acquire_process_lock: impl FnOnce() -> bool,
 ) -> Verdict {
-    if defines_s3_alias(config.shared_files) {
-        return Verdict::Python(PythonReason::S3Alias);
+    let root = lineage_names(result).first().map(|root| (*root).to_owned());
+    if root.is_some_and(|root| defines_alias(config.shared_files, &root)) {
+        return Verdict::Python(PythonReason::CommandAlias);
     }
     let Some(lineage) = native_lineage(result) else {
-        return Verdict::Python(PythonReason::UnsupportedSubcommand);
+        return generic::route(result, unpack, config);
     };
-    if let Some(reason) = globals::route_parsed_unsupported_global(result, lineage) {
+    let target = globals::Target::of_lineage(lineage);
+    if let Some(reason) = globals::route_parsed_unsupported_global(result, target) {
         return Verdict::Python(reason);
     }
     if awscli_argparse::complete(result, unpack) {
@@ -324,7 +361,7 @@ fn acquire_crt_client_lock(
     }
 }
 fn route_admitted<E: EnvMap>(
-    result: &ParseResult,
+    result: &ParseResult<'_>,
     config: &Configuration<'_, E>,
     lineage: NativeLineage,
     directory: &std::path::Path,
@@ -351,11 +388,8 @@ fn route_admitted<E: EnvMap>(
     if let Some(reason) = configured {
         return Verdict::Python(reason);
     }
-    if client_creation_fails(config, &globals, ns.os_string("endpoint_url")) {
-        return Verdict::Python(PythonReason::EndpointSetting);
-    }
-    if !selected_endpoint_resolves_natively(config, &globals) {
-        return Verdict::Python(PythonReason::EndpointSetting);
+    if let Some(reason) = endpoint_refusal(config, &globals, ns, S3_SERVICE) {
+        return Verdict::Python(reason);
     }
     let resolved = cli_core::client_config::resolve_with_probe(
         &cli_core::client_config::Inputs {
@@ -388,7 +422,7 @@ fn route_admitted<E: EnvMap>(
     reason = "root completion always yields a usage failure"
 )]
 fn bind_command(
-    result: &ParseResult,
+    result: &ParseResult<'_>,
     lineage: NativeLineage,
 ) -> (Command, Option<s3::AdmissionReason>) {
     match lineage {
@@ -432,6 +466,7 @@ fn client_creation_fails<E: EnvMap>(
     config: &Configuration<'_, E>,
     globals: &Globals,
     cli_endpoint: Option<&std::ffi::OsStr>,
+    service: &str,
 ) -> bool {
     let region = cli_core::region::session_region(
         config.env,
@@ -445,7 +480,7 @@ fn client_creation_fails<E: EnvMap>(
     cli_core::endpoint_config::configured_endpoint_fails(
         config.env,
         config.shared_files,
-        "s3",
+        service,
         cli_endpoint,
         globals.profile.as_deref(),
     )
@@ -453,14 +488,34 @@ fn client_creation_fails<E: EnvMap>(
 fn selected_endpoint_resolves_natively<E: EnvMap>(
     config: &Configuration<'_, E>,
     globals: &Globals,
+    service: &str,
 ) -> bool {
     cli_core::endpoint_config::selected_endpoint_resolves_natively(
         config.env,
         config.shared_files,
-        "s3",
+        service,
         globals.endpoint_url.as_deref(),
         globals.profile.as_deref(),
     )
+}
+/// The endpoint stage for a client of `service`: [`client_creation_fails`],
+/// then [`selected_endpoint_resolves_natively`].
+fn endpoint_refusal<E: EnvMap>(
+    config: &Configuration<'_, E>,
+    globals: &Globals,
+    ns: &Namespace,
+    service: &str,
+) -> Option<PythonReason> {
+    let refused = client_creation_fails(config, globals, ns.os_string("endpoint_url"), service)
+        || !selected_endpoint_resolves_natively(config, globals, service);
+    refused.then_some(PythonReason::EndpointSetting)
+}
+/// The pinned `s3` commands' client service, which the enum path's
+/// endpoint checks name.
+const S3_SERVICE: &str = "s3";
+/// The lineage's command names, outermost first.
+fn lineage_names<'r>(result: &'r ParseResult<'_>) -> Vec<&'r str> {
+    result.lineage.iter().map(|node| &*node.name).collect()
 }
 fn bind_globals(ns: &Namespace) -> Globals {
     Globals {
@@ -478,19 +533,19 @@ fn bind_connect_timeout(ns: &Namespace) -> Option<i64> {
         .then(|| ns.integer("connect_timeout").unwrap_or(0))
 }
 
-fn native_lineage(result: &ParseResult) -> Option<NativeLineage> {
-    match result.lineage.as_slice() {
-        [s3] if s3.name == "s3" => Some(NativeLineage::S3),
-        [s3, sub] if s3.name == "s3" && sub.name == "ls" => Some(NativeLineage::S3Ls),
-        [s3, sub] if s3.name == "s3" && sub.name == "cp" => Some(NativeLineage::S3Cp),
-        [s3, sub] if s3.name == "s3" && sub.name == "mv" => Some(NativeLineage::S3Mv),
-        [s3, sub] if s3.name == "s3" && sub.name == "rm" => Some(NativeLineage::S3Rm),
-        [s3, sub] if s3.name == "s3" && sub.name == "sync" => Some(NativeLineage::S3Sync),
+fn native_lineage(result: &ParseResult<'_>) -> Option<NativeLineage> {
+    match lineage_names(result).as_slice() {
+        [S3_SERVICE] => Some(NativeLineage::S3),
+        [S3_SERVICE, "ls"] => Some(NativeLineage::S3Ls),
+        [S3_SERVICE, "cp"] => Some(NativeLineage::S3Cp),
+        [S3_SERVICE, "mv"] => Some(NativeLineage::S3Mv),
+        [S3_SERVICE, "rm"] => Some(NativeLineage::S3Rm),
+        [S3_SERVICE, "sync"] => Some(NativeLineage::S3Sync),
         _ => None,
     }
 }
 fn route_parsed_unsupported_option(
-    result: &ParseResult,
+    result: &ParseResult<'_>,
     lineage: NativeLineage,
 ) -> Option<PythonReason> {
     result
@@ -541,27 +596,25 @@ fn has_plugins_section(files: &ParsedFiles) -> bool {
 fn unusable_alias_file(file: &ConfigFile) -> bool {
     unparsed(file) || file.status == Status::Directory
 }
-/// Whether the alias file replaces or extends the `s3` grammar. AliasLoader
-/// reads the file with `raw_config_parse(parse_subsections=False)`, a
-/// RawConfigParser whose section names are kept literally and whose option
-/// names are lowercased; awscli-config stores them the same way, with
-/// DEFAULT entries inherited into every section as configparser does. Its
-/// ASCII lowercasing is exact for `s3`: no non-ASCII character
-/// lowercases to `s` or `3`. A `toplevel` section (exact name) replaces
-/// commands by name (`AliasCommandInjector`); a section whose name starts
-/// with `command ` is split on whitespace into a lineage
-/// (`AliasLoader._normalize_key_names`) whose entries inject into that
-/// command's table when it is built (`AliasSubCommandInjector`).
-fn defines_s3_alias(files: &ParsedFiles) -> bool {
+/// Whether the alias file replaces or extends the grammar of `root`.
+/// AliasLoader reads the file with `raw_config_parse(parse_subsections=False)`,
+/// a RawConfigParser whose section names are kept literally and whose
+/// option names are lowercased; awscli-config stores them the same way,
+/// with DEFAULT entries inherited into every section as configparser does.
+/// A `toplevel` section (exact name) replaces commands by name
+/// (`AliasCommandInjector`), so its option names, lowercased, are compared
+/// with the root as given; a section whose name starts with `command ` is
+/// split on whitespace into a lineage (`AliasLoader._normalize_key_names`)
+/// whose entries inject into that command's table when it is built
+/// (`AliasSubCommandInjector`).
+fn defines_alias(files: &ParsedFiles, root: &str) -> bool {
     files.aliases.status == Status::Loaded
         && files.aliases.sections.iter().any(|(name, entries)| {
-            (name == "toplevel" && entries.get("s3").is_some())
-                || (!entries.is_empty() && name.starts_with("command ") && second_token_is_s3(name))
+            (name == "toplevel" && entries.get(root).is_some())
+                || (!entries.is_empty()
+                    && name.starts_with("command ")
+                    && python_split(name).nth(1) == Some(root))
         })
-}
-fn second_token_is_s3(name: &str) -> bool {
-    debug_assert!(name.starts_with("command "));
-    python_split(name).nth(1) == Some("s3")
 }
 /// Python's `str.split()`: the words between runs of `str.isspace()`
 /// characters, whose set includes U+001C to U+001F.

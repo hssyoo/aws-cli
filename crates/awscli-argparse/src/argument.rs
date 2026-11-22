@@ -26,16 +26,16 @@ pub enum CliType {
     Blob,
     Map,
 }
-/// Constant values representable in pinned tables.
+/// Constant values representable in pinned and derived tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DefaultValue {
+pub enum DefaultValue<'a> {
     #[default]
     None,
     Boolean(bool),
     Integer(i64),
-    String(&'static str),
+    String(&'a str),
 }
-impl DefaultValue {
+impl DefaultValue<'_> {
     /// Own the table default for a namespace.
     pub fn value(self) -> Value {
         match self {
@@ -46,23 +46,25 @@ impl DefaultValue {
         }
     }
 }
-/// One action in an argparse table.
+/// One action in an argparse table. A pinned table borrows `'static`
+/// text; a table derived from a model borrows from whatever holds the
+/// model for the invocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Argument {
-    pub name: &'static str,
-    pub dest: Option<&'static str>,
+pub struct Argument<'a> {
+    pub name: &'a str,
+    pub dest: Option<&'a str>,
     pub positional: bool,
     pub action: Action,
     pub nargs: Option<Nargs>,
-    pub constant: Option<DefaultValue>,
-    pub default: DefaultValue,
-    pub choices: &'static [&'static str],
+    pub constant: Option<DefaultValue<'a>>,
+    pub default: DefaultValue<'a>,
+    pub choices: &'a [&'a str],
     pub required: bool,
     pub cli_type: Option<CliType>,
 }
-impl Argument {
+impl<'a> Argument<'a> {
     /// Define a scalar argument with argparse defaults.
-    pub const fn new(name: &'static str) -> Self {
+    pub const fn new(name: &'a str) -> Self {
         Self {
             name,
             dest: None,

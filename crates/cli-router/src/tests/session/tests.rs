@@ -21,6 +21,7 @@ fn evaluate_on(
             shared_files: files,
             boto_config_credentials: false,
             embedded_trust: true,
+            registry: &PINNED_REGISTRY,
         },
         platform,
     )

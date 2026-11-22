@@ -18,6 +18,7 @@ awscli-argparse = { path = "../awscli-argparse" }
 awscli-config = { path = "../awscli-config" }
 cli-core = { path = "../cli-core" }
 cli-router = { path = "../cli-router" }
+command = { path = "../command" }
 crt = { path = "../crt" }
 s3 = { path = "../s3" }
 pyload = { path = "../pyload", features = ["embedded"] }

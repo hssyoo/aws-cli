@@ -104,13 +104,13 @@ fn awscli_cases() -> Vec<(FailureKind, FailureClass, String)> {
                 .into(),
         ),
         (
-            FailureKind::TooFewArguments(vec!["s3"]),
+            FailureKind::TooFewArguments(vec!["s3".into()]),
             FailureClass::ParamValidation,
             "usage: aws [options] s3 <subcommand> [parameters]\naws: [ERROR]: too few arguments"
                 .into(),
         ),
         (
-            FailureKind::TooFewArguments(vec!["s3", "child"]),
+            FailureKind::TooFewArguments(vec!["s3".into(), "child".into()]),
             FailureClass::ParamValidation,
             "usage: aws [options] s3 child <subcommand> [parameters]\naws: [ERROR]: too few \
              arguments"

@@ -315,6 +315,7 @@ fn the_entrypoint_s_boto_answer_reaches_admission() {
             shared_files: &files,
             boto_config_credentials: true,
             embedded_trust: true,
+            registry: &PINNED_REGISTRY,
         },
     );
     assert_eq!(verdict, Verdict::Python(PythonReason::CredentialForm));

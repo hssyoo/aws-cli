@@ -158,7 +158,7 @@ pub enum FailureKind {
     /// subcommand: ParamValidationError carrying its own usage and
     /// error-prefix lines, so the rendered output has two prefixes. The
     /// payload is the lineage's command names, outermost first.
-    TooFewArguments(Vec<&'static str>),
+    TooFewArguments(Vec<String>),
     /// paramfile.get_file's OSError, as argprocess.ParamError, which
     /// prefixes "Error parsing parameter 'NAME': ".
     ParamfileLoad {

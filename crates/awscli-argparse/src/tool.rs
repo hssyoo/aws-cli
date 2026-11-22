@@ -101,7 +101,7 @@ fn result_raw_fields(result: &ParseResult) -> [(&'static str, Value); 10] {
     } else {
         &result.args.remaining
     };
-    let lineage: Vec<_> = result.lineage.iter().map(|c| c.name).collect();
+    let lineage: Vec<&str> = result.lineage.iter().map(|c| &*c.name).collect();
     let skipped: Vec<&str> = if result.query_syntax_skipped {
         vec!["query_syntax"]
     } else {
