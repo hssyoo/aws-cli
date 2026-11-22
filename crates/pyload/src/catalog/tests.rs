@@ -82,6 +82,11 @@ fn model_groups_list_services_and_versions_without_reading_data()
     assert_eq!(versions, [b"2021".to_vec()]);
     assert!(groups(view, b"data/missing/", b"service-2", Layout::Versions)?.is_empty());
     assert!(groups(view, b"nothing/", b"service-2", Layout::Services)?.is_empty());
+    Ok(())
+}
+#[test]
+fn model_group_lookup_names_are_bounded() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::format::{flags, testing};
     let mut prefix = vec![b'x'; MODEL_GROUP_NAME_MAX - 6];
     prefix.push(b'/');
     let fits = [prefix.as_slice(), b"abcd/v/service-2.json"].concat();

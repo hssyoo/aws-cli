@@ -53,9 +53,18 @@ fn instants_stay_within_python_datetime_years() {
 fn formats_match_botocore_serializers() {
     let at = |seconds, micros| Timestamp::from_unix(seconds, micros).unwrap_or(Timestamp::MIN);
     assert_eq!(at(0, 0).iso8601(), "1970-01-01T00:00:00Z");
-    assert_eq!(at(1_582_979_696, 5).iso8601(), "2020-02-29T12:34:56.000005Z");
-    assert_eq!(at(1_582_979_696, 0).rfc822(), "Sat, 29 Feb 2020 12:34:56 GMT");
-    assert_eq!(at(1_582_979_696, 999_999).rfc822(), "Sat, 29 Feb 2020 12:34:56 GMT");
+    assert_eq!(
+        at(1_582_979_696, 5).iso8601(),
+        "2020-02-29T12:34:56.000005Z"
+    );
+    assert_eq!(
+        at(1_582_979_696, 0).rfc822(),
+        "Sat, 29 Feb 2020 12:34:56 GMT"
+    );
+    assert_eq!(
+        at(1_582_979_696, 999_999).rfc822(),
+        "Sat, 29 Feb 2020 12:34:56 GMT"
+    );
     assert_eq!(at(-1, 0).rfc822(), "Wed, 31 Dec 1969 23:59:59 GMT");
     assert_eq!(Timestamp::MIN.weekday(), 0);
     assert_eq!(at(0, 0).weekday(), 3);
@@ -63,38 +72,51 @@ fn formats_match_botocore_serializers() {
 
 #[test]
 fn iso8601_parsing_accepts_offsets_fractions_and_dates() {
-    let seconds = |text: &str| Timestamp::parse_iso8601(text).map(|t| (t.unix_seconds(), t.micros()));
-    assert_eq!(seconds("2020-02-29T12:34:56Z"), Some((1_582_979_696, 0)));
-    assert_eq!(seconds("2020-02-29t12:34:56z"), Some((1_582_979_696, 0)));
-    assert_eq!(seconds("2020-02-29 12:34:56"), Some((1_582_979_696, 0)));
-    assert_eq!(seconds("2020-02-29T12:34:56.5Z"), Some((1_582_979_696, 500_000)));
-    assert_eq!(seconds("2020-02-29T12:34:56.1234567Z"), Some((1_582_979_696, 123_456)));
-    assert_eq!(seconds("2020-02-29T13:34:56+01:00"), Some((1_582_979_696, 0)));
-    assert_eq!(seconds("2020-02-29T11:04:56-0130"), Some((1_582_979_696, 0)));
-    assert_eq!(seconds("2020-02-29T14:34:56+02"), Some((1_582_979_696, 0)));
-    assert_eq!(seconds("2020-02-29T12:34Z"), Some((1_582_979_640, 0)));
-    assert_eq!(seconds("2020-02-29"), Some((1_582_934_400, 0)));
-    for bad in [
-        "",
-        "2020-02-30",
-        "2020-2-29",
-        "2020-02-29T12",
-        "2020-02-29T12:34:56.Z",
-        "2020-02-29T12:34:56+1:00",
-        "2020-02-29T12:34:56Zjunk",
-        "0001-01-01T00:00:00+00:01",
+    let base = Some((1_582_979_696, 0));
+    for (text, expected) in [
+        ("2020-02-29T12:34:56Z", base),
+        ("2020-02-29t12:34:56z", base),
+        ("2020-02-29 12:34:56", base),
+        ("2020-02-29T12:34:56.5Z", Some((1_582_979_696, 500_000))),
+        (
+            "2020-02-29T12:34:56.1234567Z",
+            Some((1_582_979_696, 123_456)),
+        ),
+        ("2020-02-29T13:34:56+01:00", base),
+        ("2020-02-29T11:04:56-0130", base),
+        ("2020-02-29T14:34:56+02", base),
+        ("2020-02-29T12:34Z", Some((1_582_979_640, 0))),
+        ("2020-02-29", Some((1_582_934_400, 0))),
+        ("", None),
+        ("2020-02-30", None),
+        ("2020-2-29", None),
+        ("2020-02-29T12", None),
+        ("2020-02-29T12:34:56.Z", None),
+        ("2020-02-29T12:34:56+1:00", None),
+        ("2020-02-29T12:34:56Zjunk", None),
+        ("0001-01-01T00:00:00+00:01", None),
     ] {
-        assert_eq!(seconds(bad), None, "{bad}");
+        let parsed = Timestamp::parse_iso8601(text).map(|t| (t.unix_seconds(), t.micros()));
+        assert_eq!(parsed, expected, "{text}");
     }
 }
 
 #[test]
 fn rfc822_parsing_reads_the_http_date_form() {
     let seconds = |text: &str| Timestamp::parse_rfc822(text).map(Timestamp::unix_seconds);
-    assert_eq!(seconds("Sat, 29 Feb 2020 12:34:56 GMT"), Some(1_582_979_696));
+    assert_eq!(
+        seconds("Sat, 29 Feb 2020 12:34:56 GMT"),
+        Some(1_582_979_696)
+    );
     assert_eq!(seconds("29 Feb 2020 12:34:56 GMT"), Some(1_582_979_696));
-    assert_eq!(seconds("Sat, 29 Feb 2020 12:34:56 UTC"), Some(1_582_979_696));
-    assert_eq!(seconds("Sat, 29 Feb 2020 13:34:56 +0100"), Some(1_582_979_696));
+    assert_eq!(
+        seconds("Sat, 29 Feb 2020 12:34:56 UTC"),
+        Some(1_582_979_696)
+    );
+    assert_eq!(
+        seconds("Sat, 29 Feb 2020 13:34:56 +0100"),
+        Some(1_582_979_696)
+    );
     assert_eq!(seconds("Sat, 9 Feb 2020 12:34:56 GMT"), Some(1_581_251_696));
     for bad in [
         "",
