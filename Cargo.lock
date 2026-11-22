@@ -17,6 +17,7 @@ dependencies = [
  "build-support",
  "cli-core",
  "cli-router",
+ "command",
  "crt",
  "crt-sys",
  "pyload",
@@ -73,8 +74,18 @@ dependencies = [
  "awscli-argparse",
  "awscli-config",
  "cli-core",
+ "command",
  "credentials",
  "s3",
+]
+
+[[package]]
+name = "command"
+version = "0.1.0"
+dependencies = [
+ "awscli-argparse",
+ "awscli-config",
+ "cli-core",
 ]
 
 [[package]]

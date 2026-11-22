@@ -4,9 +4,9 @@
 )]
 use super::*;
 use awscli_argparse::chain::Outcome;
-use awscli_argparse::tables::{CommandKind, Roots};
-use awscli_argparse::{Argument, Options};
-use cli_core::cli_error::{CommandFailure, PythonReason};
+use awscli_argparse::tables::{CommandKind, Node, Roots};
+use awscli_argparse::{Argument, Options, ParseResult};
+use cli_core::cli_error::{Category, CommandFailure, PythonReason};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -21,8 +21,6 @@ impl Invocation for Echo {
         Ok(0)
     }
 }
-use cli_core::cli_error::Category;
-use std::io::Write;
 
 const THING_ARGUMENTS: &[Argument] = &[Argument {
     required: true,
@@ -98,15 +96,14 @@ static ZLOCAL: CommandSpec = CommandSpec {
     ..SHOW_SPEC_BASE
 };
 static SPECS: [&CommandSpec; 1] = [&ZLOCAL];
-static PINNED: [&awscli_argparse::tables::Command<'static>; 1] =
-    [&awscli_argparse::tables::S3];
+static PINNED: [&awscli_argparse::tables::Command<'static>; 1] = [&awscli_argparse::tables::S3];
 
 fn registry(source: &Fake) -> Registry<'_> {
     Registry::new(&PINNED, &SPECS, Some(source))
 }
 
 #[test]
-fn resolution_names_the_spec_or_operation_a_lineage_reaches() {
+fn a_spec_lineage_resolves_to_its_spec() {
     let source = Fake;
     let registry = registry(&source);
     assert!(matches!(
@@ -117,6 +114,12 @@ fn resolution_names_the_spec_or_operation_a_lineage_reaches() {
         registry.resolve(&["zlocal"]),
         Resolution::Spec(spec) if std::ptr::eq(spec, &ZLOCAL)
     ));
+}
+
+#[test]
+fn a_source_operation_resolves_to_its_operation() {
+    let source = Fake;
+    let registry = registry(&source);
     let Resolution::Operation(operation) = registry.resolve(&["zsvc", "get-thing"]) else {
         panic!("a source operation resolves to an operation");
     };
@@ -127,6 +130,12 @@ fn resolution_names_the_spec_or_operation_a_lineage_reaches() {
             service: "zsvc".into()
         }
     );
+}
+
+#[test]
+fn pinned_partial_and_unknown_lineages_resolve_to_nothing() {
+    let source = Fake;
+    let registry = registry(&source);
     for lineage in [
         &["zsvc"][..],
         &["zsvc", "nosuch"],
@@ -144,6 +153,12 @@ fn resolution_names_the_spec_or_operation_a_lineage_reaches() {
     }
 }
 
+fn root<'a>(registry: &Registry<'a>, name: &str) -> Node<'a> {
+    registry
+        .root(name)
+        .unwrap_or_else(|| panic!("{name} is a root"))
+}
+
 #[test]
 fn roots_are_pinned_then_specs_then_the_source() {
     let source = Fake;
@@ -152,30 +167,43 @@ fn roots_are_pinned_then_specs_then_the_source() {
         assert!(registry.is_root(name), "{name}");
     }
     assert!(!registry.is_root("ec2"));
-    let pinned = registry.root("s3").unwrap_or_else(|| panic!("s3 is pinned"));
+    let pinned = root(&registry, "s3");
     assert_eq!(pinned.kind, CommandKind::Basic);
     assert_eq!(
         pinned.subcommands.as_deref().map(<[&str]>::len),
         awscli_argparse::tables::S3.subcommands.map(<[_]>::len)
     );
-    let spec = registry.root("zlocal").unwrap_or_else(|| panic!("zlocal is a spec"));
+    let spec = root(&registry, "zlocal");
     assert_eq!(spec.kind, CommandKind::Basic);
-    assert_eq!(spec.subcommands.as_deref(), Some(&["show", "pinned-only"][..]));
-    let service = registry.root("zsvc").unwrap_or_else(|| panic!("zsvc is derived"));
+    let children = ["show", "pinned-only"];
+    assert_eq!(spec.subcommands.as_deref(), Some(&children[..]));
+    let service = root(&registry, "zsvc");
     assert_eq!(service.kind, CommandKind::Service);
-    assert_eq!(service.subcommands.as_deref(), Some(&["get-thing", "list-things"][..]));
-    let operation = registry
-        .subcommand(&["zsvc"], "get-thing")
-        .unwrap_or_else(|| panic!("get-thing is derived"));
+    let operations = ["get-thing", "list-things"];
+    assert_eq!(service.subcommands.as_deref(), Some(&operations[..]));
+}
+
+#[test]
+fn children_come_from_the_tree_that_owns_the_root() {
+    let source = Fake;
+    let registry = registry(&source);
+    let child = |lineage: &[&str], name: &str| {
+        registry
+            .subcommand(lineage, name)
+            .unwrap_or_else(|| panic!("{lineage:?} has {name}"))
+    };
+    let operation = child(&["zsvc"], "get-thing");
     assert_eq!(operation.kind, CommandKind::Operation);
     assert_eq!(&*operation.arguments, THING_ARGUMENTS);
     assert!(operation.subcommands.is_none());
-    let child = registry
-        .subcommand(&["zlocal"], "show")
-        .unwrap_or_else(|| panic!("show is a spec"));
-    assert_eq!(&*child.arguments, SHOW_ARGUMENTS);
+    assert_eq!(&*child(&["zlocal"], "show").arguments, SHOW_ARGUMENTS);
+    assert_eq!(child(&["s3"], "ls").kind, CommandKind::Basic);
     assert!(registry.subcommand(&["zsvc"], "nosuch").is_none());
-    assert!(registry.subcommand(&["s3"], "ls").is_some());
+    assert!(
+        registry
+            .subcommand(&["zsvc", "get-thing"], "deeper")
+            .is_none()
+    );
 }
 
 #[test]
@@ -198,7 +226,16 @@ fn failures_render_natively_only_where_the_registry_binds() {
 
 fn parse<'a>(registry: &'a Registry<'_>, args: &[&str]) -> ParseResult<'a> {
     let argv: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
-    awscli_argparse::parse(&argv, &Options::default(), &registry.tables())
+    let mut parsed = awscli_argparse::parse(&argv, &Options::default(), &registry.tables());
+    let variables = std::collections::HashMap::new();
+    let environment = awscli_argparse::unpack::Environment {
+        directory: Path::new("."),
+        variables: &variables,
+        files: &awscli_argparse::unpack::FsParamfiles,
+        preferred_encoding: awscli_argparse::unpack::PreferredEncoding::Locale,
+    };
+    assert!(!awscli_argparse::complete(&mut parsed, &environment));
+    parsed
 }
 
 fn run(invocation: &dyn Invocation) -> (Result<u8, CommandFailure>, Vec<u8>) {
