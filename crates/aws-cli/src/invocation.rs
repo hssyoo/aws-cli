@@ -47,8 +47,8 @@ fn route_and_dispatch(env: &SnapshotEnv, arguments: &[OsString]) -> io::Result<O
         prog: arguments.first().cloned().unwrap_or_else(|| "aws".into()),
         formatter_width: command::formatter_width(env, columns),
     };
-    let mut parsed =
-        awscli_argparse::parse_os(argv, &options, &awscli_argparse::tables::TABLES_DEFAULT);
+    let registry = crate::registry::REGISTRY;
+    let mut parsed = awscli_argparse::parse_os(argv, &options, &registry.tables());
     let files = shared_config::load(&awscli_config::StdFs, env).map_err(io::Error::other)?;
     let boto_config_credentials =
         shared_config::boto_config_supplies_credentials(&awscli_config::StdFs, env)
@@ -75,6 +75,7 @@ fn route_and_dispatch(env: &SnapshotEnv, arguments: &[OsString]) -> io::Result<O
             shared_files: &files,
             boto_config_credentials,
             embedded_trust: payload_embeds_trust(),
+            registry: &registry,
         },
         probe_platform,
         acquire_process_lock,
@@ -102,7 +103,7 @@ fn terminal_columns(is_terminal: bool) -> Option<usize> {
 }
 fn dispatch(
     verdict: Verdict,
-    parsed: &awscli_argparse::ParseResult,
+    parsed: &awscli_argparse::ParseResult<'_>,
     environment: &cli_error::Environment<'_, SnapshotEnv>,
     directory: &std::path::Path,
 ) -> io::Result<Outcome> {
@@ -131,6 +132,16 @@ fn dispatch(
             let status = crate::bootstrap::run_after_preparation(
                 || crate::bootstrap::prepare_native(environment.env),
                 || Ok(run_admitted(&native, environment, parsed, directory)),
+            )?;
+            Ok(Outcome::Status(status as crate::HostExitStatus))
+        }
+        Verdict::Run(run) => {
+            if let Some(reason) = cli_error::dispose_native(environment) {
+                return Ok(Outcome::Python(reason));
+            }
+            let status = crate::bootstrap::run_after_preparation(
+                || crate::bootstrap::prepare_native(environment.env),
+                || Ok(run_registered(&run, environment, parsed, directory)),
             )?;
             Ok(Outcome::Status(status as crate::HostExitStatus))
         }
@@ -170,7 +181,7 @@ fn run_python(
 fn run_admitted(
     native: &cli_router::Native,
     environment: &cli_error::Environment<'_, SnapshotEnv>,
-    parsed: &awscli_argparse::ParseResult,
+    parsed: &awscli_argparse::ParseResult<'_>,
     directory: &std::path::Path,
 ) -> u8 {
     let format = cli_error::command_failure_format(environment, parsed);
@@ -183,10 +194,8 @@ fn run_admitted(
         client: &native.client,
     };
     install_permanent_sigint_watcher();
-    let mut streams = (
-        command_stdout(&native.command),
-        command_stderr(&native.command),
-    );
+    let streams = native.command.streams();
+    let mut streams = (command_stdout(streams), command_stderr(streams));
     let outcome = run_with_debug(native, &context, environment.argv, &mut streams);
     cli_error::forget_unkept_stderr(&mut streams.1);
     let termination = match outcome {
@@ -195,27 +204,53 @@ fn run_admitted(
     };
     cli_error::flush_streams_at_exit(&mut streams.0, &mut streams.1, termination)
 }
-fn command_stdout(command: &cli_router::Command) -> BufferedStream<CommandStdout> {
-    match command {
-        cli_router::Command::S3Ls(_) => {
+/// A run of a registry command: its streams buffered as its policy says, and
+/// a failure it returns rendered as the native handlers' are.
+fn run_registered(
+    run: &cli_router::Run,
+    environment: &cli_error::Environment<'_, SnapshotEnv>,
+    parsed: &awscli_argparse::ParseResult<'_>,
+    directory: &std::path::Path,
+) -> u8 {
+    let format = cli_error::command_failure_format(environment, parsed);
+    install_permanent_sigint_watcher();
+    log_invocation(run.globals.debug, environment.argv);
+    let mut streams = (command_stdout(run.streams), command_stderr(run.streams));
+    let outcome = run.invocation.run(&mut ::command::Context {
+        env: environment.env,
+        shared_files: environment.shared_files,
+        globals: &run.globals,
+        directory,
+        stdout: &mut TextStream::new(&mut streams.0),
+        stderr: &mut TextStream::new(&mut streams.1),
+    });
+    cli_error::forget_unkept_stderr(&mut streams.1);
+    let termination = match outcome {
+        Ok(status) => cli_error::Termination::Exited(status),
+        Err(failure) => report_command_failure(&mut streams.1, &failure, format),
+    };
+    cli_error::flush_streams_at_exit(&mut streams.0, &mut streams.1, termination)
+}
+/// A listing's stdout is unlocked and buffered in small pieces, as
+/// `s3 ls` writes it; every other command's opens the descriptor with the
+/// interpreter's buffer.
+fn command_stdout(streams: ::command::StreamPolicy) -> BufferedStream<CommandStdout> {
+    match streams {
+        ::command::StreamPolicy::Listing => {
             BufferedStream::new(CommandStdout::unlocked(), LISTING_STDOUT_BYTES)
         }
-        cli_router::Command::S3Cp(_)
-        | cli_router::Command::S3Mv(_)
-        | cli_router::Command::S3Rm(_)
-        | cli_router::Command::S3Sync(_) => BufferedStream::new(
-            CommandStdout::open(),
-            cli_error::stream_buffer_len(cli_error::StandardStream::Stdout),
-        ),
+        ::command::StreamPolicy::Transfer | ::command::StreamPolicy::Formatted => {
+            BufferedStream::new(
+                CommandStdout::open(),
+                cli_error::stream_buffer_len(cli_error::StandardStream::Stdout),
+            )
+        }
     }
 }
-fn command_stderr(command: &cli_router::Command) -> BufferedStream<Descriptor> {
-    let capacity = match command {
-        cli_router::Command::S3Ls(_) => REPORT_STDERR_BYTES,
-        cli_router::Command::S3Cp(_)
-        | cli_router::Command::S3Mv(_)
-        | cli_router::Command::S3Rm(_)
-        | cli_router::Command::S3Sync(_) => {
+fn command_stderr(streams: ::command::StreamPolicy) -> BufferedStream<Descriptor> {
+    let capacity = match streams {
+        ::command::StreamPolicy::Listing => REPORT_STDERR_BYTES,
+        ::command::StreamPolicy::Transfer | ::command::StreamPolicy::Formatted => {
             cli_error::stream_buffer_len(cli_error::StandardStream::Stderr)
         }
     };
@@ -251,12 +286,7 @@ fn run_with_debug(
     argv: &[OsString],
     streams: &mut CommandStreams,
 ) -> Result<u8, cli_error::CommandFailure> {
-    let logger = crt::debug::Logger::new(native.globals.debug);
-    logger.record(
-        "awscli.clidriver",
-        &format!("CLI version: aws-cli/{} native", cli_core::AWS_CLI_VERSION),
-    );
-    logger.arguments(argv);
+    let logger = log_invocation(native.globals.debug, argv);
     if native.globals.debug {
         log_credential_source(&logger, native, context);
         native.client.log_resolved(
@@ -267,6 +297,17 @@ fn run_with_debug(
         );
     }
     run_native(native, context, streams)
+}
+/// The `--debug` lines every native command starts with: the version, as
+/// `CLIDriver.main` logs it, and the arguments.
+fn log_invocation(debug: bool, argv: &[OsString]) -> std::sync::Arc<crt::debug::Logger> {
+    let logger = crt::debug::Logger::new(debug);
+    logger.record(
+        "awscli.clidriver",
+        &format!("CLI version: aws-cli/{} native", cli_core::AWS_CLI_VERSION),
+    );
+    logger.arguments(argv);
+    logger
 }
 fn log_credential_source(
     logger: &crt::debug::Logger,

@@ -8,6 +8,7 @@ use std::io;
 use std::process::ExitCode;
 mod invocation;
 mod python;
+mod registry;
 
 #[cfg(all(target_os = "linux", target_env = "musl"))]
 #[global_allocator]
