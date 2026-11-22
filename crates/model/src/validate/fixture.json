@@ -1,0 +1,48 @@
+{
+  "metadata": {"protocol": "json", "apiVersion": "2020-01-01"},
+  "operations": {
+    "Check": {"name": "Check", "http": {"method": "POST", "requestUri": "/"}, "input": {"shape": "In"}},
+    "Bare": {"name": "Bare", "http": {"method": "POST", "requestUri": "/"}}
+  },
+  "shapes": {
+    "In": {
+      "type": "structure",
+      "required": ["Req", "Nested"],
+      "members": {
+        "Req": {"shape": "Str"},
+        "Opt": {"shape": "Str"},
+        "Num": {"shape": "Int"},
+        "Long": {"shape": "Long"},
+        "Dbl": {"shape": "Dbl"},
+        "Fmin": {"shape": "Flt"},
+        "Flag": {"shape": "Bool"},
+        "List": {"shape": "List"},
+        "Map": {"shape": "Map"},
+        "Blob": {"shape": "Blob"},
+        "When": {"shape": "Time"},
+        "Doc": {"shape": "Doc"},
+        "Union": {"shape": "U"},
+        "Nested": {"shape": "Inner"},
+        "Host": {"shape": "Free", "hostLabel": true},
+        "Json": {"shape": "Free", "location": "header", "locationName": "X-J", "jsonvalue": true},
+        "Big": {"shape": "Big"}
+      }
+    },
+    "Str": {"type": "string", "min": 3},
+    "Free": {"type": "string"},
+    "Int": {"type": "integer", "min": 1},
+    "Long": {"type": "long", "min": 10},
+    "Dbl": {"type": "double", "min": 0.5},
+    "Flt": {"type": "float", "min": 1.5},
+    "Bool": {"type": "boolean"},
+    "List": {"type": "list", "member": {"shape": "Str"}, "min": 1},
+    "Map": {"type": "map", "key": {"shape": "Key"}, "value": {"shape": "Int"}},
+    "Key": {"type": "string", "min": 2},
+    "Blob": {"type": "blob"},
+    "Time": {"type": "timestamp"},
+    "Doc": {"type": "structure", "members": {}, "document": true},
+    "U": {"type": "structure", "union": true, "members": {"A": {"shape": "Str"}, "B": {"shape": "Int"}}},
+    "Inner": {"type": "structure", "required": ["X"], "members": {"X": {"shape": "Free"}, "Y": {"shape": "Int"}}},
+    "Big": {"type": "bigInteger"}
+  }
+}

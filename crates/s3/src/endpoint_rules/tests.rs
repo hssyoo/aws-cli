@@ -1,121 +1,34 @@
 use super::*;
 use pyload::format::{flags, testing};
+/// The loader itself moved to `model::payload` with its tests; this checks
+/// that `Rules::load` keeps reporting its failures as `RulesError`.
 #[test]
-fn lexically_latest_rules_and_service_validation() -> Result<(), Box<dyn std::error::Error>> {
-    let blob = testing::blob(
-        &[
-            testing::entry(
-                b"awscli/botocore/data/s3/2006-03-01/endpoint-rule-set-1.json",
-                b"old",
-                flags::RESOURCE,
-            ),
-            testing::entry(
-                b"awscli/botocore/data/s3/2099-01-01/endpoint-rule-set-1.json",
-                b"new",
-                flags::RESOURCE,
-            ),
-            testing::entry(
-                b"awscli/botocore/data/s3/9999/other.json",
-                b"ignore",
-                flags::RESOURCE,
-            ),
-        ],
-        false,
-        2,
-    );
-    let view = View::new(&blob)?;
-    let name = versioned_resource_name(view, "s3", "endpoint-rule-set-1")?;
-    assert_eq!(
-        name,
-        b"awscli/botocore/data/s3/2099-01-01/endpoint-rule-set-1.json"
-    );
-    assert_eq!(load_resource(view, name)?, b"new");
-    for service in ["", "s3/../ec2", "s3_", "s3."] {
-        assert!(matches!(
-            versioned_resource_name(view, service, "endpoint-rule-set-1"),
-            Err(RulesError::InvalidServiceName)
-        ));
-    }
-    assert!(matches!(
-        versioned_resource_name(view, "ec2", "endpoint-rule-set-1"),
-        Err(RulesError::MissingEndpointRules)
-    ));
-    Ok(())
-}
-#[test]
-fn compressed_rules_decode_through_the_reserved_scratch() -> Result<(), Box<dyn std::error::Error>>
-{
+fn rule_loading_failures_keep_their_rules_errors() -> Result<(), Box<dyn std::error::Error>> {
     let rules = br#"{"version":"1.0"}"#;
     let frame = testing::raw_zstd_frame(rules)?;
-    let mut compressed = testing::entry(
-        b"awscli/botocore/data/s3/2006-03-01/endpoint-rule-set-1.json",
-        &frame,
-        flags::RESOURCE | flags::COMPRESSED,
-    );
-    compressed.raw_len = u32::try_from(rules.len())?;
-    let mut corrupt = testing::entry(
-        b"awscli/botocore/data/s3/2006-03-01/endpoint-tests-1.json",
-        &frame,
-        flags::RESOURCE | flags::COMPRESSED,
-    );
-    corrupt.raw_len = compressed.raw_len + 1;
-    let blob = testing::blob(&[compressed, corrupt], false, 2);
-    let view = View::new(&blob)?;
-    let name = versioned_resource_name(view, "s3", "endpoint-rule-set-1")?;
-    assert_eq!(load_resource(view, name)?, rules);
-    assert!(matches!(
-        load_resource(
-            view,
-            b"awscli/botocore/data/s3/2006-03-01/endpoint-tests-1.json"
-        ),
-        Err(RulesError::Decode(pyload::decompress::Error::DecodeFailed))
-    ));
-    Ok(())
-}
-#[test]
-fn compressed_rule_decode_failures_keep_the_decoder_error_names()
--> Result<(), Box<dyn std::error::Error>> {
-    let rules = br#"{"version":"1.0"}"#;
-    let frame = testing::raw_zstd_frame(rules)?;
-    let corrupt_name = b"awscli/botocore/data/s3/2006-03-01/endpoint-rule-set-1.json";
-    let mut corrupt = testing::entry(
-        corrupt_name,
-        b"not a zstd frame",
-        flags::RESOURCE | flags::COMPRESSED,
-    );
-    corrupt.raw_len = u32::try_from(rules.len())?;
-    let over_long_name = b"awscli/botocore/data/s3/2099-01-01/endpoint-rule-set-1.json";
-    let mut over_long = testing::entry(over_long_name, &frame, flags::RESOURCE | flags::COMPRESSED);
+    let name = b"awscli/botocore/data/s3/2099-01-01/endpoint-rule-set-1.json";
+    let mut over_long = testing::entry(name, &frame, flags::RESOURCE | flags::COMPRESSED);
     over_long.raw_len = u32::try_from(rules.len() - 1)?;
-    let blob = testing::blob(&[corrupt, over_long], false, 2);
+    let blob = testing::blob(&[over_long], false, 2);
     let view = View::new(&blob)?;
-    for (name, expected, text) in [
-        (
-            &corrupt_name[..],
-            pyload::decompress::Error::DecodeFailed,
-            "DecodeFailed",
-        ),
-        (
-            &over_long_name[..],
-            pyload::decompress::Error::OutputLengthMismatch,
-            "OutputLengthMismatch",
-        ),
-    ] {
-        let error = load_resource(view, name)
-            .err()
-            .ok_or("a corrupt compressed rule set loaded")?;
-        assert!(
-            matches!(&error, RulesError::Decode(actual) if *actual == expected),
-            "{error:?}"
-        );
-        assert_eq!(error.to_string(), text);
-    }
     assert!(matches!(
         Rules::load(view, "s3"),
         Err(RulesError::Decode(
             pyload::decompress::Error::OutputLengthMismatch
         ))
     ));
+    assert!(matches!(
+        Rules::load(view, "s3/../ec2"),
+        Err(RulesError::InvalidServiceName)
+    ));
+    assert!(matches!(
+        Rules::load(view, "ec2"),
+        Err(RulesError::MissingEndpointRules)
+    ));
+    let plain = testing::entry(name, rules, flags::RESOURCE);
+    let blob = testing::blob(&[plain], false, 2);
+    let error = Rules::load(View::new(&blob)?, "s3").err().ok_or("no partitions loaded")?;
+    assert!(matches!(error, RulesError::MissingEndpointRules), "{error:?}");
     Ok(())
 }
 pub(crate) fn payload() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
