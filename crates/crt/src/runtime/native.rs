@@ -1,5 +1,6 @@
 use super::{
-    Lifecycle, RuntimeLifecycleOps, RuntimeOptions, Stage, Trust, effective_signing_region,
+    HTTP_STAGES, Lifecycle, RuntimeLifecycleOps, RuntimeOptions, STAGES, Stage, Trust,
+    effective_signing_region,
 };
 use crate::crt_error::{check_keeping_status, check_pointer};
 use crate::s3::TransferResult;
@@ -158,8 +159,8 @@ struct NativeOps {
     /// until the credentials stage's shutdown.
     delegate: crate::credentials::native::Pinned,
     /// The requests sent over aws-c-http on this runtime's bootstrap, which
-    /// the credentials stage's release closes so that the bootstrap's does
-    /// not wait for a response.
+    /// the release of the first stage after the bootstrap closes, so that
+    /// the bootstrap's does not wait for a response.
     http: Arc<crate::http::Shared>,
     logger: Option<std::sync::Arc<crate::debug::Logger>>,
 }
@@ -170,9 +171,12 @@ fn construction_failure(logger: Option<&crate::debug::Logger>, code: i32) -> Box
     Box::new(TransferResult::from_crt_error(code))
 }
 impl NativeOps {
+    /// `signs` for a runtime with the credentials stage, whose HTTP
+    /// requests it can sign.
     fn new(
         options: &RuntimeOptions,
         logger: Option<std::sync::Arc<crate::debug::Logger>>,
+        signs: bool,
     ) -> Result<Self, Box<TransferResult>> {
         // SAFETY: allocator query/allocation have no external pointer arguments.
         let pointer = check_pointer(unsafe { c::zaws_runtime_allocate() })
@@ -187,7 +191,7 @@ impl NativeOps {
                 .map(crate::source_pool::FactoryConfig::new)
                 .map(Box::new),
             delegate: Box::new(options.credentials.delegate()),
-            http: Arc::new(crate::http::Shared::new(pointer)),
+            http: Arc::new(crate::http::Shared::new(pointer, signs)),
             logger,
         })
     }
@@ -304,7 +308,10 @@ impl RuntimeLifecycleOps for NativeOps {
         Err(failure)
     }
     fn release(&mut self, stage: Stage) {
-        if stage == Stage::Credentials {
+        // Before the credentials stage, whose delegate may wait on a
+        // request, or else before the TLS context of a runtime without one:
+        // either way before the bootstrap. A second close finds nothing new.
+        if matches!(stage, Stage::Credentials | Stage::Tls) {
             self.http.close();
         }
         // SAFETY: lifecycle releases a completed stage once, before dependencies.
@@ -344,35 +351,44 @@ pub(crate) unsafe extern "C" fn on_shutdown(data: *mut c_void) {
 }
 #[cfg(test)]
 mod tests;
-/// A runtime whose signing and region storage remain pinned in its C holder.
+/// A runtime with only the stages an HTTP client needs ([`HTTP_STAGES`]):
+/// no S3 client, and no credentials to sign with, so a request that asks to
+/// be signed fails as one whose delegate found none does. It serves a
+/// caller that only reaches a service over [`HttpRuntime::http_client`],
+/// such as a credentials delegate asking its metadata service.
+///
+/// A [`Runtime`] is one of these with every stage started, which it hands
+/// its credentials' delegate ([`crate::credentials::Delegate::attach`]).
 #[derive(Debug)]
-pub struct Runtime {
+pub struct HttpRuntime {
     lifecycle: Lifecycle<NativeOps>,
     options: RuntimeOptions,
     logger: Option<std::sync::Arc<crate::debug::Logger>>,
 }
 // SAFETY: CRT submission APIs are thread-safe and options remain immutable;
 // exclusive drop waits for every callback and dependent resource shutdown.
-unsafe impl Send for Runtime {}
-// SAFETY: concurrent access only submits to the CRT's synchronized client.
-unsafe impl Sync for Runtime {}
-impl Runtime {
-    /// Builds the runtime from explicitly captured process configuration.
-    pub fn new(options: RuntimeOptions) -> Result<Self, Box<TransferResult>> {
-        Self::build(options, None)
+unsafe impl Send for HttpRuntime {}
+// SAFETY: concurrent access only submits to the CRT's synchronized clients.
+unsafe impl Sync for HttpRuntime {}
+impl HttpRuntime {
+    /// Builds the HTTP stages from `options`, of which they read the event
+    /// loop count and the trust, and hands the runtime to the delegate of
+    /// `options.credentials`, which may ask its service now. The logger
+    /// stays with the runtime throughout its shutdown.
+    pub fn new_with_logger(
+        options: RuntimeOptions,
+        logger: std::sync::Arc<crate::debug::Logger>,
+    ) -> Result<Self, Box<TransferResult>> {
+        Self::build(options, Some(logger), &HTTP_STAGES)
     }
     fn build(
         options: RuntimeOptions,
         logger: Option<std::sync::Arc<crate::debug::Logger>>,
+        stages: &'static [Stage],
     ) -> Result<Self, Box<TransferResult>> {
-        if options
-            .max_attempts
-            .is_some_and(|attempts| !(RETRY_ATTEMPTS_MIN..=RETRY_ATTEMPTS_MAX).contains(&attempts))
-        {
-            return Err(Box::new(TransferResult::invalid_argument()));
-        }
-        let ops = NativeOps::new(&options, logger.clone())?;
-        let lifecycle = Lifecycle::new(ops, &options)?;
+        let signs = stages.contains(&Stage::Credentials);
+        let ops = NativeOps::new(&options, logger.clone(), signs)?;
+        let lifecycle = Lifecycle::with_stages(ops, stages, &options)?;
         let runtime = Self {
             lifecycle,
             options,
@@ -393,13 +409,6 @@ impl Runtime {
         }
         Ok(runtime)
     }
-    /// Retains the process logger throughout this runtime's shutdown.
-    pub fn new_with_logger(
-        options: RuntimeOptions,
-        logger: std::sync::Arc<crate::debug::Logger>,
-    ) -> Result<Self, Box<TransferResult>> {
-        Self::build(options, Some(logger))
-    }
     /// Returns immutable options used for this runtime.
     pub fn options(&self) -> &RuntimeOptions {
         &self.options
@@ -409,16 +418,68 @@ impl Runtime {
     pub fn logger(&self) -> Option<std::sync::Arc<crate::debug::Logger>> {
         self.logger.clone()
     }
-    pub(crate) fn record_outcome(&self, code: i32, status: i32) {
-        if let Some(logger) = &self.logger {
-            super::super::s3::record_outcome(logger, code, status);
-        }
-    }
-    pub(crate) fn pointer(&self) -> *mut c::Runtime {
+    fn pointer(&self) -> *mut c::Runtime {
         self.lifecycle.ops().pointer.as_ptr()
     }
     /// What this runtime's HTTP clients share with it.
     pub(crate) fn http(&self) -> Arc<crate::http::Shared> {
         Arc::clone(&self.lifecycle.ops().http)
+    }
+}
+/// A runtime whose signing and region storage remain pinned in its C holder.
+#[derive(Debug)]
+pub struct Runtime {
+    http: HttpRuntime,
+}
+impl Runtime {
+    /// Builds the runtime from explicitly captured process configuration.
+    pub fn new(options: RuntimeOptions) -> Result<Self, Box<TransferResult>> {
+        Self::build(options, None)
+    }
+    fn build(
+        options: RuntimeOptions,
+        logger: Option<std::sync::Arc<crate::debug::Logger>>,
+    ) -> Result<Self, Box<TransferResult>> {
+        if options
+            .max_attempts
+            .is_some_and(|attempts| !(RETRY_ATTEMPTS_MIN..=RETRY_ATTEMPTS_MAX).contains(&attempts))
+        {
+            return Err(Box::new(TransferResult::invalid_argument()));
+        }
+        HttpRuntime::build(options, logger, &STAGES).map(|http| Self { http })
+    }
+    /// Retains the process logger throughout this runtime's shutdown.
+    pub fn new_with_logger(
+        options: RuntimeOptions,
+        logger: std::sync::Arc<crate::debug::Logger>,
+    ) -> Result<Self, Box<TransferResult>> {
+        Self::build(options, Some(logger))
+    }
+    /// The runtime's HTTP stages and what they serve, which its
+    /// credentials' delegate is handed.
+    pub fn http_runtime(&self) -> &HttpRuntime {
+        &self.http
+    }
+    /// Returns immutable options used for this runtime.
+    pub fn options(&self) -> &RuntimeOptions {
+        self.http.options()
+    }
+    /// The process logger this runtime retains, which its credentials'
+    /// delegate records to under `--debug`.
+    pub fn logger(&self) -> Option<std::sync::Arc<crate::debug::Logger>> {
+        self.http.logger()
+    }
+    pub(crate) fn record_outcome(&self, code: i32, status: i32) {
+        if let Some(logger) = &self.http.logger {
+            super::super::s3::record_outcome(logger, code, status);
+        }
+    }
+    pub(crate) fn pointer(&self) -> *mut c::Runtime {
+        self.http.pointer()
+    }
+    /// A client that sends on this runtime's bootstrap until the runtime
+    /// begins to close, and signs with its credentials.
+    pub fn http_client(&self) -> crate::http::Client {
+        self.http.http_client()
     }
 }

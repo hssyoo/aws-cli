@@ -36,6 +36,16 @@ fn rule_loading_failures_keep_their_rules_errors() -> Result<(), Box<dyn std::er
     );
     Ok(())
 }
+use crt::endpoints::ParamValue;
+/// The S3 client's settings, as a plain client sets them.
+const SETTINGS: [(&str, ParamValue<'_>); 6] = [
+    ("UseFIPS", ParamValue::Boolean(false)),
+    ("UseDualStack", ParamValue::Boolean(false)),
+    ("ForcePathStyle", ParamValue::Boolean(false)),
+    ("Accelerate", ParamValue::Boolean(false)),
+    ("UseGlobalEndpoint", ParamValue::Boolean(false)),
+    ("DisableMultiRegionAccessPoints", ParamValue::Boolean(false)),
+];
 pub(crate) fn payload() -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let prefix = std::env::var_os("AWS_NATIVE_FALLBACK_PREFIX")
         .ok_or("AWS_NATIVE_FALLBACK_PREFIX must name the fallback payload prefix")?;
@@ -62,16 +72,10 @@ fn embedded_s3_bucket_partition_endpoint_variants() -> Result<(), Box<dyn std::e
         ("cn-north-1", None, "https://s3.cn-north-1.amazonaws.com.cn"),
         ("us-east-1", None, "https://s3.us-east-1.amazonaws.com"),
     ] {
-        let parameters = crt::endpoints::Parameters {
-            region,
-            bucket,
-            force_path_style: Some(false),
-            accelerate: Some(false),
-            use_global_endpoint: Some(false),
-            disable_multi_region_access_points: Some(false),
-            ..Default::default()
-        };
-        let resolved = resolve(view, "s3", parameters)?;
+        let mut parameters = vec![("Region", ParamValue::String(region))];
+        parameters.extend(bucket.map(|bucket| ("Bucket", ParamValue::String(bucket))));
+        parameters.extend(SETTINGS);
+        let resolved = resolve(view, "s3", &parameters)?;
         assert!(
             matches!(
                 &resolved,
@@ -88,22 +92,18 @@ fn resolutions_survive_runtime_libraries_released_around_them()
 -> Result<(), Box<dyn std::error::Error>> {
     let payload = payload()?;
     let rules = Rules::load(View::new(&payload)?, "s3")?;
-    let parameters = crt::endpoints::Parameters {
-        region: "us-west-2",
-        bucket: Some("plain-bucket"),
-        force_path_style: Some(false),
-        accelerate: Some(false),
-        use_global_endpoint: Some(false),
-        disable_multi_region_access_points: Some(false),
-        ..Default::default()
-    };
+    let mut parameters = vec![
+        ("Region", ParamValue::String("us-west-2")),
+        ("Bucket", ParamValue::String("plain-bucket")),
+    ];
+    parameters.extend(SETTINGS);
     std::thread::scope(|scope| {
         let resolving: Vec<_> = (0..2)
             .map(|_| {
                 scope.spawn(|| {
                     (0..50).all(|_| {
                         matches!(
-                            rules.resolve(parameters),
+                            rules.resolve(&parameters),
                             Ok(crt::endpoints::Resolved::Endpoint { .. })
                         )
                     })

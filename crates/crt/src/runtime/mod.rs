@@ -142,6 +142,8 @@ const _: () = {
     assert!(Stage::Credentials as u32 == c::STAGE_CREDENTIALS);
     assert!(Stage::Client as u32 == c::STAGE_CLIENT);
 };
+/// The stages of a [`Runtime`], in the order they start: every stage, so
+/// that it can send S3 requests on its client as well as HTTP requests.
 const STAGES: [Stage; 8] = [
     Stage::Endpoint,
     Stage::Region,
@@ -151,6 +153,15 @@ const STAGES: [Stage; 8] = [
     Stage::Tls,
     Stage::Credentials,
     Stage::Client,
+];
+/// The stages of an [`HttpRuntime`]: the ones its HTTP client connects
+/// with, the event loop, resolver and bootstrap, and the TLS context of
+/// its `https` requests. Without the credentials stage it signs nothing.
+const HTTP_STAGES: [Stage; 4] = [
+    Stage::EventLoop,
+    Stage::Resolver,
+    Stage::Bootstrap,
+    Stage::Tls,
 ];
 /// Socket-free seam exercising the same acquisition and release order as CRT.
 pub trait RuntimeLifecycleOps {
@@ -164,19 +175,33 @@ pub trait RuntimeLifecycleOps {
 #[derive(Debug)]
 pub struct Lifecycle<O: RuntimeLifecycleOps> {
     ops: O,
+    /// The stages to start, each after those it depends on.
+    stages: &'static [Stage],
     completed: usize,
     library: bool,
 }
 impl<O: RuntimeLifecycleOps> Lifecycle<O> {
-    /// Initializes in order and cleans every completed stage on failure.
-    pub fn new(mut ops: O, options: &RuntimeOptions) -> Result<Self, O::Error> {
+    /// Initializes every stage in order and cleans every completed stage
+    /// on failure.
+    pub fn new(ops: O, options: &RuntimeOptions) -> Result<Self, O::Error> {
+        Self::with_stages(ops, &STAGES, options)
+    }
+    /// [`Lifecycle::new`] for only `stages`, which keep the full graph's
+    /// order: a stage's dependencies come before it.
+    fn with_stages(
+        mut ops: O,
+        stages: &'static [Stage],
+        options: &RuntimeOptions,
+    ) -> Result<Self, O::Error> {
+        debug_assert!(stages.is_sorted_by_key(|stage| *stage as u32), "{stages:?}");
         ops.acquire_library();
         let mut lifecycle = Self {
             ops,
+            stages,
             completed: 0,
             library: true,
         };
-        for stage in STAGES {
+        for &stage in stages {
             lifecycle.ops.start(stage, options)?;
             lifecycle.completed += 1;
         }
@@ -190,7 +215,7 @@ impl<O: RuntimeLifecycleOps> Lifecycle<O> {
     pub fn close(&mut self) {
         while self.completed > 0 {
             self.completed -= 1;
-            self.ops.release(STAGES[self.completed]);
+            self.ops.release(self.stages[self.completed]);
         }
         if self.library {
             self.library = false;
@@ -208,7 +233,7 @@ mod native;
 #[doc(inline)]
 pub use bucket::BucketRuntime;
 #[doc(inline)]
-pub use native::{Library, Runtime, SdkutilsLibrary};
+pub use native::{HttpRuntime, Library, Runtime, SdkutilsLibrary};
 pub fn platform() -> cli_core::client_config::Platform {
     static PLATFORM: std::sync::OnceLock<cli_core::client_config::Platform> =
         std::sync::OnceLock::new();

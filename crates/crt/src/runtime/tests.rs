@@ -67,6 +67,49 @@ fn lifecycle_failures_release_every_completed_stage_in_reverse() {
         assert_eq!(*lock(&events), expected);
     }
 }
+/// An HTTP runtime's lifecycle starts only the HTTP stages, in the full
+/// graph's order, and releases them in reverse, on success and on failure.
+#[test]
+fn an_http_lifecycle_runs_only_the_http_stages() {
+    let starts = |stages: &[Stage]| stages.iter().map(|s| Event::Start(*s)).collect::<Vec<_>>();
+    let releases = |stages: &[Stage]| {
+        stages
+            .iter()
+            .rev()
+            .map(|s| Event::Release(*s))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        HTTP_STAGES,
+        [
+            Stage::EventLoop,
+            Stage::Resolver,
+            Stage::Bootstrap,
+            Stage::Tls
+        ]
+    );
+    for fail_at in [None, Some(Stage::Bootstrap)] {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let ops = FakeRuntimeLifecycle {
+            events: events.clone(),
+            fail_at,
+            options: Arc::new(Mutex::new(Vec::new())),
+        };
+        let lifecycle = Lifecycle::with_stages(ops, &HTTP_STAGES, &RuntimeOptions::default());
+        assert_eq!(lifecycle.is_err(), fail_at.is_some());
+        drop(lifecycle);
+        let started = match fail_at {
+            Some(_) => &HTTP_STAGES[..3],
+            None => &HTTP_STAGES[..],
+        };
+        let released = &started[..started.len() - usize::from(fail_at.is_some())];
+        let mut expected = vec![Event::LibraryInit];
+        expected.extend(starts(started));
+        expected.extend(releases(released));
+        expected.push(Event::LibraryCleanup);
+        assert_eq!(*lock(&events), expected, "{fail_at:?}");
+    }
+}
 #[test]
 fn lifecycle_success_forwards_options_and_releases_once() -> Result<(), String> {
     let events = Arc::new(Mutex::new(Vec::new()));

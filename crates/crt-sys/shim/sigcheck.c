@@ -1,4 +1,5 @@
 #include "native.h"
+#include "testing.h"
 #include <aws/auth/auth.h>
 #include <aws/common/allocator.h>
 #include <aws/common/cross_process_lock.h>
@@ -24,8 +25,8 @@ LAYOUT(aws_s3_meta_request_result,40); OFFSET(aws_s3_meta_request_result,error_c
 LAYOUT(zaws_runtime_options,200); OFFSET(zaws_runtime_options,pool_factory,96);
 OFFSET(zaws_runtime_options,verify_peer,176); OFFSET(zaws_runtime_options,credentials_delegate,184);
 LAYOUT(zaws_credentials_view,72); OFFSET(zaws_credentials_view,expiration_timepoint_seconds,64);
-LAYOUT(zaws_http_options,112); OFFSET(zaws_http_options,headers,80); OFFSET(zaws_http_options,port,96); OFFSET(zaws_http_options,connect_timeout_ms,100);
-OFFSET(zaws_http_options,tls,104);
+LAYOUT(zaws_http_options,144); OFFSET(zaws_http_options,body,80); OFFSET(zaws_http_options,tunnel_host,96); OFFSET(zaws_http_options,headers,112); OFFSET(zaws_http_options,port,128);
+OFFSET(zaws_http_options,connect_timeout_ms,132); OFFSET(zaws_http_options,tunnel_port,136); OFFSET(zaws_http_options,tls,140);
 LAYOUT(zaws_runtime_snapshot,72); OFFSET(zaws_runtime_snapshot,anonymous,60);
 LAYOUT(zaws_signing_snapshot,56);
 LAYOUT(zaws_credentials_snapshot,1);
@@ -89,6 +90,12 @@ CHECK(zaws_credentials_complete, void,aws_on_get_credentials_callback_fn *,void 
 CHECK(zaws_http_request, struct zaws_http_call *,struct zaws_runtime *,const struct zaws_http_options *,zaws_http_event_fn *,zaws_http_finish_fn *,void *);
 CHECK(zaws_http_cancel, void,struct zaws_http_call *);
 CHECK(zaws_http_release, void,struct zaws_http_call *);
+#ifdef ZAWS_TESTING
+CHECK(zaws_test_tls_new, struct zaws_test_tls *,void);
+CHECK(zaws_test_tls_ca, struct aws_byte_cursor,const struct zaws_test_tls *);
+CHECK(zaws_test_tls_serve, bool,struct zaws_test_tls *,int,struct aws_byte_cursor,uint8_t *,size_t,size_t *);
+CHECK(zaws_test_tls_destroy, void,struct zaws_test_tls *);
+#endif
 LAYOUT(zaws_file_length_ops,32); OFFSET(zaws_file_length_ops,data,24);
 LAYOUT(zaws_option_snapshot,72); OFFSET(zaws_option_snapshot,out_of_order,4);
 OFFSET(zaws_option_snapshot,headers,12); OFFSET(zaws_option_snapshot,hint,16); LAYOUT(zaws_proxy_snapshot,32);
@@ -125,6 +132,7 @@ CHECK(aws_endpoints_request_context_new,struct aws_endpoints_request_context *,s
 CHECK(aws_endpoints_request_context_release,struct aws_endpoints_request_context *,struct aws_endpoints_request_context *);
 CHECK(aws_endpoints_request_context_add_string,int,struct aws_allocator *,struct aws_endpoints_request_context *,struct aws_byte_cursor,struct aws_byte_cursor);
 CHECK(aws_endpoints_request_context_add_boolean,int,struct aws_allocator *,struct aws_endpoints_request_context *,struct aws_byte_cursor,bool);
+CHECK(aws_endpoints_request_context_add_string_array,int,struct aws_allocator *,struct aws_endpoints_request_context *,struct aws_byte_cursor,const struct aws_byte_cursor *,size_t);
 CHECK(aws_endpoints_rule_engine_resolve,int,struct aws_endpoints_rule_engine *,const struct aws_endpoints_request_context *,struct aws_endpoints_resolved_endpoint **);
 CHECK(aws_endpoints_resolved_endpoint_get_type,enum aws_endpoints_resolved_endpoint_type,const struct aws_endpoints_resolved_endpoint *);
 CHECK(aws_endpoints_resolved_endpoint_get_url,int,const struct aws_endpoints_resolved_endpoint *,struct aws_byte_cursor *);

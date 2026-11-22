@@ -114,3 +114,25 @@ fn prepared_libraries_are_the_crt_prefix_and_build_nothing() -> Result<()> {
     assert!(fs::read_dir(&root.0)?.next().is_none());
     Ok(())
 }
+
+#[test]
+fn a_project_s_private_headers_are_installed_at_their_source_path() -> Result<()> {
+    let directory = super::super::tests::Directory::new()?;
+    let source = directory.0.join("aws-c-http");
+    let prefix = directory.0.join("prefix");
+    let header = "include/aws/http/private/proxy_impl.h";
+    assert!(PRIVATE_HEADERS.contains(&("aws-c-http", header)));
+    // A project with no private headers installs nothing, and needs no source.
+    install_private_headers(&source, &prefix, "aws-c-io")?;
+    assert!(!prefix.exists());
+    // A pin without the header fails the project, rather than leaving the shim to compile it out.
+    assert!(install_private_headers(&source, &prefix, "aws-c-http").is_err());
+    fs::create_dir_all(source.join("include/aws/http/private"))?;
+    fs::write(source.join(header), "struct aws_http_proxy_user_data;\n")?;
+    install_private_headers(&source, &prefix, "aws-c-http")?;
+    assert_eq!(
+        fs::read_to_string(prefix.join(header))?,
+        "struct aws_http_proxy_user_data;\n"
+    );
+    Ok(())
+}

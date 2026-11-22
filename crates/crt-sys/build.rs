@@ -104,9 +104,52 @@ fn main() -> Result<(), Box<dyn Error>> {
             "CRT dependency output is incomplete; prepare the selected native link mode".into(),
         );
     }
-    compile_shim(&include, &cc, &ar, &out, target)?;
+    let shim = Shim {
+        proxy_state: proxy_state(&include, system, crt_static)?,
+        testing: testing(target),
+    };
+    compile_shim(&include, &cc, &ar, &out, target, shim)?;
     link_libraries(&library_dir, &out, target, system, crt_static)?;
     link_sanitizer()
+}
+
+/// aws-c-http's private proxy state, which the shim reads to time a
+/// tunnel's CONNECT (`native.c`, `zaws_tunnel_strategy`).
+const PROXY_STATE_HEADER: &str = "aws/http/private/proxy_impl.h";
+
+/// Whether the shim compiles against aws-c-http's private proxy state: only
+/// where the CRT is linked statically from a prefix that carries the header,
+/// installed there from the pinned source that built the library (`cargo
+/// xtask deps crt`), so the layout the shim reads is the one it links. The
+/// managed prefix always carries it. A shared system CRT never qualifies,
+/// even with the header: its library can change under a built binary. There
+/// the tunnel's CONNECT stays untimed, as aws-c-http sends it.
+fn proxy_state(include: &Path, system: bool, crt_static: bool) -> Result<bool, Box<dyn Error>> {
+    let present = include.join(PROXY_STATE_HEADER).is_file();
+    if !system && !present {
+        return Err(format!(
+            "the managed CRT prefix lacks {PROXY_STATE_HEADER}; \
+             rebuild it with cargo xtask deps crt"
+        )
+        .into());
+    }
+    Ok(crt_static && present)
+}
+
+/// What the shim is compiled with beyond its fixed sources.
+#[derive(Clone, Copy)]
+struct Shim {
+    /// Against aws-c-http's private proxy state ([`proxy_state`]).
+    proxy_state: bool,
+    /// With the TLS end of the tests' loopback HTTPS server ([`testing`]).
+    testing: bool,
+}
+
+/// Whether the shim has its test TLS server, `shim/testing.c`: only for
+/// crt-sys's `testing` feature, which crt's tests enable, so no product
+/// build compiles it; and never for Windows, which has no s2n.
+fn testing(target: NativeTarget) -> bool {
+    env::var_os("CARGO_FEATURE_TESTING").is_some() && target != NativeTarget::WindowsMsvc
 }
 
 fn compile_shim(
@@ -115,18 +158,29 @@ fn compile_shim(
     ar: &Path,
     out: &Path,
     target: NativeTarget,
+    shim: Shim,
 ) -> Result<(), Box<dyn Error>> {
-    let sources = [
+    let mut sources = vec![
         "shim/allocator.c",
         "shim/crt_shim.c",
         "shim/native.c",
         "shim/sigcheck.c",
     ];
+    if shim.testing {
+        sources.push("shim/testing.c");
+    }
     let mut objects = Vec::new();
     emit("rerun-if-changed=shim")?;
     for (index, source) in sources.iter().enumerate() {
         let object = out.join(format!("crt-{index}.o"));
-        run(cc, &shim_arguments(source, &object, include, target)?)?;
+        let mut arguments = shim_arguments(source, &object, include, target)?;
+        if shim.proxy_state {
+            arguments.push("-DZAWS_PROXY_STATE=1".into());
+        }
+        if shim.testing {
+            arguments.push("-DZAWS_TESTING=1".into());
+        }
+        run(cc, &arguments)?;
         objects.push(object.into_os_string());
     }
     if target == NativeTarget::LinuxMusl {

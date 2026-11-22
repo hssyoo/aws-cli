@@ -241,6 +241,24 @@ fn query_order_and_bucket_pagination_are_distinct() {
     assert_eq!(names, [b"a"]);
     assert!(parsed.has_more_results);
 }
+/// A query value is quoted as botocore's `quote(value, safe="")` does, the
+/// signer's encoder: only letters, digits and `-._~` stay, and every other
+/// byte, a non-UTF-8 one included, is `%XX` in upper case.
+#[test]
+fn query_values_are_quoted_with_nothing_safe() {
+    let query = Query {
+        operation: Operation::ListBuckets,
+        prefix: b"Az09-._~/ %+\xff\xc3\xa9",
+        delimiter: b"",
+        region: b"",
+        page_size: 0,
+    };
+    expect_path(b"", query, None, "/?prefix=Az09-._~%2F%20%25%2B%FF%C3%A9");
+    assert_eq!(
+        query.build_path(b"", None),
+        format!("/?prefix={}", sigv4::quote_bytes(query.prefix, "")).as_bytes()
+    );
+}
 fn expect_path(base: &[u8], query: Query<'_>, token: Option<&[u8]>, expected: &str) {
     assert_eq!(
         String::from_utf8_lossy(&query.build_path(base, token)),

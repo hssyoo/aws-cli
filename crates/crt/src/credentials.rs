@@ -104,14 +104,17 @@ pub trait Delegate: Send + Sync + fmt::Debug {
     ///
     /// It runs on the thread that builds the runtime, which may wait here:
     /// a delegate whose credentials come from a service the runtime
-    /// reaches, through [`crate::Runtime::http_client`], asks it now.
+    /// reaches, through [`crate::HttpRuntime::http_client`], asks it now.
+    /// That runtime is a [`crate::Runtime`]'s own
+    /// ([`crate::Runtime::http_runtime`]), or an [`crate::HttpRuntime`]
+    /// built only to ask the service.
     ///
     /// # Errors
     /// The delegate cannot serve the runtime, which is then not built: its
     /// construction fails with the code a failed query gives,
     /// `AWS_AUTH_SIGNING_NO_CREDENTIALS`, and the reason stays with the
     /// delegate ([`Delegate::failure`]).
-    fn attach(&self, runtime: &crate::Runtime) -> Result<(), Unavailable> {
+    fn attach(&self, runtime: &crate::HttpRuntime) -> Result<(), Unavailable> {
         let _ = runtime;
         Ok(())
     }

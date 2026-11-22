@@ -1,0 +1,18 @@
+[package]
+name = "sigv4"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sha256 = { path = "../sha256" }
+timestamp = { path = "../timestamp" }
+
+[features]
+# A server's check of a received request's signature, for loopback tests.
+testing = []

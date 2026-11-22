@@ -1,17 +1,18 @@
 //! Endpoint-rule parameters and owned resolutions from the CRT engine.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Parameters<'a> {
-    pub region: &'a str,
-    pub bucket: Option<&'a str>,
-    pub use_fips: bool,
-    pub use_dual_stack: bool,
-    pub endpoint: Option<&'a str>,
-    pub force_path_style: Option<bool>,
-    pub accelerate: Option<bool>,
-    pub use_global_endpoint: Option<bool>,
-    pub disable_multi_region_access_points: Option<bool>,
-    pub use_arn_region: Option<bool>,
+
+/// A rule parameter's value, of one of the kinds a rule set declares
+/// (`String`, `Boolean`, `stringArray`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamValue<'a> {
+    String(&'a str),
+    Boolean(bool),
+    StringArray(&'a [&'a str]),
 }
+/// The parameters of one resolution, each by the name the rule set gives
+/// it, as botocore's `EndpointRulesetResolver` hands the provider its
+/// parameter dict. A parameter left out is unset, which a rule set's
+/// default then fills; a name given twice takes its last value.
+pub type Parameters<'a> = &'a [(&'a str, ParamValue<'a>)];
 /// The two JSON documents a resolution evaluates, named because both are
 /// byte slices that a positional call could swap unnoticed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,3 +49,5 @@ impl std::error::Error for ResolveError {}
 mod native;
 #[doc(inline)]
 pub use native::resolve;
+#[cfg(test)]
+mod tests;

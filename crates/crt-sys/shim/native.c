@@ -4,6 +4,7 @@
 #include <aws/auth/signing.h>
 #include <aws/auth/signing_result.h>
 #include <aws/common/allocator.h>
+#include <aws/common/clock.h>
 #include <aws/common/date_time.h>
 #include <aws/common/error.h>
 #include <aws/common/log_channel.h>
@@ -16,6 +17,7 @@
 #include <aws/common/xml_parser.h>
 #include <aws/http/connection.h>
 #include <aws/http/proxy.h>
+#include <aws/io/channel.h>
 #include <aws/io/socket.h>
 #include <aws/io/stream.h>
 #include <aws/io/retry_strategy.h>
@@ -44,6 +46,8 @@ struct zaws_proxy_options {
     bool destination_tls;
     const struct aws_tls_connection_options *tls_options;
     bool verify_peer;
+    /* How long a tunnel's proxy may take to answer CONNECT. */
+    uint32_t connect_timeout_ms;
 };
 struct zaws_runtime {
     struct aws_allocator *allocator;
@@ -73,6 +77,190 @@ struct zaws_runtime *zaws_runtime_allocate(void) {
     struct zaws_runtime *runtime = aws_mem_calloc(allocator, 1, sizeof(*runtime));
     if (runtime) runtime->allocator = allocator;
     return runtime;
+}
+
+/* A tunnel whose proxy must answer CONNECT within a timeout.
+ *
+ * aws-c-http times a tunnel's TCP connect and its TLS handshakes, but not the CONNECT between them:
+ * it builds the proxy connection without monitoring or a first-byte timeout (proxy_connection.c,
+ * `s_create_tunneling_connection`). A proxy that takes the connection and never answers would hold
+ * the request, and the release of the bootstrap that waits for the channel, until it lets go. This
+ * strategy wraps the tunnel's own (basic auth, or none) and, as the CONNECT is sent, schedules a
+ * task on the proxy connection's channel that shuts the channel down unless a status arrived first.
+ * aws-c-http then fails the connection's setup, as for a proxy that closed it.
+ *
+ * aws-c-http hands the negotiator no handle on that connection, only its private proxy state
+ * (`struct aws_http_proxy_user_data`, aws/http/private/proxy_impl.h). The shim compiles against
+ * that header only where build.rs defines ZAWS_PROXY_STATE: a static CRT whose prefix carries the
+ * header from the pinned source that built it (aws-c-http d19eabf4), so a pin bump that changes
+ * the struct fails to compile. Elsewhere, a shared system CRT in particular, the strategy only
+ * forwards and the CONNECT is sent untimed, as aws-c-http sends it; crt::http's Rust backstop
+ * still bounds its own requests. As a second line, the state is read only when it checks out: the
+ * allocator the negotiator was built with, a CONNECT being made, no status or error yet, and a
+ * connection whose channel runs this thread.
+ *
+ * Delete the deadline once aws-c-http monitors the proxy connection or gives it a first-byte
+ * timeout (proxy_connection.c marks the monitoring options "ToDo"). */
+#ifdef ZAWS_PROXY_STATE
+#include <aws/http/private/proxy_impl.h>
+#endif
+struct zaws_tunnel_strategy {
+    struct aws_http_proxy_strategy base;
+    struct aws_allocator *allocator;
+    struct aws_http_proxy_strategy *auth;
+    uint32_t timeout_ms;
+};
+/* One CONNECT's deadline. The task and the negotiator each hold a reference; both run on the
+ * channel's thread, the negotiator's release excepted, which only drops its reference. */
+struct zaws_connect_deadline {
+    struct aws_channel_task task;
+    struct aws_channel *channel;
+    struct aws_allocator *allocator;
+    struct aws_atomic_var refs;
+    bool answered;
+};
+struct zaws_tunnel_negotiator {
+    struct aws_http_proxy_negotiator base;
+    struct aws_allocator *allocator;
+    struct aws_http_proxy_negotiator *auth;
+    uint32_t timeout_ms;
+    struct zaws_connect_deadline *deadline;
+};
+static void s_deadline_release(struct zaws_connect_deadline *d) {
+    if (d && aws_atomic_fetch_sub(&d->refs, 1) == 1) aws_mem_release(d->allocator, d);
+}
+#ifdef ZAWS_PROXY_STATE
+/* Runs once: on time, or cancelled with the channel's shutdown, when the channel is not touched. */
+static void s_deadline_task(struct aws_channel_task *task, void *arg, enum aws_task_status status) {
+    (void)task;
+    struct zaws_connect_deadline *d = arg;
+    if (status == AWS_TASK_STATUS_RUN_READY && !d->answered) {
+        AWS_LOGF_ERROR(AWS_LS_HTTP_CONNECTION, "id=%p: proxy did not answer CONNECT in time", (void *)d->channel);
+        aws_channel_shutdown(d->channel, AWS_IO_SOCKET_TIMEOUT);
+    }
+    s_deadline_release(d);
+}
+#endif
+/* Schedules the CONNECT's deadline, where the proxy state is compiled in and checks out.
+ *
+ * Only a CONNECT with no status yet is armed, which leaves the retries after a 407 as follows.
+ * - On the same connection (AWS_HPNRD_CURRENT_CONNECTION), aws-c-http keeps the 407 status, so
+ *   the retried CONNECT goes out untimed.
+ * - On a new connection (AWS_HPNRD_NEW_CONNECTION), aws-c-http reuses this negotiator with a reset
+ *   state, so the CONNECT gets a deadline of its own. Marking the last one answered then writes it
+ *   from the new channel's thread while the old channel's task may read it.
+ * Neither is reachable today: basic auth and none answer AWS_HPNRD_STOP, and only the NTLM and
+ * sequence strategies retry, which the shim does not build. Before wrapping one, time a retry on
+ * the same connection and give each connection its own deadline state. */
+static void s_tunnel_arm(struct zaws_tunnel_negotiator *n, void *internal_proxy_user_data) {
+#ifdef ZAWS_PROXY_STATE
+    const struct aws_http_proxy_user_data *ud = internal_proxy_user_data;
+    if (!n->timeout_ms || ud->allocator != n->allocator || ud->state != AWS_PBS_HTTP_CONNECT ||
+        ud->error_code || ud->connect_status_code != AWS_HTTP_STATUS_CODE_UNKNOWN || !ud->proxy_connection) return;
+    struct aws_channel *channel = aws_http_connection_get_channel(ud->proxy_connection);
+    if (!channel || !aws_channel_thread_is_callers_thread(channel)) return;
+    uint64_t now = 0;
+    if (aws_channel_current_clock_time(channel, &now)) return;
+    struct zaws_connect_deadline *d = aws_mem_calloc(n->allocator, 1, sizeof(*d));
+    if (!d) return;
+    d->channel = channel; d->allocator = n->allocator;
+    aws_atomic_init_int(&d->refs, 2);
+    aws_channel_task_init(&d->task, s_deadline_task, d, "zaws_connect_deadline");
+    if (n->deadline) n->deadline->answered = true;
+    s_deadline_release(n->deadline);
+    n->deadline = d;
+    aws_channel_schedule_task_future(channel, &d->task, now + aws_timestamp_convert(n->timeout_ms, AWS_TIMESTAMP_MILLIS, AWS_TIMESTAMP_NANOS, NULL));
+#else
+    (void)n;
+    (void)internal_proxy_user_data;
+#endif
+}
+static const struct aws_http_proxy_negotiator_tunnelling_vtable *s_auth_vtable(const struct zaws_tunnel_negotiator *n) {
+    return n->auth ? n->auth->strategy_vtable.tunnelling_vtable : NULL;
+}
+static void s_tunnel_transform(struct aws_http_proxy_negotiator *negotiator, struct aws_http_message *message, aws_http_proxy_negotiation_terminate_fn *terminate, aws_http_proxy_negotiation_http_request_forward_fn *forward, void *internal_proxy_user_data) {
+    struct zaws_tunnel_negotiator *n = negotiator->impl;
+    s_tunnel_arm(n, internal_proxy_user_data);
+    const struct aws_http_proxy_negotiator_tunnelling_vtable *auth = s_auth_vtable(n);
+    if (auth) {
+        auth->connect_request_transform(n->auth, message, terminate, forward, internal_proxy_user_data);
+    } else {
+        forward(message, internal_proxy_user_data);
+    }
+}
+static int s_tunnel_on_headers(struct aws_http_proxy_negotiator *negotiator, enum aws_http_header_block block, const struct aws_http_header *headers, size_t count) {
+    struct zaws_tunnel_negotiator *n = negotiator->impl;
+    const struct aws_http_proxy_negotiator_tunnelling_vtable *auth = s_auth_vtable(n);
+    return auth && auth->on_incoming_headers_callback ? auth->on_incoming_headers_callback(n->auth, block, headers, count) : AWS_OP_SUCCESS;
+}
+static int s_tunnel_on_status(struct aws_http_proxy_negotiator *negotiator, enum aws_http_status_code status) {
+    struct zaws_tunnel_negotiator *n = negotiator->impl;
+    if (n->deadline) n->deadline->answered = true;
+    const struct aws_http_proxy_negotiator_tunnelling_vtable *auth = s_auth_vtable(n);
+    return auth && auth->on_status_callback ? auth->on_status_callback(n->auth, status) : AWS_OP_SUCCESS;
+}
+static int s_tunnel_on_body(struct aws_http_proxy_negotiator *negotiator, const struct aws_byte_cursor *data) {
+    struct zaws_tunnel_negotiator *n = negotiator->impl;
+    const struct aws_http_proxy_negotiator_tunnelling_vtable *auth = s_auth_vtable(n);
+    return auth && auth->on_incoming_body_callback ? auth->on_incoming_body_callback(n->auth, data) : AWS_OP_SUCCESS;
+}
+static enum aws_http_proxy_negotiation_retry_directive s_tunnel_retry(struct aws_http_proxy_negotiator *negotiator) {
+    struct zaws_tunnel_negotiator *n = negotiator->impl;
+    const struct aws_http_proxy_negotiator_tunnelling_vtable *auth = s_auth_vtable(n);
+    return auth && auth->get_retry_directive ? auth->get_retry_directive(n->auth) : AWS_HPNRD_STOP;
+}
+static struct aws_http_proxy_negotiator_tunnelling_vtable s_tunnel_negotiator_vtable = {
+    .connect_request_transform = s_tunnel_transform,
+    .on_incoming_headers_callback = s_tunnel_on_headers,
+    .on_status_callback = s_tunnel_on_status,
+    .on_incoming_body_callback = s_tunnel_on_body,
+    .get_retry_directive = s_tunnel_retry,
+};
+static void s_tunnel_negotiator_destroy(void *object) {
+    struct zaws_tunnel_negotiator *n = object;
+    s_deadline_release(n->deadline);
+    aws_http_proxy_negotiator_release(n->auth);
+    aws_mem_release(n->allocator, n);
+}
+static struct aws_http_proxy_negotiator *s_tunnel_create_negotiator(struct aws_http_proxy_strategy *strategy, struct aws_allocator *allocator) {
+    struct zaws_tunnel_strategy *s = strategy->impl;
+    struct zaws_tunnel_negotiator *n = aws_mem_calloc(allocator, 1, sizeof(*n));
+    if (!n) return NULL;
+    n->allocator = allocator;
+    n->timeout_ms = s->timeout_ms;
+    if (s->auth && !(n->auth = aws_http_proxy_strategy_create_negotiator(s->auth, allocator))) {
+        aws_mem_release(allocator, n);
+        return NULL;
+    }
+    n->base.impl = n;
+    n->base.strategy_vtable.tunnelling_vtable = &s_tunnel_negotiator_vtable;
+    aws_ref_count_init(&n->base.ref_count, n, s_tunnel_negotiator_destroy);
+    return &n->base;
+}
+static struct aws_http_proxy_strategy_vtable s_tunnel_strategy_vtable = { .create_negotiator = s_tunnel_create_negotiator };
+static void s_tunnel_strategy_destroy(void *object) {
+    struct zaws_tunnel_strategy *s = object;
+    aws_http_proxy_strategy_release(s->auth);
+    aws_mem_release(s->allocator, s);
+}
+/* Takes `auth`, which may be NULL, and releases it on failure too. */
+static struct aws_http_proxy_strategy *s_tunnel_strategy_new(struct aws_allocator *allocator, struct aws_http_proxy_strategy *auth, uint32_t timeout_ms) {
+    struct zaws_tunnel_strategy *s = aws_mem_calloc(allocator, 1, sizeof(*s));
+    if (!s) {
+        aws_http_proxy_strategy_release(auth);
+        return NULL;
+    }
+    s->allocator = allocator; s->auth = auth; s->timeout_ms = timeout_ms;
+    s->base.impl = s;
+    s->base.vtable = &s_tunnel_strategy_vtable;
+    s->base.proxy_connection_type = AWS_HPCT_HTTP_TUNNEL;
+    aws_ref_count_init(&s->base.ref_count, s, s_tunnel_strategy_destroy);
+    return &s->base;
+}
+/* The strategy that authenticates to the proxy, if any: a tunnel's is inside its timed one. */
+static const struct aws_http_proxy_strategy *s_proxy_auth(const struct aws_http_proxy_strategy *strategy) {
+    if (strategy && strategy->vtable == &s_tunnel_strategy_vtable) return ((const struct zaws_tunnel_strategy *)strategy->impl)->auth;
+    return strategy;
 }
 
 /* The port urllib3 gives a proxy URL that names none, or port 0: 443 for an `https` proxy and 80
@@ -122,6 +310,10 @@ static int s_proxy_init(struct zaws_proxy *p, struct aws_allocator *allocator, c
             .user_name = p->uri.user, .password = p->uri.password,
         };
         p->options.proxy_strategy = aws_http_proxy_strategy_new_basic_auth(allocator, &auth);
+        if (!p->options.proxy_strategy) goto fail;
+    }
+    if (o->destination_tls) {
+        p->options.proxy_strategy = s_tunnel_strategy_new(allocator, p->options.proxy_strategy, o->connect_timeout_ms);
         if (!p->options.proxy_strategy) goto fail;
     }
     return AWS_OP_SUCCESS;
@@ -244,6 +436,8 @@ static int s_create_client_proxy(struct zaws_runtime *r, const struct zaws_runti
     struct zaws_proxy_options options = {
         .url = o->proxy_url, .destination_tls = destination_tls,
         .tls_options = r->tls ? &r->tls_options : NULL, .verify_peer = o->verify_peer,
+        /* The S3 client's own connect timeout, 3 seconds when it is 0 (s3_endpoint.c). */
+        .connect_timeout_ms = o->connect_timeout_ms ? o->connect_timeout_ms : 3000,
     };
     return s_proxy_init(&r->proxy, r->allocator, &options);
 }
@@ -355,9 +549,13 @@ struct zaws_http_call {
     /* Live until `finish`: the runtime's bootstrap stage waits for the connection's shutdown. */
     struct zaws_runtime *runtime;
     struct aws_http_message *message;
+    /* The copy of the body the message's stream reads, released after the message. */
+    struct aws_byte_buf body;
     struct aws_signable *signable;
-    struct aws_string *host;
-    uint32_t port, connect_timeout_ms;
+    struct aws_string *host, *tunnel_host;
+    uint32_t port, connect_timeout_ms, tunnel_port;
+    /* The tunnel's timed CONNECT, which aws-c-http's copy of the tunnel's options shares. */
+    struct aws_http_proxy_strategy *tunnel_strategy;
     /* For a call over TLS: the runtime's connection options with this call's server name and
      * negotiation timeout, copied while the caller holds the runtime's TLS stage in place. */
     bool tls;
@@ -377,7 +575,10 @@ void zaws_http_release(struct zaws_http_call *call) {
     if (!call || aws_atomic_fetch_sub(&call->refs, 1) != 1) return;
     aws_signable_destroy(call->signable);
     aws_http_message_release(call->message);
+    aws_byte_buf_clean_up(&call->body);
     aws_string_destroy(call->host);
+    aws_string_destroy(call->tunnel_host);
+    aws_http_proxy_strategy_release(call->tunnel_strategy);
     if (call->tls) aws_tls_connection_options_clean_up(&call->tls_options);
     aws_mutex_clean_up(&call->lock);
     aws_mem_release(call->allocator, call);
@@ -406,16 +607,25 @@ static void s_http_on_shutdown(struct aws_http_connection *connection, int error
     (void)connection; (void)error;
     s_http_call_finish(data);
 }
+/* Reports each header of the final response, in order and as received, and an informational
+ * response's block, or an empty one, as one event without a header. */
 static int s_http_on_headers(struct aws_http_stream *stream, enum aws_http_header_block block, const struct aws_http_header *headers, size_t count, void *data) {
-    (void)stream; (void)block; (void)headers; (void)count;
+    (void)stream;
     struct zaws_http_call *call = data;
-    call->event(ZAWS_HTTP_HEADERS, (struct aws_byte_cursor){0}, call->data);
+    if (block != AWS_HTTP_HEADER_BLOCK_MAIN || !count) {
+        call->event(ZAWS_HTTP_HEADERS, NULL, (struct aws_byte_cursor){0}, call->data);
+        return AWS_OP_SUCCESS;
+    }
+    for (size_t i = 0; i < count; i++) {
+        struct zaws_header header = { .name = headers[i].name, .value = headers[i].value };
+        call->event(ZAWS_HTTP_HEADERS, &header, (struct aws_byte_cursor){0}, call->data);
+    }
     return AWS_OP_SUCCESS;
 }
 static int s_http_on_body(struct aws_http_stream *stream, const struct aws_byte_cursor *body, void *data) {
     (void)stream;
     struct zaws_http_call *call = data;
-    call->event(ZAWS_HTTP_BODY, *body, call->data);
+    call->event(ZAWS_HTTP_BODY, NULL, *body, call->data);
     return AWS_OP_SUCCESS;
 }
 static void s_http_on_stream_complete(struct aws_http_stream *stream, int error, void *data) {
@@ -455,14 +665,16 @@ static void s_http_on_setup(struct aws_http_connection *connection, int error, v
         return;
     }
     /* Reported on this connection's own thread, so before anything of the response. */
-    call->event(ZAWS_HTTP_CONNECTED, (struct aws_byte_cursor){0}, call->data);
+    call->event(ZAWS_HTTP_CONNECTED, NULL, (struct aws_byte_cursor){0}, call->data);
 }
-/* Connects on the runtime's bootstrap, in plaintext or with the call's TLS options. The
- * environment's proxies are never read: a caller with a proxy connects to it and sends an
- * absolute target. */
+/* Connects on the runtime's bootstrap, in plaintext or with the call's TLS options, directly or
+ * through the call's tunnel. The environment's proxies are never read: a caller with a forwarding
+ * proxy connects to it and sends an absolute target. aws-c-http copies the tunnel's options. */
 static int s_http_connect(struct zaws_http_call *call) {
     struct aws_socket_options socket = { .type = AWS_SOCKET_STREAM, .domain = AWS_SOCKET_IPV4, .connect_timeout_ms = call->connect_timeout_ms };
     struct proxy_env_var_settings proxy = { .env_var_type = AWS_HPEV_DISABLE };
+    struct aws_http_proxy_options tunnel = { .connection_type = AWS_HPCT_HTTP_TUNNEL, .port = call->tunnel_port, .proxy_strategy = call->tunnel_strategy };
+    if (call->tunnel_host) tunnel.host = aws_byte_cursor_from_string(call->tunnel_host);
     struct aws_http_client_connection_options options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
     options.allocator = call->allocator;
     options.bootstrap = call->runtime->bootstrap;
@@ -471,6 +683,7 @@ static int s_http_connect(struct zaws_http_call *call) {
     options.socket_options = &socket;
     options.tls_options = call->tls ? &call->tls_options : NULL;
     options.proxy_ev_settings = &proxy;
+    options.proxy_options = call->tunnel_host ? &tunnel : NULL;
     options.user_data = call;
     options.on_setup = s_http_on_setup;
     options.on_shutdown = s_http_on_shutdown;
@@ -517,16 +730,36 @@ static int s_http_init_tls(struct zaws_http_call *call) {
     struct aws_byte_cursor host = aws_byte_cursor_from_string(call->host);
     return aws_tls_connection_options_set_server_name(&call->tls_options, call->allocator, &host);
 }
+/* Attaches the request's body to the message as a stream that reads the caller's bytes in place. */
+static int s_message_body_stream(struct aws_http_message *message, struct aws_byte_cursor body) {
+    if (!body.len) return AWS_OP_SUCCESS;
+    struct aws_input_stream *stream = aws_input_stream_new_from_cursor(rust_crt_allocator(), &body);
+    if (!stream) return AWS_OP_ERR;
+    aws_http_message_set_body_stream(message, stream);
+    aws_input_stream_release(stream);
+    return AWS_OP_SUCCESS;
+}
 static int s_http_init_message(struct zaws_http_call *call, const struct zaws_http_options *o) {
     call->host = aws_string_new_from_cursor(call->allocator, &o->host);
     call->message = aws_http_message_new_request(call->allocator);
     if (!call->host || !call->message) return AWS_OP_ERR;
+    if (o->tunnel_host.len) {
+        call->tunnel_host = aws_string_new_from_cursor(call->allocator, &o->tunnel_host);
+        if (!call->tunnel_host) return AWS_OP_ERR;
+        call->tunnel_port = o->tunnel_port;
+        /* The proxy answers CONNECT within the connect's own bound. */
+        call->tunnel_strategy = s_tunnel_strategy_new(call->allocator, NULL, o->connect_timeout_ms);
+        if (!call->tunnel_strategy) return AWS_OP_ERR;
+    }
     if (aws_http_message_set_request_method(call->message, o->method) || aws_http_message_set_request_path(call->message, o->target)) return AWS_OP_ERR;
     for (size_t i = 0; i < o->header_count; i++) {
         struct aws_http_header header = { .name = o->headers[i].name, .value = o->headers[i].value };
         if (aws_http_message_add_header(call->message, header)) return AWS_OP_ERR;
     }
-    return AWS_OP_SUCCESS;
+    if (!o->body.len) return AWS_OP_SUCCESS;
+    /* A copy, which outlives the message: the caller may stop waiting while the CRT still sends. */
+    if (aws_byte_buf_init_copy_from_cursor(&call->body, call->allocator, o->body)) return AWS_OP_ERR;
+    return s_message_body_stream(call->message, aws_byte_cursor_from_buf(&call->body));
 }
 /* Signs the request with SigV4 for `service` in `region`, through the provider the runtime's
  * credentials stage built or with its anonymous credentials, then connects. The signer copies the
@@ -1045,7 +1278,7 @@ void zaws_debug_emit(struct aws_byte_cursor logger, const char *message) {
 }
 void zaws_proxy_snapshot(struct zaws_runtime *r, struct zaws_proxy_snapshot *out) {
     const struct aws_http_proxy_options *p = &r->proxy.options;
-    *out = (struct zaws_proxy_snapshot){ .host = p->host, .port = p->port, .connection_type = p->connection_type, .strategy = p->proxy_strategy != NULL, .tls = p->tls_options != NULL, .env_disabled = r->s3_proxy_env.env_var_type == AWS_HPEV_DISABLE, .configured = s_proxy_connection_options(&r->proxy) != NULL };
+    *out = (struct zaws_proxy_snapshot){ .host = p->host, .port = p->port, .connection_type = p->connection_type, .strategy = s_proxy_auth(p->proxy_strategy) != NULL, .tls = p->tls_options != NULL, .env_disabled = r->s3_proxy_env.env_var_type == AWS_HPEV_DISABLE, .configured = s_proxy_connection_options(&r->proxy) != NULL };
 }
 bool zaws_runtime_has_custom_tls(struct zaws_runtime *runtime) { return runtime->tls != NULL; }
 int zaws_callback_capture(const struct aws_byte_cursor *names, const struct aws_byte_cursor *values, size_t count, int status, int error_code, zaws_headers_fn *headers, zaws_finish_fn *finish, void *data) {

@@ -43,7 +43,8 @@ impl Query<'_> {
             query = true;
             path.extend_from_slice(name);
             path.push(b'=');
-            append_encoded(&mut path, value);
+            // botocore quotes each query value with no character safe.
+            path.extend_from_slice(sigv4::quote_bytes(value, "").as_bytes());
         };
         if self.operation == Operation::ListObjectsV2 {
             param(b"list-type", b"2", true);
@@ -66,15 +67,5 @@ impl Query<'_> {
             param(b"encoding-type", b"url", true);
         }
         path
-    }
-}
-fn append_encoded(out: &mut Vec<u8>, bytes: &[u8]) {
-    const HEX: &[u8] = b"0123456789ABCDEF";
-    for &byte in bytes {
-        if byte.is_ascii_alphanumeric() || b"-_.~".contains(&byte) {
-            out.push(byte);
-        } else {
-            out.extend_from_slice(&[b'%', HEX[(byte >> 4) as usize], HEX[(byte & 15) as usize]]);
-        }
     }
 }

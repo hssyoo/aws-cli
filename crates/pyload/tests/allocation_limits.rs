@@ -1,5 +1,6 @@
 use fearless_simd as _;
 use ruzstd as _;
+use sha256 as _;
 
 #[path = "allocation_limits/counting.rs"]
 mod counting;

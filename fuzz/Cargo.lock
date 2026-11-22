@@ -68,6 +68,7 @@ dependencies = [
  "crt-sys",
  "libc",
  "numa",
+ "sigv4",
 ]
 
 [[package]]
@@ -191,6 +192,7 @@ version = "0.1.0"
 dependencies = [
  "fearless_simd",
  "ruzstd",
+ "sha256",
 ]
 
 [[package]]
@@ -231,6 +233,7 @@ dependencies = [
  "model",
  "numa",
  "pyload",
+ "sigv4",
 ]
 
 [[package]]
@@ -277,10 +280,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha256"
+version = "0.1.0"
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "sigv4"
+version = "0.1.0"
+dependencies = [
+ "sha256",
+ "timestamp",
+]
 
 [[package]]
 name = "source-pool-fuzz"

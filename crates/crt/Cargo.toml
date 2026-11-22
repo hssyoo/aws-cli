@@ -13,11 +13,15 @@ testing = ["dep:arbitrary"]
 crt-sys = { path = "../crt-sys" }
 cli-core = { path = "../cli-core" }
 numa = { path = "../numa" }
+sigv4 = { path = "../sigv4" }
 libc.workspace = true
 arbitrary = { workspace = true, optional = true }
 
 [dev-dependencies]
 arbitrary.workspace = true
+crt-sys = { path = "../crt-sys", features = ["testing"] }
+sigv4 = { path = "../sigv4", features = ["testing"] }
+timestamp = { path = "../timestamp" }
 
 [lints]
 workspace = true

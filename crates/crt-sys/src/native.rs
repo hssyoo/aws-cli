@@ -111,10 +111,10 @@ pub struct CredentialsView {
     pub expiration_timepoint_seconds: u64,
 }
 /// `struct zaws_http_options`: one request over aws-c-http, outside the S3
-/// client, borrowed for the call. `host` and `port` are where to connect,
-/// in plaintext; `method`, `target` and `headers` are the request as sent,
-/// the Host header included. A nonempty `service` signs it for that service
-/// in `region`.
+/// client, borrowed for the call. `host` and `port` are the server;
+/// `method`, `target`, `headers` and `body` are the request as sent, the
+/// Host header and the body's framing included. A nonempty `service` signs
+/// it for that service in `region`; an empty one sends it as it is.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct HttpOptions {
@@ -123,12 +123,19 @@ pub struct HttpOptions {
     pub target: AwsByteCursor,
     pub region: AwsByteCursor,
     pub service: AwsByteCursor,
+    /// The request body, copied for the call; empty for none. Its
+    /// `Content-Length` is the caller's header.
+    pub body: AwsByteCursor,
+    /// A cleartext proxy to ask, with CONNECT, for a tunnel to `host` and
+    /// `port`; empty for none.
+    pub tunnel_host: AwsByteCursor,
     pub headers: *const Header,
     pub header_count: usize,
     pub port: u32,
     /// Bounds the connect, and again the TLS handshake of a call with
     /// `tls`; nothing bounds the response.
     pub connect_timeout_ms: u32,
+    pub tunnel_port: u32,
     /// Connects with TLS, on the runtime's trust, to the server named
     /// `host`.
     pub tls: bool,
@@ -136,13 +143,16 @@ pub struct HttpOptions {
 /// `ZAWS_HTTP_CONNECTED`: the connection is up and aws-c-http has taken
 /// the request to send.
 pub const HTTP_CONNECTED: c_int = 0;
-/// `ZAWS_HTTP_HEADERS`: some of the response's headers arrived.
+/// `ZAWS_HTTP_HEADERS`: a header of the final response arrived, in the
+/// header pointer, one event each and in order; an informational
+/// response's headers are one event with a null pointer.
 pub const HTTP_HEADERS: c_int = 1;
 /// `ZAWS_HTTP_BODY`: some of the response's body arrived, in the cursor.
 pub const HTTP_BODY: c_int = 2;
-/// An event of a call in flight, on a CRT thread: the `HTTP_` kind, and the
-/// bytes of a body event, borrowed for the callback.
-pub type HttpEventFn = unsafe extern "C" fn(c_int, AwsByteCursor, *mut c_void);
+/// An event of a call in flight, on a CRT thread: the `HTTP_` kind, the
+/// header of a headers event or null, and the bytes of a body event, each
+/// borrowed for the callback.
+pub type HttpEventFn = unsafe extern "C" fn(c_int, *const Header, AwsByteCursor, *mut c_void);
 /// The error code, then the response's status when the code is 0.
 pub type HttpFinishFn = unsafe extern "C" fn(c_int, c_int, *mut c_void);
 /// `struct zaws_http_call`: one request in flight.
@@ -444,11 +454,13 @@ const _: () = {
     assert!(std::mem::offset_of!(RuntimeOptions, credentials_delegate) == 184);
     assert!(std::mem::size_of::<CredentialsView>() == 72);
     assert!(std::mem::offset_of!(CredentialsView, expiration_timepoint_seconds) == 64);
-    assert!(std::mem::size_of::<HttpOptions>() == 112);
-    assert!(std::mem::offset_of!(HttpOptions, tls) == 104);
-    assert!(std::mem::offset_of!(HttpOptions, headers) == 80);
-    assert!(std::mem::offset_of!(HttpOptions, port) == 96);
-    assert!(std::mem::offset_of!(HttpOptions, connect_timeout_ms) == 100);
+    assert!(std::mem::size_of::<HttpOptions>() == 144);
+    assert!(std::mem::offset_of!(HttpOptions, tls) == 140);
+    assert!(std::mem::offset_of!(HttpOptions, tunnel_host) == 96);
+    assert!(std::mem::offset_of!(HttpOptions, headers) == 112);
+    assert!(std::mem::offset_of!(HttpOptions, port) == 128);
+    assert!(std::mem::offset_of!(HttpOptions, connect_timeout_ms) == 132);
+    assert!(std::mem::offset_of!(HttpOptions, tunnel_port) == 136);
     assert!(std::mem::offset_of!(RuntimeOptions, pool_factory) == 96);
     assert!(std::mem::offset_of!(RuntimeOptions, verify_peer) == 176);
     assert!(std::mem::size_of::<RequestOptions>() == 152);

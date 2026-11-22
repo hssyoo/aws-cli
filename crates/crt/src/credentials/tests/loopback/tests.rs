@@ -291,7 +291,7 @@ impl Delegate for Attached {
     fn credentials(&self, query: Query) {
         query.fail();
     }
-    fn attach(&self, runtime: &crate::Runtime) -> Result<(), Unavailable> {
+    fn attach(&self, runtime: &crate::HttpRuntime) -> Result<(), Unavailable> {
         // Nothing listens on the discard port, so the answer is a refusal
         // that the runtime's own threads deliver.
         let refused = runtime.http_client().send(&crate::http::Request {
@@ -301,6 +301,8 @@ impl Delegate for Attached {
             method: "GET",
             target: "/",
             headers: &[("Host", "127.0.0.1:9")],
+            body: &[],
+            tunnel: None,
             signing: None,
             connect_timeout: std::time::Duration::from_secs(5),
             read_timeout: std::time::Duration::from_secs(5),

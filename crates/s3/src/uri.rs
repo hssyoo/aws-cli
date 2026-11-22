@@ -166,18 +166,7 @@ pub fn encode_s3_request_path_key(key: &str) -> String {
 }
 
 pub(crate) fn encode_s3_request_path_key_bytes(key: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut encoded = String::with_capacity(key.len());
-    for &byte in key {
-        if byte.is_ascii_alphanumeric() || b"-_.~/".contains(&byte) {
-            encoded.push(char::from(byte));
-        } else {
-            encoded.push('%');
-            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-            encoded.push(char::from(HEX[usize::from(byte & 15)]));
-        }
-    }
-    encoded
+    sigv4::quote_bytes(key, "/")
 }
 
 /// Whether a key's path, appended to a download root, resolves above that

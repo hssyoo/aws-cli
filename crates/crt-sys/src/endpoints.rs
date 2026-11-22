@@ -53,6 +53,13 @@ c_functions! {
         name: AwsByteCursor,
         value: bool,
     ) -> c_int;
+    pub fn aws_endpoints_request_context_add_string_array(
+        allocator: *mut AwsAllocator,
+        context: *mut Context,
+        name: AwsByteCursor,
+        values: *const AwsByteCursor,
+        len: usize,
+    ) -> c_int;
     pub fn aws_endpoints_rule_engine_resolve(
         engine: *mut Engine,
         context: *const Context,
