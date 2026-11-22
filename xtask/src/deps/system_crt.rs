@@ -89,7 +89,7 @@ fn build_projects(
         process::run(
             tool_command(root, "cmake")?
                 .arg("-S")
-                .arg(input)
+                .arg(&input)
                 .arg("-B")
                 .arg(&work)
                 .args([
@@ -117,6 +117,7 @@ fn build_projects(
                 .args(["--target", "install", "--parallel"])
                 .arg(super::toolchain::jobs()?.to_string()),
         )?;
+        super::crt::install_private_headers(&input, prefix, name)?;
         super::crt::mark_installed(prefix, name)?;
     }
     Ok(())

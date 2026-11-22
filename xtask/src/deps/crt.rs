@@ -31,6 +31,41 @@ const PROJECTS: &[(&str, &str)] = &[
     ("aws-c-s3", "aws_c_s3"),
 ];
 
+/// The private headers of a pinned CRT project that the crt-sys shim reads
+/// beside its public ones, as `(project, path in its source)`. CMake
+/// installs only public headers; these are copied to the same path in the
+/// prefix, so the shim compiles against the layout of the library it links
+/// and a pin bump that changes them fails to compile.
+///
+/// - aws-c-http's proxy state: the shim's tunnel strategy finds the proxy
+///   connection's channel there, to time the CONNECT (crt-sys `native.c`).
+pub(super) const PRIVATE_HEADERS: &[(&str, &str)] =
+    &[("aws-c-http", "include/aws/http/private/proxy_impl.h")];
+
+/// Copy project `name`'s `PRIVATE_HEADERS` from its `source` into `prefix`.
+///
+/// # Errors
+/// Reports a header the source lacks, or a copy that fails.
+pub(super) fn install_private_headers(source: &Path, prefix: &Path, name: &str) -> Result<()> {
+    for &(_, header) in PRIVATE_HEADERS
+        .iter()
+        .filter(|(project, _)| *project == name)
+    {
+        let from = source.join(header);
+        if !from.is_file() {
+            return Err(error(format!(
+                "pinned {name} lacks the private header {header} the CRT shim compiles against"
+            )));
+        }
+        let to = prefix.join(header);
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(&from, &to)?;
+    }
+    Ok(())
+}
+
 /// Build, or reuse, the static CRT prefix: the AWS C libraries, built
 /// against OpenSSL and published with OpenSSL, zlib, and xz.
 ///
@@ -215,6 +250,7 @@ fn project(
         target: "install",
     };
     build.run(root, tools, &project, &arguments(build.prefix, name))?;
+    install_private_headers(&input, build.prefix, name)?;
     mark_installed(build.prefix, name)
 }
 

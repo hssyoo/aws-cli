@@ -347,7 +347,7 @@ impl Delegate for Chain {
     /// runtime that signs with this chain. A runtime built later,
     /// such as a redirect's regional client, signs with what that one
     /// found, and a refresh asks through the newest runtime still there.
-    fn attach(&self, runtime: &crt::Runtime) -> Result<(), Unavailable> {
+    fn attach(&self, runtime: &crt::HttpRuntime) -> Result<(), Unavailable> {
         let Some(metadata) = &self.0.metadata else {
             return Ok(());
         };
@@ -393,8 +393,9 @@ impl Transport for Service {
     /// (`IMDSFetcher.__init__`).
     ///
     /// The requests carry what `http.client` adds to botocore's own: the
-    /// Host header and `Accept-Encoding: identity` first, and a zero
-    /// `Content-Length` last on a PUT, which has no body.
+    /// Host header and `Accept-Encoding: identity` first, and the body's
+    /// framing last, a zero `Content-Length` on a PUT, which has no body
+    /// ([`crt::http::Request::body`]).
     fn send(
         &self,
         request: &::credentials::Request,
@@ -431,9 +432,6 @@ impl Transport for Service {
                 .iter()
                 .map(|(name, value)| (*name, value.as_str())),
         );
-        if request.method == "PUT" {
-            headers.push(("Content-Length", "0"));
-        }
         let sent = crt::http::Request {
             host,
             port,
@@ -441,6 +439,8 @@ impl Transport for Service {
             method: request.method,
             target: &location.target,
             headers: &headers,
+            body: &[],
+            tunnel: None,
             signing: None,
             connect_timeout: timeout,
             read_timeout: timeout,
@@ -472,9 +472,10 @@ const PROXY_UNSUPPORTED: &str = "The proxy for the instance metadata service is 
     service is not asked for credentials";
 
 /// Why no request for an `https` endpoint goes to a proxy: that is a
-/// tunnel, which aws-c-http cannot bound. The endpoint is one the user
-/// named, so the fetch fails and says why, with the HTTPClientError that
-/// botocore's fetcher does not try again.
+/// tunnel, which this transport, for the metadata services only, does not
+/// make, though `crt::http` can ([`crt::http::Request::tunnel`]). The
+/// endpoint is one the user named, so the fetch fails and says why, with
+/// the HTTPClientError that botocore's fetcher does not try again.
 fn tunnel_unsupported() -> TransportError {
     TransportError::Client {
         reason: "cannot ask the instance metadata service for credentials: an https endpoint is \

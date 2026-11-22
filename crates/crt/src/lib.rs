@@ -17,7 +17,7 @@ pub mod source_pool;
 pub mod testing;
 
 #[doc(inline)]
-pub use runtime::Runtime;
+pub use runtime::{HttpRuntime, Runtime};
 #[doc(inline)]
 pub use runtime::{RuntimeLifecycleOps, RuntimeOptions};
 #[doc(inline)]

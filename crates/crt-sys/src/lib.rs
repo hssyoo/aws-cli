@@ -329,3 +329,5 @@ c_functions! {
 
 pub mod endpoints;
 pub mod native;
+#[cfg(all(feature = "testing", not(windows)))]
+pub mod testing;

@@ -9,5 +9,9 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# The TLS end of a loopback HTTPS server, for tests (`shim/testing.h`).
+testing = []
+
 [build-dependencies]
 build-support = { path = "../build-support" }

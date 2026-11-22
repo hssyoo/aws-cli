@@ -107,19 +107,24 @@ typedef void(zaws_progress_fn)(uint64_t bytes, void *data);
  * any other service takes, a credential provider's own among them. Everything is borrowed for
  * the call.
  *
- * `host` and `port` are where to connect, in plaintext, and `method`, `target` and `headers` are
- * the request as it is sent, the Host header included; it has no body. A nonempty `service` signs
- * it with SigV4 for that service in `region`, through the provider the runtime's credentials
- * stage built. The process environment's proxies are never read: a caller with a proxy connects
- * to it and sends an absolute `target`.
+ * `host` and `port` are the server, and `method`, `target`, `headers` and `body` are the request as
+ * it is sent, the Host header and the body's framing included. A nonempty `service` signs it with
+ * SigV4 for that service in `region`, through the provider the runtime's credentials stage built.
+ * The process environment's proxies are never read: a caller with a forwarding proxy connects to
+ * it and sends an absolute `target`, and one with a nonempty `tunnel_host` connects there and asks
+ * that cleartext proxy, with CONNECT, for a tunnel to the server.
  *
  * `connect_timeout_ms` bounds the connect. Nothing here bounds the response: the caller watches
  * the events and cancels. */
 struct zaws_http_options {
     struct aws_byte_cursor host, method, target, region, service;
+    /* The request body, copied for the call; empty for none. The caller sets Content-Length. */
+    struct aws_byte_cursor body;
+    /* A cleartext proxy at `tunnel_host`:`tunnel_port` to tunnel through; empty for none. */
+    struct aws_byte_cursor tunnel_host;
     const struct zaws_header *headers;
     size_t header_count;
-    uint32_t port, connect_timeout_ms;
+    uint32_t port, connect_timeout_ms, tunnel_port;
     /* Connects with TLS: the runtime's trust and peer verification, the server named `host`, and
      * `connect_timeout_ms` again as the bound of the handshake. */
     bool tls;
@@ -128,12 +133,14 @@ struct zaws_http_options {
 enum zaws_http_event {
     /* The connection is up and aws-c-http has taken the request to send. */
     ZAWS_HTTP_CONNECTED = 0,
-    /* Some of the response's headers arrived. */
+    /* A header of the final response arrived: `header`, as received and borrowed for the callback,
+     * one event each, in order. An informational response's headers are one event with no
+     * `header`. */
     ZAWS_HTTP_HEADERS = 1,
     /* Some of the response's body arrived: `body`, borrowed for the callback. */
     ZAWS_HTTP_BODY = 2,
 };
-typedef void(zaws_http_event_fn)(int event, struct aws_byte_cursor body, void *data);
+typedef void(zaws_http_event_fn)(int event, const struct zaws_header *header, struct aws_byte_cursor body, void *data);
 /* `status` is the response's when `error_code` is 0. */
 typedef void(zaws_http_finish_fn)(int error_code, int status, void *data);
 struct zaws_http_call;
