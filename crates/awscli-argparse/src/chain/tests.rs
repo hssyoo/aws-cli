@@ -5,7 +5,7 @@
 )]
 use super::*;
 use crate::failure::{Color, FailureClass};
-use crate::tables::CommandKind;
+use crate::tables::{Command, CommandKind};
 use std::collections::HashMap;
 use std::path::Path;
 fn corpus() -> String {
@@ -46,7 +46,7 @@ mod os {
         OsString::from_vec(value.to_vec())
     }
 
-    fn complete_os(arguments: &[OsString]) -> (ParseResult, bool) {
+    fn complete_os(arguments: &[OsString]) -> (ParseResult<'static>, bool) {
         let mut result = parse_os(arguments, &Options::default(), &tables::TABLES_DEFAULT);
         let unsupported = if result.outcome == Outcome::Parsed {
             complete(
@@ -392,14 +392,14 @@ fn corpus_failure_text(error: &Value) -> &Value {
     }
     error.get("native_text").unwrap_or(&error["text"])
 }
-fn level_table(case: &Value, level: &Value) -> Vec<Argument> {
+fn level_table(case: &Value, level: &Value) -> Vec<Argument<'static>> {
     match level["parser"].as_str().unwrap() {
         "FirstPassGlobalArgParser" => tables::FIRST_PASS.to_vec(),
         "MainArgParser" if level["help_mode"].as_bool().unwrap() => {
             help_mode_table(main_table(&tables::TABLES_DEFAULT))
         }
         "MainArgParser" => main_table(&tables::TABLES_DEFAULT),
-        "SubCommandArgParser" => command_table(&tables::S3),
+        "SubCommandArgParser" => command_table(&Node::pinned(&tables::S3)),
         "ArgTableArgParser" => {
             let command = case["lineage"]
                 .as_array()
@@ -409,7 +409,7 @@ fn level_table(case: &Value, level: &Value) -> Vec<Argument> {
                 .fold(&tables::S3, |command, name| {
                     command.subcommand(name.as_str().unwrap()).unwrap()
                 });
-            command_table(command)
+            command_table(&Node::pinned(command))
         }
         _ => panic!("unknown parser"),
     }

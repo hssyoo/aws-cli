@@ -1,21 +1,31 @@
-//! Complete pinned AWS CLI argument tables and command tree.
+//! Complete pinned AWS CLI argument tables and command tree, and the
+//! lookup through which the parse finds every command below the globals.
 use crate::{Action, Argument, CliType, DefaultValue, Nargs};
+use std::borrow::Cow;
+/// The upstream class a command is, which decides how its level parses and
+/// which handler claims its leftovers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandKind {
+    /// A hand-written `BasicCommand`, which parses its own table and an
+    /// optional `subcommand`.
     Basic,
+    /// A `ServiceCommand`: a model's service, whose one argument is the
+    /// operation (`ServiceArgParser`).
     Service,
+    /// A `ServiceOperation`: one operation of a model.
     Operation,
 }
+/// A pinned command and its pinned children.
 #[derive(Debug, Clone, Copy)]
-pub struct Command {
-    pub name: &'static str,
+pub struct Command<'a> {
+    pub name: &'a str,
     pub kind: CommandKind,
-    pub usage: Option<&'static str>,
-    pub arguments: &'static [Argument],
-    pub subcommands: Option<&'static [Command]>,
+    pub usage: Option<&'a str>,
+    pub arguments: &'a [Argument<'a>],
+    pub subcommands: Option<&'a [Command<'a>]>,
 }
-impl Command {
-    pub const fn subcommand(&self, name: &str) -> Option<&Command> {
+impl<'a> Command<'a> {
+    pub const fn subcommand(&self, name: &str) -> Option<&Command<'a>> {
         let Some(children) = self.subcommands else {
             return None;
         };
@@ -44,10 +54,67 @@ const fn equal(a: &str, b: &str) -> bool {
     }
     true
 }
+/// One command of a parse's lineage as its lookup supplied it: borrowed
+/// from a pinned tree, or derived for the invocation, in which case its
+/// name, its table and its children's names may be owned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Node<'a> {
+    pub name: Cow<'a, str>,
+    pub kind: CommandKind,
+    pub arguments: Cow<'a, [Argument<'a>]>,
+    /// The children's names, in table order, when the command has a
+    /// subcommand or operation argument; they are its choices.
+    pub subcommands: Option<Cow<'a, [&'a str]>>,
+}
+impl<'a> Node<'a> {
+    /// The node of a pinned command.
+    pub fn pinned(command: &Command<'a>) -> Self {
+        Self {
+            name: Cow::Borrowed(command.name),
+            kind: command.kind,
+            arguments: Cow::Borrowed(command.arguments),
+            subcommands: command
+                .subcommands
+                .map(|children| Cow::Owned(children.iter().map(|child| child.name).collect())),
+        }
+    }
+}
+/// Where the parse finds the commands below the globals: the main parser's
+/// command table (`CLIDriver._get_command_table`) and each command's own.
+/// A word no lookup defines leaves the parse unresolved.
+pub trait Roots<'a>: std::fmt::Debug {
+    /// The root command `name`, when the lookup defines it.
+    fn root(&self, name: &str) -> Option<Node<'a>>;
+    /// The child `name` of the command `lineage` names, outermost first.
+    fn subcommand(&self, lineage: &[&str], name: &str) -> Option<Node<'a>>;
+}
+/// A lookup over pinned trees only.
 #[derive(Debug, Clone, Copy)]
-pub struct Tables {
-    pub globals: &'static [Argument],
-    pub s3: &'static Command,
+pub struct Pinned<'a>(pub &'a [&'a Command<'a>]);
+impl<'a> Pinned<'a> {
+    /// The pinned command `lineage` names, outermost first.
+    pub fn find(&self, lineage: &[&str]) -> Option<&'a Command<'a>> {
+        let (first, rest) = lineage.split_first()?;
+        let mut command: &'a Command<'a> = self.0.iter().copied().find(|c| c.name == *first)?;
+        for name in rest {
+            command = command.subcommand(name)?;
+        }
+        Some(command)
+    }
+}
+impl<'a> Roots<'a> for Pinned<'a> {
+    fn root(&self, name: &str) -> Option<Node<'a>> {
+        self.find(&[name]).map(Node::pinned)
+    }
+    fn subcommand(&self, lineage: &[&str], name: &str) -> Option<Node<'a>> {
+        self.find(lineage)?.subcommand(name).map(Node::pinned)
+    }
+}
+/// The global table and the lookup the parse resolves commands through.
+#[derive(Debug, Clone, Copy)]
+pub struct Tables<'a> {
+    pub globals: &'a [Argument<'a>],
+    pub roots: &'a dyn Roots<'a>,
 }
 /// Complete unmodified global option table, in cli.json insertion order and
 /// before version conflict resolution.
@@ -423,7 +490,7 @@ const fn concat_len(parts: &[&[Argument]]) -> usize {
     }
     len
 }
-const fn concat<const N: usize>(parts: &[&[Argument]]) -> [Argument; N] {
+const fn concat<'a, const N: usize>(parts: &[&[Argument<'a>]]) -> [Argument<'a>; N] {
     let mut joined = [Argument::new(""); N];
     let mut len = 0;
     let mut p = 0;
@@ -631,9 +698,12 @@ pub const S3: Command = Command {
     arguments: &[],
     subcommands: Some(&[LS, WEBSITE, CP, MV, RM, SYNC, MB, RB, PRESIGN]),
 };
-pub const TABLES_DEFAULT: Tables = Tables {
+/// The pinned roots: the `s3` tree.
+pub const PINNED: Pinned<'static> = Pinned(&[&S3]);
+/// The globals and the pinned roots alone.
+pub const TABLES_DEFAULT: Tables<'static> = Tables {
     globals: GLOBALS,
-    s3: &S3,
+    roots: &PINNED,
 };
 const fn command_fits(command: &Command, depth: usize) {
     assert!(depth <= crate::LINEAGE_DEPTH_MAX);

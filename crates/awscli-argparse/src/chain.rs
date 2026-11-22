@@ -3,7 +3,7 @@ use crate::close_matches;
 use crate::failure::{Failure, FailureKind, Suggestion};
 use crate::parser;
 use crate::pyrepr;
-use crate::tables::{self, Command, Tables};
+use crate::tables::{self, CommandKind, Node, Roots, Tables};
 use crate::token::{self, Token};
 use crate::unpack::{self, Environment};
 use crate::{Action, Argument, Namespace, Parser, Value};
@@ -76,13 +76,13 @@ pub enum Outcome {
 }
 /// One successful parser boundary.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Level {
-    pub table: Vec<Argument>,
+pub struct Level<'a> {
+    pub table: Vec<Argument<'a>>,
     pub namespace: Namespace,
     pub seen: Vec<bool>,
     pub remaining: Vec<Token>,
 }
-impl Level {
+impl Level<'_> {
     pub fn was_supplied(&self, name: &str) -> bool {
         self.table
             .iter()
@@ -93,11 +93,11 @@ impl Level {
 }
 /// Owned namespaces, values, lineage, and failure state.
 #[derive(Debug, Clone, Default)]
-pub struct ParseResult {
-    pub first_pass: Level,
-    pub globals: Level,
-    pub lineage: Vec<&'static Command>,
-    pub args: Level,
+pub struct ParseResult<'a> {
+    pub first_pass: Level<'a>,
+    pub globals: Level<'a>,
+    pub lineage: Vec<Node<'a>>,
+    pub args: Level<'a>,
     pub values: Namespace,
     pub failed: Option<Namespace>,
     pub stopped_dest: Option<String>,
@@ -106,15 +106,20 @@ pub struct ParseResult {
     pub outcome: Outcome,
 }
 /// Parse host argv through the raw argument-table boundary.
-pub fn parse(argv: &[String], options: &Options, tables: &Tables) -> ParseResult {
+pub fn parse<'a>(argv: &[String], options: &Options, tables: &Tables<'a>) -> ParseResult<'a> {
     let arguments: Vec<_> = argv.iter().map(std::ffi::OsString::from).collect();
     parse_os(&arguments, options, tables)
 }
 /// Parse native arguments without decoding filesystem operands as Unicode.
-pub fn parse_os(argv: &[std::ffi::OsString], options: &Options, tables: &Tables) -> ParseResult {
+/// The command word is resolved through the tables' lookup; a word it does
+/// not define leaves the parse unresolved, before global resolution.
+pub fn parse_os<'a>(
+    argv: &[std::ffi::OsString],
+    options: &Options,
+    tables: &Tables<'a>,
+) -> ParseResult<'a> {
     assert!(argv.len() <= crate::ARG_COUNT_MAX);
     assert!(argv.iter().all(|a| a.len() <= crate::ARG_LEN_MAX));
-    assert_eq!(tables.s3.name, "s3");
     let argv = token::from_os(argv);
     let argv = argv.as_slice();
     let mut result = ParseResult::default();
@@ -143,25 +148,25 @@ pub fn parse_os(argv: &[std::ffi::OsString], options: &Options, tables: &Tables)
         .string("command")
         .unwrap_or_default()
         .to_owned();
-    if command != "s3" {
+    let Some(root) = tables.roots.root(&command) else {
         result.outcome = Outcome::Unresolved {
             command,
             remaining: result.globals.remaining.clone(),
         };
         return result;
-    }
-    result.lineage.push(tables.s3);
+    };
+    result.lineage.push(root);
     result.stage = Stage::TopLevel;
     if !resolve_globals(&mut result) {
         return result;
     }
     let args = result.globals.remaining.clone();
-    parse_command(&mut result, tables.s3, &args);
+    parse_command(&mut result, tables.roots, &args);
     result
 }
 /// Construct MainArgParser's conflict-resolving table: every global, the
 /// resolving --version, and the command.
-pub fn main_table(tables: &Tables) -> Vec<Argument> {
+pub fn main_table<'a>(tables: &Tables<'a>) -> Vec<Argument<'a>> {
     let mut table = Vec::with_capacity(tables.globals.len() + tables::MAIN_TABLE_EXTRA_COUNT);
     table.extend_from_slice(tables.globals);
     table.push(Argument {
@@ -178,7 +183,7 @@ pub fn main_table(tables: &Tables) -> Vec<Argument> {
 /// command or any global's value: each option that takes one value takes it
 /// optionally, and so does the command (argparser.py `MainArgParser._build`).
 /// A global takes a value by storing or appending it.
-pub fn help_mode_table(mut table: Vec<Argument>) -> Vec<Argument> {
+pub fn help_mode_table(mut table: Vec<Argument<'_>>) -> Vec<Argument<'_>> {
     for argument in &mut table {
         let takes_value = matches!(argument.action, Action::Store | Action::Append);
         if argument.positional || (argument.nargs.is_none() && takes_value) {
@@ -192,7 +197,11 @@ pub fn help_mode_table(mut table: Vec<Argument>) -> Vec<Argument> {
 /// renders help whatever else fails to parse (argparser.py
 /// `_parse_help_request`). Any other retry keeps the first failure; a
 /// `--version` the retry reaches exits as it would have.
-fn main_level(result: &mut ParseResult, tables: &Tables, argv: &[Token]) -> Option<Level> {
+fn main_level<'a>(
+    result: &mut ParseResult<'a>,
+    tables: &Tables<'a>,
+    argv: &[Token],
+) -> Option<Level<'a>> {
     let table = main_table(tables);
     let options = || parser::Options::new(tables::USAGE);
     let globals = level(result, &table, argv, options());
@@ -215,7 +224,7 @@ fn main_level(result: &mut ParseResult, tables: &Tables, argv: &[Token]) -> Opti
     }
 }
 /// Build a parent table with its optional subcommand positional.
-pub fn command_table(command: &Command) -> Vec<Argument> {
+pub fn command_table<'a>(command: &Node<'a>) -> Vec<Argument<'a>> {
     let mut table = command.arguments.to_vec();
     if command.subcommands.is_some() {
         table.push(Argument {
@@ -229,12 +238,12 @@ pub fn command_table(command: &Command) -> Vec<Argument> {
     }
     table
 }
-fn level(
-    result: &mut ParseResult,
-    table: &[Argument],
+fn level<'a>(
+    result: &mut ParseResult<'a>,
+    table: &[Argument<'a>],
     args: &[Token],
-    options: parser::Options,
-) -> Option<Level> {
+    options: parser::Options<'a>,
+) -> Option<Level<'a>> {
     let parsed_table = Parser::new(table, options);
     assert!(parsed_table.is_ok(), "supplied parser table is invalid");
     let Ok(parser) = parsed_table else {
@@ -260,51 +269,166 @@ fn level(
         }
     }
 }
-fn parse_command(result: &mut ParseResult, command: &'static Command, args: &[Token]) {
-    let table = command_table(command);
-    if let Some(children) = command.subcommands {
+/// Parse the lineage's last command from `args`, descending into the
+/// child its subcommand or operation names.
+fn parse_command<'a>(result: &mut ParseResult<'a>, roots: &dyn Roots<'a>, args: &[Token]) {
+    let Some(command) = result.lineage.last().cloned() else {
+        return;
+    };
+    if command.kind == CommandKind::Service {
+        parse_service(result, roots, &command, args);
+        return;
+    }
+    if let Some(children) = &command.subcommands {
         result.stage = Stage::Probe;
         let mut options = parser::Options::new(tables::USAGE);
         options.help_sentinel = true;
         options.ignore_required = true;
-        options.command_choices = Some(children.iter().map(|c| c.name).collect());
-        let Some(probe) = level(result, &table, args, options) else {
+        options.command_choices = Some(children.to_vec());
+        let Some(probe) = level(result, &command_table(&command), args, options) else {
             return;
         };
         if let Some(name) = probe.namespace.string("subcommand")
-            && let Some(child) = children.iter().find(|c| c.name == name)
+            && children.contains(&name)
         {
             let mut remaining = args.to_vec();
             if let Some(index) = remaining.iter().position(|value| value.is_text(name)) {
                 remaining.remove(index);
             }
-            assert!(result.lineage.len() < crate::LINEAGE_DEPTH_MAX);
-            result.lineage.push(child);
-            parse_command(result, child, &remaining);
-            return;
+            if descend(result, roots, name, &remaining) {
+                return;
+            }
         }
     }
+    parse_table(result, &command, args);
+}
+/// ServiceCommand.__call__: ServiceArgParser parses the operation name,
+/// its one argument, whose choices are the service's operations and
+/// `help`. Under `--help` the name is optional (`help_mode`), and an
+/// absent name shows the service's help, as `help` does.
+fn parse_service<'a>(
+    result: &mut ParseResult<'a>,
+    roots: &dyn Roots<'a>,
+    command: &Node<'a>,
+    args: &[Token],
+) {
+    result.stage = Stage::Probe;
+    let help_mode = result.globals.namespace.boolean("help");
+    let table = [Argument {
+        positional: true,
+        action: Action::Command,
+        nargs: help_mode.then_some(crate::Nargs::Optional),
+        ..Argument::new("operation")
+    }];
+    let mut choices = command.subcommands.as_deref().unwrap_or_default().to_vec();
+    choices.push("help");
+    let mut options = parser::Options::new(tables::USAGE);
+    options.command_choices = Some(choices);
+    let Some(parsed) = level(result, &table, args, options) else {
+        return;
+    };
+    match parsed.namespace.string("operation") {
+        None | Some("help") => result.outcome = Outcome::Help,
+        Some(name) => {
+            if !descend(result, roots, name, &parsed.remaining) {
+                result.outcome = Outcome::Unresolved {
+                    command: name.to_owned(),
+                    remaining: parsed.remaining.clone(),
+                };
+            }
+        }
+    }
+}
+/// Push the child `name` of the lineage's last command and parse it from
+/// `args`; false when the lookup does not supply that child.
+fn descend<'a>(
+    result: &mut ParseResult<'a>,
+    roots: &dyn Roots<'a>,
+    name: &str,
+    args: &[Token],
+) -> bool {
+    let child = {
+        let lineage: Vec<&str> = result.lineage.iter().map(|node| &*node.name).collect();
+        roots.subcommand(&lineage, name)
+    };
+    let Some(child) = child else {
+        return false;
+    };
+    assert!(result.lineage.len() < crate::LINEAGE_DEPTH_MAX);
+    result.lineage.push(child);
+    parse_command(result, roots, args);
+    true
+}
+/// The command's own table: BasicCommand.__call__'s ArgTableArgParser, or
+/// ServiceOperation.__call__'s, which adds an optional `help` positional
+/// (`_add_help`) whose value, other than `help`, joins the end of the
+/// leftovers.
+fn parse_table<'a>(result: &mut ParseResult<'a>, command: &Node<'a>, args: &[Token]) {
     result.stage = Stage::Table;
-    // BasicCommand.__call__ renders `--help` before it parses its table, so
-    // no value of this command's can fail it.
+    // BasicCommand.__call__ renders `--help` before it parses its table, and
+    // ServiceOperation.__call__ before it parses its own, so no value of
+    // this command's can fail it.
     if result.globals.namespace.boolean("help") {
         result.outcome = Outcome::Help;
         return;
     }
+    let operation = command.kind == CommandKind::Operation;
+    let mut table = command_table(command);
+    if operation {
+        table.push(Argument {
+            positional: true,
+            nargs: Some(crate::Nargs::Optional),
+            ..Argument::new("help")
+        });
+    }
     let mut options = parser::Options::new(tables::USAGE);
     options.help_sentinel = true;
-    options.command_choices = command
-        .subcommands
-        .map(|children| children.iter().map(|c| c.name).collect());
-    let Some(parsed) = level(result, &table, args, options) else {
+    options.command_choices = command.subcommands.as_deref().map(<[&str]>::to_vec);
+    let Some(mut parsed) = level(result, &table, args, options) else {
         return;
     };
-    result.outcome = if parsed.namespace.string("help").is_some() {
-        Outcome::Help
+    let help = if operation {
+        operation_help(&mut parsed, args)
     } else {
-        Outcome::Parsed
+        parsed.namespace.string("help").is_some()
     };
+    result.outcome = if help { Outcome::Help } else { Outcome::Parsed };
     result.args = parsed;
+}
+/// ServiceOperation.__call__ on the `help` positional: `help` asks for the
+/// operation's help page, and any other value is appended to the leftovers.
+/// The positional is the parser's, not the table's, so it leaves the level.
+fn operation_help(parsed: &mut Level<'_>, args: &[Token]) -> bool {
+    let value = parsed.namespace.value("help").cloned();
+    parsed
+        .namespace
+        .entries
+        .retain(|entry| entry.dest != "help");
+    if let Some(index) = parsed
+        .table
+        .iter()
+        .position(|argument| argument.positional && argument.name == "help")
+    {
+        parsed.table.remove(index);
+        parsed.seen.remove(index);
+    }
+    let Some(text) = value.as_ref().and_then(Value::as_os_str) else {
+        return false;
+    };
+    if text == "help" {
+        return true;
+    }
+    let consumed = args.iter().find(|token| {
+        token.as_os_str() == text
+            && !parsed
+                .remaining
+                .iter()
+                .any(|left| left.original_index == token.original_index)
+    });
+    if let Some(token) = consumed {
+        parsed.remaining.push(token.clone());
+    }
+    false
 }
 /// globalargs.resolve_types in upstream's order: the endpoint URL, then
 /// verify_ssl, then the timeouts, whose argv bytes render as stderr writes
@@ -471,42 +595,75 @@ fn bracketed_host(host: &[u8]) -> Result<(), String> {
     ))
 }
 /// Complete a parsed result; true means a value was explicitly deferred to Python.
-pub fn complete(result: &mut ParseResult, environment: &Environment<'_>) -> bool {
+/// BasicCommand processes its values before it reports leftovers;
+/// ServiceOperation.__call__ raises its UnknownArgumentError first and
+/// builds its call parameters after (`_build_call_parameters`).
+pub fn complete(result: &mut ParseResult<'_>, environment: &Environment<'_>) -> bool {
     assert_eq!(result.outcome, Outcome::Parsed);
     assert_eq!(result.stage, Stage::Table);
     assert!(!result.lineage.is_empty(), "parsed command has no lineage");
+    let Some(kind) = result.lineage.last().map(|command| command.kind) else {
+        return false;
+    };
+    if kind == CommandKind::Operation {
+        return !leftover_failure(result) && unpack_values(result, environment);
+    }
+    if unpack_values(result, environment) {
+        return true;
+    }
+    if result.outcome == Outcome::Parsed && !leftover_failure(result) && result.lineage.len() == 1 {
+        // S3._run_main with no subcommand: the root's own usage failure.
+        let lineage = result
+            .lineage
+            .iter()
+            .map(|command| command.name.to_string())
+            .collect();
+        result.outcome = Outcome::Failure(Failure::new(FailureKind::TooFewArguments(lineage)));
+    }
+    false
+}
+/// The unpack stage; true when a value was deferred to Python. A value's
+/// failure becomes the outcome.
+fn unpack_values(result: &mut ParseResult<'_>, environment: &Environment<'_>) -> bool {
     let Some(command) = result.lineage.last() else {
         return false;
     };
     result.stage = Stage::Unpack;
-    match unpack::unpack(command.arguments, &result.args.namespace, environment) {
-        Ok(values) => result.values = values,
+    match unpack::unpack(&command.arguments, &result.args.namespace, environment) {
+        Ok(values) => {
+            result.values = values;
+            false
+        }
         Err(e) => {
             result.stopped_dest = Some(e.dest);
             if let Some(failure) = e.failure {
                 result.outcome = Outcome::Failure(failure);
                 return false;
             }
-            return true;
+            true
         }
     }
+}
+/// The leftover stage: tokens no table consumed are the outcome's failure,
+/// which the command's kind assigns its handler. True when there were any.
+fn leftover_failure(result: &mut ParseResult<'_>) -> bool {
+    let Some(command) = result.lineage.last() else {
+        return false;
+    };
     result.stage = Stage::Leftover;
-    if !result.args.remaining.is_empty() {
-        let remaining: Vec<_> = result.args.remaining.iter().map(Token::as_os_str).collect();
-        result.outcome = Outcome::Failure(Failure::new(FailureKind::UnknownOptions {
-            suggestions: unknown_option_suggestions(&remaining, command.arguments),
-            tokens: remaining
-                .into_iter()
-                .map(std::ffi::OsStr::to_os_string)
-                .collect(),
-            kind: command.kind,
-        }));
-    } else if result.lineage.len() == 1 {
-        // S3._run_main with no subcommand: the root's own usage failure.
-        let lineage = result.lineage.iter().map(|command| command.name).collect();
-        result.outcome = Outcome::Failure(Failure::new(FailureKind::TooFewArguments(lineage)));
+    if result.args.remaining.is_empty() {
+        return false;
     }
-    false
+    let remaining: Vec<_> = result.args.remaining.iter().map(Token::as_os_str).collect();
+    result.outcome = Outcome::Failure(Failure::new(FailureKind::UnknownOptions {
+        suggestions: unknown_option_suggestions(&remaining, &command.arguments),
+        tokens: remaining
+            .into_iter()
+            .map(std::ffi::OsStr::to_os_string)
+            .collect(),
+        kind: command.kind,
+    }));
+    true
 }
 /// argparser.format_unknown_options_error's suggestions: each `--` token's
 /// name, before any `=`, against get_option_suggestion_candidates, which

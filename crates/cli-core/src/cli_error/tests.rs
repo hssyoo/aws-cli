@@ -21,7 +21,7 @@ fn inputs(config: &str) -> ParsedFiles {
         ..Default::default()
     })
 }
-fn parse(args: &[&str]) -> (Vec<std::ffi::OsString>, ParseResult) {
+fn parse(args: &[&str]) -> (Vec<std::ffi::OsString>, ParseResult<'static>) {
     let argv = args.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
     let result = awscli_argparse::parse(&argv, &Options::default(), &tables::TABLES_DEFAULT);
     (argv.into_iter().map(Into::into).collect(), result)
@@ -979,7 +979,10 @@ fn the_registry_s_reasons_have_their_refusal_names() {
         (PythonReason::CommandAlias, "command_alias"),
         (PythonReason::UnsupportedProtocol, "unsupported_protocol"),
         (PythonReason::UnsupportedTrait, "unsupported_trait"),
-        (PythonReason::UnportedCustomization, "unported_customization"),
+        (
+            PythonReason::UnportedCustomization,
+            "unported_customization",
+        ),
         (PythonReason::OutputFormat, "output_format"),
     ] {
         assert_eq!(reason.name(), name);

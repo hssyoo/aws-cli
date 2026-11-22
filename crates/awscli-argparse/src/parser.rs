@@ -8,7 +8,7 @@ use crate::{
 };
 /// Behavior selected by argparse subclasses.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Options {
+pub struct Options<'a> {
     /// Fixed usage text following the prefix.
     pub usage: String,
     /// Generated usage may color program, option names, and metavars separately.
@@ -22,12 +22,12 @@ pub struct Options {
     /// Permit unambiguous long-option prefixes.
     pub allow_abbrev: bool,
     /// The runtime-built choices of the table's `Action::Command` argument:
-    /// the subcommand names. `Argument` holds `&'static` choices, so they
-    /// travel here instead of on the argument, and `Parser::new` rejects a
-    /// Command argument without them.
-    pub command_choices: Option<Vec<&'static str>>,
+    /// the subcommand or operation names, which the lookup supplies per
+    /// invocation, so they travel here instead of on the argument, and
+    /// `Parser::new` rejects a Command argument without them.
+    pub command_choices: Option<Vec<&'a str>>,
 }
-impl Default for Options {
+impl Default for Options<'_> {
     fn default() -> Self {
         Self {
             usage: String::new(),
@@ -40,7 +40,7 @@ impl Default for Options {
         }
     }
 }
-impl Options {
+impl Options<'_> {
     pub fn new(usage: impl Into<String>) -> Self {
         Self {
             usage: usage.into(),
@@ -79,11 +79,11 @@ pub struct Rejected {
 }
 /// Validated table with argparse conflict resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Parser {
-    pub arguments: Vec<Argument>,
+pub struct Parser<'a> {
+    pub arguments: Vec<Argument<'a>>,
     pub names: Vec<String>,
     pub dests: Vec<String>,
-    pub options: Options,
+    pub options: Options<'a>,
 }
 #[derive(Debug, Clone, Default)]
 struct Optional {
@@ -92,7 +92,7 @@ struct Optional {
     explicit: Option<Token>,
 }
 struct State<'a> {
-    parser: &'a Parser,
+    parser: &'a Parser<'a>,
     namespace: Namespace,
     args: &'a [Token],
     kinds: Vec<Kind>,
@@ -103,9 +103,9 @@ struct State<'a> {
     positional_index: usize,
     version: bool,
 }
-impl Parser {
+impl<'a> Parser<'a> {
     /// Validate definitions and resolve duplicate option strings as argparse does.
-    pub fn new(arguments: &[Argument], options: Options) -> Result<Self, InitError> {
+    pub fn new(arguments: &[Argument<'a>], options: Options<'a>) -> Result<Self, InitError> {
         if arguments.len() > ARGUMENT_COUNT_MAX {
             return Err(InitError::TableTooLarge);
         }

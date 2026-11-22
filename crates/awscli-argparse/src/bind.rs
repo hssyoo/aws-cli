@@ -233,7 +233,11 @@ pub enum ShapeError {
     ShapeMismatch { argument: &'static str },
 }
 /// Check every argument sharing a destination against the field shape.
-pub const fn check(table: &[Argument], dest: &str, shape: Shape) -> Result<(), ShapeError> {
+pub const fn check(
+    table: &[Argument<'static>],
+    dest: &str,
+    shape: Shape,
+) -> Result<(), ShapeError> {
     let mut found = false;
     let mut i = 0;
     while i < table.len() {
@@ -253,7 +257,7 @@ pub const fn check(table: &[Argument], dest: &str, shape: Shape) -> Result<(), S
     }
 }
 /// Whether every argument sharing a destination accepts the field shape.
-pub const fn accepts(table: &[Argument], dest: &str, shape: Shape) -> bool {
+pub const fn accepts(table: &[Argument<'static>], dest: &str, shape: Shape) -> bool {
     check(table, dest, shape).is_ok()
 }
 const fn accepts_argument(arg: Argument, shape: Shape) -> bool {
