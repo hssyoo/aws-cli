@@ -57,6 +57,14 @@ pub struct Civil {
 }
 
 impl Timestamp {
+    /// 0001-01-01T00:00:00Z, `datetime.datetime.min` in UTC.
+    pub const MIN: Self = Self {
+        micros: FIRST_MICROS,
+    };
+    /// 9999-12-31T23:59:59.999999Z, `datetime.datetime.max` in UTC.
+    pub const MAX: Self = Self {
+        micros: LAST_MICROS,
+    };
     /// The instant `micros` microseconds after the epoch, `None` outside
     /// the range.
     pub fn from_unix_micros(micros: i64) -> Option<Self> {
