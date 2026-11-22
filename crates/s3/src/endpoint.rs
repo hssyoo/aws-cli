@@ -196,29 +196,41 @@ fn scheme_region(scheme: &JsonValue) -> Result<Option<&str>, EndpointError> {
         _ => Err(EndpointError::InvalidProperties),
     }
 }
-/// Configures only the S3 rule parameters [`crt::endpoints::Parameters`]
-/// carries; the rule set's others stay unset.
+/// The S3 rule set's parameters, by name, from the built-ins botocore's S3
+/// client sets (`ClientArgsCreator.compute_endpoint_resolver_builtin_defaults`)
+/// and the request's bucket: the region, the
+/// bucket when there is one, FIPS and dual-stack, the endpoint when one is
+/// configured, then the client's addressing, acceleration, global-endpoint
+/// and access-point settings. The rule set's others stay unset.
 pub fn parameters<'a>(
     region: &'a str,
     bucket: Option<&'a str>,
     options: Options<'a>,
-) -> crt::endpoints::Parameters<'a> {
-    crt::endpoints::Parameters {
-        region,
-        bucket,
-        use_fips: options.use_fips,
-        use_dual_stack: options.use_dual_stack,
-        endpoint: options.endpoint,
-        force_path_style: Some(force_path_style(
-            options.addressing_style,
-            options.accelerate,
-            options.endpoint,
-        )),
-        accelerate: Some(options.accelerate),
-        use_global_endpoint: Some(false),
-        disable_multi_region_access_points: Some(false),
-        use_arn_region: None,
-    }
+) -> Vec<(&'static str, crt::endpoints::ParamValue<'a>)> {
+    use crt::endpoints::ParamValue::{Boolean, String};
+    let mut parameters = vec![("Region", String(region))];
+    parameters.extend(bucket.map(|bucket| ("Bucket", String(bucket))));
+    parameters.extend([
+        ("UseFIPS", Boolean(options.use_fips)),
+        ("UseDualStack", Boolean(options.use_dual_stack)),
+    ]);
+    parameters.extend(
+        options
+            .endpoint
+            .map(|endpoint| ("Endpoint", String(endpoint))),
+    );
+    let path_style = force_path_style(
+        options.addressing_style,
+        options.accelerate,
+        options.endpoint,
+    );
+    parameters.extend([
+        ("ForcePathStyle", Boolean(path_style)),
+        ("Accelerate", Boolean(options.accelerate)),
+        ("UseGlobalEndpoint", Boolean(false)),
+        ("DisableMultiRegionAccessPoints", Boolean(false)),
+    ]);
+    parameters
 }
 /// The endpoint of `bucket` in `region`, or the rule error its parameters
 /// reach, with the client netloc when `options.client_netloc` asks for it.
@@ -295,7 +307,7 @@ fn resolve_rules(
     options: Options<'_>,
 ) -> Result<Resolved, EndpointError> {
     let resolved = rules
-        .resolve(parameters(region, bucket, options))
+        .resolve(&parameters(region, bucket, options))
         .map_err(EndpointError::Rules)?;
     match resolved {
         crt::endpoints::Resolved::Endpoint { url, properties } => {

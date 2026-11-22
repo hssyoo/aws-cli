@@ -1,4 +1,4 @@
-use super::{Documents, Parameters, ResolveError, Resolved};
+use super::{Documents, ParamValue, Parameters, ResolveError, Resolved};
 use crate::runtime::SdkutilsLibrary;
 use crt_sys::{AwsByteCursor as Cursor, endpoints as c};
 use std::marker::PhantomData;
@@ -32,8 +32,9 @@ owner!(
     aws_endpoints_resolved_endpoint_release
 );
 
-/// Evaluates `documents` for `parameters` without reading process state. The
-/// result owns copies of the CRT's bytes, so it outlives the engine.
+/// Evaluates `documents` for `parameters`, each passed to the engine by its
+/// name, without reading process state. The result owns copies of the
+/// CRT's bytes, so it outlives the engine.
 pub fn resolve(
     documents: Documents<'_>,
     parameters: Parameters<'_>,
@@ -81,29 +82,12 @@ pub fn resolve(
     copy_result(&result)
 }
 fn add_parameters(context: &Context<'_>, parameters: Parameters<'_>) -> Result<(), ResolveError> {
-    add_string(context, "Region", parameters.region)?;
-    if let Some(value) = parameters.bucket {
-        add_string(context, "Bucket", value)?;
-    }
-    add_boolean(context, "UseFIPS", parameters.use_fips)?;
-    add_boolean(context, "UseDualStack", parameters.use_dual_stack)?;
-    if let Some(value) = parameters.endpoint {
-        add_string(context, "Endpoint", value)?;
-    }
-    if let Some(value) = parameters.force_path_style {
-        add_boolean(context, "ForcePathStyle", value)?;
-    }
-    if let Some(value) = parameters.accelerate {
-        add_boolean(context, "Accelerate", value)?;
-    }
-    if let Some(value) = parameters.use_global_endpoint {
-        add_boolean(context, "UseGlobalEndpoint", value)?;
-    }
-    if let Some(value) = parameters.disable_multi_region_access_points {
-        add_boolean(context, "DisableMultiRegionAccessPoints", value)?;
-    }
-    if let Some(value) = parameters.use_arn_region {
-        add_boolean(context, "UseArnRegion", value)?;
+    for &(name, value) in parameters {
+        match value {
+            ParamValue::String(value) => add_string(context, name, value)?,
+            ParamValue::Boolean(value) => add_boolean(context, name, value)?,
+            ParamValue::StringArray(values) => add_string_array(context, name, values)?,
+        }
     }
     Ok(())
 }
@@ -155,6 +139,31 @@ fn add_boolean(context: &Context<'_>, name: &str, value: bool) -> Result<(), Res
             context.0.as_ptr(),
             Cursor::from_bytes(name.as_bytes()),
             value,
+        )
+    };
+    if rc != 0 {
+        return Err(ResolveError::OutOfMemory);
+    }
+    Ok(())
+}
+fn add_string_array(
+    context: &Context<'_>,
+    name: &str,
+    values: &[&str],
+) -> Result<(), ResolveError> {
+    let cursors: Vec<Cursor> = values
+        .iter()
+        .map(|value| Cursor::from_bytes(value.as_bytes()))
+        .collect();
+    // SAFETY: the live context copies the name and every value, which
+    // `cursors` borrows for the call.
+    let rc = unsafe {
+        c::aws_endpoints_request_context_add_string_array(
+            crt_sys::rust_crt_allocator(),
+            context.0.as_ptr(),
+            Cursor::from_bytes(name.as_bytes()),
+            cursors.as_ptr(),
+            cursors.len(),
         )
     };
     if rc != 0 {

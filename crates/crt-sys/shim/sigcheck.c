@@ -132,6 +132,7 @@ CHECK(aws_endpoints_request_context_new,struct aws_endpoints_request_context *,s
 CHECK(aws_endpoints_request_context_release,struct aws_endpoints_request_context *,struct aws_endpoints_request_context *);
 CHECK(aws_endpoints_request_context_add_string,int,struct aws_allocator *,struct aws_endpoints_request_context *,struct aws_byte_cursor,struct aws_byte_cursor);
 CHECK(aws_endpoints_request_context_add_boolean,int,struct aws_allocator *,struct aws_endpoints_request_context *,struct aws_byte_cursor,bool);
+CHECK(aws_endpoints_request_context_add_string_array,int,struct aws_allocator *,struct aws_endpoints_request_context *,struct aws_byte_cursor,const struct aws_byte_cursor *,size_t);
 CHECK(aws_endpoints_rule_engine_resolve,int,struct aws_endpoints_rule_engine *,const struct aws_endpoints_request_context *,struct aws_endpoints_resolved_endpoint **);
 CHECK(aws_endpoints_resolved_endpoint_get_type,enum aws_endpoints_resolved_endpoint_type,const struct aws_endpoints_resolved_endpoint *);
 CHECK(aws_endpoints_resolved_endpoint_get_url,int,const struct aws_endpoints_resolved_endpoint *,struct aws_byte_cursor *);
