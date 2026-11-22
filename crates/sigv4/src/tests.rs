@@ -288,7 +288,12 @@ fn a_retry_s_stale_signing_headers_are_replaced_as_botocore_deletes_them() {
     assert_eq!(retried, fresh);
     let sent = retried.apply(&stale_base);
     let mut expected = vec![("Content-Type", "text/plain")];
-    expected.extend(fresh.headers.iter().map(|(name, value)| (*name, value.as_str())));
+    expected.extend(
+        fresh
+            .headers
+            .iter()
+            .map(|(name, value)| (*name, value.as_str())),
+    );
     assert_eq!(sent, expected);
     assert_eq!(sent.len(), 5, "{sent:?}");
 }
