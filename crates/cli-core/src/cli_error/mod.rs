@@ -10,7 +10,9 @@ use std::io::{self, Write};
 
 mod disposition;
 mod stdout_flush;
-pub use disposition::{Environment, command_failure_format, dispose_failure, dispose_native};
+pub use disposition::{
+    Environment, command_failure_format, dispose_failure, dispose_formatted, dispose_native,
+};
 pub use stdout_flush::{
     FLUSH_FAILURE_STATUS, NO_STDOUT_MESSAGE, StandardStream, StdoutFailure, Termination,
     UNREPORTED_FAILURE_STATUS, WRITE_FAILED_MESSAGE, flush_pending_stdout, flush_streams_at_exit,
@@ -36,11 +38,12 @@ pub enum PythonReason {
     /// its outcome: an `s3` subcommand the enum path does not bind, or a
     /// hand-written command whose spec has no `bind`.
     UnsupportedSubcommand,
-    /// A global option the native handlers do not implement (`--no-verify-ssl`,
-    /// `--cli-read-timeout`, `--cli-binary-format`, the auto-prompt switches,
-    /// and the output globals where the command does not ignore them), or a
-    /// value of one they implement only in part: a structured
-    /// `--cli-error-format`, a `--cli-connect-timeout` botocore rejects, or a
+    /// A global option the native handlers do not implement
+    /// (`--no-verify-ssl`, `--cli-read-timeout` outside a formatting
+    /// command, `--cli-binary-format`, the auto-prompt switches, and the
+    /// output globals where the command does not ignore them), or a value of
+    /// one they implement only in part: a structured `--cli-error-format`, a
+    /// `--cli-connect-timeout` or `--cli-read-timeout` botocore rejects, or a
     /// `--ca-bundle` that is blank, names no regular readable file, or holds
     /// anything but well-formed certificates where upstream loads it with
     /// OpenSSL.
@@ -171,8 +174,24 @@ pub enum PythonReason {
     /// native formatters do not write: anything but `json`, `text` and
     /// `off`. It is `--output`, else `AWS_DEFAULT_OUTPUT`, else the
     /// profile's `output` (`CLIDriver._construct_cli_output_chain`), which
-    /// `CLIOperationCaller._display_response` hands `get_formatter`.
+    /// `CLIOperationCaller._display_response` hands `get_formatter`; or a
+    /// `cli_timestamp_format` other than `iso8601`, whose `wire` timestamps
+    /// the native formatter does not print and whose other values
+    /// `add_timestamp_parser` rejects.
     OutputFormat,
+    /// A setting every botocore client reads, which the model client does
+    /// not implement for the value configured, or which botocore rejects
+    /// as it builds the client: an auth scheme preference, request
+    /// compression's minimum size outside botocore's range, host-prefix
+    /// injection turned off, parameter validation turned off, client-side
+    /// monitoring turned on, an `s3_disable_express_session_auth` that is
+    /// no boolean, or a `cli_binary_format` `BinaryFormatHandler` does not
+    /// know.
+    ClientSetting,
+    /// A formatted response would go to a pager: stdout is a terminal and
+    /// the pager chain names one (`OutputStreamFactory.get_output_stream`),
+    /// which the native formatter does not start.
+    Pager,
 }
 impl PythonReason {
     pub const fn name(self) -> &'static str {
@@ -206,6 +225,8 @@ impl PythonReason {
             Self::UnsupportedTrait => "unsupported_trait",
             Self::UnportedCustomization => "unported_customization",
             Self::OutputFormat => "output_format",
+            Self::ClientSetting => "client_setting",
+            Self::Pager => "pager",
         }
     }
 }

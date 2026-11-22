@@ -154,6 +154,32 @@ impl<'a, E: EnvMap> SettingsInputs<'a, E> {
     }
 }
 
+/// The settings of a client of a model operation, in the order botocore
+/// raises their errors as it builds the client: the top-level arguments,
+/// then the client's arguments, then the `Config` they build, which checks
+/// the `s3` block's addressing style for every client, then the
+/// User-Agent. The bundle's contents come
+/// last, as they do for `s3 ls`, whose client loads them the same way.
+/// `adaptive` retries are refused after every check botocore makes: the
+/// native client runs the standard mode only.
+pub fn resolve_settings<E: EnvMap>(
+    inputs: &SettingsInputs<'_, E>,
+) -> Result<ClientSettings, PythonReason> {
+    let mut settings = start(inputs);
+    resolve_globals(&mut settings, inputs.globals)?;
+    resolve_client_arguments(inputs, &mut settings)?;
+    s3_addressing_style(inputs)?;
+    user_agent::resolve(inputs, &mut settings)?;
+    if settings.retry_mode().value == RetryMode::Adaptive {
+        return Err(PythonReason::RetrySetting);
+    }
+    if let Trust::File(path) = &settings.trust.value
+        && !holds_only_certificates(inputs.directory, path)
+    {
+        return Err(trust_reason(settings.trust.source));
+    }
+    Ok(settings)
+}
 /// The settings before any is read, with the provider the credential chain
 /// would answer from.
 pub(super) fn start<E: EnvMap>(inputs: &SettingsInputs<'_, E>) -> ClientSettings {
@@ -199,6 +225,26 @@ pub(super) fn resolve_client_arguments<E: EnvMap>(
     settings.use_fips_endpoint = variant(Variant::Fips);
     settings.use_dualstack_endpoint = variant(Variant::DualStack);
     Ok(())
+}
+/// The `s3` block's `addressing_style`, which every client's `Config`
+/// validates (`Config._validate_s3_configuration`, through
+/// `ClientArgsCreator.get_client_args`): `auto`, `virtual` or `path`, and
+/// any other value is InvalidS3AddressingStyleError. A profile `s3` key
+/// that is no block is no configuration (`SectionConfigProvider`).
+pub(super) fn s3_addressing_style<E: EnvMap>(
+    inputs: &SettingsInputs<'_, E>,
+) -> Result<Option<Resolved<AddressingStyle>>, PythonReason> {
+    let key = S3_ENDPOINT_KEYS[0];
+    let Some(value) = inputs.nested(key) else {
+        return Ok(None);
+    };
+    let style = match value {
+        "auto" => AddressingStyle::Auto,
+        "virtual" => AddressingStyle::Virtual,
+        "path" => AddressingStyle::Path,
+        _ => return Err(Field::S3Endpoint.reason()),
+    };
+    Ok(Some(Resolved::new(style, Source::S3(key))))
 }
 /// The reason a trust setting from `source` routes to Python with: the
 /// command line's flag is a global, any other a network setting.

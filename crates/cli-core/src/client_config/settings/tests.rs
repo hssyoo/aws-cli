@@ -48,6 +48,12 @@ fn nothing_configured_leaves_the_customizable_settings_unset() -> Result<(), Pyt
     );
     assert_eq!(resolved.use_fips_endpoint, None);
     assert_eq!(resolved.use_dualstack_endpoint, None);
+    Ok(())
+}
+
+#[test]
+fn nothing_configured_gives_botocore_s_defaults() -> Result<(), PythonReason> {
+    let resolved = settings("", &[])?;
     assert_eq!(resolved.connect_timeout_ms.value, 60_000);
     assert_eq!(resolved.read_timeout_ms.value, 60_000);
     assert_eq!(resolved.trust.value, Trust::Embedded);

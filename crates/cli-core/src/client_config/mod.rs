@@ -13,10 +13,10 @@ mod settings;
 mod transfer;
 pub mod user_agent;
 #[doc(inline)]
-pub use settings::{ClientSettings, SettingsInputs};
+pub use settings::{ClientSettings, SettingsInputs, resolve_settings};
 use settings::{
     holds_only_certificates, is_blank_path, reject_blank, resolve_client_arguments,
-    resolve_globals, trust_reason,
+    resolve_globals, s3_addressing_style, trust_reason,
 };
 
 const TARGET_GBPS_LIST: f64 = 10.0;
@@ -627,19 +627,12 @@ fn resolve_endpoint<E: EnvMap>(
     inputs: &SettingsInputs<'_, E>,
     config: &mut ClientConfig,
 ) -> Result<(), PythonReason> {
-    let reason = Field::S3Endpoint.reason();
     if inputs.property("s3").is_some() {
-        return Err(reason);
+        return Err(Field::S3Endpoint.reason());
     }
-    let [style_key, accelerate_key, dualstack_key] = S3_ENDPOINT_KEYS;
-    if let Some(value) = inputs.nested(style_key) {
-        let style = match value {
-            "auto" => AddressingStyle::Auto,
-            "virtual" => AddressingStyle::Virtual,
-            "path" => AddressingStyle::Path,
-            _ => return Err(reason),
-        };
-        config.addressing_style = Resolved::new(style, Source::S3(style_key));
+    let [_, accelerate_key, dualstack_key] = S3_ENDPOINT_KEYS;
+    if let Some(style) = s3_addressing_style(inputs)? {
+        config.addressing_style = style;
     }
     for (key, output) in [
         (accelerate_key, &mut config.use_accelerate_endpoint),
