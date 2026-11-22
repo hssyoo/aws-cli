@@ -7,6 +7,37 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+/// Collects mismatches, so one test can check many fields with a single
+/// assertion at the end.
+#[derive(Debug, Default)]
+pub struct Checks(Vec<String>);
+
+impl Checks {
+    pub fn eq<A, E>(&mut self, label: &str, actual: &A, expected: &E)
+    where
+        A: PartialEq<E> + std::fmt::Debug + ?Sized,
+        E: std::fmt::Debug + ?Sized,
+    {
+        if actual != expected {
+            self.0.push(format!("{label}: {actual:?} != {expected:?}"));
+        }
+    }
+
+    pub fn is(&mut self, label: &str, condition: bool) {
+        if !condition {
+            self.0.push(format!("{label}: false"));
+        }
+    }
+
+    pub fn finish(self) -> Result<()> {
+        if self.0.is_empty() {
+            Ok(())
+        } else {
+            Err(self.0.join("\n").into())
+        }
+    }
+}
+
 /// A directory under the system temporary directory, removed on drop.
 #[derive(Debug)]
 pub struct Scratch(PathBuf);
@@ -52,8 +83,12 @@ pub fn service_json(version: &str, operations: &[&str]) -> Vec<u8> {
         .map(|name| format!(r#""{name}":{{"name":"{name}","http":{{"method":"POST"}}}}"#))
         .collect();
     format!(
-        r#"{{"version":"2.0","metadata":{{"apiVersion":"{version}","protocol":"query"}},"operations":{{{}}},"shapes":{{}}}}"#,
-        operations.join(",")
+        concat!(
+            r#"{{"version":"2.0","metadata":{{"apiVersion":"{version}","protocol":"query"}},"#,
+            r#""operations":{{{operations}}},"shapes":{{}}}}"#
+        ),
+        version = version,
+        operations = operations.join(",")
     )
     .into_bytes()
 }

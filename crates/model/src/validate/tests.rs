@@ -38,7 +38,10 @@ fn utc_day() -> Value {
 fn json_cases() -> Vec<(&'static str, Value)> {
     vec![
         ("missing", json("{}")),
-        ("unknown", json(r#"{"Req":"abc","Nested":{"X":"a"},"Bogus":1,"Other":2}"#)),
+        (
+            "unknown",
+            json(r#"{"Req":"abc","Nested":{"X":"a"},"Bogus":1,"Other":2}"#),
+        ),
         (
             "types",
             json(
@@ -55,7 +58,10 @@ fn json_cases() -> Vec<(&'static str, Value)> {
         ),
         ("nested", json(r#"{"Req":"abc","Nested":{"Z":1,"Y":"y"}}"#)),
         ("not_a_dict", json("[]")),
-        ("everything", json(r#"{"Bogus":1,"Num":0,"Req":1,"List":[1],"Union":{}}"#)),
+        (
+            "everything",
+            json(r#"{"Bogus":1,"Num":0,"Req":1,"List":[1],"Union":{}}"#),
+        ),
     ]
 }
 
@@ -73,8 +79,14 @@ fn member_cases() -> Vec<(&'static str, Value)> {
         ("timestamp_nan", ok_with("When", Value::Float(f64::NAN))),
         ("timestamps_ok", ok_with("When", Value::String("12".into()))),
         ("host_label", ok_with("Host", Value::String(String::new()))),
-        ("repr", ok_with("Opt", json(r#"{"it's":["a\nb","q\"'",2.5e-7]}"#))),
-        ("big_negative", ok_with("Num", json("-99999999999999999999"))),
+        (
+            "repr",
+            ok_with("Opt", json(r#"{"it's":["a\nb","q\"'",2.5e-7]}"#)),
+        ),
+        (
+            "big_negative",
+            ok_with("Num", json("-99999999999999999999")),
+        ),
         ("big_positive", ok_with("Num", json("99999999999999999999"))),
         ("float_for_int", ok_with("Num", Value::Float(1.0))),
     ]
@@ -88,12 +100,18 @@ fn python_only_cases() -> Vec<(&'static str, Value)> {
     }
     let mut non_ascii = ok_with("Req", Value::String("é😀".into()));
     if let Value::Map(map) = &mut non_ascii {
-        map.insert("Opt".into(), Value::List(vec![Value::String("é😀\0".into())]));
+        map.insert(
+            "Opt".into(),
+            Value::List(vec![Value::String("é😀\0".into())]),
+        );
     }
     let mut document = Map::new();
     let mut inner = Map::new();
     inner.insert("b".into(), Value::Blob(b"x".to_vec()));
-    document.insert("a".into(), Value::List(vec![Value::Integer(1), Value::Map(inner)]));
+    document.insert(
+        "a".into(),
+        Value::List(vec![Value::Integer(1), Value::Map(inner)]),
+    );
     document.insert("c".into(), utc_day());
     document.insert("d".into(), Value::Null);
     document.insert("e".into(), Value::Float(1.5));
@@ -105,14 +123,20 @@ fn python_only_cases() -> Vec<(&'static str, Value)> {
         ("document", ok_with("Doc", Value::Map(document))),
         ("document_top", ok_with("Doc", Value::Blob(b"raw".to_vec()))),
         ("jsonvalue", ok_with("Json", Value::Map(blob_header))),
-        ("jsonvalue_datetime", ok_with("Json", Value::List(vec![utc_day()]))),
+        (
+            "jsonvalue_datetime",
+            ok_with("Json", Value::List(vec![utc_day()])),
+        ),
     ]
 }
 
 #[test]
 fn reports_match_botocore_for_every_error_kind() -> Result<()> {
     let model = model()?;
-    let input = model.operation("Check").and_then(|op| op.input).ok_or("input")?;
+    let input = model
+        .operation("Check")
+        .and_then(|op| op.input)
+        .ok_or("input")?;
     let expected: serde_json::Value = serde_json::from_slice(include_bytes!("expected.json"))?;
     let expected = expected.as_object().ok_or("expected is not an object")?;
     let mut cases = json_cases();
@@ -142,14 +166,20 @@ fn the_error_message_wraps_the_report_and_no_input_shape_is_valid() -> Result<()
         Missing required parameter in input: \"Nested\"";
     assert_eq!(report.message(), text);
     let bare = model.operation("Bare").ok_or("Bare")?;
-    assert!(matches!(validate_input(&model, bare, &json("[1]")), Validation::Valid));
+    assert!(matches!(
+        validate_input(&model, bare, &json("[1]")),
+        Validation::Valid
+    ));
     Ok(())
 }
 
 #[test]
 fn timestamps_python_accepts_are_valid() -> Result<()> {
     let model = model()?;
-    let input = model.operation("Check").and_then(|op| op.input).ok_or("input")?;
+    let input = model
+        .operation("Check")
+        .and_then(|op| op.input)
+        .ok_or("input")?;
     for value in [
         utc_day(),
         Value::String("2020-01-02T03:04:05Z".into()),
@@ -162,7 +192,10 @@ fn timestamps_python_accepts_are_valid() -> Result<()> {
         Value::Blob(b"12".to_vec()),
     ] {
         let params = ok_with("When", value.clone());
-        assert!(matches!(validate(&model, input, &params), Validation::Valid), "{value:?}");
+        assert!(
+            matches!(validate(&model, input, &params), Validation::Valid),
+            "{value:?}"
+        );
     }
     Ok(())
 }
@@ -172,7 +205,10 @@ fn timestamps_python_accepts_are_valid() -> Result<()> {
 #[test]
 fn what_only_python_can_decide_is_undecided() -> Result<()> {
     let model = model()?;
-    let input = model.operation("Check").and_then(|op| op.input).ok_or("input")?;
+    let input = model
+        .operation("Check")
+        .and_then(|op| op.input)
+        .ok_or("input")?;
     for (member, value) in [
         ("When", Value::String("next tuesday".into())),
         ("When", Value::String("inf".into())),
@@ -182,7 +218,10 @@ fn what_only_python_can_decide_is_undecided() -> Result<()> {
     ] {
         let params = ok_with(member, value.clone());
         let outcome = validate(&model, input, &params);
-        assert!(matches!(outcome, Validation::Undecided(_)), "{value:?}: {outcome:?}");
+        assert!(
+            matches!(outcome, Validation::Undecided(_)),
+            "{value:?}: {outcome:?}"
+        );
     }
     Ok(())
 }

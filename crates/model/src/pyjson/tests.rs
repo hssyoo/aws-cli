@@ -10,17 +10,35 @@ fn dump(text: &str, options: &Options) -> Result<String> {
 fn round_trips_match_python_for_the_cases_that_matter() -> Result<()> {
     let options = Options::default();
     assert_eq!(dump("1.50", &options)?, "1.5");
-    assert_eq!(dump("12345678901234567890", &options)?, "12345678901234567890");
-    assert_eq!(dump(r#""é😀\u0001\u007f\"\\/""#, &options)?, r#""\u00e9\ud83d\ude00\u0001\u007f\"\\/""#);
+    assert_eq!(
+        dump("12345678901234567890", &options)?,
+        "12345678901234567890"
+    );
+    assert_eq!(
+        dump(r#""é😀\u0001\u007f\"\\/""#, &options)?,
+        r#""\u00e9\ud83d\ude00\u0001\u007f\"\\/""#
+    );
     let raw = Options {
         ensure_ascii: false,
         ..Options::default()
     };
-    assert_eq!(dump(r#""é😀\u0001\u007f\b\f\n\r\t""#, &raw)?, "\"é😀\\u0001\u{7f}\\b\\f\\n\\r\\t\"");
-    assert_eq!(dump(r#"{"a":[1,{"b":null}],"c":{}}"#, &options)?, r#"{"a": [1, {"b": null}], "c": {}}"#);
-    assert_eq!(dump(r#"{"a":[1,{"b":null}],"c":{}}"#, &Options::compact())?, r#"{"a":[1,{"b":null}],"c":{}}"#);
+    assert_eq!(
+        dump(r#""é😀\u0001\u007f\b\f\n\r\t""#, &raw)?,
+        "\"é😀\\u0001\u{7f}\\b\\f\\n\\r\\t\""
+    );
+    assert_eq!(
+        dump(r#"{"a":[1,{"b":null}],"c":{}}"#, &options)?,
+        r#"{"a": [1, {"b": null}], "c": {}}"#
+    );
+    assert_eq!(
+        dump(r#"{"a":[1,{"b":null}],"c":{}}"#, &Options::compact())?,
+        r#"{"a":[1,{"b":null}],"c":{}}"#
+    );
     let indented = "{\n    \"a\": [\n        1,\n        []\n    ],\n    \"b\": {}\n}";
-    assert_eq!(dump(r#"{"a":[1,[]],"b":{}}"#, &Options::indented(4))?, indented);
+    assert_eq!(
+        dump(r#"{"a":[1,[]],"b":{}}"#, &Options::indented(4))?,
+        indented
+    );
     assert_eq!(dump("[1]", &Options::indented(0))?, "[\n1\n]");
     Ok(())
 }
@@ -50,11 +68,21 @@ fn floats_print_as_python_repr() -> Result<()> {
 #[test]
 fn unencodable_values_fail_as_json_dumps_does_unless_default_converts_them() -> Result<()> {
     let options = Options::default();
-    let error = dumps(&Value::Blob(vec![1]), &options, None).err().ok_or("blob dumped")?;
-    assert_eq!(error.to_string(), "Object of type bytes is not JSON serializable");
+    let error = dumps(&Value::Blob(vec![1]), &options, None)
+        .err()
+        .ok_or("blob dumped")?;
+    assert_eq!(
+        error.to_string(),
+        "Object of type bytes is not JSON serializable"
+    );
     let instant = timestamp::Timestamp::MIN;
-    let error = dumps(&Value::Timestamp(instant), &options, None).err().ok_or("datetime dumped")?;
-    assert_eq!(error.to_string(), "Object of type datetime is not JSON serializable");
+    let error = dumps(&Value::Timestamp(instant), &options, None)
+        .err()
+        .ok_or("datetime dumped")?;
+    assert_eq!(
+        error.to_string(),
+        "Object of type datetime is not JSON serializable"
+    );
     let mut map = Map::new();
     map.insert("t".into(), Value::Timestamp(instant));
     let convert = |value: &Value| match value {
@@ -78,7 +106,9 @@ fn json_dumps_agrees_with_python_byte_for_byte() -> Result<()> {
     );
     let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
     for _ in 0..400 {
-        state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1);
         let value = f64::from_bits(state);
         if value.is_finite() {
             corpus.push_str(&format!(",{value:e}"));

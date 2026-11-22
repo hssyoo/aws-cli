@@ -28,7 +28,10 @@ fn lexically_latest_resource_and_service_validation() -> Result<()> {
     );
     let view = View::new(&blob)?;
     let name = versioned_resource_name(view, "s3", "endpoint-rule-set-1")?;
-    assert_eq!(name, b"awscli/botocore/data/s3/2099-01-01/endpoint-rule-set-1.json");
+    assert_eq!(
+        name,
+        b"awscli/botocore/data/s3/2099-01-01/endpoint-rule-set-1.json"
+    );
     assert_eq!(load_resource(view, name)?, b"new");
     for service in ["", "s3/../ec2", "s3_", "s3."] {
         assert!(matches!(
@@ -64,8 +67,13 @@ fn compressed_resources_decode_through_the_reserved_scratch() -> Result<()> {
     let name = versioned_resource_name(view, "s3", "endpoint-rule-set-1")?;
     assert_eq!(load_resource(view, name)?, rules);
     assert!(matches!(
-        load_resource(view, b"awscli/botocore/data/s3/2006-03-01/endpoint-tests-1.json"),
-        Err(ResourceError::Decode(pyload::decompress::Error::DecodeFailed))
+        load_resource(
+            view,
+            b"awscli/botocore/data/s3/2006-03-01/endpoint-tests-1.json"
+        ),
+        Err(ResourceError::Decode(
+            pyload::decompress::Error::DecodeFailed
+        ))
     ));
     Ok(())
 }
@@ -87,50 +95,102 @@ fn compressed_decode_failures_keep_the_decoder_error_names() -> Result<()> {
     let blob = blobs::blob(&[corrupt, over_long], false, 2);
     let view = View::new(&blob)?;
     for (name, expected, text) in [
-        (&corrupt_name[..], pyload::decompress::Error::DecodeFailed, "DecodeFailed"),
+        (
+            &corrupt_name[..],
+            pyload::decompress::Error::DecodeFailed,
+            "DecodeFailed",
+        ),
         (
             &over_long_name[..],
             pyload::decompress::Error::OutputLengthMismatch,
             "OutputLengthMismatch",
         ),
     ] {
-        let error = load_resource(view, name).err().ok_or("a corrupt resource loaded")?;
-        assert!(matches!(&error, ResourceError::Decode(actual) if *actual == expected), "{error:?}");
+        let error = load_resource(view, name)
+            .err()
+            .ok_or("a corrupt resource loaded")?;
+        assert!(
+            matches!(&error, ResourceError::Decode(actual) if *actual == expected),
+            "{error:?}"
+        );
         assert_eq!(error.to_string(), text);
     }
     Ok(())
 }
 
+fn two_prefixes(model: &[u8]) -> Vec<u8> {
+    let entries = [
+        (
+            b"awscli/botocore/data/a/2019-01-01/service-2.json".as_slice(),
+            b"{}".as_slice(),
+        ),
+        (b"awscli/botocore/data/a/2020-01-01/service-2.json", model),
+        (b"awscli/botocore/data/a-b/2020-01-01/service-2.json", b"{}"),
+        (b"awscli/botocore/data/b/2020-01-01/waiters-2.json", b"{}"),
+        (b"awscli/botocore/data/partitions.json", b"[]"),
+        (b"awscli/data/cli.json", b"{}"),
+        (b"awscli/data/z/2020-01-01/service-2.json", b"{}"),
+    ];
+    let entries = entries.map(|(name, data)| blobs::entry(name, data, flags::RESOURCE));
+    blobs::blob(&entries, false, 2)
+}
+
 #[test]
-fn payload_sources_list_and_read_their_own_prefix() -> Result<()> {
-    let model = testing::service_json("2020-01-01", &["Op"]);
-    let blob = blobs::blob(
-        &[
-            blobs::entry(b"awscli/botocore/data/a/2019-01-01/service-2.json", b"{}", flags::RESOURCE),
-            blobs::entry(b"awscli/botocore/data/a/2020-01-01/service-2.json", &model, flags::RESOURCE),
-            blobs::entry(b"awscli/botocore/data/b/2020-01-01/waiters-2.json", b"{}", flags::RESOURCE),
-            blobs::entry(b"awscli/botocore/data/partitions.json", b"[]", flags::RESOURCE),
-            blobs::entry(b"awscli/data/cli.json", b"{}", flags::RESOURCE),
-            blobs::entry(b"awscli/data/z/2020-01-01/service-2.json", b"{}", flags::RESOURCE),
-        ],
-        false,
-        2,
-    );
+fn payload_sources_list_their_own_prefix_in_sorted_order() -> Result<()> {
+    let blob = two_prefixes(b"{}");
     let view = View::new(&blob)?;
     let botocore = PayloadSource::botocore(view);
-    assert_eq!(botocore.services(Kind::Service)?, ["a"]);
-    assert_eq!(botocore.services(Kind::Waiters)?, ["b"]);
-    assert_eq!(botocore.versions("a", Kind::Service)?, ["2019-01-01", "2020-01-01"]);
-    assert!(botocore.versions("a/2020-01-01", Kind::Service)?.is_empty());
-    assert!(botocore.versions("", Kind::Service)?.is_empty());
-    assert_eq!(botocore.read("a/2020-01-01/service-2")?, Some(model));
-    assert_eq!(botocore.read("partitions")?, Some(b"[]".to_vec()));
-    assert_eq!(botocore.read("cli")?, None);
+    let mut checks = testing::Checks::default();
+    checks.eq(
+        "services",
+        &botocore.services(Kind::Service)?[..],
+        &["a", "a-b"][..],
+    );
+    checks.eq(
+        "waiters",
+        &botocore.services(Kind::Waiters)?[..],
+        &["b"][..],
+    );
+    let versions = botocore.versions("a", Kind::Service)?;
+    checks.eq("versions", &versions[..], &["2019-01-01", "2020-01-01"][..]);
+    checks.is(
+        "nested name",
+        botocore.versions("a/2020-01-01", Kind::Service)?.is_empty(),
+    );
+    checks.is(
+        "empty name",
+        botocore.versions("", Kind::Service)?.is_empty(),
+    );
     let awscli = PayloadSource::awscli(view);
-    assert_eq!(awscli.services(Kind::Service)?, ["z"]);
-    assert_eq!(awscli.read("cli")?, Some(b"{}".to_vec()));
-    assert_eq!(awscli.read("partitions")?, None);
-    Ok(())
+    checks.eq(
+        "awscli services",
+        &awscli.services(Kind::Service)?[..],
+        &["z"][..],
+    );
+    checks.finish()
+}
+
+#[test]
+fn payload_sources_read_their_own_prefix() -> Result<()> {
+    let model = testing::service_json("2020-01-01", &["Op"]);
+    let blob = two_prefixes(&model);
+    let view = View::new(&blob)?;
+    let (botocore, awscli) = (PayloadSource::botocore(view), PayloadSource::awscli(view));
+    let mut checks = testing::Checks::default();
+    checks.eq(
+        "model",
+        &botocore.read("a/2020-01-01/service-2")?,
+        &Some(model.clone()),
+    );
+    checks.eq(
+        "partitions",
+        &botocore.read("partitions")?,
+        &Some(b"[]".to_vec()),
+    );
+    checks.eq("cli in botocore", &botocore.read("cli")?, &None);
+    checks.eq("cli in awscli", &awscli.read("cli")?, &Some(b"{}".to_vec()));
+    checks.eq("partitions in awscli", &awscli.read("partitions")?, &None);
+    checks.finish()
 }
 
 #[test]
@@ -139,7 +199,12 @@ fn the_embedded_payload_holds_the_repository_data_directory() -> Result<()> {
     let view = View::new(&payload)?;
     let embedded = PayloadSource::botocore(view);
     let disk = DirSource::new(testing::data_dir());
-    for kind in [Kind::Service, Kind::Paginators, Kind::Waiters, Kind::EndpointRuleSet] {
+    for kind in [
+        Kind::Service,
+        Kind::Paginators,
+        Kind::Waiters,
+        Kind::EndpointRuleSet,
+    ] {
         assert_eq!(embedded.services(kind)?, disk.services(kind)?, "{kind:?}");
     }
     let directories = std::fs::read_dir(testing::data_dir())?
@@ -148,7 +213,10 @@ fn the_embedded_payload_holds_the_repository_data_directory() -> Result<()> {
     assert_eq!(embedded.services(Kind::Service)?.len(), directories);
     for service in ["sts", "ec2"] {
         let version = crate::source::latest_version(&embedded, service, Kind::Service)?;
-        assert_eq!(version, crate::source::latest_version(&disk, service, Kind::Service)?);
+        assert_eq!(
+            version,
+            crate::source::latest_version(&disk, service, Kind::Service)?
+        );
         let name = format!("{service}/{version}/service-2");
         assert_eq!(embedded.read(&name)?, disk.read(&name)?);
     }

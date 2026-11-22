@@ -3,7 +3,10 @@ use crate::testing::{Result, Scratch, service_json};
 
 fn layout() -> Result<Scratch> {
     let root = Scratch::new("dir-source")?;
-    root.write("a/2020-01-01/service-2.json", &service_json("2020-01-01", &["Old"]))?;
+    root.write(
+        "a/2020-01-01/service-2.json",
+        &service_json("2020-01-01", &["Old"]),
+    )?;
     root.write("a/2021-01-01/paginators-1.json", b"{}")?;
     root.write("b/2019-01-01/waiters-2.json", b"{}")?;
     root.write("file/2020-01-01/service-2.json", b"{}")?;
@@ -35,11 +38,23 @@ fn dir_source_reads_files_by_botocore_data_path() -> Result<()> {
     let source = DirSource::new(root.path());
     let model = source.read("a/2020-01-01/service-2")?;
     assert_eq!(model, Some(service_json("2020-01-01", &["Old"])));
-    assert_eq!(source.read("partitions")?, Some(br#"{"partitions":[]}"#.to_vec()));
+    assert_eq!(
+        source.read("partitions")?,
+        Some(br#"{"partitions":[]}"#.to_vec())
+    );
     assert_eq!(source.read("a/2021-01-01/service-2")?, None);
     assert_eq!(source.read("c/2020-01-01/service-2")?, None);
-    for name in ["", "a//2020-01-01/service-2", "../a/2020-01-01/service-2", "a/./x", "a\0b"] {
-        assert!(matches!(source.read(name), Err(LoadError::InvalidName(_))), "{name:?}");
+    for name in [
+        "",
+        "a//2020-01-01/service-2",
+        "../a/2020-01-01/service-2",
+        "a/./x",
+        "a\0b",
+    ] {
+        assert!(
+            matches!(source.read(name), Err(LoadError::InvalidName(_))),
+            "{name:?}"
+        );
     }
     Ok(())
 }
@@ -47,7 +62,10 @@ fn dir_source_reads_files_by_botocore_data_path() -> Result<()> {
 #[test]
 fn a_missing_or_empty_root_names_no_directory() -> Result<()> {
     let root = Scratch::new("missing-root")?;
-    for source in [DirSource::new(root.path().join("absent")), DirSource::new("")] {
+    for source in [
+        DirSource::new(root.path().join("absent")),
+        DirSource::new(""),
+    ] {
         assert!(source.services(Kind::Service)?.is_empty());
         assert!(source.versions("a", Kind::Service)?.is_empty());
         assert_eq!(source.read("partitions")?, None);
@@ -84,14 +102,20 @@ fn a_service_model_needs_a_listed_service_and_takes_its_extras() -> Result<()> {
         br#"{"version":1,"merge":{"metadata":{"m":{"k":9,"n":3},"z":5,"y":[1]}}}"#,
     )?;
     root.write("b/2020-01-01/service-2.json", br#"{"metadata":{"x":1}}"#)?;
-    root.write("b/2020-01-01/service-2.sdk-extras.json", br#"{"version":1}"#)?;
+    root.write(
+        "b/2020-01-01/service-2.sdk-extras.json",
+        br#"{"version":1}"#,
+    )?;
     let source = DirSource::new(root.path());
     let document = load_service_model(&source, "a", Kind::Service)?;
     assert_eq!(document.version, "2020-01-01");
     let merged = r#"{"metadata":{"x":1,"m":{"k":9,"j":2,"n":3},"z":5,"y":[1]},"operations":{}}"#;
     assert_eq!(serde_json::to_string(&document.json)?, merged);
     let document = load_service_model(&source, "b", Kind::Service)?;
-    assert_eq!(serde_json::to_string(&document.json)?, r#"{"metadata":{"x":1}}"#);
+    assert_eq!(
+        serde_json::to_string(&document.json)?,
+        r#"{"metadata":{"x":1}}"#
+    );
     assert!(matches!(
         load_service_model(&source, "c", Kind::Service),
         Err(LoadError::UnknownService(name)) if name == "c"
@@ -111,10 +135,16 @@ fn raw_bytes_pass_through_unless_extras_merge() -> Result<()> {
     )?;
     let source = DirSource::new(root.path());
     let (version, bytes) = load_service_bytes(&source, "a", Kind::EndpointRuleSet)?;
-    assert_eq!((version.as_str(), bytes.as_slice()), ("2020-01-01", rules.as_slice()));
+    assert_eq!(
+        (version.as_str(), bytes.as_slice()),
+        ("2020-01-01", rules.as_slice())
+    );
     let (_, bytes) = load_service_bytes(&source, "b", Kind::EndpointRuleSet)?;
     assert_eq!(bytes, br#"{"version":"1.0","parameters":{}}"#);
-    assert_eq!(load_data_bytes(&source, "a/2020-01-01/endpoint-rule-set-1")?, rules);
+    assert_eq!(
+        load_data_bytes(&source, "a/2020-01-01/endpoint-rule-set-1")?,
+        rules
+    );
     assert!(matches!(
         load_data_bytes(&source, "partitions"),
         Err(LoadError::DataNotFound(name)) if name == "partitions"

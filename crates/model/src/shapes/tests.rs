@@ -1,6 +1,6 @@
 use super::*;
 use crate::source::{DirSource, Kind, Source};
-use crate::testing::{self, Result};
+use crate::testing::{self, Checks, Result};
 use crate::value::Value;
 
 fn fixture() -> Result<Model> {
@@ -8,159 +8,323 @@ fn fixture() -> Result<Model> {
 }
 
 fn named(model: &Model, name: &str) -> Result<ShapeId> {
-    Ok(model.shape_named(name).ok_or_else(|| format!("no shape {name}"))?)
+    Ok(model
+        .shape_named(name)
+        .ok_or_else(|| format!("no shape {name}"))?)
 }
 
 fn member(model: &Model, shape: ShapeId, name: &str) -> Result<ShapeId> {
-    let found = model.members(shape).iter().find(|member| &*member.name == name);
+    let found = model
+        .members(shape)
+        .iter()
+        .find(|member| &*member.name == name);
     Ok(found.ok_or_else(|| format!("no member {name}"))?.shape)
 }
 
 fn member_names(model: &Model, shape: ShapeId) -> Vec<&str> {
-    model.members(shape).iter().map(|member| &*member.name).collect()
+    model
+        .members(shape)
+        .iter()
+        .map(|member| &*member.name)
+        .collect()
+}
+
+fn text(value: &str) -> Option<Box<str>> {
+    Some(value.into())
+}
+
+fn texts(values: &[&str]) -> Box<[Box<str>]> {
+    values.iter().map(|value| Box::from(*value)).collect()
 }
 
 #[test]
 fn metadata_and_client_context_parameters_are_read() -> Result<()> {
     let model = fixture()?;
     let metadata = model.metadata();
-    assert_eq!(metadata.api_version.as_deref(), Some("2020-01-01"));
-    assert_eq!(metadata.endpoint_prefix.as_deref(), Some("x"));
-    assert_eq!(metadata.protocol.as_deref(), Some("json"));
-    assert_eq!(metadata.protocols.as_deref(), Some(&["json".into(), "query".into()][..]));
-    assert_eq!(metadata.json_version.as_deref(), Some("1.1"));
-    assert_eq!(metadata.target_prefix.as_deref(), Some("X"));
-    assert_eq!(metadata.service_id.as_deref(), Some("X Svc"));
-    assert_eq!(metadata.service_full_name.as_deref(), Some("X Service"));
-    assert_eq!(metadata.signature_version.as_deref(), Some("v4"));
-    assert_eq!(metadata.signing_name.as_deref(), Some("xs"));
-    assert_eq!(metadata.uid.as_deref(), Some("x-2020-01-01"));
-    assert!(metadata.aws_query_compatible);
-    assert_eq!(metadata.auth.as_deref(), Some(&["aws.auth#sigv4".into()][..]));
-    assert_eq!(metadata.xml_namespace.as_deref(), Some("https://x/"));
-    assert_eq!(metadata.global_endpoint.as_deref(), Some("x.amazonaws.com"));
-    assert_eq!(metadata.checksum_format.as_deref(), Some("md5"));
+    let mut checks = Checks::default();
+    for (label, actual, expected) in [
+        ("apiVersion", &metadata.api_version, "2020-01-01"),
+        ("endpointPrefix", &metadata.endpoint_prefix, "x"),
+        ("protocol", &metadata.protocol, "json"),
+        ("jsonVersion", &metadata.json_version, "1.1"),
+        ("targetPrefix", &metadata.target_prefix, "X"),
+        ("serviceId", &metadata.service_id, "X Svc"),
+        ("serviceFullName", &metadata.service_full_name, "X Service"),
+        ("signatureVersion", &metadata.signature_version, "v4"),
+        ("signingName", &metadata.signing_name, "xs"),
+        ("uid", &metadata.uid, "x-2020-01-01"),
+        ("xmlNamespace", &metadata.xml_namespace, "https://x/"),
+        (
+            "globalEndpoint",
+            &metadata.global_endpoint,
+            "x.amazonaws.com",
+        ),
+        ("checksumFormat", &metadata.checksum_format, "md5"),
+    ] {
+        checks.eq(label, actual, &text(expected));
+    }
+    checks.eq(
+        "protocols",
+        &metadata.protocols,
+        &Some(texts(&["json", "query"])),
+    );
+    checks.eq("auth", &metadata.auth, &Some(texts(&["aws.auth#sigv4"])));
+    checks.is("awsQueryCompatible", metadata.aws_query_compatible);
     let params = model.client_context_params();
-    assert_eq!(params.len(), 1);
-    assert_eq!((&*params[0].name, &*params[0].type_name), ("Accelerate", "boolean"));
-    Ok(())
+    let expected = [ClientContextParam {
+        name: "Accelerate".into(),
+        type_name: "boolean".into(),
+    }];
+    checks.eq("clientContextParams", params, &expected[..]);
+    checks.finish()
 }
 
 #[test]
 fn operations_keep_model_order_and_their_traits() -> Result<()> {
     let model = fixture()?;
     let names: Vec<&str> = model.operations().iter().map(|op| &*op.name).collect();
-    assert_eq!(names, ["Zeta", "Alpha"]);
     let zeta = model.operation("Zeta").ok_or("Zeta")?;
-    assert_eq!(zeta.http.method.as_deref(), Some("POST"));
-    assert_eq!(zeta.http.request_uri.as_deref(), Some("/"));
-    assert_eq!(zeta.http.response_code, Some(200));
-    assert_eq!(zeta.host_prefix.as_deref(), Some("{Name}."));
-    let statics = &zeta.static_context_params;
-    assert_eq!(statics.len(), 2);
-    assert_eq!((&*statics[0].0, &statics[0].1), ("UseThing", &Value::Bool(true)));
-    assert_eq!((&*statics[1].0, &statics[1].1), ("Region", &Value::String("r".into())));
-    let contexts = &zeta.operation_context_params;
-    assert_eq!(contexts.len(), 1);
-    assert_eq!((&*contexts[0].0, &*contexts[0].1), ("Names", "Items[*].Name"));
-    let auth = zeta.auth.as_deref().ok_or("auth")?;
-    assert_eq!(auth, [Box::from("aws.auth#sigv4"), Box::from("smithy.api#noAuth")]);
-    assert_eq!(zeta.auth_type.as_deref(), Some("v4"));
-    assert!(zeta.unsigned_payload && zeta.deprecated && !zeta.endpoint_operation);
-    assert_eq!(zeta.endpoint_discovery, Some(EndpointDiscovery { required: true }));
-    let checksum = zeta.http_checksum.as_ref().ok_or("httpChecksum")?;
-    assert_eq!(checksum.request_algorithm_member.as_deref(), Some("Algo"));
-    assert!(checksum.request_checksum_required);
-    assert_eq!(checksum.request_validation_mode_member.as_deref(), Some("Mode"));
-    assert_eq!(&*checksum.response_algorithms, [Box::from("CRC32"), Box::from("SHA256")]);
-    let compression = zeta.request_compression.as_deref().ok_or("requestcompression")?;
-    assert_eq!(compression, [Box::from("gzip")]);
+    let mut checks = Checks::default();
+    checks.eq("order", &names[..], &["Zeta", "Alpha"][..]);
+    let http = Http {
+        method: text("POST"),
+        request_uri: text("/"),
+        response_code: Some(200),
+    };
+    checks.eq("http", &zeta.http, &http);
+    checks.eq("hostPrefix", &zeta.host_prefix, &text("{Name}."));
+    let statics: Box<[(Box<str>, Value)]> = Box::new([
+        ("UseThing".into(), Value::Bool(true)),
+        ("Region".into(), Value::String("r".into())),
+    ]);
+    checks.eq("staticContextParams", &zeta.static_context_params, &statics);
+    let contexts: Box<[(Box<str>, Box<str>)]> =
+        Box::new([("Names".into(), "Items[*].Name".into())]);
+    checks.eq(
+        "operationContextParams",
+        &zeta.operation_context_params,
+        &contexts,
+    );
+    checks.eq(
+        "auth",
+        &zeta.auth,
+        &Some(texts(&["aws.auth#sigv4", "smithy.api#noAuth"])),
+    );
+    checks.eq("authtype", &zeta.auth_type, &text("v4"));
+    checks.is("unsignedPayload", zeta.unsigned_payload);
+    checks.is("deprecated", zeta.deprecated);
+    checks.is("not endpointoperation", !zeta.endpoint_operation);
+    checks.eq(
+        "endpointdiscovery",
+        &zeta.endpoint_discovery,
+        &Some(EndpointDiscovery { required: true }),
+    );
+    let checksum = HttpChecksum {
+        request_algorithm_member: text("Algo"),
+        request_checksum_required: true,
+        request_validation_mode_member: text("Mode"),
+        response_algorithms: texts(&["CRC32", "SHA256"]),
+    };
+    checks.eq("httpChecksum", &zeta.http_checksum, &Some(checksum));
+    checks.eq(
+        "requestcompression",
+        &zeta.request_compression,
+        &Some(texts(&["gzip"])),
+    );
+    checks.is("no Missing operation", model.operation("Missing").is_none());
+    checks.finish()
+}
+
+#[test]
+fn an_operation_without_io_reads_its_wire_name_and_flags() -> Result<()> {
+    let model = fixture()?;
     let alpha = model.operation("Alpha").ok_or("Alpha")?;
-    assert_eq!(alpha.wire_name.as_deref(), Some("AlphaWire"));
-    assert!(alpha.endpoint_operation && alpha.http_checksum_required);
-    assert_eq!(alpha.endpoint_discovery, Some(EndpointDiscovery { required: false }));
-    assert!(alpha.input.is_none() && alpha.output.is_none() && alpha.errors.is_empty());
-    assert!(model.operation("Missing").is_none());
-    Ok(())
+    let mut checks = Checks::default();
+    checks.eq("wire name", &alpha.wire_name, &text("AlphaWire"));
+    checks.is("endpointoperation", alpha.endpoint_operation);
+    checks.is("httpChecksumRequired", alpha.http_checksum_required);
+    checks.eq(
+        "endpointdiscovery",
+        &alpha.endpoint_discovery,
+        &Some(EndpointDiscovery { required: false }),
+    );
+    checks.eq("input", &alpha.input, &None);
+    checks.eq("output", &alpha.output, &None);
+    checks.is("no errors", alpha.errors.is_empty());
+    checks.finish()
 }
 
 #[test]
 fn members_keep_model_order_and_references_overlay_their_targets() -> Result<()> {
     let model = fixture()?;
-    let zeta = model.operation("Zeta").ok_or("Zeta")?;
-    let input = zeta.input.ok_or("input")?;
-    assert_eq!(input, named(&model, "ZetaInput")?);
+    let input = model
+        .operation("Zeta")
+        .and_then(|op| op.input)
+        .ok_or("input")?;
+    let str_id = named(&model, "Str")?;
+    let name = model.shape(member(&model, input, "Name")?);
+    let token = model.shape(member(&model, input, "Token")?);
+    let mut checks = Checks::default();
+    checks.eq("input", &input, &named(&model, "ZetaInput")?);
     let expected = [
         "Name", "Token", "Plain", "Doc", "Items", "Tags", "Header", "Query", "Num", "Ratio",
         "Body", "When", "Choice", "Stream", "Secret", "Next",
     ];
-    assert_eq!(member_names(&model, input), expected);
-    assert_eq!(&*model.shape(input).traits.required, [Box::from("Name"), Box::from("Token")]);
-    let str_id = named(&model, "Str")?;
-    assert_eq!(member(&model, input, "Plain")?, str_id);
-    assert_eq!(member(&model, input, "Doc")?, named(&model, "Doc")?);
-    let name = model.shape(member(&model, input, "Name")?);
-    assert_eq!((&*name.name, &name.kind), ("Str", &ShapeKind::String));
-    assert_eq!(name.traits.name.as_deref(), Some("name"));
-    assert!(name.traits.is(Flag::HostLabel));
-    assert_eq!(name.traits.context_param.as_deref(), Some("ResourceName"));
-    assert_eq!(name.traits.min, Some(Bound::Integer(1)));
-    assert_eq!(name.traits.max, Some(Bound::Integer(64)));
-    assert_eq!(name.traits.pattern.as_deref(), Some("^a+$"));
-    assert_eq!(&*name.traits.enum_values, [Box::from("a"), Box::from("aa")]);
-    assert!(!model.shape(str_id).traits.is(Flag::HostLabel));
-    assert!(model.shape(str_id).traits.name.is_none());
-    let token = model.shape(member(&model, input, "Token")?);
-    assert!(token.traits.is(Flag::IdempotencyToken) && token.traits.min.is_some());
-    Ok(())
+    checks.eq("members", &member_names(&model, input)[..], &expected[..]);
+    checks.eq(
+        "required",
+        &model.shape(input).traits.required,
+        &texts(&["Name", "Token"]),
+    );
+    checks.eq("Plain is Str", &member(&model, input, "Plain")?, &str_id);
+    checks.eq(
+        "Doc is Doc",
+        &member(&model, input, "Doc")?,
+        &named(&model, "Doc")?,
+    );
+    checks.eq(
+        "Name shape",
+        &(&*name.name, &name.kind),
+        &("Str", &ShapeKind::String),
+    );
+    checks.eq("Name locationName", &name.traits.name, &text("name"));
+    checks.is("Name hostLabel", name.traits.is(Flag::HostLabel));
+    checks.eq(
+        "Name contextParam",
+        &name.traits.context_param,
+        &text("ResourceName"),
+    );
+    checks.eq("Name min", &name.traits.min, &Some(Bound::Integer(1)));
+    checks.eq("Name max", &name.traits.max, &Some(Bound::Integer(64)));
+    checks.eq("Name pattern", &name.traits.pattern, &text("^a+$"));
+    checks.eq("Name enum", &name.traits.enum_values, &texts(&["a", "aa"]));
+    checks.is(
+        "Str keeps no hostLabel",
+        !model.shape(str_id).traits.is(Flag::HostLabel),
+    );
+    checks.eq(
+        "Str has no locationName",
+        &model.shape(str_id).traits.name,
+        &None,
+    );
+    checks.is(
+        "Token idempotencyToken",
+        token.traits.is(Flag::IdempotencyToken),
+    );
+    checks.eq("Token min", &token.traits.min, &Some(Bound::Integer(1)));
+    checks.finish()
 }
 
 #[test]
-fn every_carried_trait_is_resolved() -> Result<()> {
+fn member_traits_are_resolved() -> Result<()> {
     let model = fixture()?;
     let input = named(&model, "ZetaInput")?;
     let traits = |member_name: &str| -> Result<&Traits> {
         Ok(&model.shape(member(&model, input, member_name)?).traits)
     };
+    let mut checks = Checks::default();
     let header = traits("Header")?;
-    assert_eq!(header.location.as_deref(), Some("header"));
-    assert_eq!(header.name.as_deref(), Some("X-H"));
-    assert!(header.is(Flag::JsonValue));
+    checks.eq("Header location", &header.location, &text("header"));
+    checks.eq("Header name", &header.name, &text("X-H"));
+    checks.is("Header jsonvalue", header.is(Flag::JsonValue));
     let query = traits("Query")?;
-    assert_eq!(query.query_name.as_deref(), Some("q"));
-    assert!(query.is(Flag::XmlAttribute));
-    assert_eq!(traits("Ratio")?.min, Some(Bound::Float(0.5)));
-    assert_eq!(traits("Ratio")?.max.map(|max| max.to_string()).as_deref(), Some("1000.0"));
-    assert_eq!(traits("Num")?.min.map(|min| min.to_string()).as_deref(), Some("-5"));
-    assert!(traits("Body")?.is(Flag::Streaming) && traits("Body")?.is(Flag::RequiresLength));
-    assert!(!model.shape(named(&model, "Body")?).traits.is(Flag::Streaming));
-    assert_eq!(traits("When")?.timestamp_format.as_deref(), Some("iso8601"));
-    assert!(traits("Choice")?.is(Flag::Union) && traits("Doc")?.is(Flag::Document));
-    assert!(traits("Stream")?.is(Flag::EventStream));
-    assert!(traits("Secret")?.is(Flag::Deprecated) && traits("Secret")?.is(Flag::Sensitive));
-    let next = traits("Next")?;
-    let namespace = next.xml_namespace.as_ref().ok_or("xmlNamespace")?;
-    assert_eq!(namespace.uri.as_deref(), Some("https://n/"));
-    assert_eq!(namespace.prefix.as_deref(), Some("n"));
+    checks.eq("Query queryName", &query.query_name, &text("q"));
+    checks.is("Query xmlAttribute", query.is(Flag::XmlAttribute));
+    checks.eq("Ratio min", &traits("Ratio")?.min, &Some(Bound::Float(0.5)));
+    let ratio_max = traits("Ratio")?.max.map(|max| max.to_string());
+    checks.eq("Ratio max text", &ratio_max, &Some("1000.0".to_owned()));
+    let num_min = traits("Num")?.min.map(|min| min.to_string());
+    checks.eq("Num min text", &num_min, &Some("-5".to_owned()));
+    checks.is("Body streaming", traits("Body")?.is(Flag::Streaming));
+    checks.is(
+        "Body requiresLength",
+        traits("Body")?.is(Flag::RequiresLength),
+    );
+    checks.is(
+        "Body shape not streaming",
+        !model
+            .shape(named(&model, "Body")?)
+            .traits
+            .is(Flag::Streaming),
+    );
+    checks.eq(
+        "When timestampFormat",
+        &traits("When")?.timestamp_format,
+        &text("iso8601"),
+    );
+    checks.is("Choice union", traits("Choice")?.is(Flag::Union));
+    checks.is("Doc document", traits("Doc")?.is(Flag::Document));
+    checks.is(
+        "Stream eventstream",
+        traits("Stream")?.is(Flag::EventStream),
+    );
+    checks.is("Secret deprecated", traits("Secret")?.is(Flag::Deprecated));
+    checks.is("Secret sensitive", traits("Secret")?.is(Flag::Sensitive));
+    let namespace = XmlNamespace {
+        uri: text("https://n/"),
+        prefix: text("n"),
+    };
+    checks.eq(
+        "Next xmlNamespace",
+        &traits("Next")?.xml_namespace,
+        &Some(namespace),
+    );
+    checks.finish()
+}
+
+#[test]
+fn list_map_and_event_traits_are_resolved() -> Result<()> {
+    let model = fixture()?;
     let items = named(&model, "Items")?;
-    assert!(model.shape(items).traits.is(Flag::Flattened));
-    assert_eq!(model.shape(items).traits.min, Some(Bound::Integer(0)));
     let ShapeKind::List { member: item } = model.shape(items).kind else {
         return Err("Items is not a list".into());
     };
-    assert_eq!(model.shape(item).traits.name.as_deref(), Some("item"));
     let ShapeKind::Map { key, value } = model.shape(named(&model, "Tags")?).kind else {
         return Err("Tags is not a map".into());
     };
-    assert_eq!(key, named(&model, "Str")?);
-    assert_eq!(model.shape(value).traits.name.as_deref(), Some("v"));
     let event = named(&model, "Ev")?;
-    assert!(model.shape(event).traits.is(Flag::Event));
-    assert!(model.shape(member(&model, event, "H")?).traits.is(Flag::EventHeader));
-    assert!(model.shape(member(&model, event, "P")?).traits.is(Flag::EventPayload));
-    let endpoint = named(&model, "Endpoint")?;
-    assert!(model.shape(endpoint).traits.is(Flag::EndpointDiscoveryId));
-    Ok(())
+    let mut checks = Checks::default();
+    checks.is(
+        "Items flattened",
+        model.shape(items).traits.is(Flag::Flattened),
+    );
+    checks.eq(
+        "Items min",
+        &model.shape(items).traits.min,
+        &Some(Bound::Integer(0)),
+    );
+    checks.eq(
+        "item locationName",
+        &model.shape(item).traits.name,
+        &text("item"),
+    );
+    checks.eq("map key", &key, &named(&model, "Str")?);
+    checks.eq(
+        "map value locationName",
+        &model.shape(value).traits.name,
+        &text("v"),
+    );
+    checks.is("Ev event", model.shape(event).traits.is(Flag::Event));
+    checks.is(
+        "H eventheader",
+        model
+            .shape(member(&model, event, "H")?)
+            .traits
+            .is(Flag::EventHeader),
+    );
+    checks.is(
+        "P eventpayload",
+        model
+            .shape(member(&model, event, "P")?)
+            .traits
+            .is(Flag::EventPayload),
+    );
+    let endpoint = model.shape(named(&model, "Endpoint")?);
+    checks.is(
+        "endpointdiscoveryid",
+        endpoint.traits.is(Flag::EndpointDiscoveryId),
+    );
+    checks.finish()
 }
 
 #[test]
@@ -168,41 +332,91 @@ fn recursive_shapes_and_overlaid_structures_share_their_members() -> Result<()> 
     let model = fixture()?;
     let node = named(&model, "Node")?;
     let next = member(&model, node, "Next")?;
-    assert_ne!(next, node);
-    assert_eq!(model.shape(next).traits.name.as_deref(), Some("n"));
-    assert_eq!(member_names(&model, next), ["Next", "Id"]);
-    assert_eq!(member(&model, next, "Next")?, next);
     let input = named(&model, "ZetaInput")?;
     let overlaid = member(&model, input, "Next")?;
-    assert_eq!(model.shape(overlaid).traits.name.as_deref(), Some("next"));
-    assert_eq!(member_names(&model, overlaid), ["Next", "Id"]);
-    Ok(())
+    let mut checks = Checks::default();
+    checks.is("derived shape", next != node);
+    checks.eq(
+        "Next locationName",
+        &model.shape(next).traits.name,
+        &text("n"),
+    );
+    checks.eq(
+        "Next members",
+        &member_names(&model, next)[..],
+        &["Next", "Id"][..],
+    );
+    checks.eq("Next is recursive", &member(&model, next, "Next")?, &next);
+    checks.eq(
+        "overlaid locationName",
+        &model.shape(overlaid).traits.name,
+        &text("next"),
+    );
+    checks.eq(
+        "overlaid members",
+        &member_names(&model, overlaid)[..],
+        &["Next", "Id"][..],
+    );
+    checks.finish()
 }
 
 #[test]
-fn outputs_errors_and_kinds_resolve_as_botocore_does() -> Result<()> {
+fn outputs_and_errors_resolve_as_botocore_does() -> Result<()> {
     let model = fixture()?;
     let zeta = model.operation("Zeta").ok_or("Zeta")?;
     let output = model.shape(zeta.output.ok_or("output")?);
-    assert_eq!(&*output.name, "ZetaOutput");
-    assert_eq!(output.traits.result_wrapper.as_deref(), Some("ZetaResult"));
-    assert_eq!(output.traits.payload.as_deref(), Some("Id"));
+    let (boom, plain) = (named(&model, "Boom")?, named(&model, "Plain")?);
+    let mut checks = Checks::default();
+    checks.eq("output name", &*output.name, "ZetaOutput");
+    checks.eq(
+        "resultWrapper",
+        &output.traits.result_wrapper,
+        &text("ZetaResult"),
+    );
+    checks.eq("payload", &output.traits.payload, &text("Id"));
     let named_output = model.shape(named(&model, "ZetaOutput")?);
-    assert!(named_output.traits.result_wrapper.is_none());
-    let boom = named(&model, "Boom")?;
-    let plain = named(&model, "Plain")?;
-    assert_eq!(zeta.errors[0], boom);
-    assert!(!model.shape(zeta.errors[1]).traits.is(Flag::Exception));
-    let error = model.shape(boom).traits.error.as_ref().ok_or("error")?;
-    assert_eq!(error.code.as_deref(), Some("BoomCode"));
-    assert_eq!((error.http_status_code, error.sender_fault), (Some(400), true));
-    assert_eq!(model.shape(boom).traits.retryable, Some(Retryable { throttling: true }));
-    assert_eq!(model.error_shapes().collect::<Vec<_>>(), [boom, plain]);
-    assert_eq!(model.error_code(boom), Some("BoomCode"));
-    assert_eq!(model.error_code(plain), Some("Plain"));
-    assert_eq!(model.error_code(named(&model, "Str")?), None);
-    assert_eq!(model.shape_for_error_code("BoomCode"), Some(boom));
-    assert_eq!(model.shape_for_error_code("Boom"), None);
+    checks.eq(
+        "named output has no wrapper",
+        &named_output.traits.result_wrapper,
+        &None,
+    );
+    checks.eq("first error", &zeta.errors[0], &boom);
+    checks.is(
+        "overlaid exception",
+        !model.shape(zeta.errors[1]).traits.is(Flag::Exception),
+    );
+    let error = ErrorTrait {
+        code: text("BoomCode"),
+        http_status_code: Some(400),
+        sender_fault: true,
+    };
+    checks.eq("error", &model.shape(boom).traits.error, &Some(error));
+    checks.eq(
+        "retryable",
+        &model.shape(boom).traits.retryable,
+        &Some(Retryable { throttling: true }),
+    );
+    checks.eq(
+        "error shapes",
+        &model.error_shapes().collect::<Vec<_>>()[..],
+        &[boom, plain][..],
+    );
+    checks.eq("Boom code", &model.error_code(boom), &Some("BoomCode"));
+    checks.eq("Plain code", &model.error_code(plain), &Some("Plain"));
+    checks.eq("Str code", &model.error_code(named(&model, "Str")?), &None);
+    checks.eq(
+        "by code",
+        &model.shape_for_error_code("BoomCode"),
+        &Some(boom),
+    );
+    checks.eq("by name", &model.shape_for_error_code("Boom"), &None);
+    checks.finish()
+}
+
+#[test]
+fn every_shape_type_has_its_kind() -> Result<()> {
+    let model = fixture()?;
+    let mut checks = Checks::default();
     for (name, kind) in [
         ("Big", ShapeKind::Other("bigInteger".into())),
         ("Flags", ShapeKind::Boolean),
@@ -213,42 +427,59 @@ fn outputs_errors_and_kinds_resolve_as_botocore_does() -> Result<()> {
         ("Body", ShapeKind::Blob),
         ("When", ShapeKind::Timestamp),
     ] {
-        assert_eq!(model.shape(named(&model, name)?).kind, kind, "{name}");
+        checks.eq(name, &model.shape(named(&model, name)?).kind, &kind);
     }
-    Ok(())
+    checks.finish()
 }
 
 #[test]
 fn malformed_models_name_what_botocore_would_raise() -> Result<()> {
     let wrap = |shapes: &str| {
         let text = format!(
-            r#"{{"metadata":{{}},"operations":{{"Op":{{"input":{{"shape":"In"}}}}}},"shapes":{{{shapes}}}}}"#
+            concat!(
+                r#"{{"metadata":{{}},"operations":{{"Op":{{"input":{{"shape":"In"}}}}}},"#,
+                r#""shapes":{{{shapes}}}}}"#
+            ),
+            shapes = shapes,
         );
         Model::from_json(text.as_bytes())
     };
-    let cases: [(&str, fn(&ModelError) -> bool); 5] = [
-        (r#""In":{"type":"structure","members":{"A":{"shape":"Gone"}}}"#, |e| {
-            matches!(e, ModelError::NoShapeFound(name) if &**name == "Gone")
-        }),
-        (r#""In":{"members":{}}"#, |e| {
-            matches!(e, ModelError::InvalidShape(name) if &**name == "In")
-        }),
-        (r#""In":{"type":"structure","members":{"A":{"location":"header"}}}"#, |e| {
-            matches!(e, ModelError::InvalidShapeReference(_))
-        }),
+    type Expect = fn(&ModelError) -> bool;
+    let cases: [(&str, Expect); 5] = [
+        (
+            r#""In":{"type":"structure","members":{"A":{"shape":"Gone"}}}"#,
+            |e| matches!(e, ModelError::NoShapeFound(name) if &**name == "Gone"),
+        ),
+        (
+            r#""In":{"members":{}}"#,
+            |e| matches!(e, ModelError::InvalidShape(name) if &**name == "In"),
+        ),
+        (
+            r#""In":{"type":"structure","members":{"A":{"location":"header"}}}"#,
+            |e| matches!(e, ModelError::InvalidShapeReference(_)),
+        ),
         (r#""In":{"type":"string","min":"one"}"#, |e| {
-            matches!(e, ModelError::InvalidTrait { shape, name } if &**shape == "In" && *name == "min")
+            let ModelError::InvalidTrait { shape, name } = e else {
+                return false;
+            };
+            &**shape == "In" && *name == "min"
         }),
-        (r#""Other":{"type":"string"}"#, |e| {
-            matches!(e, ModelError::NoShapeFound(name) if &**name == "In")
-        }),
+        (
+            r#""Other":{"type":"string"}"#,
+            |e| matches!(e, ModelError::NoShapeFound(name) if &**name == "In"),
+        ),
     ];
     for (shapes, expected) in cases {
-        let error = wrap(shapes).err().ok_or_else(|| format!("{shapes} loaded"))?;
+        let error = wrap(shapes)
+            .err()
+            .ok_or_else(|| format!("{shapes} loaded"))?;
         assert!(expected(&error), "{shapes}: {error:?}");
     }
     assert!(matches!(Model::from_json(b"{"), Err(ModelError::Json(_))));
-    assert!(matches!(Model::from_json(b"[]"), Err(ModelError::NotAnObject)));
+    assert!(matches!(
+        Model::from_json(b"[]"),
+        Err(ModelError::NotAnObject)
+    ));
     Ok(())
 }
 
@@ -266,7 +497,10 @@ fn every_service_in_the_repository_loads_into_the_arena() -> Result<()> {
         operations += model.operations().len();
         for operation in model.operations() {
             for shape in operation.input.iter().chain(&operation.output) {
-                assert!(matches!(model.shape(*shape).kind, ShapeKind::Structure { .. }));
+                assert!(matches!(
+                    model.shape(*shape).kind,
+                    ShapeKind::Structure { .. }
+                ));
             }
         }
     }
@@ -274,8 +508,9 @@ fn every_service_in_the_repository_loads_into_the_arena() -> Result<()> {
     Ok(())
 }
 
-/// Prints parse and arena time per service. Run in release mode:
-/// `cargo xtask test -p model --release --filter load_timings -- --ignored --nocapture`.
+/// Prints parse and arena time per service, best of seven. Run in release
+/// mode (it is the package's only ignored test):
+/// `RUST_TEST_NOCAPTURE=1 cargo xtask test -p model --profile release --filter --ignored`.
 #[test]
 #[ignore = "a timing report, not a check"]
 fn load_timings() -> Result<()> {
@@ -283,7 +518,9 @@ fn load_timings() -> Result<()> {
     let mut report = String::from("service    bytes  parse_ms  arena_ms  ops/shapes\n");
     for service in ["sts", "dynamodb", "s3", "ec2"] {
         let version = crate::source::latest_version(&source, service, Kind::Service)?;
-        let bytes = source.read(&format!("{service}/{version}/service-2"))?.ok_or(service)?;
+        let bytes = source
+            .read(&format!("{service}/{version}/service-2"))?
+            .ok_or(service)?;
         let (mut parse, mut arena) = (std::time::Duration::MAX, std::time::Duration::MAX);
         let mut counts = (0, 0);
         for _ in 0..7 {
