@@ -73,7 +73,9 @@ fn bytes_print_as_python_does() {
 
 #[test]
 fn datetimes_print_as_python_does() -> Result<()> {
-    let at = |seconds, micros| Timestamp::from_unix(seconds, micros).ok_or("instant");
+    let at = |seconds: i64, micros: i64| {
+        Timestamp::from_unix_micros(seconds * 1_000_000 + micros).ok_or("instant")
+    };
     let micro = Value::Timestamp(at(1_577_934_245, 6)?);
     let minute = Value::Timestamp(at(1_577_934_240, 0)?);
     let second = Value::Timestamp(at(1_577_934_245, 0)?);

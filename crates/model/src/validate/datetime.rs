@@ -5,7 +5,8 @@
 //! `parse_timestamp` tries `datetime.fromtimestamp` on numbers and on
 //! strings `float()` reads, then `dateutil.parser.parse`. A value in the
 //! years both the UTC and local readings can hold is accepted. A string or
-//! bytes value that is ISO 8601 or RFC 822 is accepted. A value of another
+//! bytes value that is ISO 8601 with a zone, or RFC 822, is accepted (a
+//! zone-less time is left to Python, which reads it in the local zone). A value of another
 //! Python type fails `float()` and `dateutil` alike and is rejected, as are
 //! the empty string and a NaN number. Anything else depends on `dateutil`,
 //! or on the `RuntimeError` `parse_timestamp` raises for an out-of-range

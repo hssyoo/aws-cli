@@ -199,8 +199,8 @@ fn datetime_str(at: Timestamp) -> String {
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
         c.year, c.month, c.day, c.hour, c.minute, c.second
     );
-    if c.micros != 0 {
-        let _ = write!(text, ".{:06}", c.micros);
+    if c.microsecond != 0 {
+        let _ = write!(text, ".{:06}", c.microsecond);
     }
     text.push_str("+00:00");
     text
@@ -211,12 +211,12 @@ fn datetime_repr(out: &mut String, at: Timestamp) {
     let c = at.civil();
     let mut fields = vec![
         c.year.unsigned_abs(),
-        c.month,
-        c.day,
-        c.hour,
-        c.minute,
-        c.second,
-        c.micros,
+        u32::from(c.month),
+        u32::from(c.day),
+        u32::from(c.hour),
+        u32::from(c.minute),
+        u32::from(c.second),
+        c.microsecond,
     ];
     for _ in 0..2 {
         if fields.last() == Some(&0) {

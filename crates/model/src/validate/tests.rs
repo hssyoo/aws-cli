@@ -32,7 +32,7 @@ fn ok_with(member: &str, value: Value) -> Value {
 }
 
 fn utc_day() -> Value {
-    Value::Timestamp(Timestamp::from_unix(1_577_923_200, 0).unwrap_or(Timestamp::MIN))
+    Value::Timestamp(Timestamp::from_unix_seconds(1_577_923_200).unwrap_or(Timestamp::MIN))
 }
 
 fn json_cases() -> Vec<(&'static str, Value)> {
