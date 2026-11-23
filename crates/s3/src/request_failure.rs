@@ -6,11 +6,12 @@
 //! anything else. The ls command hands the classification to the
 //! error-handler chain; the cp result lines print the sentence after the
 //! transfer location.
+use cli_core::botocore_error;
 use crt::s3::TransferResult;
 use std::fmt;
 
 /// The message of the NoCredentialsError.
-pub const NO_CREDENTIALS_MESSAGE: &str = "Unable to locate credentials";
+pub const NO_CREDENTIALS_MESSAGE: &str = cli_core::botocore_error::NO_CREDENTIALS;
 pub use crt::s3::NO_CREDENTIALS_ERROR_CODE;
 /// `str(PaginationError)` for a listing page that named the continuation
 /// token it was requested with. Both listing operations call their input
@@ -224,46 +225,34 @@ pub fn sentence_bytes(reason: Reason<'_>) -> Vec<u8> {
             message,
             operation,
             retries_exhausted,
-        } => {
-            out.extend_from_slice(b"An error occurred (");
-            out.extend_from_slice(code);
-            out.extend_from_slice(b") when calling the ");
-            out.extend_from_slice(operation_name(operation));
-            out.extend_from_slice(
-                format!(" operation{}: ", RetryNote { retries_exhausted }).as_bytes(),
-            );
-            out.extend_from_slice(message);
-        }
+        } => out.extend_from_slice(&botocore_error::client_error(
+            code,
+            operation_name(operation),
+            retries_exhausted,
+            message,
+        )),
         Kind::HttpStatus {
             status,
             operation,
             retries_exhausted,
         } => {
-            out.extend_from_slice(
-                format!("An error occurred ({status}) when calling the ").as_bytes(),
-            );
-            out.extend_from_slice(operation_name(operation));
-            out.extend_from_slice(
-                format!(" operation{}: ", RetryNote { retries_exhausted }).as_bytes(),
-            );
-            if let Some(key) = reason.missing_key.filter(|_| status == 404) {
-                out.extend_from_slice(format!("Key \"{key}\" does not exist").as_bytes());
-            } else {
-                out.extend_from_slice(http_reason_phrase(status).as_bytes());
-            }
+            let message = match reason.missing_key.filter(|_| status == 404) {
+                Some(key) => format!("Key \"{key}\" does not exist"),
+                None => http_reason_phrase(status).to_owned(),
+            };
+            out.extend_from_slice(&botocore_error::client_error(
+                status.to_string().as_bytes(),
+                operation_name(operation),
+                retries_exhausted,
+                message.as_bytes(),
+            ));
         }
         Kind::NoCredentials => out.extend_from_slice(NO_CREDENTIALS_MESSAGE.as_bytes()),
         Kind::EndpointConnection => out.extend_from_slice(
-            format!(
-                "Could not connect to the endpoint URL: \"{}\"",
-                reason.request_url()
-            )
-            .as_bytes(),
+            botocore_error::endpoint_connection(&reason.request_url().to_string()).as_bytes(),
         ),
         Kind::ProxyConnection(proxy) => {
-            out.extend_from_slice(b"Failed to connect to proxy URL: \"");
-            out.extend_from_slice(proxy);
-            out.extend_from_slice(b"\"");
+            out.extend_from_slice(&botocore_error::proxy_connection(proxy));
         }
         Kind::ChecksumMismatch { name, message } => {
             out.extend_from_slice(name);
@@ -296,21 +285,6 @@ pub fn transfer_sentence_bytes(reason: Reason<'_>) -> Vec<u8> {
             out
         }
         _ => sentence_bytes(reason),
-    }
-}
-/// What ClientError adds after the operation once botocore's attempts ran
-/// out (exceptions.py `ClientError._get_retry_info`); nothing otherwise.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RetryNote {
-    /// See [`TransferResult::retries_exhausted`].
-    pub retries_exhausted: Option<u64>,
-}
-impl fmt::Display for RetryNote {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.retries_exhausted {
-            Some(retries) => write!(f, " (reached max retries: {retries})"),
-            None => Ok(()),
-        }
     }
 }
 #[cfg(test)]

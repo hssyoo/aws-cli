@@ -1052,7 +1052,9 @@ fn details_follow_the_error_line_in_the_enhanced_format_only() {
         code: "InvalidInputException".into(),
         operation: "ListAssessmentRuns".into(),
         message: b"bad input".to_vec(),
-        details: b"\nAdditional error details:\ncanRetry: False\n".to_vec(),
+        details: Some(Box::new(Details(
+            b"\nAdditional error details:\ncanRetry: False\n".to_vec(),
+        ))),
         ..CommandFailure::new(Category::ClientError)
     };
     assert_eq!(
