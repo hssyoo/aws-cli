@@ -114,3 +114,54 @@ fn floats_and_blobs_go_on_the_wire_as_botocore_writes_them() {
     assert_eq!(decode_blob("AP8="), Ok(Value::Blob(vec![0, 255])));
     assert!(decode_blob("A").is_err());
 }
+
+/// Arbitrary bodies at every status reach an output or an error through
+/// both protocols, never a panic: truncated and malformed XML and JSON,
+/// invalid UTF-8, deep nesting, huge numbers.
+#[test]
+fn adversarial_bodies_never_panic() -> Result<(), Box<dyn std::error::Error>> {
+    use crate::protocol::{Protocol, json::Json, query::Query};
+    let model = Model::from_json(
+        br#"{"metadata":{"apiVersion":"1","jsonVersion":"1.0","targetPrefix":"T"},
+        "operations":{"Go":{"name":"Go","output":{"shape":"Out","resultWrapper":"GoResult"}}},
+        "shapes":{"Out":{"type":"structure","members":{"N":{"shape":"I"},"L":{"shape":"L"},
+        "M":{"shape":"M"},"T":{"shape":"Ts"},"B":{"shape":"Bl"}}},"I":{"type":"integer"},
+        "L":{"type":"list","member":{"shape":"Out"}},"M":{"type":"map","key":{"shape":"S"},
+        "value":{"shape":"Out"}},"S":{"type":"string"},"Ts":{"type":"timestamp"},
+        "Bl":{"type":"blob"},"E":{"type":"structure","members":{},"exception":true}}}"#,
+    )?;
+    let operation = &model.operations()[0];
+    let deep_xml = [
+        b"<GoResponse><GoResult>".to_vec(),
+        b"<L><member>".repeat(400),
+    ]
+    .concat();
+    let deep_json = [b"{\"L\":[".repeat(5_000), b"]}".repeat(5_000)].concat();
+    let bodies: Vec<Vec<u8>> = vec![
+        b"".to_vec(),
+        b"\xff\xfe".to_vec(),
+        b"<GoResponse><GoResult><N>99999999999999999999999</N><T>never</T><B>!</B>".to_vec(),
+        b"<ErrorResponse><Errors>x</Errors></ErrorResponse>".to_vec(),
+        b"<GoResponse><GoResult><M><entry><key>k</key></entry></M></GoResult></GoResponse>"
+            .to_vec(),
+        br#"{"N":"x","L":{"a":1},"M":[1],"T":[],"B":5,"__type":7}"#.to_vec(),
+        br#"{"N":1e999999,"T":1e300}"#.to_vec(),
+        deep_xml,
+        deep_json,
+    ];
+    let protocols: [&dyn Protocol; 2] = [&Query, &Json];
+    for body in &bodies {
+        for status in [200, 300, 400, 500] {
+            let response = HttpResponse {
+                status,
+                headers: Headers::from_pairs([("x-amzn-query-error", ";;")]),
+                body: body.clone(),
+            };
+            for protocol in protocols {
+                let _ = protocol.parse(&model, operation, &response, &ParseOptions::BOTOCORE);
+                let _ = protocol.parse_error(&model, operation, &response, &ParseOptions::BOTOCORE);
+            }
+        }
+    }
+    Ok(())
+}
