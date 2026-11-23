@@ -68,7 +68,11 @@ fn responses_are_classified_as_standard_mode_does() -> TestResult {
         (400, Some("PriorRequestNotComplete"), Some(Throttling)),
         (400, Some("Throttling"), Some(Throttling)),
         (400, Some("ThrottlingException"), Some(Throttling)),
-        (400, Some("ProvisionedThroughputExceededException"), Some(Throttling)),
+        (
+            400,
+            Some("ProvisionedThroughputExceededException"),
+            Some(Throttling),
+        ),
         (400, Some("RequestLimitExceeded"), Some(Throttling)),
         (503, Some("SlowDown"), Some(Throttling)),
         (429, None, Some(Throttling)),
@@ -125,7 +129,11 @@ fn retries_stop_at_max_attempts_and_say_so() {
     assert_eq!(not_retryable.delay, None);
     assert!(!not_retryable.max_attempts_reached);
     let one_attempt = Standard::new(1, ErrorKind::Transient.base());
-    assert!(one_attempt.needs_retry(1, None, None, 0.5).max_attempts_reached);
+    assert!(
+        one_attempt
+            .needs_retry(1, None, None, 0.5)
+            .max_attempts_reached
+    );
 }
 
 /// `delay_amount`: `random() * min(base * 2 ** (attempt - 1), 20)`, the
@@ -134,10 +142,22 @@ fn retries_stop_at_max_attempts_and_say_so() {
 fn the_delay_is_the_jittered_exponential_backoff() {
     let policy = Standard::new(10, Duration::from_millis(25));
     let delay = |attempt, kind| policy.needs_retry(attempt, Some(kind), None, 0.5).delay;
-    assert_eq!(delay(1, ErrorKind::Transient), Some(Duration::from_micros(12_500)));
-    assert_eq!(delay(3, ErrorKind::Transient), Some(Duration::from_millis(50)));
-    assert_eq!(delay(2, ErrorKind::Throttling), Some(Duration::from_secs(1)));
-    assert_eq!(delay(9, ErrorKind::Throttling), Some(Duration::from_secs(10)));
+    assert_eq!(
+        delay(1, ErrorKind::Transient),
+        Some(Duration::from_micros(12_500))
+    );
+    assert_eq!(
+        delay(3, ErrorKind::Transient),
+        Some(Duration::from_millis(50))
+    );
+    assert_eq!(
+        delay(2, ErrorKind::Throttling),
+        Some(Duration::from_secs(1))
+    );
+    assert_eq!(
+        delay(9, ErrorKind::Throttling),
+        Some(Duration::from_secs(10))
+    );
 }
 
 /// `x-amz-retry-after`, in milliseconds, raises the delay to it, but no
@@ -151,9 +171,18 @@ fn retry_after_raises_the_delay_within_five_seconds() {
             .delay
     };
     assert_eq!(delay(None), Some(Duration::from_millis(500)));
-    assert_eq!(delay(Some(Duration::from_secs(2))), Some(Duration::from_secs(2)));
-    assert_eq!(delay(Some(Duration::from_secs(30))), Some(Duration::from_millis(5_500)));
-    assert_eq!(delay(Some(Duration::ZERO)), Some(Duration::from_millis(500)));
+    assert_eq!(
+        delay(Some(Duration::from_secs(2))),
+        Some(Duration::from_secs(2))
+    );
+    assert_eq!(
+        delay(Some(Duration::from_secs(30))),
+        Some(Duration::from_millis(5_500))
+    );
+    assert_eq!(
+        delay(Some(Duration::ZERO)),
+        Some(Duration::from_millis(500))
+    );
     let mut headers = Headers::new();
     for (value, after) in [
         ("1500", Some(Duration::from_millis(1_500))),
@@ -189,7 +218,10 @@ fn the_quota_limits_retries_across_calls() {
             .needs_retry(1, Some(ErrorKind::Throttling), None, 0.0)
             .retry_cost
     };
-    assert_eq!([throttled(), throttled(), throttled()], [Some(5), Some(5), None]);
+    assert_eq!(
+        [throttled(), throttled(), throttled()],
+        [Some(5), Some(5), None]
+    );
     policy.succeeded(Some(14));
     assert_eq!(
         policy
