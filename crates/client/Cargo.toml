@@ -12,13 +12,17 @@ testing = []
 
 [dependencies]
 cli-core = { path = "../cli-core" }
+credentials = { path = "../credentials" }
+crt = { path = "../crt" }
 model = { path = "../model" }
+sigv4 = { path = "../sigv4" }
 timestamp = { path = "../timestamp" }
 
 [dev-dependencies]
 awscli-argparse = { path = "../awscli-argparse", features = ["testing"] }
-format = { path = "../format" }
+crt = { path = "../crt", features = ["loopback"] }
 model = { path = "../model", features = ["testing"] }
+sigv4 = { path = "../sigv4", features = ["testing"] }
 timestamp = { path = "../timestamp", features = ["testing"] }
 serde_json.workspace = true
 

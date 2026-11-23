@@ -122,12 +122,44 @@ fn use_dualstack_endpoint_is_honoured() {
     assert_eq!(run.settings.use_dualstack_endpoint, Some(expected));
 }
 
+/// botocore's default, `auto`, discovers only for required operations,
+/// which admission refuses, and `false` never discovers; any other value,
+/// from either source, discovers for optional operations too or is
+/// botocore's error (`_normalize_endpoint_discovery_config`), so the
+/// command is Python's.
 #[test]
-fn endpoint_discovery_enabled_is_ignored() {
-    for value in ["true", "auto", "bogus"] {
+fn endpoint_discovery_enabled_is_python_s_unless_auto_or_false() {
+    for (value, native) in [
+        ("auto", true),
+        ("false", true),
+        ("true", false),
+        ("AUTO", false),
+        ("bogus", false),
+        ("", false),
+    ] {
         let verdict = identity_verdict(&[("AWS_ENDPOINT_DISCOVERY_ENABLED", value)], "");
-        assert_runs(verdict, value);
+        if native {
+            assert_runs(verdict, value);
+        } else {
+            assert_python(verdict, PythonReason::ClientSetting, value);
+        }
+        let profile = format!("[default]\nendpoint_discovery_enabled = {value}\n");
+        let verdict = identity_verdict(&[], &profile);
+        if native {
+            assert_runs(verdict, &profile);
+        } else {
+            assert_python(verdict, PythonReason::ClientSetting, &profile);
+        }
     }
+    // S3's clients have no discovery operation: the row does not reach them.
+    let listing = ["s3", "ls", "s3://bucket"];
+    let plain = evaluate_with(&listing, &env(&[]), &files(""));
+    let set = evaluate_with(
+        &listing,
+        &env(&[("AWS_ENDPOINT_DISCOVERY_ENABLED", "true")]),
+        &files(""),
+    );
+    assert_eq!(format!("{set:?}"), format!("{plain:?}"));
 }
 
 #[test]

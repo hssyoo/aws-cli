@@ -8,5 +8,30 @@
   "case": "zquery-describe-every-member",
   "path": "a.outcomes.botocore.parsed",
   "reason": "As zjson-describe-every-member: a zoned timestamp string under botocore's default parse_timestamp."
+ },
+ {
+  "case": "zjson-describe-every-member",
+  "path": "b.parsed",
+  "reason": "As at layer A: layer B's client keeps botocore's default parsers (the CLI swaps them only at session-initialized), so the zoned timestamp prints as its instant."
+ },
+ {
+  "case": "zquery-describe-every-member",
+  "path": "b.parsed",
+  "reason": "As zjson-describe-every-member at layer B."
+ },
+ {
+  "case": "zjson-null-output",
+  "path": "b.error.class",
+  "reason": "botocore raises AttributeError from parsed_response.update; the native call fails with the same text as a parse error. The CLI cannot tell them apart: awscli's GeneralExceptionHandler prints str(e) and exits 255 for both."
+ },
+ {
+  "case": "zquery-missing-result-wrapper",
+  "path": "b.error.class",
+  "reason": "botocore raises KeyError ('LocateResult') from QueryParser; the native parse error has the same text. As zjson-null-output, the CLI prints both alike."
+ },
+ {
+  "case": "dynamodb-idempotency-token",
+  "path": "b",
+  "reason": "TransactWriteItems has operationContextParams, which T5b's admission leaves to the Python route (CallError::Unsupported before any request), so the native call is never made: layer B records the Python route's call only."
  }
 ]

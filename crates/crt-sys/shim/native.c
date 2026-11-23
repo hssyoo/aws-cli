@@ -554,6 +554,7 @@ struct zaws_http_call {
     struct aws_signable *signable;
     struct aws_string *host, *tunnel_host;
     uint32_t port, connect_timeout_ms, tunnel_port;
+    bool keep_alive;
     /* The tunnel's timed CONNECT, which aws-c-http's copy of the tunnel's options shares. */
     struct aws_http_proxy_strategy *tunnel_strategy;
     /* For a call over TLS: the runtime's connection options with this call's server name and
@@ -671,7 +672,8 @@ static void s_http_on_setup(struct aws_http_connection *connection, int error, v
  * through the call's tunnel. The environment's proxies are never read: a caller with a forwarding
  * proxy connects to it and sends an absolute target. aws-c-http copies the tunnel's options. */
 static int s_http_connect(struct zaws_http_call *call) {
-    struct aws_socket_options socket = { .type = AWS_SOCKET_STREAM, .domain = AWS_SOCKET_IPV4, .connect_timeout_ms = call->connect_timeout_ms };
+    /* Keepalive's zero interval and timeout leave the system's timings: SO_KEEPALIVE alone. */
+    struct aws_socket_options socket = { .type = AWS_SOCKET_STREAM, .domain = AWS_SOCKET_IPV4, .connect_timeout_ms = call->connect_timeout_ms, .keepalive = call->keep_alive };
     struct proxy_env_var_settings proxy = { .env_var_type = AWS_HPEV_DISABLE };
     struct aws_http_proxy_options tunnel = { .connection_type = AWS_HPCT_HTTP_TUNNEL, .port = call->tunnel_port, .proxy_strategy = call->tunnel_strategy };
     if (call->tunnel_host) tunnel.host = aws_byte_cursor_from_string(call->tunnel_host);
@@ -785,7 +787,7 @@ struct zaws_http_call *zaws_http_request(struct zaws_runtime *r, const struct za
     aws_atomic_init_int(&call->refs, 2);
     call->allocator = allocator; call->runtime = r;
     call->event = event; call->finish = finish; call->data = data;
-    call->port = o->port; call->connect_timeout_ms = o->connect_timeout_ms;
+    call->port = o->port; call->connect_timeout_ms = o->connect_timeout_ms; call->keep_alive = o->keep_alive;
     if (aws_mutex_init(&call->lock)) { aws_mem_release(allocator, call); return NULL; }
     if (s_http_init_message(call, o)) goto fail;
     if (o->tls && s_http_init_tls(call)) goto fail;

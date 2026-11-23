@@ -1,9 +1,13 @@
-//! Layer A of the differential test: for every case `tests/parity/oracle.py`
-//! captured from botocore, the Rust validator, serializer and parsers (with
-//! botocore's default parsers and the CLI's two) and `format`'s renderings
-//! must give the same bytes. `PARITY_VECTORS` names the capture; `cargo
-//! xtask parity` sets it. Layer B (the full prepared request) is captured
-//! too and compared once the call loop is in place.
+//! The differential test: for every case `tests/parity/oracle.py` captured
+//! from botocore, two layers must give the same bytes.
+//!
+//! - Layer A: the Rust validator, serializer and parsers (with botocore's
+//!   default parsers and the CLI's two) and `format`'s renderings.
+//! - Layer B: the whole call through `Client::call` with the CLI's
+//!   customizations (`calls`): every request sent, signature included, and
+//!   the outcome.
+//!
+//! `PARITY_VECTORS` names the capture; `cargo xtask parity` sets it.
 use client::error::{ParseError, ServiceError};
 use client::http::{Headers, HttpResponse};
 use client::protocol::{self, ParseOptions, Protocol, Serialized};
@@ -15,6 +19,8 @@ use model::value::{Map, Value};
 use serde_json::{Value as Json, json};
 use std::path::PathBuf;
 use timestamp::Timestamp;
+
+mod calls;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -262,28 +268,34 @@ fn declared() -> Result<Vec<(String, String)>> {
         .collect())
 }
 
+/// Whether the declared `path` covers a difference: the path itself, or
+/// anything under it.
+fn covers(path: &str, text: &str) -> bool {
+    text.starts_with(&format!("{path}:")) || text.starts_with(&format!("{path}."))
+}
+
 /// The differences of one case once its declared ones are set aside; a
 /// declared difference that no longer differs is itself a failure.
-fn undeclared(name: &str, found: Vec<String>, declared: &[(String, String)]) -> Vec<String> {
+fn undeclared(
+    name: &str,
+    found: Vec<String>,
+    declared: &[(String, String)],
+    layer: &str,
+) -> Vec<String> {
     let paths: Vec<&str> = declared
         .iter()
-        .filter(|(case, _)| case == name)
+        .filter(|(case, path)| {
+            case == name && (path == layer || path.starts_with(&format!("{layer}.")))
+        })
         .map(|(_, path)| path.as_str())
         .collect();
     let mut left: Vec<String> = found
         .iter()
-        .filter(|text| {
-            !paths
-                .iter()
-                .any(|path| text.starts_with(&format!("{path}:")))
-        })
+        .filter(|text| !paths.iter().any(|path| covers(path, text)))
         .cloned()
         .collect();
     for path in paths {
-        if !found
-            .iter()
-            .any(|text| text.starts_with(&format!("{path}:")))
-        {
+        if !found.iter().any(|text| covers(path, text)) {
             left.push(format!(
                 "{path}: declared in differences.json but identical now: remove it"
             ));
@@ -292,62 +304,124 @@ fn undeclared(name: &str, found: Vec<String>, declared: &[(String, String)]) -> 
     left
 }
 
-/// Runs under `cargo xtask parity`, which captures the vectors first.
-#[test]
-#[ignore = "runs under cargo xtask parity"]
-fn parity_layer_a_matches_botocore() -> Result<()> {
-    let path = std::env::var_os("PARITY_VECTORS")
-        .ok_or("PARITY_VECTORS is unset: run `cargo xtask parity`")?;
-    let filter = std::env::var("PARITY_FILTER").unwrap_or_default();
-    let services = std::env::var("PARITY_SERVICE").unwrap_or_default();
-    let services: Vec<&str> = services.split(',').filter(|s| !s.is_empty()).collect();
-    let vectors: Vec<Json> = serde_json::from_slice(&std::fs::read(path)?)?;
-    let declared = declared()?;
-    let (mut compared, mut failures) = (0, Vec::new());
-    let mut per_service: std::collections::BTreeMap<String, (usize, usize)> = Default::default();
-    for vector in &vectors {
-        let case = &vector["case"];
+/// The capture `cargo xtask parity` made, with its filters.
+struct Selection {
+    vectors: Vec<Json>,
+    filter: String,
+    services: Vec<String>,
+}
+
+impl Selection {
+    fn from_environment() -> Result<Self> {
+        let path = std::env::var_os("PARITY_VECTORS")
+            .ok_or("PARITY_VECTORS is unset: run `cargo xtask parity`")?;
+        let services = std::env::var("PARITY_SERVICE").unwrap_or_default();
+        Ok(Self {
+            vectors: serde_json::from_slice(&std::fs::read(path)?)?,
+            filter: std::env::var("PARITY_FILTER").unwrap_or_default(),
+            services: services
+                .split(',')
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        })
+    }
+    fn selects(&self, case: &Json) -> bool {
         let name = case["name"].as_str().unwrap_or_default();
         let service = case["service"].as_str().unwrap_or_default();
-        if !name.contains(filter.as_str()) || !(services.is_empty() || services.contains(&service))
-        {
-            continue;
-        }
+        name.contains(self.filter.as_str())
+            && (self.services.is_empty() || self.services.iter().any(|s| s == service))
+    }
+}
+
+/// One case's verdict at one layer.
+enum Judged {
+    Identical,
+    /// Every difference is declared in `differences.json`.
+    Declared,
+    /// The undeclared differences, as the failure prints them.
+    Differs(String),
+}
+
+fn judge(
+    key: &str,
+    vector: &Json,
+    compute: fn(&Json) -> Result<Json>,
+    expected: fn(&Json) -> Json,
+    declared: &[(String, String)],
+) -> Judged {
+    let case = &vector["case"];
+    let name = case["name"].as_str().unwrap_or_default();
+    let actual =
+        compute(case).unwrap_or_else(|error| json!({ "harness_error": error.to_string() }));
+    let mut found = Vec::new();
+    differences(key, &expected(&vector[key]), &actual, &mut found);
+    let differed = !found.is_empty();
+    let left = undeclared(name, found, declared, key);
+    match (differed, left.is_empty()) {
+        (false, _) => Judged::Identical,
+        (true, true) => Judged::Declared,
+        (true, false) => Judged::Differs(format!(
+            "case {name} ({}):\n{}",
+            vector["file"],
+            left.join("\n")
+        )),
+    }
+}
+
+/// Compares layer `key` (`a` or `b`) of every selected case with what
+/// `compute` gives for it, prints the per-service table, and fails with
+/// every undeclared difference.
+fn compare(
+    key: &str,
+    compute: fn(&Json) -> Result<Json>,
+    expected: fn(&Json) -> Json,
+) -> Result<()> {
+    let selection = Selection::from_environment()?;
+    let declared = declared()?;
+    let (mut compared, mut failures) = (0, Vec::new());
+    // Per service: cases, identical, within declared differences.
+    let mut per_service: std::collections::BTreeMap<String, [usize; 3]> = Default::default();
+    for vector in selection
+        .vectors
+        .iter()
+        .filter(|v| selection.selects(&v["case"]))
+    {
         compared += 1;
-        let actual =
-            layer_a(case).unwrap_or_else(|error| json!({ "harness_error": error.to_string() }));
-        let mut found = Vec::new();
-        differences("a", &vector["a"], &actual, &mut found);
-        let found = undeclared(name, found, &declared);
-        let entry = per_service
-            .entry(case["service"].as_str().unwrap_or_default().to_owned())
-            .or_default();
-        entry.0 += 1;
-        if found.is_empty() {
-            entry.1 += 1;
-        } else {
-            failures.push(format!(
-                "case {name} ({}):\n{}",
-                vector["file"],
-                found.join("\n")
-            ));
+        let service = vector["case"]["service"].as_str().unwrap_or_default();
+        let counts = per_service.entry(service.to_owned()).or_default();
+        counts[0] += 1;
+        match judge(key, vector, compute, expected, &declared) {
+            Judged::Identical => counts[1] += 1,
+            Judged::Declared => counts[2] += 1,
+            Judged::Differs(failure) => failures.push(failure),
         }
     }
+    let total = |index: usize| {
+        per_service
+            .values()
+            .map(|counts| counts[index])
+            .sum::<usize>()
+    };
     let mut report = format!(
-        "parity layer A: {compared} cases, {} identical\n",
-        compared - failures.len()
+        "parity layer {}: {compared} cases, {} identical, {} within declared differences, \
+         {} differ\n",
+        key.to_uppercase(),
+        total(1),
+        total(2),
+        failures.len()
     );
-    for (service, (cases, same)) in &per_service {
+    for (service, [cases, same, declared]) in &per_service {
         report.push_str(&format!(
-            "  {service:<10} {cases:>3} cases {same:>3} identical\n"
+            "  {service:<10} {cases:>3} cases {same:>3} identical {declared:>2} declared\n"
         ));
     }
-    let layer_b = vectors.iter().filter(|v| v.get("b").is_some()).count();
-    report.push_str(&format!(
-        "parity layer B: {layer_b} captured, compared when the call loop lands\n"
-    ));
     std::io::Write::write_all(&mut std::io::stderr(), report.as_bytes())?;
-    assert!(compared > 0, "no case matched PARITY_FILTER={filter:?}");
+    assert!(
+        compared > 0,
+        "no case matched PARITY_FILTER={:?}",
+        selection.filter
+    );
     assert!(
         failures.is_empty(),
         "{} of {compared} cases differ:\n\n{}",
@@ -355,4 +429,18 @@ fn parity_layer_a_matches_botocore() -> Result<()> {
         failures.join("\n\n")
     );
     Ok(())
+}
+
+/// Runs under `cargo xtask parity`, which captures the vectors first.
+#[test]
+#[ignore = "runs under cargo xtask parity"]
+fn parity_layer_a_matches_botocore() -> Result<()> {
+    compare("a", layer_a, Json::clone)
+}
+
+/// Runs under `cargo xtask parity`, which captures the vectors first.
+#[test]
+#[ignore = "runs under cargo xtask parity"]
+fn parity_layer_b_matches_botocore() -> Result<()> {
+    compare("b", calls::layer_b, calls::expected)
 }

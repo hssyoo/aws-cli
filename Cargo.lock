@@ -85,9 +85,11 @@ version = "0.1.0"
 dependencies = [
  "awscli-argparse",
  "cli-core",
- "format",
+ "credentials",
+ "crt",
  "model",
  "serde_json",
+ "sigv4",
  "timestamp",
 ]
 
@@ -149,6 +151,18 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "customizations"
+version = "0.1.0"
+dependencies = [
+ "cli-core",
+ "client",
+ "format",
+ "model",
+ "serde_json",
+ "timestamp",
 ]
 
 [[package]]

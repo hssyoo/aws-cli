@@ -386,5 +386,43 @@
    "headers": {},
    "body": "{\"TableNames\":[]}"
   }
+ },
+ {
+  "name": "sts-get-caller-identity-us-east-1-token",
+  "service": "sts",
+  "models": "builtin",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "settings": {
+   "region": "us-east-1",
+   "access_key": "AKIDEXAMPLE",
+   "secret_key": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+   "session_token": "token-1"
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<GetCallerIdentityResponse><GetCallerIdentityResult><Account>1</Account></GetCallerIdentityResult></GetCallerIdentityResponse>"
+  }
+ },
+ {
+  "name": "dynamodb-list-tables-token-default-retries",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "ListTables",
+  "input": {
+   "Limit": 5
+  },
+  "settings": {
+   "region": "us-west-2",
+   "access_key": "AKIDEXAMPLE",
+   "secret_key": "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+   "session_token": "token-1"
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{\"TableNames\": []}"
+  }
  }
 ]

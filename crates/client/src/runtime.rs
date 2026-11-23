@@ -26,7 +26,7 @@ pub trait Runtime: Send + Sync + std::fmt::Debug {
     fn random(&self) -> f64;
 }
 
-/// The process's clock, randomness ([`cli_core::random::word`]) and
+/// The process's clock, randomness ([`cli_core::random`]) and
 /// interruptible sleep ([`State::sleep`]).
 #[derive(Clone, Copy, Debug)]
 pub struct SystemRuntime {
@@ -45,16 +45,29 @@ impl Runtime for SystemRuntime {
     fn now(&self) -> Timestamp {
         Timestamp::now()
     }
-    /// 122 random bits in the RFC 4122 version 4 layout.
+    /// `uuid.uuid4()`: 122 random bits from the operating system's source
+    /// ([`cli_core::random::os_bytes`]), as Python's reads `os.urandom`, in
+    /// the RFC 4122 version 4 layout. Should that source fail, which macOS's
+    /// never does and Linux's does only when the kernel refuses
+    /// `getrandom`, the bits come from [`cli_core::random::word`] instead,
+    /// which is not cryptographic but still differs across processes.
     fn uuid4(&self) -> String {
-        let (high, low) = (cli_core::random::word(), cli_core::random::word());
+        let mut bytes = cli_core::random::os_bytes::<16>().unwrap_or_else(|_| {
+            let mut bytes = [0; 16];
+            bytes[..8].copy_from_slice(&cli_core::random::word().to_be_bytes());
+            bytes[8..].copy_from_slice(&cli_core::random::word().to_be_bytes());
+            bytes
+        });
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        let hex: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
         format!(
-            "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
-            high >> 32,
-            (high >> 16) & 0xffff,
-            high & 0x0fff,
-            ((low >> 48) & 0x3fff) | 0x8000,
-            low & 0xffff_ffff_ffff,
+            "{}-{}-{}-{}-{}",
+            &hex[..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..]
         )
     }
     fn sleep(&self, duration: Duration) -> Result<(), Interrupted> {

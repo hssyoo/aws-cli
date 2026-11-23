@@ -1001,15 +1001,23 @@ pub const SETTINGS: &[Setting] = &[
         scope: Scope::Service,
     },
     // botocore reads it only for a service with an endpoint-discovery
-    // operation (`_register_endpoint_discovery`), whose operations the model
-    // admission sends to Python (`UnsupportedTrait`).
+    // operation (`_register_endpoint_discovery`). Its default, `auto`
+    // (configprovider.py `endpoint_discovery_enabled`), discovers only for
+    // required operations (`_requires_endpoint_discovery`,
+    // `EndpointDiscoveryManager.describe_endpoint`), which the model
+    // admission sends to Python (`UnsupportedTrait`), and `false` never
+    // discovers. `true` discovers for optional operations too, and any
+    // other value, which `_normalize_endpoint_discovery_config` lowercases
+    // and strips before it accepts `auto`, `true` or `false`, is either
+    // that or `InvalidEndpointDiscoveryConfigurationError`: Python's, as
+    // is every spelling but exactly `auto` or `false`.
     Setting {
         source: Source::Chain(
             "AWS_ENDPOINT_DISCOVERY_ENABLED",
             "endpoint_discovery_enabled",
         ),
-        support: Support::Ignored,
-        matching: Match::Present,
+        support: Support::Unsupported(PythonReason::ClientSetting),
+        matching: Match::NoneOf(&["auto", "false"]),
         scope: Scope::Service,
     },
     // Compression applies to operations with the `requestcompression` trait,

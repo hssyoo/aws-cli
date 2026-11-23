@@ -289,6 +289,7 @@ fn refreshed_credentials_sign_the_next_request() -> TestResult {
             region: "us-west-2",
             service: "lambda",
         }),
+        keep_alive: false,
         connect_timeout: Duration::from_secs(10),
         read_timeout: Duration::from_secs(10),
     };

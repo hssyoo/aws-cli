@@ -82,6 +82,10 @@ pub struct Request<'a> {
     /// as it is, such as one its caller signed with `sigv4`, whose headers
     /// are then sent as given.
     pub signing: Option<Signing<'a>>,
+    /// SO_KEEPALIVE on the connection's socket, at the system's timings:
+    /// what botocore's `tcp_keepalive` adds to urllib3's socket options
+    /// (`ClientArgsCreator._compute_socket_options`).
+    pub keep_alive: bool,
     /// How long the connect may take.
     pub connect_timeout: Duration,
     /// How long the response may stay silent once the connection is up:
@@ -104,6 +108,7 @@ impl std::fmt::Debug for Request<'_> {
             .field("body_len", &self.body.len())
             .field("tunnel", &self.tunnel)
             .field("signing", &self.signing)
+            .field("keep_alive", &self.keep_alive)
             .field("connect_timeout", &self.connect_timeout)
             .field("read_timeout", &self.read_timeout)
             .finish()
@@ -201,6 +206,10 @@ const HTTP_ERROR_CODES_END: i32 = 3 * 1024;
 /// `AWS_IO_SOCKET_TIMEOUT`: a connect that outlasted its timeout.
 pub const SOCKET_TIMEOUT_ERROR_CODE: i32 = ffi::AWS_IO_SOCKET_TIMEOUT;
 
+/// `AWS_IO_TLS_ERROR_NEGOTIATION_FAILURE`: a TLS handshake that failed, a
+/// certificate the runtime's trust does not verify among the causes.
+pub const TLS_FAILURE_ERROR_CODE: i32 = ffi::AWS_IO_TLS_ERROR_NEGOTIATION_FAILURE;
+
 /// `AWS_IO_TLS_NEGOTIATION_TIMEOUT`: a TLS handshake that outlasted the
 /// connect timeout, which bounds it as well.
 pub const TLS_TIMEOUT_ERROR_CODE: i32 = ffi::AWS_IO_TLS_NEGOTIATION_TIMEOUT;
@@ -288,6 +297,7 @@ impl Shared {
             connect_timeout_ms: milliseconds(request.connect_timeout),
             tunnel_port: u32::from(tunnel.port),
             tls: request.tls,
+            keep_alive: request.keep_alive,
         };
         let mut state = lock(&self.state);
         let runtime = state.runtime.ok_or(Error::Closed)?;

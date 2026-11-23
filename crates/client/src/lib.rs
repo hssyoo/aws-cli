@@ -13,7 +13,10 @@
 //! [`hooks::Customization`].
 #![forbid(unsafe_code)]
 
+pub mod admission;
 pub mod auth;
+pub mod call;
+pub mod credentials;
 pub mod endpoint;
 pub mod error;
 pub mod hooks;
@@ -22,11 +25,8 @@ pub mod protocol;
 pub mod retry;
 pub mod runtime;
 pub mod transport;
+pub mod useragent;
 pub mod xml;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
-
-// The parity test renders through `format`; the unit tests do not.
-#[cfg(test)]
-use format as _;
