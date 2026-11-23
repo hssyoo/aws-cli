@@ -190,6 +190,17 @@ impl Source for PayloadSource<'_> {
         )
     }
 
+    /// The catalog's entry, found without decompressing it.
+    fn contains(&self, name: &str) -> Result<bool, LoadError> {
+        check_name(name)?;
+        let full = format!("{}{name}.json", self.prefix);
+        let found = self
+            .view
+            .find(full.as_bytes())
+            .map_err(ResourceError::from)?;
+        Ok(found.is_some())
+    }
+
     fn read(&self, name: &str) -> Result<Option<Vec<u8>>, LoadError> {
         check_name(name)?;
         let full = format!("{}{name}.json", self.prefix);

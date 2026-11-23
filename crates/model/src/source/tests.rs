@@ -32,6 +32,33 @@ fn dir_source_lists_services_and_versions_holding_a_model_file() -> Result<()> {
     Ok(())
 }
 
+/// `contains` answers as `read` finds a file, without reading it: a file
+/// that cannot be read is there all the same.
+#[test]
+fn dir_source_contains_a_file_without_reading_it() -> Result<()> {
+    let root = layout()?;
+    let source = DirSource::new(root.path());
+    assert!(source.contains("a/2020-01-01/service-2")?);
+    assert!(!source.contains("a/2021-01-01/service-2")?);
+    assert!(!source.contains("c/2020-01-01/service-2")?);
+    assert!(matches!(
+        source.contains("../a"),
+        Err(LoadError::InvalidName(_))
+    ));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let path = root.path().join("a/2020-01-01/service-2.json");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0))?;
+        let unreadable = source.read("a/2020-01-01/service-2");
+        let contained = source.contains("a/2020-01-01/service-2");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;
+        assert!(contained?);
+        assert!(unreadable.is_err());
+    }
+    Ok(())
+}
+
 #[test]
 fn dir_source_reads_files_by_botocore_data_path() -> Result<()> {
     let root = layout()?;
