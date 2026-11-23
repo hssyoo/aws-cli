@@ -1,0 +1,226 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zjson",
+    "protocol": "json",
+    "serviceFullName": "Fake zjson",
+    "serviceId": "Zjson",
+    "signatureVersion": "v4",
+    "uid": "zjson-2020-01-01",
+    "jsonVersion": "1.0",
+    "targetPrefix": "ZJson"
+  },
+  "operations": {
+    "GetThing": {
+      "name": "GetThing",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "GetThingRequest"
+      },
+      "output": {
+        "shape": "GetThingResult"
+      },
+      "errors": [
+        {
+          "shape": "ThingNotFound"
+        }
+      ]
+    },
+    "ListThings": {
+      "name": "ListThings",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "ListThingsRequest"
+      },
+      "output": {
+        "shape": "ListThingsResult"
+      }
+    },
+    "DeleteThing": {
+      "name": "DeleteThing",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "DeleteThingRequest"
+      }
+    },
+    "Measure": {
+      "name": "Measure",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "MeasureRequest"
+      }
+    }
+  },
+  "shapes": {
+    "String": {
+      "type": "string"
+    },
+    "Integer": {
+      "type": "integer"
+    },
+    "Boolean": {
+      "type": "boolean"
+    },
+    "Blob": {
+      "type": "blob"
+    },
+    "Timestamp": {
+      "type": "timestamp"
+    },
+    "StringList": {
+      "type": "list",
+      "member": {
+        "shape": "String"
+      }
+    },
+    "StringMap": {
+      "type": "map",
+      "key": {
+        "shape": "String"
+      },
+      "value": {
+        "shape": "String"
+      }
+    },
+    "Config": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "String"
+        },
+        "Size": {
+          "shape": "Integer"
+        }
+      }
+    },
+    "GetThingRequest": {
+      "type": "structure",
+      "required": [
+        "ThingId"
+      ],
+      "members": {
+        "ThingId": {
+          "shape": "String"
+        },
+        "Count": {
+          "shape": "Integer"
+        },
+        "Enabled": {
+          "shape": "Boolean"
+        },
+        "Tags": {
+          "shape": "StringList"
+        },
+        "Attributes": {
+          "shape": "StringMap"
+        },
+        "Config": {
+          "shape": "Config"
+        },
+        "Payload": {
+          "shape": "Blob"
+        },
+        "Since": {
+          "shape": "Timestamp"
+        },
+        "ClientToken": {
+          "shape": "String",
+          "idempotencyToken": true
+        }
+      }
+    },
+    "GetThingResult": {
+      "type": "structure",
+      "members": {
+        "ThingId": {
+          "shape": "String"
+        },
+        "Count": {
+          "shape": "Integer"
+        }
+      }
+    },
+    "ListThingsRequest": {
+      "type": "structure",
+      "members": {
+        "MaxResults": {
+          "shape": "Integer"
+        },
+        "NextToken": {
+          "shape": "String"
+        }
+      }
+    },
+    "ListThingsResult": {
+      "type": "structure",
+      "members": {
+        "Things": {
+          "shape": "StringList"
+        },
+        "NextToken": {
+          "shape": "String"
+        }
+      }
+    },
+    "DeleteThingRequest": {
+      "type": "structure",
+      "required": [
+        "ThingId",
+        "Force"
+      ],
+      "members": {
+        "ThingId": {
+          "shape": "String"
+        },
+        "Force": {
+          "shape": "Boolean"
+        }
+      }
+    },
+    "ThingNotFound": {
+      "type": "structure",
+      "members": {
+        "Message": {
+          "shape": "String"
+        }
+      },
+      "error": {
+        "code": "ThingNotFound",
+        "httpStatusCode": 404,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "Long": {
+      "type": "long"
+    },
+    "Double": {
+      "type": "double"
+    },
+    "MeasureRequest": {
+      "type": "structure",
+      "members": {
+        "Total": {
+          "shape": "Long"
+        },
+        "Ratio": {
+          "shape": "Double"
+        }
+      }
+    }
+  },
+  "documentation": "A fake json service for tests."
+}
