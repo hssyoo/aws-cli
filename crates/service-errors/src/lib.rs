@@ -15,12 +15,15 @@ use client::error::{CallError, ServiceError};
 use model::shapes::Model;
 use model::value::{Map, Value};
 
-/// `InterruptExceptionHandler`: a newline on stdout, and 130.
+/// `InterruptExceptionHandler`: a newline on stdout, flushed, and 130.
 ///
 /// # Errors
 /// Writing to `stdout` failed.
 pub fn interrupted(stdout: &mut dyn std::io::Write) -> std::io::Result<u8> {
     stdout.write_all(b"\n")?;
+    // The interpreter flushes stdout at exit; the binary's exit flushes
+    // only what a failed write left.
+    stdout.flush()?;
     Ok(cli_core::interrupt::EXIT_STATUS)
 }
 

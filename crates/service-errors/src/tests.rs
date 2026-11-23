@@ -101,6 +101,9 @@ impl std::io::Write for Buffered {
 fn an_interrupt_writes_and_flushes_its_newline() -> std::io::Result<()> {
     let mut stdout = Buffered::default();
     assert_eq!(interrupted(&mut stdout)?, 130);
-    assert_eq!((stdout.flushed, stdout.pending), (b"\n".to_vec(), Vec::new()));
+    assert_eq!(
+        (stdout.flushed, stdout.pending),
+        (b"\n".to_vec(), Vec::new())
+    );
     Ok(())
 }
