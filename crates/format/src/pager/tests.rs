@@ -158,3 +158,49 @@ fn a_missing_pager_fails_with_python_s_text() {
     assert_eq!(error.as_ref().map(|e| e.text.as_str()), Some(expected));
     assert_eq!(error.map(|e| e.not_found), Some(true));
 }
+
+/// `get_pager_stream` swallows every `OSError` but the missing program's:
+/// a pager that cannot be executed leaves the command's output unwritten
+/// and its status 0 (`except OSError: pass`; `LazyPager.communicate`
+/// starts nothing once the start failed).
+#[test]
+fn a_pager_that_cannot_run_is_no_failure() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("format-pager-noexec-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let script = dir.join("not-executable");
+    std::fs::write(&script, "#!/bin/sh\ncat\n")?;
+    std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o644))?;
+    let env = environment(std::env::vars_os());
+    let state = cli_core::interrupt::State::default();
+    let outcome = run(&[script.display().to_string()], &env, b"x", &state);
+    assert_eq!(outcome, Ok(Outcome::Exited));
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// The wait is active work: a Ctrl-C the signal handler records while the
+/// pager runs cancels the wait (`Signal::Canceled`) instead of terminating
+/// the process, and the run reports it.
+#[test]
+fn ctrl_c_while_the_pager_runs_cancels_the_wait() -> Result<(), Box<dyn std::error::Error>> {
+    let env = environment(std::env::vars_os());
+    let state = std::sync::Arc::new(cli_core::interrupt::State::default());
+    let signaller = {
+        let state = state.clone();
+        std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            while state.active_count() == 0 && started.elapsed() < Duration::from_secs(10) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let signal = state.record_interrupt();
+            state.request();
+            signal
+        })
+    };
+    let argv = vec!["sleep".to_owned(), "5".to_owned()];
+    let outcome = run(&argv, &env, b"", &state);
+    let signal = signaller.join().map_err(|_| "signaller panicked")?;
+    assert_eq!(signal, cli_core::interrupt::Signal::Canceled);
+    assert_eq!(outcome, Ok(Outcome::Interrupted));
+    Ok(())
+}
