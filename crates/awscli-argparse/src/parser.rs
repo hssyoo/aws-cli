@@ -427,6 +427,9 @@ impl State<'_> {
         {
             return Ok(value);
         }
+        if let Some(value_type) = arg.value_type {
+            return self.typed_values(index, value_type, strings);
+        }
         for value in strings {
             self.check_value(index, value)?;
         }
@@ -435,6 +438,40 @@ impl State<'_> {
             Ok(strings[0].clone().into())
         } else {
             Ok(strings.to_vec().into())
+        }
+    }
+    /// `_get_values` for an argument with a `type`: every string converted
+    /// in order (`_get_value`), then every one checked against the choices,
+    /// a bare value for nargs None and OPTIONAL and a list otherwise.
+    fn typed_values(
+        &self,
+        index: usize,
+        value_type: crate::ValueType,
+        strings: &[Token],
+    ) -> Result<Value, ParseFailure> {
+        let mut converted = Vec::with_capacity(strings.len());
+        for string in strings {
+            let kind = match crate::convert::convert(value_type, string.as_os_str()) {
+                crate::convert::Converted::Value(text) => {
+                    converted.push(Value::Number(text));
+                    continue;
+                }
+                crate::convert::Converted::Invalid => ParseFailureKind::InvalidType {
+                    type_name: value_type.name(),
+                    value: string.value.clone(),
+                },
+                crate::convert::Converted::Undecided => ParseFailureKind::UndecidedValue,
+            };
+            return Err(self.failure(Some(index), kind));
+        }
+        for value in strings {
+            self.check_value(index, value)?;
+        }
+        let arg = self.parser.arguments[index];
+        if converted.len() == 1 && matches!(arg.arity(), None | Some(Nargs::Optional)) {
+            Ok(converted.remove(0))
+        } else {
+            Ok(Value::Array(converted))
         }
     }
     fn check_value(&self, index: usize, value: &Token) -> Result<(), ParseFailure> {

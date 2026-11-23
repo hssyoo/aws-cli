@@ -263,7 +263,13 @@
     },
     "MeasureRequest": {
       "type": "structure",
+      "required": [
+        "Unit"
+      ],
       "members": {
+        "Unit": {
+          "shape": "String"
+        },
         "Total": {
           "shape": "Long"
         },

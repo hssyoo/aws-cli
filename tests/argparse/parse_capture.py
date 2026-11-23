@@ -32,7 +32,7 @@ from awscli.argprocess import (
     unpack_argument,
     unpack_cli_arg,
 )
-from awscli.arguments import CustomArgument
+from awscli.arguments import CustomArgument, UnknownArgumentError
 from awscli.commands import help_requested
 from awscli.customizations import globalargs
 from awscli.customizations.exceptions import ParamValidationError
@@ -144,6 +144,16 @@ def spelled_report(
     except BotocoreParamValidationError as error:
         return str(error)
     return None
+
+
+def derived_command(name: str) -> Any:
+    """The model root `name` of a CLI driver as `aws` builds one, over the
+    search path `AWS_DATA_PATH` names (the fake models), or None when the
+    driver's command is no model root. Each case gets a driver of its own,
+    as each invocation does: an override of the required arguments
+    (`override_required_args`) leaves the cached table's arguments changed."""
+    command = clidriver.create_clidriver()._get_command_table().get(name)
+    return command if isinstance(command, clidriver.ServiceCommand) else None
 
 
 def capture_parse_requests(request_path: str, data_path: str) -> None:
@@ -370,6 +380,74 @@ def capture_parse_requests(request_path: str, data_path: str) -> None:
             record["help"] = getattr(parsed, "help", None) == "help"
             return parsed, remaining
 
+        def resolve_top_level(parsed: Any) -> None:
+            """The top-level handlers, in their order and with their errors.
+            A valid compiled query is recorded as its original raw string."""
+            nonlocal current_dest
+            query = parsed.query
+            try:
+                globalargs.resolve_types(parsed)
+            finally:
+                parsed.query = query
+            globalargs.no_sign_request(parsed, session)
+            globalargs.resolve_verify_ssl(parsed, session)
+            current_dest = "read_timeout"
+            globalargs.resolve_cli_read_timeout(parsed, session)
+            current_dest = "connect_timeout"
+            globalargs.resolve_cli_connect_timeout(parsed, session)
+            current_dest = None
+
+        def capture_operation(service: Any, parsed: Any, remaining: list[str]) -> dict[str, Any]:
+            """ServiceCommand.__call__, then ServiceOperation.__call__ up to its
+            leftover check: the service parser, the operation's table with the
+            required-argument overrides applied and `_add_help`'s positional.
+            Values are not unpacked; a model operation's binding does that."""
+            output["stage"] = "probe"
+            service_args, remaining = level(
+                service.create_parser(help_mode=help_requested(parsed)), remaining
+            )
+            operation_name = service_args.operation or "help"
+            if operation_name == "help":
+                output["outcome"] = "help"
+                return output
+            output["lineage"].append(operation_name)
+            operation = service._get_command_table()[operation_name]
+            output["stage"] = "table"
+            if help_requested(parsed):
+                output["outcome"] = "help"
+                return output
+            operation._emit(
+                f"before-building-argument-table-parser.{service.name}.{operation_name}",
+                argument_table=operation.arg_table,
+                args=remaining,
+                session=operation._session,
+            )
+            parser = operation._create_operation_parser(
+                operation.arg_table, operation.subcommand_table
+            )
+            operation._add_help(parser)
+            parsed_args, remaining = level(parser, remaining)
+            output["args"] = vars(parsed_args)
+            output["args_seen"] = output["levels"][-1]["seen"]
+            if parsed_args.help == "help":
+                output["outcome"] = "help"
+                return output
+            if parsed_args.help:
+                remaining.append(parsed_args.help)
+            output["remaining"] = remaining
+            output["stage"] = "leftover"
+            if remaining:
+                raise UnknownArgumentError(
+                    parsers.format_unknown_options_error(
+                        remaining,
+                        parsers.get_option_suggestion_candidates(
+                            operation.arg_table, operation._session
+                        ),
+                    )
+                )
+            output["stage"] = "unpack"
+            return output
+
         try:
             clidriver.validate_auto_prompt_args_are_mutually_exclusive(argv)
             output["stage"] = "first_pass"
@@ -419,27 +497,19 @@ def capture_parse_requests(request_path: str, data_path: str) -> None:
             output["globals"] = vars(parsed)
             output["globals_seen"] = output["levels"][-1]["seen"]
             output["stage"] = "dispatch"
-            if parsed.command != "s3":
+            service = None
+            if request.get("scope") == "derived" and parsed.command != "s3":
+                service = derived_command(parsed.command)
+            if parsed.command != "s3" and service is None:
                 output["outcome"] = "unresolved"
                 output["scope"] = "boundary"
                 output["remaining"] = remaining
                 return output
-            output["lineage"] = ["s3"]
+            output["lineage"] = [parsed.command]
             output["stage"] = "top_level"
-            # Run the actual handlers, preserving their ordering and errors.
-            # A valid compiled query is recorded as its original raw string.
-            query = parsed.query
-            try:
-                globalargs.resolve_types(parsed)
-            finally:
-                parsed.query = query
-            globalargs.no_sign_request(parsed, session)
-            globalargs.resolve_verify_ssl(parsed, session)
-            current_dest = "read_timeout"
-            globalargs.resolve_cli_read_timeout(parsed, session)
-            current_dest = "connect_timeout"
-            globalargs.resolve_cli_connect_timeout(parsed, session)
-            current_dest = None
+            resolve_top_level(parsed)
+            if service is not None:
+                return capture_operation(service, parsed, remaining)
             command_table = children
             argument_table = root.arg_table
             output["stage"] = "probe"
@@ -489,15 +559,21 @@ def capture_parse_requests(request_path: str, data_path: str) -> None:
                 root._raise_usage_error()
         except SystemExit:
             output["outcome"] = "version"
-        except (*PARAM_VALIDATION_ERRORS, ValueError, TypeError) as error:
+        except (
+            *PARAM_VALIDATION_ERRORS,
+            UnknownArgumentError,
+            ValueError,
+            TypeError,
+        ) as error:
             # The entry point hands any other Exception to the general
             # handler, so the unpack loop's ValueError (int()) and TypeError
             # (bytes reaching the shorthand parser) are rejections too.
-            category = (
-                "param_validation"
-                if isinstance(error, PARAM_VALIDATION_ERRORS)
-                else "general"
-            )
+            if isinstance(error, UnknownArgumentError):
+                category = "unknown_argument"
+            elif isinstance(error, PARAM_VALIDATION_ERRORS):
+                category = "param_validation"
+            else:
+                category = "general"
             output["outcome"] = "reject"
             output["error"] = {
                 "class": category,

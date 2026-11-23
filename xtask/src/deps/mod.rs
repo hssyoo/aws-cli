@@ -72,6 +72,12 @@ impl NativeEnvironment {
     pub fn cpython(&self) -> &Path {
         &self.cpython
     }
+
+    /// The fallback payload prefix, `AWS_NATIVE_FALLBACK_PREFIX`.
+    pub fn fallback(&self) -> &Path {
+        &self.fallback
+    }
+
     pub fn apply(&self, command: &mut Command) {
         if let Some((environment, path)) = &self.msvc {
             environment.apply(command);

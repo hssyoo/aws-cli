@@ -22,17 +22,7 @@ pub fn check(root: &Path, commands: &[String]) -> Result<(), TaskError> {
         commands.to_vec()
     };
     let environment = deps::native_environment(root, false)?;
-    process::run(Command::new("cargo").current_dir(root).args([
-        "build",
-        "--locked",
-        "--package",
-        "command",
-        "--bin",
-        "derive-tables",
-    ]))?;
-    let tool = root
-        .join("target/debug/derive-tables")
-        .with_extension(std::env::consts::EXE_EXTENSION);
+    let tool = build_tool(root)?;
     let directory = root.join("target/argtables/derived");
     let home = directory.join("home");
     fs::create_dir_all(&home)?;
@@ -52,6 +42,36 @@ pub fn check(root: &Path, commands: &[String]) -> Result<(), TaskError> {
         .args(&commands);
     isolate(&mut oracle, root);
     process::run(&mut oracle)
+}
+
+/// Build `derive-tables`, which derives the tables and parses over them.
+pub fn build_tool(root: &Path) -> Result<PathBuf, TaskError> {
+    process::run(Command::new("cargo").current_dir(root).args([
+        "build",
+        "--locked",
+        "--package",
+        "command",
+        "--bin",
+        "derive-tables",
+    ]))?;
+    Ok(root
+        .join("target/debug/derive-tables")
+        .with_extension(std::env::consts::EXE_EXTENSION))
+}
+
+/// The parse oracle's derived cases (`parse_oracle.py --derived-parser`):
+/// `derive-tables parse` over the fake models and the payload, which only
+/// that tool reads.
+pub fn oracle_arguments(root: &Path, oracle: &mut Command) -> Result<(), TaskError> {
+    let environment = deps::native_environment(root, false)?;
+    oracle
+        .arg("--derived-parser")
+        .arg(build_tool(root)?)
+        .arg("--models")
+        .arg(root.join("tests/models"))
+        .arg("--fallback-prefix")
+        .arg(environment.fallback());
+    Ok(())
 }
 
 /// Both sides read only the repository's fake models besides the payload's

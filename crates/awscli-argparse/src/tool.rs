@@ -81,6 +81,18 @@ fn seen_json(level: &Level) -> Value {
         .collect::<Vec<_>>()
         .into()
 }
+/// [`result_json`] written as one line of JSON, for a tool outside this
+/// crate that replays requests over other tables.
+pub fn write_result(
+    result: &ParseResult<'_>,
+    unsupported: bool,
+    color: bool,
+    output: &mut dyn std::io::Write,
+) -> std::io::Result<()> {
+    let mut output = output;
+    result_json(result, unsupported, color).write_json(&mut output)?;
+    writeln!(output)
+}
 /// One complete result object, every oracle comparison field in the
 /// canonical order. `unsupported` says value processing handed the
 /// invocation to Python; `color` renders the failure text with color.

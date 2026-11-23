@@ -102,7 +102,7 @@ pub fn parse_int_os(text: &OsStr) -> Result<i64, Failure> {
         ))),
     }
 }
-fn literal_digits(digits: &str) -> Option<usize> {
+pub(crate) fn literal_digits(digits: &str) -> Option<usize> {
     if digits.is_empty() || digits.starts_with('_') || digits.ends_with('_') {
         return None;
     }

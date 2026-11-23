@@ -7,13 +7,8 @@ use model::shapes::{Flag, Member, Operation, ShapeId, ShapeKind};
 /// How argparse converts an option's value (`add_argument(type=...)`):
 /// `CLIArgument.TYPE_MAP` gives `long` members `int` and `float`/`double`
 /// members `float`, and `PageArgument.type_map` gives the integer page
-/// options `int`. argparse fails a value its type cannot convert while it
-/// parses (`invalid int value: ...`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValueType {
-    Int,
-    Float,
-}
+/// options `int`; the parse applies it (`awscli_argparse::convert`).
+pub use awscli_argparse::ValueType;
 
 /// What a derived argument stands for, which says how it binds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,8 +73,7 @@ pub struct Table {
 }
 
 impl Table {
-    /// Whether an argument's value goes through an argparse type, whose
-    /// failure text native does not reproduce.
+    /// Whether an argument's value goes through an argparse type.
     pub fn typed(&self) -> bool {
         self.arguments
             .iter()
