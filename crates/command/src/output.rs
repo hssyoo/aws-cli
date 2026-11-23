@@ -74,7 +74,8 @@ impl OutputSettings {
     /// The settings the command prints with, or why only Python prints
     /// them: an output format the native formatters do not write (a value
     /// that is not Unicode or a nested block is none), or a
-    /// `cli_timestamp_format` `add_timestamp_parser` rejects.
+    /// `cli_timestamp_format` `add_timestamp_parser` rejects (an unknown
+    /// name, or a nested block, which it gets as a dict).
     pub fn resolve(
         env: &impl EnvMap,
         files: &ParsedFiles,
@@ -91,6 +92,9 @@ impl OutputSettings {
         let format = name
             .and_then(OutputFormat::from_name)
             .ok_or(PythonReason::OutputFormat)?;
+        if shared_config::profile_property_is_block(files, profile, "cli_timestamp_format") {
+            return Err(PythonReason::OutputFormat);
+        }
         let setting = shared_config::profile_property(files, profile, "cli_timestamp_format");
         let timestamps =
             TimestampFormat::from_setting(setting).map_err(|_| PythonReason::OutputFormat)?;
