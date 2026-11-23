@@ -304,6 +304,7 @@ impl Delegate for Attached {
             body: &[],
             tunnel: None,
             signing: None,
+            keep_alive: false,
             connect_timeout: std::time::Duration::from_secs(5),
             read_timeout: std::time::Duration::from_secs(5),
         });

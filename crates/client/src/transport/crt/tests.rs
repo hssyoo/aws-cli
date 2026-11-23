@@ -24,6 +24,7 @@ fn env(pairs: &[(&str, &str)]) -> cli_core::SnapshotEnv {
 fn transport(trust: ::crt::runtime::Trust, env: cli_core::SnapshotEnv) -> TestResult<CrtTransport> {
     Ok(CrtTransport::new(
         trust,
+        false,
         env,
         ::crt::debug::Logger::new(false),
     )?)
