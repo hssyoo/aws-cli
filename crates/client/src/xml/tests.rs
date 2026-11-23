@@ -102,7 +102,10 @@ fn corpus() -> Vec<Vec<u8>> {
 #[test]
 fn parses_as_elementtree_does() -> Result<(), Box<dyn std::error::Error>> {
     let documents = corpus();
-    let encoded: Vec<String> = documents.iter().map(|d| model::base64::encode(d)).collect();
+    let encoded: Vec<String> = documents
+        .iter()
+        .map(|d| pytext::base64::encode(d))
+        .collect();
     let prefix = std::env::var_os("AWS_NATIVE_CPYTHON_PREFIX")
         .ok_or("AWS_NATIVE_CPYTHON_PREFIX must name the toolchain CPython")?;
     let mut child =

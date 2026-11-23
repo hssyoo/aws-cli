@@ -25,6 +25,10 @@ pub enum Unsupported {
     /// An endpoint built-in neither core nor a customization supplies,
     /// which the rule set requires without a default.
     Builtin(String),
+    /// A client-context parameter the rule set requires without a default,
+    /// which the CLI's empty client context cannot supply and the
+    /// operation does not set.
+    ClientContextParam(String),
     /// An auth type the client cannot sign with (anything but SigV4 and
     /// none), by the name botocore resolves.
     Auth(String),
@@ -51,6 +55,7 @@ impl std::fmt::Display for Unsupported {
             Self::Trait(name) => write!(f, "the {name} trait"),
             Self::OperationContextParams => f.write_str("operation context parameters"),
             Self::Builtin(name) => write!(f, "the endpoint built-in {name}"),
+            Self::ClientContextParam(name) => write!(f, "the client context parameter {name}"),
             Self::Auth(name) => write!(f, "the auth type {name}"),
             Self::UnsignedPayload => f.write_str("an unsigned payload"),
             Self::EndpointHeaders => f.write_str("endpoint headers"),
@@ -94,7 +99,11 @@ pub fn static_refusal(
     if let Some(unsupported) = crate::auth::static_refusal(model, operation) {
         return Some(unsupported);
     }
-    crate::endpoint::missing_builtin(endpoints, service, customizations).map(Unsupported::Builtin)
+    if let Some(name) = crate::endpoint::missing_builtin(endpoints, service, customizations) {
+        return Some(Unsupported::Builtin(name));
+    }
+    crate::endpoint::missing_client_context(endpoints, model, operation)
+        .map(Unsupported::ClientContextParam)
 }
 
 /// An event stream or a streaming member at either end of the operation,

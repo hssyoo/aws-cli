@@ -725,7 +725,8 @@ const CONTEXT_SERVICE: &str = r#"{"metadata": {"protocol": "json", "jsonVersion"
 #[test]
 fn a_required_client_context_parameter_needs_the_operation() -> TestResult {
     let model = Model::from_json(CONTEXT_SERVICE.as_bytes())?;
-    let data = EndpointData::from_documents(CONTEXT_RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
+    let data =
+        EndpointData::from_documents(CONTEXT_RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
     let pinned = model.operation("Pinned").ok_or("Pinned")?;
     let loose = model.operation("Loose").ok_or("Loose")?;
     assert_eq!(missing_client_context(&data, &model, pinned), None);

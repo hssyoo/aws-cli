@@ -12,6 +12,7 @@ client = { path = "../client" }
 model = { path = "../model" }
 
 [dev-dependencies]
+pytext = { path = "../pytext" }
 client = { path = "../client", features = ["testing"] }
 format = { path = "../format" }
 serde_json.workspace = true

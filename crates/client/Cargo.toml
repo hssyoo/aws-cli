@@ -15,6 +15,7 @@ cli-core = { path = "../cli-core" }
 credentials = { path = "../credentials" }
 crt = { path = "../crt" }
 model = { path = "../model" }
+pytext = { path = "../pytext" }
 sigv4 = { path = "../sigv4" }
 timestamp = { path = "../timestamp" }
 

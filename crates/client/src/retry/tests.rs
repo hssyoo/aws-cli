@@ -260,7 +260,7 @@ fn retry_after_is_read_as_python_s_int() {
 /// When the quota refuses a retry, the verdict still carries the delay
 /// botocore computes for a long-polling operation's sleep.
 #[test]
-fn an_exhausted_quota_still_reports_the_delay() {
+fn an_exhausted_quota_still_reports_the_delay() -> Result<(), &'static str> {
     let policy = Standard::new(100, Duration::from_millis(50));
     let mut refused = None;
     for attempt in 1..60 {
@@ -270,10 +270,11 @@ fn an_exhausted_quota_still_reports_the_delay() {
             break;
         }
     }
-    let refused = refused.unwrap_or_else(|| panic!("the quota never ran out"));
+    let refused = refused.ok_or("the quota never ran out")?;
     assert!(
         refused
             .exhausted_delay
             .is_some_and(|delay| delay > Duration::ZERO)
     );
+    Ok(())
 }

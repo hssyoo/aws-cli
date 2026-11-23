@@ -3,6 +3,7 @@
 //! refusal.
 use cli_core as _;
 use format as _;
+use pytext as _;
 use timestamp as _;
 
 #[path = "census/tests.rs"]

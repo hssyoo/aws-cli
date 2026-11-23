@@ -482,6 +482,7 @@ pub fn provider_params(
     for def in &data.parameters {
         let value = static_param(operation, &def.name)
             .or_else(|| context_param(model, operation, input, &def.name))
+            .or_else(|| client_context_param(model, &def.name))
             .or_else(|| match def.builtin.as_deref()? {
                 "AWS::Auth::AccountId" => account_id.map(|id| ParamValue::String(id.to_owned())),
                 builtin => builtins.get(builtin).cloned(),
@@ -491,6 +492,61 @@ pub fn provider_params(
         }
     }
     params
+}
+
+/// The AWS CLI's `client_context_params`: none. It builds its clients with
+/// no `Config(client_context_params=...)`, and only an S3 client folds its
+/// `s3` configuration section into the client context (args.py
+/// `ClientArgsCreator.compute_client_args`), a protocol the client does not
+/// implement.
+const CLIENT_CONTEXT: [(&str, &str); 0] = [];
+
+/// `_resolve_param_as_client_context_param`: a parameter the model declares
+/// in `clientContextParams` takes the client context's value, under the
+/// parameter's `xform_name`. The CLI's client context is empty
+/// ([`CLIENT_CONTEXT`]), so this supplies nothing; a rule set that requires
+/// such a parameter and an operation that does not set it are refused by
+/// [`missing_client_context`].
+fn client_context_param(model: &Model, name: &str) -> Option<ParamValue> {
+    model
+        .client_context_params()
+        .iter()
+        .find(|param| &*param.name == name)?;
+    CLIENT_CONTEXT
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| ParamValue::String((*value).to_owned()))
+}
+
+/// The first parameter the rule set requires, without a default or a
+/// built-in, that only the client context could give `operation`: one the
+/// model declares in `clientContextParams` and the operation neither sets
+/// (`staticContextParams`) nor binds to an input member (`contextParam`).
+/// The CLI's client context is empty, so nothing supplies it.
+pub fn missing_client_context(
+    data: &EndpointData,
+    model: &Model,
+    operation: &Operation,
+) -> Option<String> {
+    let bound = |name: &str| {
+        static_param(operation, name).is_some()
+            || operation.input.is_some_and(|shape| {
+                model.members(shape).iter().any(|member| {
+                    model.shape(member.shape).traits.context_param.as_deref() == Some(name)
+                })
+            })
+    };
+    data.parameters
+        .iter()
+        .filter(|def| def.required && !def.has_default && def.builtin.is_none())
+        .filter(|def| {
+            model
+                .client_context_params()
+                .iter()
+                .any(|param| *param.name == *def.name)
+        })
+        .find(|def| !bound(&def.name))
+        .map(|def| def.name.clone())
 }
 
 fn static_param(operation: &Operation, name: &str) -> Option<ParamValue> {

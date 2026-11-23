@@ -263,7 +263,7 @@ fn written(text: &str) -> Option<Timestamp> {
 
 /// botocore's default `blob_parser`, `base64.b64decode`.
 pub(super) fn decode_blob(text: &str) -> Result<Value, ParseError> {
-    model::base64::decode(text)
+    pytext::base64::decode(text)
         .map(Value::Blob)
         .map_err(ParseError::new)
 }
@@ -287,8 +287,8 @@ pub(super) fn timestamp_out(value: &Value, format: &str) -> Result<Value, Serial
 /// `Serializer._get_base64`: text is encoded as UTF-8 first.
 pub(super) fn base64_in(value: &Value) -> Result<String, SerializeError> {
     match value {
-        Value::String(text) => Ok(model::base64::encode(text.as_bytes())),
-        Value::Blob(bytes) => Ok(model::base64::encode(bytes)),
+        Value::String(text) => Ok(pytext::base64::encode(text.as_bytes())),
+        Value::Blob(bytes) => Ok(pytext::base64::encode(bytes)),
         other => Err(SerializeError::new(format!(
             "a bytes-like object is required, not '{}'",
             short_type(other)

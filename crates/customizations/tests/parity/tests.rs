@@ -44,7 +44,7 @@ fn decode(value: Value) -> Result<Value> {
             if map.len() == 1 && (map.contains_key("$blob") || map.contains_key("$datetime")) =>
         {
             match map.iter().next() {
-                Some(("$blob", Value::String(text))) => Value::Blob(model::base64::decode(text)?),
+                Some(("$blob", Value::String(text))) => Value::Blob(pytext::base64::decode(text)?),
                 Some(("$datetime", Value::String(text))) => Value::Timestamp(instant(text)?),
                 _ => return Err("tag".into()),
             }
@@ -78,7 +78,7 @@ fn request_json(request: &Serialized) -> Json {
         "path": request.path,
         "query": request.query,
         "headers": headers,
-        "body": model::base64::encode(&request.body),
+        "body": pytext::base64::encode(&request.body),
         "host_prefix": request.host_prefix,
     })
 }

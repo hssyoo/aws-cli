@@ -181,7 +181,7 @@ fn request_json(request: &HttpRequest) -> Json {
         "method": request.method.as_str(),
         "url": request.url.to_string(),
         "headers": headers,
-        "body": model::base64::encode(&request.body),
+        "body": pytext::base64::encode(&request.body),
     })
 }
 
