@@ -44,6 +44,11 @@ const ASSUME_ROLE: &[Argument] = &[
         ..Argument::new("role-session-name")
     },
     Argument::new("policy"),
+    Argument {
+        cli_type: Some(awscli_argparse::CliType::Deferred),
+        nargs: Some(awscli_argparse::Nargs::ZeroOrMore),
+        ..Argument::new("tags")
+    },
 ];
 
 /// A stand-in for the model source T8 writes: `sts` with its real
@@ -382,9 +387,20 @@ fn the_prologue_and_the_command_line_refuse_before_run() {
     ]);
 }
 
-/// Completion defers a value, then binding refuses.
+/// Completion defers a value, or stops at an option only Python binds,
+/// then binding refuses.
 #[test]
 fn completion_and_binding_refuse_before_run() {
+    let python_bound = [
+        "sts",
+        "assume-role",
+        "--role-arn",
+        "a",
+        "--role-session-name",
+        "s",
+        "--tags",
+        "t",
+    ];
     let deferred = [
         "sts",
         "assume-role",
@@ -403,6 +419,7 @@ fn completion_and_binding_refuse_before_run() {
     ];
     assert_refused(&[
         (&deferred, &[], "", PythonReason::UnsupportedValue),
+        (&python_bound, &[], "", PythonReason::UnsupportedOption),
         (&refused, &[], "", PythonReason::UnsupportedOption),
     ]);
 }

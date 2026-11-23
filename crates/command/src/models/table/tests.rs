@@ -131,3 +131,23 @@ fn a_paging_token_with_no_argument_is_python_s_to_build() {
     let missing: Json = serde_json::json!({"input_token": "Cursor"});
     assert!(table("ListThings", Some(&missing)).customized);
 }
+
+/// What the unpack loop does with each member's supplied value: a string,
+/// long or boolean as it stands, an integer through `int()`, and the rest,
+/// with every customization's option, only on the Python route.
+#[test]
+fn each_argument_says_how_its_value_unpacks() {
+    let table = table("Measure", None);
+    for (name, unpack) in [
+        ("total", Unpack::AsIs),
+        ("count", Unpack::Integer),
+        ("ratio", Unpack::Deferred),
+        ("share", Unpack::Deferred),
+        ("cli-input-json", Unpack::Deferred),
+        ("generate-cli-skeleton", Unpack::Deferred),
+    ] {
+        assert_eq!(find(&table, name).unpack, unpack, "{name}");
+    }
+    let table = self::table("ListThings", None);
+    assert_eq!(find(&table, "next-token").unpack, Unpack::AsIs);
+}
