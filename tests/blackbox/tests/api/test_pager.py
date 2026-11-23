@@ -326,7 +326,7 @@ async def test_an_unbalanced_quote_is_python_s(api: ApiSession, pagers: Path) ->
     env = pager_environment(api, pagers, {"AWS_PAGER": "sh -c 'cat"})
     run = await run_paged(api, pagers, COMMAND, env)
     if FORCED_NATIVE:
-        assert (run.returncode, run.stderr) == (255, refusal("pager_setting")), run.describe()
+        assert (run.returncode, run.stderr) == (255, refusal("pager")), run.describe()
         return
     assert run.returncode == 255, run.describe()
     assert run.stderr == "\naws: [ERROR]: No closing quotation\n", run.describe()

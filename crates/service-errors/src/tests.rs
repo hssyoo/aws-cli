@@ -75,3 +75,32 @@ fn code_and_message_in_any_case_are_not_details() {
         ""
     );
 }
+
+/// A writer that keeps what reached it only once flushed, as the binary's
+/// buffered stdout does.
+#[derive(Default)]
+struct Buffered {
+    pending: Vec<u8>,
+    flushed: Vec<u8>,
+}
+
+impl std::io::Write for Buffered {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.pending.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flushed.append(&mut self.pending);
+        Ok(())
+    }
+}
+
+/// The interrupt's newline reaches stdout before the exit, which flushes
+/// only what a failed write left (`cli_error::flush_pending_stdout`).
+#[test]
+fn an_interrupt_writes_and_flushes_its_newline() -> std::io::Result<()> {
+    let mut stdout = Buffered::default();
+    assert_eq!(interrupted(&mut stdout)?, 130);
+    assert_eq!((stdout.flushed, stdout.pending), (b"\n".to_vec(), Vec::new()));
+    Ok(())
+}
