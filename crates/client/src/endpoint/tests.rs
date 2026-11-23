@@ -682,3 +682,22 @@ fn account_id_endpoints_refuse_nothing_more() -> TestResult {
     std::io::Write::write_all(&mut std::io::stderr(), checked.as_bytes())?;
     Ok(())
 }
+
+/// `UnknownSignatureVersionError` names the schemes as botocore has
+/// rebound them, without their `sig` prefix (`auth_schemes_to_signing_ctx`
+/// strips them before it builds `auth_type_options`).
+#[test]
+fn an_unknown_scheme_is_named_without_its_sig_prefix() {
+    let scheme = |name: &str| SchemeProps {
+        name: name.into(),
+        ..SchemeProps::default()
+    };
+    let endpoint = ResolvedEndpoint {
+        url: "https://zjson.example.com".into(),
+        auth_schemes: vec![scheme("sigv5"), scheme("custom")],
+    };
+    assert_eq!(
+        endpoint.signing_context().err().as_deref(),
+        Some("Unknown Signature Version: v5, custom.")
+    );
+}
