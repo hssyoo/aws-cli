@@ -128,6 +128,8 @@ struct zaws_http_options {
     /* Connects with TLS: the runtime's trust and peer verification, the server named `host`, and
      * `connect_timeout_ms` again as the bound of the handshake. */
     bool tls;
+    /* Sets SO_KEEPALIVE on the connection's socket, at the system's timings. */
+    bool keep_alive;
 };
 /* What a call reports before it finishes, each on a CRT thread, which must not wait. */
 enum zaws_http_event {
