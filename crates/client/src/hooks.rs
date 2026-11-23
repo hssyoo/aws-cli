@@ -352,11 +352,11 @@ pub struct Hooks {
 }
 
 impl Hooks {
-    /// The customizations of `table` whose scope names `service`.
     /// Whether an interceptor in scope for `operation` long-polls.
     pub fn long_polls(&self, operation: &str) -> bool {
         self.interceptors(operation).any(|hook| hook.long_polls())
     }
+    /// The customizations of `table` whose scope names `service`.
     pub fn for_service(table: &[&'static Customization], service: &str) -> Self {
         let matching: Vec<&Customization> = table
             .iter()

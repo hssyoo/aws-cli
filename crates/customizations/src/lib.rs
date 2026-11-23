@@ -9,13 +9,13 @@ use cli_core::cli_error::PythonReason;
 use client::hooks::{
     Basis, CallContext, Customization, HookError, Interceptor, Refusal, Scope, SettingDefault,
 };
+use client::retry::{Attempt, RetryDecision};
+use std::time::Duration;
 
 /// A basis implemented at the Rust item `at`.
 const fn implemented(at: &'static str) -> Basis {
     Basis::Implemented { at }
 }
-use client::retry::{Attempt, RetryDecision};
-use std::time::Duration;
 
 /// Every customization, in the order a client applies them.
 pub static TABLE: [&Customization; 8] = [
