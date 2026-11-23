@@ -118,10 +118,6 @@ const UNSUPPORTED_ROWS: &[(Source, PythonReason)] = &[
     ),
     (Source::Profile("cli_history"), PythonReason::HistoryEnabled),
     (
-        Source::Profile("cli_timestamp_format"),
-        PythonReason::OutputFormat,
-    ),
-    (
         Source::Profile("cli_binary_format"),
         PythonReason::ClientSetting,
     ),
