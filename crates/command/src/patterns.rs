@@ -168,8 +168,20 @@ impl Patterns {
 
     /// The rows `subject`'s client registers as it is created whose
     /// patterns match one of `events`: the generic rows, and the service's
-    /// own when the subject's model is the one the pack observed. A model a
-    /// user supplies meets the generic rows alone (`Subject::packed`).
+    /// own when the subject's model is the one the pack observed.
+    ///
+    /// A model a user supplies (`AWS_DATA_PATH`, `~/.aws/models`; not
+    /// [`Subject::packed`]) meets the generic rows alone. They are the ones
+    /// `ClientCreator.create_client` registers for any model: the signer
+    /// and user-agent rebuild of `BaseClient._register_handlers`, and the
+    /// standard retry handlers, which depend on configuration only. The
+    /// others are registered on the model's loader name (`s3`, `s3control`,
+    /// `importexport`) or on its having an endpoint-discovery operation
+    /// (`_register_endpoint_discovery`), and the pack saw the packed
+    /// model's, not the user's; so the generic rows are exactly a user
+    /// model's only where its name is none of those and it has no
+    /// `endpointoperation`. Admission must route any other user model to
+    /// Python rather than read this as its full set.
     pub fn client_handlers(&self, subject: &Subject<'_>, events: &[String]) -> BTreeSet<String> {
         let own = self
             .client
