@@ -67,6 +67,7 @@ impl Protocol for Fake {
         _model: &Model,
         _operation: &Operation,
         _response: &HttpResponse,
+        _options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
         Err(ParseError::new("fake"))
     }
@@ -75,8 +76,9 @@ impl Protocol for Fake {
         _model: &Model,
         operation: &Operation,
         response: &HttpResponse,
-    ) -> ServiceError {
-        ServiceError::new(&operation.name, response.status)
+        _options: &ParseOptions<'_>,
+    ) -> Result<ServiceError, ParseError> {
+        Ok(ServiceError::new(&operation.name, response.status))
     }
 }
 
@@ -102,21 +104,29 @@ fn an_implementation_is_chosen_for_the_resolved_protocol_only() {
 }
 
 /// Every model in the repository's botocore data resolves to a protocol,
-/// and with nothing implemented yet, none has an implementation.
+/// and exactly those resolving to `query` or `json` have an implementation.
 #[test]
 #[cfg_attr(miri, ignore = "reads the data directory, which Miri cannot")]
-fn no_real_model_has_an_implementation_yet() -> TestResult {
+fn query_and_json_models_have_an_implementation() -> TestResult {
     let data =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../aws-cli/awscli/botocore/data");
     let source = DirSource::new(data);
     let services = source.services(Kind::Service)?;
     assert!(services.len() > 400, "{} services", services.len());
+    let mut implemented = 0;
     for service in services {
         let model = Model::load(&source, &service)?;
         let resolved = resolved_protocol(model.metadata());
         assert!(resolved.is_ok(), "{service}: {resolved:?}");
-        assert!(for_model(&model).is_none(), "{service}");
-        assert!(!is_implemented(resolved.unwrap_or_default()), "{service}");
+        let expected = matches!(resolved, Ok("query" | "json"));
+        assert_eq!(for_model(&model).is_some(), expected, "{service}");
+        assert_eq!(
+            is_implemented(resolved.unwrap_or_default()),
+            expected,
+            "{service}"
+        );
+        implemented += usize::from(expected);
     }
+    assert!(implemented > 100, "{implemented} implemented");
     Ok(())
 }

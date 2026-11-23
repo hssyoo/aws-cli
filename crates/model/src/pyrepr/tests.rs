@@ -161,3 +161,26 @@ fn float_from_text_reads_what_python_float_reads() {
     }
     assert!(float_from_text("NaN").is_some_and(f64::is_nan));
 }
+
+/// `int(text)` in CPython 3.14, for the ASCII digits read here.
+#[test]
+fn int_from_text_reads_what_python_int_reads() {
+    let cases = [
+        (" 12 ", Some(Value::Integer(12))),
+        ("-0", Some(Value::Integer(0))),
+        ("+5", Some(Value::Integer(5))),
+        ("1_000", Some(Value::Integer(1000))),
+        ("007", Some(Value::Integer(7))),
+        (
+            "-99999999999999999999",
+            Some(Value::BigInteger("-99999999999999999999".into())),
+        ),
+        ("1__0", None),
+        ("0x10", None),
+        ("1.5", None),
+        ("", None),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(int_from_text(text), expected, "{text:?}");
+    }
+}
