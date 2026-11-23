@@ -147,6 +147,13 @@ const UNSUPPORTED_ROWS: &[(Source, PythonReason)] = &[
     ),
     (
         Source::Chain(
+            "AWS_ENDPOINT_DISCOVERY_ENABLED",
+            "endpoint_discovery_enabled",
+        ),
+        PythonReason::ClientSetting,
+    ),
+    (
+        Source::Chain(
             "AWS_REQUEST_MIN_COMPRESSION_SIZE_BYTES",
             "request_min_compression_size_bytes",
         ),
