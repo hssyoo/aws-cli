@@ -59,6 +59,15 @@ impl OperationSource for ServiceSource<'_> {
     fn needs(&self, root: &str) -> Needs {
         self.models.needs(root)
     }
+    /// The paging handlers' (`bind::precedes_unpack_failure`).
+    fn precedes_unpack_failure(&self, parsed: &ParseResult<'_>) -> bool {
+        let [command, operation] = parsed.lineage.as_slice() else {
+            return false;
+        };
+        self.models
+            .table(&command.name, &operation.name)
+            .is_some_and(|table| crate::bind::precedes_unpack_failure(table, parsed))
+    }
     /// Admission, then the invocation, with the endpoint data its client
     /// loads as botocore's client creation does.
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {

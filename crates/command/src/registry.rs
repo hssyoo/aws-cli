@@ -29,6 +29,13 @@ pub trait OperationSource: std::fmt::Debug {
     fn needs(&self, root: &str) -> Needs;
     /// Bind the completed parse of one of this source's operations.
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission>;
+    /// Whether, for a parse the unpack loop failed, a handler of the
+    /// operation raises or writes first: one on `operation-args-parsed`, or
+    /// an argument's `add_to_params` ahead of the failing one in
+    /// `_build_call_parameters`. Python then reports what comes first.
+    fn precedes_unpack_failure(&self, _parsed: &ParseResult<'_>) -> bool {
+        false
+    }
 }
 
 /// The root table: pinned grammars, then a model source, in that
@@ -68,6 +75,10 @@ impl Operation<'_> {
     /// Bind the completed parse through the source.
     pub fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
         self.source.bind(parsed)
+    }
+    /// See [`OperationSource::precedes_unpack_failure`].
+    pub fn precedes_unpack_failure(&self, parsed: &ParseResult<'_>) -> bool {
+        self.source.precedes_unpack_failure(parsed)
     }
 }
 

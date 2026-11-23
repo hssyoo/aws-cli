@@ -10,8 +10,10 @@ enum GlobalSupport {
     /// it, whose format the settings stage judges with the environment's
     /// and the profile's (`generic::output_format_refusal`).
     Output,
-    /// `--no-paginate`: a listing ignores it. A model operation that
-    /// paginates is Python's, and whether one does is not known here.
+    /// `--no-paginate`: a listing ignores it, and a model operation honors
+    /// it as `parsed_globals.paginate`, which its binding reads
+    /// (`check_should_enable_pagination`, `_make_client_call`); one that
+    /// does not paginate ignores it. A transfer is Python's.
     Pagination,
     /// `--color` and `--no-cli-pager`: a command below a root writes no
     /// colored text and starts no pager it would change, or starts one it
@@ -156,7 +158,10 @@ fn is_native_global(support: GlobalSupport, target: Target, level: &Level<'_>) -
             streams,
             Some(StreamPolicy::Listing | StreamPolicy::Formatted)
         ),
-        GlobalSupport::Pagination => streams == Some(StreamPolicy::Listing),
+        GlobalSupport::Pagination => matches!(
+            streams,
+            Some(StreamPolicy::Listing | StreamPolicy::Formatted)
+        ),
         GlobalSupport::Presentation => streams.is_some(),
         GlobalSupport::ErrorFormat => level
             .namespace
