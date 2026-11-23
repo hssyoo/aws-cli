@@ -20,7 +20,9 @@ fn models() -> Vec<Model> {
 
 /// Every curated input of `target`, sorted by name.
 fn curated(target: &str) -> std::io::Result<Vec<Vec<u8>>> {
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fuzz/corpus").join(target);
+    let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fuzz/corpus")
+        .join(target);
     let mut paths: Vec<_> = std::fs::read_dir(directory)?
         .map(|entry| entry.map(|entry| entry.path()))
         .collect::<Result<_, _>>()?;

@@ -21,11 +21,24 @@ pub fn convert_both(bytes: &[u8]) {
         return;
     };
     let magnitude = digits.strip_prefix('-').unwrap_or(digits);
-    assert!(magnitude.bytes().all(|byte| byte.is_ascii_digit()), "{text:?}: {digits}");
-    assert!(magnitude == "0" || !magnitude.starts_with('0'), "{text:?}: {digits}");
+    assert!(
+        magnitude.bytes().all(|byte| byte.is_ascii_digit()),
+        "{text:?}: {digits}"
+    );
+    assert!(
+        magnitude == "0" || !magnitude.starts_with('0'),
+        "{text:?}: {digits}"
+    );
     assert!(digits != "-0", "{text:?}");
-    assert!(matches!(float, Converted::Value(_)), "{text:?}: int() takes it, float() not");
+    assert!(
+        matches!(float, Converted::Value(_)),
+        "{text:?}: int() takes it, float() not"
+    );
     if let Converted::Value(float) = float {
-        assert_eq!(digits.parse::<f64>().ok(), float.parse::<f64>().ok(), "{text:?}");
+        assert_eq!(
+            digits.parse::<f64>().ok(),
+            float.parse::<f64>().ok(),
+            "{text:?}"
+        );
     }
 }

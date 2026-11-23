@@ -83,6 +83,7 @@ dependencies = [
 name = "client"
 version = "0.1.0"
 dependencies = [
+ "awscli-argparse",
  "cli-core",
  "format",
  "model",

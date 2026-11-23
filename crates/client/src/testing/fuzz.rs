@@ -1,8 +1,8 @@
 //! The bodies of the fuzz targets over this crate's readers
 //! (`fuzz/fuzz_targets/xml_reader.rs`, `responses.rs`), which the stable
 //! replay test (its `tests`) also runs. No input may panic.
-use crate::http::{Headers, HttpResponse};
 use crate::error::ParseError;
+use crate::http::{Headers, HttpResponse};
 use crate::protocol::{self, ParseOptions};
 use model::shapes::Model;
 use model::value::Value;

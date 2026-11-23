@@ -10,7 +10,10 @@ pub fn parse(bytes: &[u8]) {
         return;
     };
     if let Some(zoned) = Timestamp::parse_iso8601_zoned(text) {
-        assert_eq!(Timestamp::parse_iso8601_zoned(&zoned.isoformat()), Some(zoned));
+        assert_eq!(
+            Timestamp::parse_iso8601_zoned(&zoned.isoformat()),
+            Some(zoned)
+        );
     }
     if let Some(zoned) = Timestamp::parse_rfc822_zoned(text) {
         assert!(zoned.offset_seconds.is_some());
