@@ -9,6 +9,7 @@ use std::process::Command;
 
 mod layers;
 mod modules;
+mod services;
 
 /// Directories holding project-owned Rust sources, relative to the repository
 /// root; absent directories are optional. The fuzz package sits outside the
@@ -78,6 +79,7 @@ enum Rule {
     UnboundedLoop,
     ErasedError,
     Layering,
+    ServiceName,
 }
 
 impl Rule {
@@ -95,6 +97,7 @@ impl Rule {
             Self::UnboundedLoop => "unbounded_loop",
             Self::ErasedError => "erased_error",
             Self::Layering => "layering",
+            Self::ServiceName => "service_name",
         }
     }
 }
@@ -226,6 +229,7 @@ pub(crate) fn check_sources(root: &Path) -> Result<(), TaskError> {
     roots.extend(target_roots(&metadata(root, FUZZ_MANIFEST)?)?);
     let mut diagnostics = check_inventory(&sources, &roots)?;
     diagnostics.extend(layers::check(&workspace)?);
+    diagnostics.extend(services::check(root, &sources)?);
     report(root, &diagnostics, &mut io::stderr().lock())
 }
 
