@@ -8,7 +8,11 @@
 //! service the model client does not fetch from, the client, and the
 //! client's own refusals ([`Client::prepare`]), any of which can still hand
 //! the invocation to Python. [`Invocation::run`] then sends the prepared
-//! call; the credential chain is walked then, once (`crate::credentials`).
+//! call, and the credential chain is walked then, once
+//! (`crate::credentials`). A failure the preflight settled is reported by
+//! the run after the chain is walked, as botocore walks it in
+//! `create_client` before it validates or resolves anything: a failing
+//! chain's error is the one reported.
 use crate::admit::Admitted;
 use cli_core::cli_error::{CommandFailure, PythonReason};
 use cli_core::client_config::{ClientSettings, Trust};
@@ -25,7 +29,7 @@ use command::{Context, Invocation, Preflight};
 use format::{Delivered, Destination, Outcome, OutputFormat, TimestampParser};
 use model::shapes::Model;
 use model::value::Value;
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::ffi::OsString;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -48,14 +52,23 @@ pub struct ServiceInvocation {
 /// What the preflight settled.
 #[derive(Debug)]
 struct Ready {
-    /// The client and the prepared call, or the failure botocore raises as
-    /// it creates the client or prepares the call, which the run reports.
-    client: Result<Client, CommandFailure>,
-    /// The call, prepared once in the preflight and sent by the run.
-    prepared: std::cell::RefCell<Option<Prepared>>,
+    /// The client and its call, or the failure botocore raises as it
+    /// creates the client or prepares the call, which the run reports.
+    call: Result<Call, CommandFailure>,
+    /// The client's credentials, which the run walks before it reports a
+    /// failure.
+    credentials: Arc<dyn CredentialSource>,
     format: OutputFormat,
     destination: Destination,
     pager_env: Vec<(OsString, OsString)>,
+}
+
+/// A client and the call it prepared once, in the preflight, which the run
+/// sends.
+#[derive(Debug)]
+struct Call {
+    client: Client,
+    prepared: RefCell<Option<Prepared>>,
 }
 
 impl ServiceInvocation {
@@ -104,14 +117,14 @@ impl Invocation for ServiceInvocation {
             CallError::Unsupported(unsupported) => Err(crate::admit::reason(&unsupported)),
             other => Ok(service_errors::call_failure(&other, &self.model)),
         };
-        let mut prepared = None;
-        let client = match self.client(cx)? {
+        let credentials = credentials(cx)?;
+        let call = match self.client(cx, Arc::clone(&credentials))? {
             Ok(client) => {
                 match client.prepare(&self.admitted.operation, self.admitted.input.clone()) {
-                    Ok(call) => {
-                        prepared = Some(call);
-                        Ok(client)
-                    }
+                    Ok(prepared) => Ok(Call {
+                        client,
+                        prepared: RefCell::new(Some(prepared)),
+                    }),
                     Err(error) => Err(failure(error)?),
                 }
             }
@@ -123,8 +136,8 @@ impl Invocation for ServiceInvocation {
                 .map(|(name, value)| (OsString::from(name), value.clone())),
         );
         let _ = self.ready.set(Ready {
-            client,
-            prepared: std::cell::RefCell::new(prepared),
+            call,
+            credentials,
             format,
             destination,
             pager_env,
@@ -139,14 +152,17 @@ impl Invocation for ServiceInvocation {
                 ..CommandFailure::new(cli_core::cli_error::Category::General)
             });
         };
-        let client = ready.client.as_ref().map_err(Clone::clone)?;
-        let Some(prepared) = ready.prepared.borrow_mut().take() else {
+        let call = match &ready.call {
+            Ok(call) => call,
+            Err(failure) => return Err(self.after_the_chain(&*ready.credentials, failure)),
+        };
+        let Some(prepared) = call.prepared.borrow_mut().take() else {
             return Err(CommandFailure {
                 message: b"the prepared call was already sent".to_vec(),
                 ..CommandFailure::new(cli_core::cli_error::Category::General)
             });
         };
-        let output = match client.send(prepared) {
+        let output = match call.client.send(prepared) {
             Ok(output) => output,
             Err(CallError::Interrupted) => return Ok(interrupted(cx)),
             Err(error) => return Err(service_errors::call_failure(&error, &self.model)),
@@ -190,11 +206,29 @@ fn interrupted(cx: &mut Context<'_>) -> u8 {
 }
 
 impl ServiceInvocation {
-    /// The client the session would create for this invocation, or the
-    /// failure its creation raises; a credential chain that would reach a
-    /// service the model client does not fetch from is Python's. No
-    /// credential provider runs here.
-    fn client(&self, cx: &Preflight<'_>) -> Result<Result<Client, CallError>, PythonReason> {
+    /// `failure`, which botocore raises after `create_client` has walked the
+    /// credential chain: the chain's error instead, if it fails. The chain
+    /// is the client's, so a provider still runs once.
+    fn after_the_chain(
+        &self,
+        credentials: &dyn CredentialSource,
+        failure: &CommandFailure,
+    ) -> CommandFailure {
+        match credentials.credentials() {
+            Err(error) => {
+                service_errors::call_failure(&CallError::Credentials(error.0), &self.model)
+            }
+            Ok(_) => failure.clone(),
+        }
+    }
+
+    /// The client the session would create for this invocation, signing
+    /// with `credentials`, or the failure its creation raises.
+    fn client(
+        &self,
+        cx: &Preflight<'_>,
+        credentials: Arc<dyn CredentialSource>,
+    ) -> Result<Result<Client, CallError>, PythonReason> {
         let globals = cx.globals;
         let profile = globals.profile.as_deref();
         let region = cli_core::region::configured_region(
@@ -212,7 +246,6 @@ impl ServiceInvocation {
             profile,
         )
         .map_err(|_| PythonReason::EndpointSetting)?;
-        let credentials = credentials(cx)?;
         let settings = cx.settings;
         let endpoint = EndpointConfig::new(&EndpointInputs {
             region,
@@ -287,7 +320,8 @@ fn session_extras(
 /// The client's credential source: botocore's chain for the selected
 /// profile, walked when the client first signs (`crate::credentials`), or
 /// none for an unsigned call. A chain that would ask the container's
-/// endpoint or the instance metadata service is Python's.
+/// endpoint or the instance metadata service is Python's. No credential
+/// provider runs here.
 fn credentials(cx: &Preflight<'_>) -> Result<Arc<dyn CredentialSource>, PythonReason> {
     if !cx.settings.signing.value {
         return Ok(Arc::new(ChainCredentials::new(None)));

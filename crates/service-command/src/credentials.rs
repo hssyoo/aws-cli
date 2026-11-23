@@ -1,6 +1,7 @@
 //! A model client's credentials: botocore's chain for the selected
-//! profile, walked the first time the client asks for credentials, which
-//! is when it signs the first attempt. Every refusal that can hand the
+//! profile, walked the first time anything asks for credentials: the
+//! client when it signs the first attempt, or the run before it reports a
+//! failure the preflight settled. Every refusal that can hand the
 //! invocation to Python comes before that (`Client::prepare` asks for none),
 //! so a provider with side effects, a `credential_process` above all, runs
 //! once, as on the Python route.
