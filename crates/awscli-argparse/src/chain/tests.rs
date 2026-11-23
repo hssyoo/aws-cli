@@ -373,7 +373,7 @@ fn captured_chain_outcomes_provenance_and_values() {
         }
         count += 1;
     }
-    assert_eq!(count, 205);
+    assert_eq!(count, 210);
 }
 
 fn assert_corpus_failure(actual: &Value, error: &Value, case: &str) {
