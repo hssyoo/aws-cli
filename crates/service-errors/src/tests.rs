@@ -107,3 +107,25 @@ fn an_interrupt_writes_and_flushes_its_newline() -> std::io::Result<()> {
     );
     Ok(())
 }
+
+/// A customization's parameter validation is `ParamValidationError` (252)
+/// with its text; any other failure of one is the general handler's (255).
+#[test]
+fn hook_failures_are_validation_or_general() -> Result<(), model::shapes::ModelError> {
+    let empty = br#"{"metadata": {"protocol": "json"}, "operations": {}, "shapes": {}}"#;
+    let model = model::shapes::Model::from_json(empty)?;
+    let text = "Parameter validation failed:\nInvalid length for parameter Name";
+    let validation = call_failure(
+        &CallError::Hook(client::hooks::HookError::Validation(text.into())),
+        &model,
+    );
+    assert_eq!(validation.category, Category::ParamValidation);
+    assert_eq!(validation.message, text.as_bytes());
+    let failed = call_failure(
+        &CallError::Hook(client::hooks::HookError::Failed("boom".into())),
+        &model,
+    );
+    assert_eq!(failed.category, Category::General);
+    assert_eq!(failed.message, b"boom");
+    Ok(())
+}
