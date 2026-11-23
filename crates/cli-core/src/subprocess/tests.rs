@@ -107,3 +107,53 @@ fn no_candidate_is_a_missing_file() {
         Some(io::ErrorKind::NotFound)
     );
 }
+
+#[test]
+fn a_command_is_split_as_shlex_splits_it() {
+    let cases: [(&str, &[&str]); 9] = [
+        ("a b", &["a", "b"]),
+        ("a 'b c' d", &["a", "b c", "d"]),
+        (r#"a "b \" c" d"#, &["a", "b \" c", "d"]),
+        (r"a\ b c", &["a b", "c"]),
+        ("a '' b", &["a", "", "b"]),
+        (r#"a "b\nc""#, &["a", r"b\nc"]),
+        ("x'y'z", &["xyz"]),
+        (
+            r#"sh -c 'echo "{\"V\": 1}"'"#,
+            &["sh", "-c", r#"echo "{\"V\": 1}""#],
+        ),
+        ("  ", &[]),
+    ];
+    for (command, words) in cases {
+        assert_eq!(
+            shell_split(command).as_deref(),
+            Ok(words
+                .iter()
+                .map(|&word| word.to_owned())
+                .collect::<Vec<_>>()
+                .as_slice()),
+            "{command}"
+        );
+    }
+    assert_eq!(shell_split("a \"b"), Err("No closing quotation"));
+    assert_eq!(shell_split("a\\"), Err("No escaped character"));
+}
+
+/// `Popen._execute_child`'s executable list.
+#[test]
+fn candidates_follow_cpython_s_search() {
+    let path = std::ffi::OsStr::new("/a::/b/");
+    assert_eq!(
+        candidates("less", Some(path)),
+        [
+            PathBuf::from("/a/less"),
+            PathBuf::from("less"),
+            PathBuf::from("/b/less")
+        ]
+    );
+    assert_eq!(candidates("./less", Some(path)), [PathBuf::from("./less")]);
+    assert_eq!(
+        candidates("less", None),
+        [PathBuf::from("/bin/less"), PathBuf::from("/usr/bin/less")]
+    );
+}

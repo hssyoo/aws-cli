@@ -38,12 +38,6 @@ pub(crate) fn backoff_delay(
     let ceiling = (scale << exponent).min(BACKOFF_NANOS_MAX);
     Duration::from_nanos(uint_less_than(random, ceiling))
 }
-pub(crate) fn random_word() -> u64 {
-    use std::hash::{BuildHasher, Hasher};
-    std::collections::hash_map::RandomState::new()
-        .build_hasher()
-        .finish()
-}
 fn uint_less_than(random: &mut dyn FnMut() -> u64, less_than: u64) -> u64 {
     debug_assert!(less_than > 0);
     let biased = less_than.wrapping_neg() % less_than;

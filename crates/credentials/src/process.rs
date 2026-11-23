@@ -89,37 +89,22 @@ fn started(program: &str, arguments: &[String]) -> io::Result<Output> {
         .output()
 }
 
-/// CPython's default search path, `os.defpath`.
-#[cfg(unix)]
-const DEFAULT_PATH: &str = "/bin:/usr/bin";
-
-/// Finds `program` as CPython's `subprocess` does (`Popen._execute_child`
-/// and `_posixsubprocess`'s `child_exec`): a name with a directory
-/// is run as given, and any other from each directory of `PATH` in turn,
-/// an empty one being the working directory, until one starts. A candidate
-/// the kernel cannot start moves the search on, and none is run through
-/// `/bin/sh` as `Command` would run it.
+/// Finds `program` as CPython's `subprocess` does
+/// ([`cli_core::subprocess::candidates`]) and runs the first that starts.
 ///
 /// # Errors
 /// As [`cli_core::subprocess::output`]: when no candidate starts, the
 /// failure `subprocess` raises.
 #[cfg(unix)]
 fn started(program: &str, arguments: &[String]) -> io::Result<Output> {
-    if program.contains('/') {
-        return cli_core::subprocess::output(&[program], program, arguments);
-    }
-    let path = std::env::var_os("PATH").unwrap_or_else(|| DEFAULT_PATH.into());
-    searched(&path, program, arguments)
+    let path = std::env::var_os("PATH");
+    searched(path.as_deref(), program, arguments)
 }
 
-/// [`started`] for a bare `program`, searching `path`.
+/// [`started`] with `path` as the search path.
 #[cfg(unix)]
-fn searched(path: &OsStr, program: &str, arguments: &[String]) -> io::Result<Output> {
-    // An empty directory joins to the bare name, which `execv` finds in the
-    // working directory, as `os.path.join` builds it.
-    let candidates: Vec<_> = std::env::split_paths(path)
-        .map(|directory| directory.join(program))
-        .collect();
+fn searched(path: Option<&OsStr>, program: &str, arguments: &[String]) -> io::Result<Output> {
+    let candidates = cli_core::subprocess::candidates(program, path);
     cli_core::subprocess::output(&candidates, program, arguments)
 }
 
@@ -227,7 +212,7 @@ impl Process {
         let command = if cfg!(windows) {
             windows_shell_split(&self.command)
         } else {
-            shell_split(&self.command).map_err(str::to_owned)
+            cli_core::subprocess::shell_split(&self.command).map_err(str::to_owned)
         }
         .map_err(unusable)?;
         let output = (self.runner.0)(&command).map_err(|error| unusable(error.to_string()))?;
@@ -360,61 +345,6 @@ fn check_version(version: Option<&Value>) -> Result<(), LoadError> {
              supported versions: 1"
         ),
     })
-}
-
-/// Python's `shlex.split`, which botocore splits the command with off
-/// Windows (`compat_shell_split`): POSIX quoting, whitespace between words,
-/// no comments.
-///
-/// # Errors
-/// The text `shlex` raises `ValueError` with: a quotation that is never
-/// closed, or a backslash that ends the command.
-fn shell_split(command: &str) -> Result<Vec<String>, &'static str> {
-    const NO_CLOSING_QUOTATION: &str = "No closing quotation";
-    const NO_ESCAPED_CHARACTER: &str = "No escaped character";
-    let mut words = Vec::new();
-    // `Some` from a word's first character or quote, so `''` is a word.
-    let mut word: Option<String> = None;
-    let mut characters = command.chars();
-    while let Some(character) = characters.next() {
-        match character {
-            ' ' | '\t' | '\r' | '\n' => words.extend(word.take()),
-            '\\' => word
-                .get_or_insert_default()
-                .push(characters.next().ok_or(NO_ESCAPED_CHARACTER)?),
-            '\'' => {
-                let word = word.get_or_insert_default();
-                loop {
-                    match characters.next().ok_or(NO_CLOSING_QUOTATION)? {
-                        '\'' => break,
-                        quoted => word.push(quoted),
-                    }
-                }
-            }
-            '"' => {
-                let word = word.get_or_insert_default();
-                loop {
-                    match characters.next().ok_or(NO_CLOSING_QUOTATION)? {
-                        '"' => break,
-                        '\\' => {
-                            // Inside double quotes a backslash escapes only
-                            // itself and the quote; before anything else it
-                            // stays.
-                            let escaped = characters.next().ok_or(NO_ESCAPED_CHARACTER)?;
-                            if !matches!(escaped, '\\' | '"') {
-                                word.push('\\');
-                            }
-                            word.push(escaped);
-                        }
-                        quoted => word.push(quoted),
-                    }
-                }
-            }
-            plain => word.get_or_insert_default().push(plain),
-        }
-    }
-    words.extend(word);
-    Ok(words)
 }
 
 /// botocore's `_windows_shell_split`, which it splits the command with on

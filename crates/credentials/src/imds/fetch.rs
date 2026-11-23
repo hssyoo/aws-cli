@@ -32,7 +32,6 @@ use super::{InstanceMetadataSettings, METHOD, RoleCredentials, Timeout, expirati
 use crate::{Clock, LoadError};
 use serde_json::{Map, Value};
 use std::fmt;
-use std::hash::{BuildHasher, RandomState};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -199,9 +198,7 @@ impl Fetcher {
             user_agent,
             transport,
             clock: Clock::system(),
-            // A fresh hasher's keys are the randomness the standard
-            // library has.
-            jitter: Arc::new(|| RandomState::new().hash_one(0)),
+            jitter: Arc::new(cli_core::random::word),
         }
     }
     /// Reads the time of a fetch from `clock` in place of the system's.

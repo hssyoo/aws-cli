@@ -7,7 +7,7 @@
 //! and refuses anything else: a caller that meets another form decides
 //! what to do with it.
 use super::{
-    Civil, DAY_NAMES, FIRST_MICROS, LAST_MICROS, MICROS_PER_SECOND, MONTH_NAMES, Timestamp,
+    Civil, DAY_NAMES, FIRST_MICROS, LAST_MICROS, MICROS_PER_SECOND, MONTH_NAMES, Timestamp, Zoned,
 };
 
 impl Timestamp {
@@ -28,6 +28,12 @@ impl Timestamp {
     /// Past six digits the fraction is cut, as dateutil cuts it. A time
     /// without a zone is refused: botocore would read it in the local zone.
     pub fn parse_iso8601(text: &str) -> Option<Self> {
+        Self::parse_iso8601_zoned(text)?.instant()
+    }
+    /// [`Timestamp::parse_iso8601`]'s form with the zone optional, as the
+    /// wall time and the zone written: what `dateutil.parser.parse` returns
+    /// for it, naive without a zone and `+00:00` for `Z`.
+    pub fn parse_iso8601_zoned(text: &str) -> Option<Zoned> {
         let mut scan = Scan::new(text);
         let year = scan.digits(4)?;
         scan.byte(b'-')?;
@@ -40,10 +46,15 @@ impl Timestamp {
             Some(()) => scan.fraction()?,
             None => 0,
         };
-        let offset = scan.iso_zone()?;
+        let offset = match scan.peek() {
+            None => None,
+            Some(_) => Some(scan.iso_zone()?),
+        };
         scan.end()?;
-        let local = civil(year, month, day, hour, minute, second, microsecond)?;
-        Self::from_civil(local)?.shifted(-offset)
+        zoned(
+            civil(year, month, day, hour, minute, second, microsecond)?,
+            offset,
+        )
     }
     /// Reads seconds since the epoch as Python's `float` reads a decimal:
     /// an optional sign, digits with an optional point and digits on at
@@ -83,6 +94,11 @@ impl Timestamp {
     /// `UTC` or an offset `+HHMM`, which is taken away. The day's name is
     /// not checked against the date, as dateutil does not check it.
     pub fn parse_rfc822(text: &str) -> Option<Self> {
+        Self::parse_rfc822_zoned(text)?.instant()
+    }
+    /// [`Timestamp::parse_rfc822`]'s form as the wall time and the zone
+    /// written, `GMT` and `UTC` being `+00:00`.
+    pub fn parse_rfc822_zoned(text: &str) -> Option<Zoned> {
         let mut scan = Scan::new(text);
         scan.day_name()?;
         let day = scan.digits(2).or_else(|| scan.digits(1))?;
@@ -95,8 +111,10 @@ impl Timestamp {
         scan.byte(b' ')?;
         let offset = scan.rfc822_zone()?;
         scan.end()?;
-        let local = civil(year, month, day, hour, minute, second, 0)?;
-        Self::from_civil(local)?.shifted(-offset)
+        zoned(
+            civil(year, month, day, hour, minute, second, 0)?,
+            Some(offset),
+        )
     }
     /// This instant moved by `micros`, `None` past the range.
     fn shifted(self, micros: i64) -> Option<Self> {
@@ -104,6 +122,28 @@ impl Timestamp {
         (FIRST_MICROS..=LAST_MICROS)
             .contains(&moved)
             .then_some(Self { micros: moved })
+    }
+}
+
+/// A wall time that exists, with an offset in microseconds east of UTC.
+fn zoned(civil: Civil, offset_micros: Option<i64>) -> Option<Zoned> {
+    Timestamp::from_civil(civil)?;
+    let offset_seconds = offset_micros
+        .map(|micros| i32::try_from(micros / MICROS_PER_SECOND))
+        .transpose()
+        .ok()?;
+    Some(Zoned {
+        civil,
+        offset_seconds,
+    })
+}
+
+impl Zoned {
+    /// The instant a zoned wall time names; `None` for a naive one or one
+    /// past the range.
+    fn instant(&self) -> Option<Timestamp> {
+        let offset = i64::from(self.offset_seconds?) * MICROS_PER_SECOND;
+        Timestamp::from_civil(self.civil)?.shifted(-offset)
     }
 }
 
