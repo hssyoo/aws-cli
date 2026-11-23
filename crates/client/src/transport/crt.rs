@@ -11,10 +11,14 @@
 //!   proxy the native transport does not speak to fails the request; the
 //!   router sends such settings to Python first.
 //! - **On the wire**: `http.client`'s Host header and
-//!   `Accept-Encoding: identity` first (`putrequest`), then the request's
-//!   headers in order. The Host is the one the request was signed with:
-//!   both come from [`credentials::Location`], so a signature always
-//!   covers the Host that goes out.
+//!   `Accept-Encoding: identity` first (`putrequest`), each unless the
+//!   request has its own, then the request's headers in order. The Host is
+//!   the one the request was signed with: both come from
+//!   [`credentials::Location`], so a signature always covers the Host that
+//!   goes out.
+//! - **The response body** comes back as it arrived, a `Content-Encoding`
+//!   not undone, as botocore reads it (`URLLib3Session.send` passes
+//!   `decode_content=False`).
 //! - **Keep-alive**: `tcp_keepalive` sets SO_KEEPALIVE at the system's
 //!   timings, as botocore adds it to urllib3's socket options
 //!   (`_compute_socket_options`). Each request connects anew.
@@ -129,11 +133,7 @@ impl Transport for CrtTransport {
             .map_or((location.host.as_str(), location.port), |proxy| {
                 (proxy.host.as_str(), proxy.port)
             });
-        let mut headers = vec![
-            ("Host", location.host_header.as_str()),
-            ("Accept-Encoding", "identity"),
-        ];
-        headers.extend(request.headers.iter());
+        let headers = wire_headers(&location.host_header, &request.headers);
         let sent = ::crt::http::Request {
             host,
             port,
@@ -166,6 +166,21 @@ impl Transport for CrtTransport {
             body: response.body,
         })
     }
+}
+
+/// The headers as `http.client` sends them for urllib3's
+/// `HTTPConnection.request`: `putrequest`'s Host and
+/// `Accept-Encoding: identity`, each left out when the request has its own
+/// of that name in any case (`skip_host`, `skip_accept_encoding`), then the
+/// request's headers in order. A model header member such as neptunedata's
+/// `Accept-Encoding` thus goes out once, as signed.
+fn wire_headers<'a>(host: &'a str, own: &'a Headers) -> Vec<(&'a str, &'a str)> {
+    let defaults = [("Host", host), ("Accept-Encoding", "identity")];
+    defaults
+        .into_iter()
+        .filter(|(name, _)| !own.contains(name))
+        .chain(own.iter())
+        .collect()
 }
 
 /// The exception botocore's session raises for `error`
