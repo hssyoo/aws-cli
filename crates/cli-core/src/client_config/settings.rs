@@ -92,25 +92,14 @@ impl ClientSettings {
         });
         features
     }
-    /// The feature ids the credential provider that answered registers
-    /// (credentials.py `EnvProvider.load`, `ProcessProvider.load`,
-    /// `SharedCredentialProvider`, `ContainerProvider`): none for a client
-    /// that does not sign, or for a source the chain does not name.
+    /// The feature ids the credential provider that answers registers
+    /// ([`user_agent::credential_features`]): none for a client that does not
+    /// sign.
     pub fn credential_features(&self) -> &'static [user_agent::Feature] {
-        use user_agent::Feature;
         if !self.signing.value {
             return &[];
         }
-        match self.credential_source {
-            CredentialSource::Environment => &[Feature::CredentialsEnvVars],
-            CredentialSource::SharedProfile => &[Feature::CredentialsProfile],
-            CredentialSource::Process => &[
-                Feature::CredentialsProfileProcess,
-                Feature::CredentialsProcess,
-            ],
-            CredentialSource::Container => &[Feature::CredentialsHttp],
-            CredentialSource::DefaultChain => &[],
-        }
+        user_agent::credential_features(self.credential_source.method())
     }
     /// The retry mode the client runs: the configured one, or botocore's
     /// `standard` (`ClientArgsCreator._compute_retry_mode`).

@@ -528,7 +528,11 @@ impl Client {
             // after the signer, which does not sign `User-Agent`.
             if let Some(method) = self.parts.credentials.method() {
                 let mut features = features;
-                features.extend(crate::useragent::credential_features(method).iter());
+                features.extend(
+                    cli_core::client_config::user_agent::credential_features(method)
+                        .iter()
+                        .copied(),
+                );
                 let parts = &self.parts;
                 let agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
                 request.headers.set("User-Agent", agent);

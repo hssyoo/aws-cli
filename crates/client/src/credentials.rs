@@ -37,7 +37,7 @@ pub trait CredentialSource: Send + Sync + std::fmt::Debug {
     /// botocore's `method` of the provider that answered, once
     /// [`Self::credentials`] has found credentials; `None` before then, or
     /// for a source that cannot say. The `User-Agent` names the provider by
-    /// it ([`crate::useragent::credential_features`]).
+    /// it ([`cli_core::client_config::user_agent::credential_features`]).
     fn method(&self) -> Option<&'static str> {
         None
     }
