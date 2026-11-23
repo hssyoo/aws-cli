@@ -1,4 +1,5 @@
-//! Loads the lexicographically latest service endpoint model from a payload.
+//! Loads the lexicographically latest service endpoint model from a payload,
+//! through `model::payload`.
 use pyload::View;
 #[derive(Debug)]
 #[non_exhaustive]
@@ -33,67 +34,25 @@ impl From<pyload::Error> for RulesError {
         Self::Payload(error)
     }
 }
-/// Selects the greatest complete model name within a validated service prefix.
-pub fn versioned_resource_name<'a>(
-    view: View<'a>,
-    service: &str,
-    basename: &str,
-) -> Result<&'a [u8], RulesError> {
-    if service.is_empty()
-        || !service
-            .bytes()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == b'-')
-    {
-        return Err(RulesError::InvalidServiceName);
-    }
-    let prefix = format!("awscli/botocore/data/{service}/");
-    let suffix = format!("/{basename}.json");
-    let mut best = None;
-    let mut index = view.first_name_at_least(prefix.as_bytes())?;
-    while index < view.entry_count() {
-        let name = view.entry_name_at(index)?;
-        if !name.starts_with(prefix.as_bytes()) {
-            break;
+impl From<model::payload::ResourceError> for RulesError {
+    fn from(error: model::payload::ResourceError) -> Self {
+        use model::payload::ResourceError;
+        use pyload::catalog::GroupError;
+        match error {
+            ResourceError::InvalidServiceName => Self::InvalidServiceName,
+            ResourceError::Missing => Self::MissingEndpointRules,
+            ResourceError::InvalidLength => Self::InvalidEndpointRules,
+            ResourceError::Decode(error) => Self::Decode(error),
+            ResourceError::OutOfMemory => Self::OutOfMemory,
+            ResourceError::Payload(error) => Self::Payload(error),
+            ResourceError::Catalog(GroupError::Payload(error)) => Self::Payload(error),
+            ResourceError::Catalog(GroupError::Unsorted) => {
+                Self::Payload(pyload::Error::UnsortedNames)
+            }
+            ResourceError::Catalog(GroupError::NameTooLong) => Self::InvalidServiceName,
+            _ => Self::InvalidEndpointRules,
         }
-        if name.ends_with(suffix.as_bytes()) && best.is_none_or(|old| old < name) {
-            best = Some(name);
-        }
-        index += 1;
     }
-    best.ok_or(RulesError::MissingEndpointRules)
-}
-/// Copies or decompresses an embedded resource using its declared exact length.
-///
-/// It reserves the output and then the decoder scratch fallibly, so an exhausted heap returns
-/// `OutOfMemory` instead of aborting. A frame that does not decode to exactly the declared length
-/// returns the decoder's own error; `InvalidEndpointRules` is only a declared length this target
-/// cannot address.
-pub fn load_resource(view: View<'_>, name: &[u8]) -> Result<Vec<u8>, RulesError> {
-    let entry = view
-        .find(name)?
-        .ok_or(RulesError::MissingEndpointRules)?
-        .entry;
-    let stored = view.stored_bytes(entry)?;
-    if !entry.is_compressed() {
-        let mut bytes = reserve(stored.len())?;
-        bytes.extend_from_slice(stored);
-        return Ok(bytes);
-    }
-    let len =
-        usize::try_from(entry.uncompressed_len).map_err(|_| RulesError::InvalidEndpointRules)?;
-    let mut bytes = reserve(len)?;
-    bytes.resize(len, 0);
-    let mut scratch = reserve(pyload::decompress::ZSTD_BUFFER_LEN)?;
-    pyload::decompress::decode_zstd(stored, &mut bytes, scratch.spare_capacity_mut())
-        .map_err(RulesError::Decode)?;
-    Ok(bytes)
-}
-fn reserve(len: usize) -> Result<Vec<u8>, RulesError> {
-    let mut bytes = Vec::new();
-    bytes
-        .try_reserve_exact(len)
-        .map_err(|_| RulesError::OutOfMemory)?;
-    Ok(bytes)
 }
 /// A service's decompressed rule set and the partitions it reads, shared by
 /// every evaluation for a command.
@@ -113,9 +72,11 @@ impl std::fmt::Debug for Rules {
 impl Rules {
     /// Loads the service's latest rule set and the partitions from a payload.
     pub fn load(view: View<'_>, service: &str) -> Result<Self, RulesError> {
-        let rules_name = versioned_resource_name(view, service, "endpoint-rule-set-1")?;
-        let rules = load_resource(view, rules_name)?;
-        let partitions = load_resource(view, b"awscli/botocore/data/partitions.json")?;
+        let rules_name =
+            model::payload::versioned_resource_name(view, service, "endpoint-rule-set-1")?;
+        let rules = model::payload::load_resource(view, rules_name)?;
+        let partitions =
+            model::payload::load_resource(view, b"awscli/botocore/data/partitions.json")?;
         Ok(Self {
             rules: rules.into(),
             partitions: partitions.into(),

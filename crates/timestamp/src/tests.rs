@@ -371,3 +371,36 @@ fn seconds_and_microseconds_split_toward_the_past() -> TestResult {
     assert!(Timestamp::now().unix_seconds() > SUITE);
     Ok(())
 }
+
+/// The range ends are public: callers bound epoch values with them.
+#[test]
+fn the_range_ends_are_datetime_min_and_max() -> TestResult {
+    assert_eq!(Timestamp::MIN.civil(), civil(1, 1, 1, 0, 0, 0));
+    let last = Civil {
+        microsecond: 999_999,
+        ..civil(9999, 12, 31, 23, 59, 59)
+    };
+    assert_eq!(Timestamp::MAX.civil(), last);
+    let (min, max) = (Timestamp::MIN.unix_micros(), Timestamp::MAX.unix_micros());
+    assert_eq!(Timestamp::from_unix_micros(min), Some(Timestamp::MIN));
+    assert_eq!(Timestamp::from_unix_micros(max), Some(Timestamp::MAX));
+    assert_eq!(Timestamp::from_unix_micros(min - 1), None);
+    assert_eq!(Timestamp::from_unix_micros(max + 1), None);
+    Ok(())
+}
+
+/// Anchors from the model crate's former copy: a leap day, the day after a
+/// leap February, the last day of the range, and RFC 822 before the epoch.
+#[test]
+fn civil_anchors_and_an_instant_before_the_epoch() -> TestResult {
+    let leap = Timestamp::from_civil(civil(2020, 2, 29, 12, 34, 56));
+    assert_eq!(leap.map(|t| t.unix_seconds()), Some(1_582_979_696));
+    let march = Timestamp::from_civil(civil(2000, 3, 1, 0, 0, 0));
+    assert_eq!(march.map(|t| t.unix_seconds()), Some(11_017 * 86_400));
+    let last_day = Timestamp::from_civil(civil(9999, 12, 31, 0, 0, 0));
+    assert_eq!(last_day.map(|t| t.unix_seconds()), Some(2_932_896 * 86_400));
+    assert_eq!(at(-1)?.civil(), civil(1969, 12, 31, 23, 59, 59));
+    assert_eq!(at(-1)?.rfc822(), "Wed, 31 Dec 1969 23:59:59 GMT");
+    assert_eq!(Timestamp::from_civil(civil(2021, 2, 29, 0, 0, 0)), None);
+    Ok(())
+}
