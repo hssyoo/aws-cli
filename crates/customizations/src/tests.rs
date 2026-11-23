@@ -188,7 +188,9 @@ fn model_with(carried: &str) -> String {
 /// Each basis holds: an implemented one names an item the source defines,
 /// and an inert one refused by a trait is refused by
 /// `client::admission::static_refusal` with that trait's key. A router
-/// refusal is the router's to check (its settings table).
+/// refusal is checked where the router refuses: service-command's coverage
+/// tests, `every_core_router_refusal_refuses_where_the_customization_acts`,
+/// one case per entry.
 #[test]
 fn every_basis_holds() -> TestResult {
     use client::hooks::{Basis, Refusal};
@@ -221,6 +223,8 @@ fn every_basis_holds() -> TestResult {
                         "{name}"
                     );
                 }
+                // service-command's coverage tests route each through the
+                // router (see this test's doc).
                 Basis::Inert {
                     refused_as: Refusal::Router(_),
                     ..
