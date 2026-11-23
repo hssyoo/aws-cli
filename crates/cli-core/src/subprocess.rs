@@ -49,6 +49,80 @@ pub fn output<P: AsRef<Path>>(
     command.output()
 }
 
+/// CPython's default search path, `os.defpath`.
+const DEFAULT_PATH: &str = "/bin:/usr/bin";
+
+/// The files CPython's `subprocess` tries for `program`
+/// (`Popen._execute_child`): a name with a directory as given, any other
+/// joined to each directory of `path` (`os.get_exec_path`, `os.defpath`
+/// when unset), an empty directory leaving the bare name, which `execv`
+/// finds in the working directory.
+pub fn candidates(program: &str, path: Option<&std::ffi::OsStr>) -> Vec<std::path::PathBuf> {
+    if program.contains('/') {
+        return vec![program.into()];
+    }
+    let path = path.unwrap_or(std::ffi::OsStr::new(DEFAULT_PATH));
+    std::env::split_paths(path)
+        .map(|directory| directory.join(program))
+        .collect()
+}
+
+/// Python's `shlex.split(command)`: POSIX quoting, whitespace between
+/// words, no comments. botocore's `compat_shell_split` splits a
+/// `credential_process` with it off Windows, and awscli's
+/// `get_popen_kwargs_for_pager_cmd` splits the pager command with it.
+///
+/// # Errors
+/// The text `shlex` raises `ValueError` with: a quotation that is never
+/// closed, or a backslash that ends the command.
+pub fn shell_split(command: &str) -> Result<Vec<String>, &'static str> {
+    const NO_CLOSING_QUOTATION: &str = "No closing quotation";
+    const NO_ESCAPED_CHARACTER: &str = "No escaped character";
+    let mut words = Vec::new();
+    // `Some` from a word's first character or quote, so `''` is a word.
+    let mut word: Option<String> = None;
+    let mut characters = command.chars();
+    while let Some(character) = characters.next() {
+        match character {
+            ' ' | '\t' | '\r' | '\n' => words.extend(word.take()),
+            '\\' => word
+                .get_or_insert_default()
+                .push(characters.next().ok_or(NO_ESCAPED_CHARACTER)?),
+            '\'' => {
+                let word = word.get_or_insert_default();
+                loop {
+                    match characters.next().ok_or(NO_CLOSING_QUOTATION)? {
+                        '\'' => break,
+                        quoted => word.push(quoted),
+                    }
+                }
+            }
+            '"' => {
+                let word = word.get_or_insert_default();
+                loop {
+                    match characters.next().ok_or(NO_CLOSING_QUOTATION)? {
+                        '"' => break,
+                        '\\' => {
+                            // Inside double quotes a backslash escapes only
+                            // itself and the quote; before anything else it
+                            // stays.
+                            let escaped = characters.next().ok_or(NO_ESCAPED_CHARACTER)?;
+                            if !matches!(escaped, '\\' | '"') {
+                                word.push('\\');
+                            }
+                            word.push(escaped);
+                        }
+                        quoted => word.push(quoted),
+                    }
+                }
+            }
+            plain => word.get_or_insert_default().push(plain),
+        }
+    }
+    words.extend(word);
+    Ok(words)
+}
+
 /// `execv`'s arguments, built before the fork.
 struct Exec {
     candidates: Vec<CString>,

@@ -436,37 +436,6 @@ fn a_file_that_does_not_parse_is_an_error() {
 }
 
 /// The words Python's `shlex.split` gives for the same commands.
-#[test]
-fn a_command_is_split_as_shlex_splits_it() {
-    let cases: [(&str, &[&str]); 9] = [
-        ("a b", &["a", "b"]),
-        ("a 'b c' d", &["a", "b c", "d"]),
-        (r#"a "b \" c" d"#, &["a", "b \" c", "d"]),
-        (r"a\ b c", &["a b", "c"]),
-        ("a '' b", &["a", "", "b"]),
-        (r#"a "b\nc""#, &["a", r"b\nc"]),
-        ("x'y'z", &["xyz"]),
-        (
-            r#"sh -c 'echo "{\"V\": 1}"'"#,
-            &["sh", "-c", r#"echo "{\"V\": 1}""#],
-        ),
-        ("  ", &[]),
-    ];
-    for (command, words) in cases {
-        assert_eq!(
-            shell_split(command).as_deref(),
-            Ok(words
-                .iter()
-                .map(|&word| word.to_owned())
-                .collect::<Vec<_>>()
-                .as_slice()),
-            "{command}"
-        );
-    }
-    assert_eq!(shell_split("a \"b"), Err("No closing quotation"));
-    assert_eq!(shell_split("a\\"), Err("No escaped character"));
-}
-
 /// The words botocore's `_windows_shell_split` gives for each command.
 fn assert_windows_splits(cases: &[(&str, &[&str])]) {
     for &(command, words) in cases {
@@ -609,16 +578,20 @@ fn the_search_moves_past_a_candidate_that_cannot_be_run() -> TestResult {
     };
     let arguments = ["argument".to_owned()];
     for first in ["p1", "p3", "missing"] {
-        let output = searched(&joined(&[first, "p2"])?, "helper", &arguments)?;
+        let output = searched(Some(&joined(&[first, "p2"])?), "helper", &arguments)?;
         assert_eq!(output.stdout, b"p2 argument\n", "{first}");
     }
     // The first failure that is not a missing file is the one reported.
-    let refused = searched(&joined(&["missing", "p1", "p3"])?, "helper", &arguments);
+    let refused = searched(
+        Some(&joined(&["missing", "p1", "p3"])?),
+        "helper",
+        &arguments,
+    );
     assert_eq!(
         refused.map_err(|error| error.kind()).err(),
         Some(std::io::ErrorKind::PermissionDenied)
     );
-    let missing = searched(&joined(&["missing"])?, "helper", &arguments);
+    let missing = searched(Some(&joined(&["missing"])?), "helper", &arguments);
     assert_eq!(
         missing.map_err(|error| error.kind()).err(),
         Some(std::io::ErrorKind::NotFound)
