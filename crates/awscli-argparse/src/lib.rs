@@ -4,6 +4,7 @@ pub mod argument;
 pub mod bind;
 pub mod chain;
 pub mod close_matches;
+pub mod convert;
 pub mod failure;
 pub mod json;
 pub mod namespace;
@@ -20,6 +21,8 @@ pub mod unpack;
 pub use argument::{Action, Argument, CliType, DefaultValue, Nargs};
 #[doc(inline)]
 pub use chain::{Options, ParseResult, complete, parse, parse_os};
+#[doc(inline)]
+pub use convert::ValueType;
 #[doc(inline)]
 pub use namespace::{Namespace, Value};
 #[doc(inline)]

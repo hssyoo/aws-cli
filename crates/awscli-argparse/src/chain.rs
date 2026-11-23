@@ -67,6 +67,8 @@ pub enum Outcome {
     /// resolution found no failure first. The native handlers carry Unicode
     /// globals only, so the router maps this outcome to a PythonReason and
     /// upstream runs the command, decoding the value with surrogate escapes.
+    /// Also a typed argument's value that Python's `int()` or `float()`
+    /// reads through Unicode tables (`convert`), which native does not judge.
     UnsupportedOsValue,
     Unresolved {
         command: String,
@@ -250,6 +252,10 @@ fn level<'a>(
         return None;
     };
     match parser.parse_tokens(args) {
+        Err(failed) if *failed.failure.kind == crate::failure::ParseFailureKind::UndecidedValue => {
+            result.outcome = Outcome::UnsupportedOsValue;
+            None
+        }
         Err(failed) => {
             result.failed = Some(failed.namespace);
             result.outcome = Outcome::Failure(Failure::parsing(failed.failure));

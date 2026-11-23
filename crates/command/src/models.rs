@@ -330,6 +330,7 @@ fn argparse(argument: &DerivedArgument) -> Argument<'_> {
         choices: argument.choices,
         required: argument.required,
         hidden: argument.hidden,
+        value_type: argument.value_type,
         cli_type: None,
     }
 }
@@ -366,7 +367,7 @@ impl OperationSource for ModelSource<'_> {
             return !service.customized;
         };
         let table = self.table(root, operation);
-        !service.customized && table.is_some_and(|table| !table.customized && !table.typed())
+        !service.customized && table.is_some_and(|table| !table.customized)
     }
     fn needs(&self, root: &str) -> Needs {
         let service = self.service(root);

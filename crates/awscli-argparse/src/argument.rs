@@ -19,7 +19,9 @@ pub enum Nargs {
     OneOrMore,
     Count(u8),
 }
-/// Deferred modeled conversion.
+/// Deferred modeled conversion: the unpack loop converts a value argparse
+/// stored as text (`unpack`), after the parse. argparse's own `type=`
+/// conversion is [`crate::ValueType`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CliType {
     Integer,
@@ -68,6 +70,9 @@ pub struct Argument<'a> {
     /// `_UNDOCUMENTED`: parsed as any other, but no suggestion names it
     /// (`get_option_suggestion_candidates`).
     pub hidden: bool,
+    /// argparse's `type=`: the conversion the value goes through while it
+    /// is parsed (`convert`). The pinned tables carry none.
+    pub value_type: Option<crate::ValueType>,
     pub cli_type: Option<CliType>,
 }
 impl<'a> Argument<'a> {
@@ -84,6 +89,7 @@ impl<'a> Argument<'a> {
             choices: &[],
             required: false,
             hidden: false,
+            value_type: None,
             cli_type: None,
         }
     }
