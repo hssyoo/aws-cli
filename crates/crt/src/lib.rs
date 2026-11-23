@@ -5,6 +5,8 @@ pub mod credentials;
 mod crt_error;
 pub mod debug;
 pub mod http;
+#[cfg(all(unix, any(test, feature = "loopback")))]
+pub mod loopback;
 pub mod page_mapping;
 pub mod process_lock;
 pub mod runtime;

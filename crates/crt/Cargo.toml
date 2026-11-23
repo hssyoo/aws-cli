@@ -8,6 +8,8 @@ publish.workspace = true
 
 [features]
 testing = ["dep:arbitrary"]
+# Loopback servers for tests that send over crt::http.
+loopback = ["crt-sys/testing"]
 
 [dependencies]
 crt-sys = { path = "../crt-sys" }
