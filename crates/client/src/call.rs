@@ -12,7 +12,7 @@ use crate::admission::Unsupported;
 use crate::auth::{self, AuthScheme};
 use crate::credentials::CredentialSource;
 use crate::endpoint::{self, EndpointConfig, EndpointData, ResolvedEndpoint};
-use crate::error::{CallError, ServiceError};
+use crate::error::{CallError, ParseError, ServiceError};
 use crate::hooks::{CallContext, Customization, Hooks};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method, Url};
 use crate::protocol::{self, ParseOptions, Protocol, Serialized};
@@ -501,6 +501,11 @@ impl Client {
         }
         match self.protocol.parse(model, cx.operation, &response, options) {
             Err(error) => Step::Done(Err(CallError::Parse(error))),
+            // `parsed_response.update(customized_response_dict)` in
+            // `Endpoint._do_get_response`: a parse to `None` raises there.
+            Ok(Value::Null) => Step::Done(Err(CallError::Parse(ParseError::new(
+                "'NoneType' object has no attribute 'update'",
+            )))),
             Ok(value) => self.succeeded(cx, attempt, response, value, last_cost),
         }
     }

@@ -58,7 +58,7 @@ pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
         "--target",
         deps::TARGET,
         "-p",
-        "client",
+        "customizations",
         "-p",
         "format",
         "--",

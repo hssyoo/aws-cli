@@ -100,6 +100,9 @@ impl Protocol for Fake {
         if response.body == b"bad" {
             return Err(ParseError::new("Unable to parse response"));
         }
+        if response.body == b"null" {
+            return Ok(Value::Null);
+        }
         let mut output = Map::new();
         output.insert(
             "Body".into(),
@@ -395,6 +398,21 @@ fn a_parse_failure_is_not_retried() -> TestResult {
     f.transport.respond(ok("bad"));
     let error = f.client.call("Op", input("a")).err().ok_or("no error")?;
     assert!(matches!(error, CallError::Parse(_)), "{error:?}");
+    assert_eq!(f.transport.sent().len(), 1);
+    Ok(())
+}
+
+/// A parse that gives no dict (a json body of `null`) fails where
+/// `Endpoint._do_get_response` updates it, before `needs-retry`.
+#[test]
+fn a_parse_to_none_fails_as_botocore_s_update_does() -> TestResult {
+    let f = fixture(settings(), keys(), &[])?;
+    f.transport.respond(ok("null"));
+    let error = f.client.call("Op", input("a")).err().ok_or("no error")?;
+    assert_eq!(
+        error.to_string(),
+        "'NoneType' object has no attribute 'update'"
+    );
     assert_eq!(f.transport.sent().len(), 1);
     Ok(())
 }

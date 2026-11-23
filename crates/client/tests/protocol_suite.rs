@@ -2,7 +2,6 @@
 use cli_core as _;
 use credentials as _;
 use crt as _;
-use format as _;
 use sigv4 as _;
 use timestamp as _;
 

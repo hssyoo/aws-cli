@@ -38,20 +38,22 @@ fn input(json: &str) -> Value {
 }
 
 /// `QuerySerializer`: `Action` and `Version` first, the caller's order, an
-/// empty list as `Name=`, booleans as `true`/`false`, `urlencode`'s
-/// escapes, and the host prefix.
+/// empty list as `Name=`, booleans as `true`/`false`, and the host prefix;
+/// the body as `AWSRequestPreparer._prepare_body` puts it on the wire,
+/// `urlencode(doseq=True)`'s escapes, a space as `+`.
 #[test]
 fn the_form_is_botocore_s() -> Result<(), Box<dyn std::error::Error>> {
     let model = model()?;
     let request = Query.serialize(
         &model,
         go(&model),
-        &input(r#"{"Text":"a b&c=é/~","Tags":[],"On":1,"Name":"n"}"#),
+        &input(r#"{"Text":"a b&c=é/~+*'!()","Tags":[],"On":1,"Name":"n"}"#),
     )?;
     let body = String::from_utf8_lossy(&request.body).into_owned();
     assert_eq!(
         body,
-        "Action=Go&Version=2020-01-01&Text=a%20b%26c%3D%C3%A9%2F~&Tags=&On=true&Name=n"
+        "Action=Go&Version=2020-01-01&Text=a+b%26c%3D%C3%A9%2F~%2B%2A%27%21%28%29\
+         &Tags=&On=true&Name=n"
     );
     assert_eq!(request.host_prefix.as_deref(), Some("n."));
     assert_eq!(
