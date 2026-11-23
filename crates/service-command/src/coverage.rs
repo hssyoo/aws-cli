@@ -105,7 +105,7 @@ pub static CLI: &[Row] = &[
         // (paginate.py:133-145); admission refuses one with.
         basis: Basis::Inert {
             acts_when: "the operation has a paginator",
-            refused_as: Refusal::Router(PythonReason::UnsupportedTrait),
+            refused_as: Refusal::Router(PythonReason::Paginator),
         },
     },
     Row {

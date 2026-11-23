@@ -48,7 +48,7 @@ fn each_stage_names_its_refusal() -> Result<()> {
         );
         assert_eq!(
             refused(everything, &["zjson", "list-things"]),
-            Some(PythonReason::UnsupportedTrait)
+            Some(PythonReason::Paginator)
         );
         assert_eq!(
             refused(&[], &["lambda", "list-functions"]),

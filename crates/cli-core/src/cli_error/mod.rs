@@ -160,10 +160,14 @@ pub enum PythonReason {
     /// implement (botocore's `metadata.protocol`).
     UnsupportedProtocol,
     /// The operation uses a model trait the native client does not
-    /// implement: an event stream, a streaming blob, endpoint discovery, an
-    /// auth scheme other than SigV4 or none, `httpChecksum`, request
-    /// compression, or a paginator.
+    /// implement: an event stream, a streaming blob, required endpoint
+    /// discovery, `httpChecksum`, request compression, or a key the model
+    /// loader does not interpret.
     UnsupportedTrait,
+    /// The operation has a paginator, and the CLI pages its calls
+    /// (`CLIOperationCaller._make_client_call`), which the native route
+    /// does not.
+    Paginator,
     /// The operation's auth is one the native client cannot sign with:
     /// anything but SigV4 and none, by the name botocore resolves.
     UnsupportedAuth,
@@ -256,6 +260,7 @@ impl PythonReason {
             Self::OutputEncoding => "output_encoding",
             Self::UnsupportedProtocol => "unsupported_protocol",
             Self::UnsupportedTrait => "unsupported_trait",
+            Self::Paginator => "paginator",
             Self::UnportedCustomization => "unported_customization",
             Self::UnsupportedAuth => "unsupported_auth",
             Self::UnsignedPayload => "unsigned_payload",

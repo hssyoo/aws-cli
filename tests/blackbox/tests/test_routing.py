@@ -184,7 +184,7 @@ async def test_forced_native_refuses_a_python_command_line(
         # format only Python writes; client-side monitoring sends metrics
         # over UDP; --cli-input-json is an option only Python binds.
         ({}, "", ["s3api", "list-buckets"], "unsupported_protocol"),
-        ({}, "", ["dynamodb", "list-tables"], "unsupported_trait"),
+        ({}, "", ["dynamodb", "list-tables"], "paginator"),
         ({}, "", ["dynamodb", "describe-table", "--table-name", "t"],
          "unported_customization"),
         ({}, "", ["sts", "get-caller-identity", "--output", "table"],

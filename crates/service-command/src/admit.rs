@@ -104,7 +104,7 @@ pub fn operation(
         return Err(reason(&unsupported));
     }
     if service.paginated(&operation.name) {
-        return Err(PythonReason::UnsupportedTrait);
+        return Err(PythonReason::Paginator);
     }
     if coverage::uncovered(&matches, customizations, &service.name, &operation.name).is_some() {
         return Err(PythonReason::UnportedCustomization);

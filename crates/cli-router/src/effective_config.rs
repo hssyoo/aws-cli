@@ -1050,7 +1050,7 @@ pub const SETTINGS: &[Setting] = &[
         scope: Scope::Service,
     },
     // Only the SigV4A signer reads the region set, and an operation that
-    // signs with SigV4A is Python's (`UnsupportedTrait`).
+    // signs with SigV4A is Python's (`UnsupportedAuth`).
     Setting {
         source: Source::Chain("AWS_SIGV4A_SIGNING_REGION_SET", "sigv4a_signing_region_set"),
         support: Support::Ignored,

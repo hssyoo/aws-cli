@@ -979,6 +979,7 @@ fn the_registry_s_reasons_have_their_refusal_names() {
         (PythonReason::CommandAlias, "command_alias"),
         (PythonReason::UnsupportedProtocol, "unsupported_protocol"),
         (PythonReason::UnsupportedTrait, "unsupported_trait"),
+        (PythonReason::Paginator, "paginator"),
         (
             PythonReason::UnportedCustomization,
             "unported_customization",
