@@ -242,7 +242,7 @@ fn explicit_binary_is_checked_before_any_harness_step() {
     let args = ["--aws-binary", "/absent/aws", "--run-all"].map(str::to_owned);
     assert_eq!(
         run(Path::new(ROOT), &args).map_err(|error| error.to_string()),
-        Err("Rust CLI is absent: /absent/aws; build it or supply --aws-binary".to_owned())
+        Err("Rust CLI is absent: /absent/aws".to_owned())
     );
     let args = ["--external-binary", "/absent/aws", "--run-all"].map(str::to_owned);
     assert_eq!(
