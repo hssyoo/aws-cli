@@ -126,6 +126,16 @@
       "output": {
         "shape": "StampOutput"
       }
+    },
+    "PingSigv4a": {
+      "name": "PingSigv4a",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "auth": [
+        "aws.auth#sigv4a"
+      ]
     }
   },
   "shapes": {

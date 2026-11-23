@@ -30,6 +30,8 @@ from tests.blackbox.utils import run_cli
 pytestmark = pytest.mark.asyncio
 
 ROUTER: Final = "AWS_CLI_NATIVE_ROUTER"
+# The repository's fake service models (tests/models).
+MODELS: Final = Path(__file__).resolve().parents[2] / "models"
 # The name the AWS CLI's TransferManagerFactory locks while it runs the
 # CRT client (awscli/customizations/s3/factory.py).
 CRT_PROCESS_LOCK: Final = "aws-cli"
@@ -191,6 +193,15 @@ async def test_forced_native_refuses_a_python_command_line(
          "client_setting"),
         ({}, "", ["sts", "get-caller-identity", "--cli-input-json", "{}"],
          "unsupported_option"),
+        # Over the fake models: an auth scheme the native client cannot
+        # sign with, and an epoch in a zone with daylight-saving time; and
+        # a model search path native cannot expand as Python does.
+        ({"AWS_DATA_PATH": str(MODELS)}, "", ["zjson", "ping-sigv4a"],
+         "unsupported_auth"),
+        ({"AWS_DATA_PATH": str(MODELS), "TZ": "America/New_York"}, "",
+         ["zjson", "describe"], "local_zone"),
+        ({"AWS_DATA_PATH": "~nosuchuser/models"}, "", ["sts", "get-caller-identity"],
+         "model_source_unavailable"),
     ],
     ids=[
         "structured-error-format",
@@ -216,6 +227,9 @@ async def test_forced_native_refuses_a_python_command_line(
         "model-output-table",
         "model-client-monitoring",
         "model-cli-input-json",
+        "model-auth",
+        "model-local-zone",
+        "model-source-unavailable",
     ],
 )
 async def test_forced_native_refuses_a_python_setting(
