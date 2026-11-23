@@ -378,6 +378,7 @@ dependencies = [
  "client",
  "format",
  "model",
+ "timestamp",
 ]
 
 [[package]]

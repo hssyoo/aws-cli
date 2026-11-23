@@ -1068,3 +1068,24 @@ fn details_follow_the_error_line_in_the_enhanced_format_only() {
          ListAssessmentRuns operation: bad input\n"
     );
 }
+
+/// NoRegionErrorHandler and PagerErrorHandler frame their own code; the
+/// interrupt handler writes nothing to stderr.
+#[test]
+fn configuration_failures_name_their_handler_s_code() {
+    let failure = CommandFailure {
+        code: "NoRegion".into(),
+        message: b"You must specify a region.".to_vec(),
+        ..CommandFailure::new(Category::Configuration)
+    };
+    assert_eq!(
+        formatted(&failure, ErrorFormat::Enhanced),
+        "\naws: [ERROR]: An error occurred (NoRegion): You must specify a region.\n"
+    );
+    assert_eq!(
+        formatted(&failure, ErrorFormat::Legacy),
+        "\naws: [ERROR]: You must specify a region.\n"
+    );
+    let interrupt = CommandFailure::new(Category::Interrupt);
+    assert_eq!(formatted(&interrupt, ErrorFormat::Enhanced), "");
+}

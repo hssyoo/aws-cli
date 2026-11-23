@@ -1,5 +1,0 @@
-
-aws: [ERROR]: An error occurred (InvalidNextToken) when calling the ListDomains operation (reached max retries: 0): The specified next token is not valid.
-
-Additional error details:
-BoxUsage: 0.0000219907

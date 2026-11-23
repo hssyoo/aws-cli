@@ -11,9 +11,9 @@
 //! validation and protocol, on the in-memory transport, which answers with
 //! the stub's response or fails as the case says. Its error goes through
 //! [`service_errors::call_failure`] and `cli_core`'s renderer.
-use cli_core::client_config::{ClientSettings, Resolved, Source};
-use cli_core::client_config::user_agent::{Host, Versions};
 use cli_core::cli_error::{ErrorFormat, exit_status, render_command_failure};
+use cli_core::client_config::user_agent::{Host, Versions};
+use cli_core::client_config::{ClientSettings, Resolved, Source};
 use client::call::{Client, ClientParts, UserAgentContext};
 use client::credentials::{CredentialError, CredentialSource, SigningCredentials};
 use client::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
@@ -130,18 +130,46 @@ fn transport_failure(kind: &str) -> TestResult<TransportError> {
     })
 }
 
-/// The case's call, natively: its error and its service's model.
-fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
-    let service = text(case, "service").ok_or("service")?;
+/// `service`'s model and endpoint data, as the payload holds them.
+fn service_data(service: &str) -> TestResult<(Arc<Model>, EndpointData)> {
     let directory = service_directory(service)?;
-    let model = Arc::new(Model::from_json(&std::fs::read(directory.join("service-2.json"))?)?);
-    let prefix = model.metadata().endpoint_prefix.as_deref().unwrap_or(service).to_owned();
+    let model = Arc::new(Model::from_json(&std::fs::read(
+        directory.join("service-2.json"),
+    )?)?);
+    let prefix = model
+        .metadata()
+        .endpoint_prefix
+        .as_deref()
+        .unwrap_or(service)
+        .to_owned();
     let endpoints_json = std::fs::read(data().join("endpoints.json"))?;
     let endpoints = EndpointData::from_documents(
         std::fs::read(directory.join("endpoint-rule-set-1.json"))?,
         std::fs::read(data().join("partitions.json"))?,
         Some((&endpoints_json, &prefix)),
     )?;
+    Ok((model, endpoints))
+}
+
+/// The transport for `attempts` attempts: the stub's response each time,
+/// or the case's failure.
+fn transport_for(case: &Value, attempts: u64) -> TestResult<Arc<InMemoryTransport>> {
+    let transport = Arc::new(InMemoryTransport::new());
+    for _ in 0..attempts {
+        if let Some(stub) = field(case, "stub") {
+            transport.respond(response(stub)?);
+        }
+        if let Some(kind) = text(case, "transport") {
+            transport.fail(transport_failure(kind)?);
+        }
+    }
+    Ok(transport)
+}
+
+/// The case's call, natively: its error and its service's model.
+fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
+    let service = text(case, "service").ok_or("service")?;
+    let (model, endpoints) = service_data(service)?;
     let argv = strings(case, "argv");
     let endpoint_url = argv
         .iter()
@@ -159,17 +187,7 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
         .parse()?;
     let mut settings = ClientSettings::new(format!("{service}.test"));
     settings.max_attempts = Some(Resolved::new(attempts, Source::Env("AWS_MAX_ATTEMPTS")));
-    let transport = Arc::new(InMemoryTransport::new());
-    if let Some(stub) = field(case, "stub") {
-        for _ in 0..attempts {
-            transport.respond(response(stub)?);
-        }
-    }
-    if let Some(kind) = text(case, "transport") {
-        for _ in 0..attempts {
-            transport.fail(transport_failure(kind)?);
-        }
-    }
+    let transport = transport_for(case, attempts)?;
     let parts = ClientParts {
         service: service.into(),
         model: model.clone(),
@@ -199,7 +217,9 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
             },
         },
     };
-    let input = field(case, "input").cloned().unwrap_or(Value::Map(model::value::Map::new()));
+    let input = field(case, "input")
+        .cloned()
+        .unwrap_or(Value::Map(model::value::Map::new()));
     let operation = text(case, "operation").ok_or("operation")?;
     let error = match Client::new(parts) {
         Err(error) => error,
@@ -229,7 +249,9 @@ fn every_case_renders_as_the_python_route_does() -> TestResult {
         let name = text(case, "name").ok_or("name")?;
         let fixture = here().join("fixtures").join(name);
         let expected = std::fs::read(fixture.with_extension("stderr"))?;
-        let status: u8 = std::fs::read_to_string(fixture.with_extension("status"))?.trim().parse()?;
+        let status: u8 = std::fs::read_to_string(fixture.with_extension("status"))?
+            .trim()
+            .parse()?;
         let (error, model) = native_error(case)?;
         let failure = service_errors::call_failure(&error, &model);
         let mut rendered = Vec::new();

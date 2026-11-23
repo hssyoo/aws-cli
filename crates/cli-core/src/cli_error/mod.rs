@@ -415,8 +415,11 @@ pub fn render_command_failure(
     failure: &CommandFailure,
     format: ErrorFormat,
 ) -> io::Result<()> {
-    if failure.category == Category::General {
-        return write_error(writer, trim_bytes(&failure.message));
+    match failure.category {
+        Category::General => return write_error(writer, trim_bytes(&failure.message)),
+        // InterruptExceptionHandler writes only its newline, to stdout.
+        Category::Interrupt => return Ok(()),
+        _ => {}
     }
     let mut text = Vec::new();
     write_command_failure_text(&mut text, failure, format);
@@ -431,8 +434,7 @@ pub fn render_command_failure(
 }
 #[expect(
     clippy::unreachable,
-    reason = "the general category renders before composing text, and no caller builds an \
-              interrupt failure"
+    reason = "the general and interrupt categories render before composing text"
 )]
 fn write_command_failure_text(text: &mut Vec<u8>, failure: &CommandFailure, format: ErrorFormat) {
     match failure.category {
@@ -443,7 +445,16 @@ fn write_command_failure_text(text: &mut Vec<u8>, failure: &CommandFailure, form
             &failure.message,
         )),
         Category::ParamValidation => write_coded_text(text, format, "ParamValidation", failure, ""),
-        Category::Configuration => write_coded_text(text, format, "Configuration", failure, ""),
+        // NoRegionErrorHandler and PagerErrorHandler share the status and
+        // name their own code.
+        Category::Configuration => {
+            let code = if failure.code.is_empty() {
+                "Configuration"
+            } else {
+                failure.code.as_str()
+            };
+            write_coded_text(text, format, code, failure, "");
+        }
         Category::NoCredentials => write_coded_text(
             text,
             format,

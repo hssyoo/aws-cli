@@ -102,13 +102,13 @@
   }
  },
  {
-  "name": "client_error_float",
-  "service": "sdb",
-  "operation": "ListDomains",
+  "name": "client_error_query_details",
+  "service": "sns",
+  "operation": "ListTopics",
   "input": {},
   "argv": [
-   "sdb",
-   "list-domains",
+   "sns",
+   "list-topics",
    "--endpoint-url",
    "http://127.0.0.1:{port}"
   ],
@@ -120,7 +120,7 @@
      "text/xml"
     ]
    ],
-   "body": "<Response><Errors><Error><Code>InvalidNextToken</Code><Message>The specified next token is not valid.</Message><BoxUsage>0.0000219907</BoxUsage></Error></Errors><RequestID>req-1</RequestID></Response>"
+   "body": "<ErrorResponse><Error><Type>Sender</Type><Code>VerificationException</Code><Message>The OTP is not valid</Message><Status>Failed</Status></Error><RequestId>req-1</RequestId></ErrorResponse>"
   }
  },
  {
