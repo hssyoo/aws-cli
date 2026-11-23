@@ -16,11 +16,19 @@ use std::ffi::OsString;
 pub fn source(env: &SnapshotEnv) -> Option<ServiceSource<'static>> {
     let payload = pyload::embedded();
     let view = pyload::View::new(payload).ok()?;
-    let variables: HashMap<String, OsString> = env
+    let mut variables: HashMap<String, OsString> = env
         .names()
         .into_iter()
         .filter_map(|name| Some((name.to_owned(), env.var_os(name)?.to_owned())))
         .collect();
+    // posixpath.expanduser reads the password database when HOME is unset;
+    // ntpath's reads USERPROFILE and never HOME.
+    if cfg!(unix)
+        && !variables.contains_key("HOME")
+        && let Some(home) = cli_core::shared_config::home_directory(env)
+    {
+        variables.insert("HOME".to_owned(), home.into_os_string());
+    }
     let expand =
         |path: &[u8]| unpack::expand_user(&unpack::expand_vars(path, &variables)?, &variables);
     let models = ModelSource::from_payload(view, env.var_os("AWS_DATA_PATH"), &expand).ok()?;
