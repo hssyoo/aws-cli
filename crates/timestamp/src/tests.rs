@@ -404,3 +404,66 @@ fn civil_anchors_and_an_instant_before_the_epoch() -> TestResult {
     assert_eq!(Timestamp::from_civil(civil(2021, 2, 29, 0, 0, 0)), None);
     Ok(())
 }
+
+/// `datetime.datetime.fromtimestamp(value, timezone.utc)` in CPython 3.14:
+/// the float's fraction rounds half to even at the microsecond.
+#[test]
+fn float_epochs_round_as_fromtimestamp_does() {
+    let at = |value: f64| Timestamp::from_epoch_float(value).map(|t| (t.unix_seconds(), t.subsec_micros()));
+    for (value, expected) in [
+        (1.5, Some((1, 500_000))),
+        (-1.5, Some((-2, 500_000))),
+        (0.000_000_5, Some((0, 0))),
+        (0.000_001_5, Some((0, 2))),
+        (1_582_979_696.999_999_9, Some((1_582_979_697, 0))),
+        (-0.000_000_1, Some((0, 0))),
+        (f64::NAN, None),
+        (f64::INFINITY, None),
+        (1e20, None),
+    ] {
+        assert_eq!(at(value), expected, "{value}");
+    }
+}
+
+/// The wall time and zone as written, for `datetime.isoformat` of what
+/// dateutil reads; the plain parsers still require a zone.
+#[test]
+fn zoned_parses_keep_the_wall_time_and_the_written_zone() -> TestResult {
+    let cases = [
+        ("2015-08-30T13:36:00.123+01:00", "2015-08-30T13:36:00.123000+01:00"),
+        ("2015-08-30T12:36:00Z", "2015-08-30T12:36:00+00:00"),
+        ("2015-08-30T11:06:00-0130", "2015-08-30T11:06:00-01:30"),
+        ("2015-08-30 12:36:00", "2015-08-30T12:36:00"),
+        ("2015-08-30T12:36:00.000001", "2015-08-30T12:36:00.000001"),
+    ];
+    for (text, iso) in cases {
+        let zoned = Timestamp::parse_iso8601_zoned(text).ok_or(text)?;
+        assert_eq!(zoned.isoformat(), iso, "{text}");
+    }
+    assert_eq!(Timestamp::parse_iso8601("2015-08-30 12:36:00"), None);
+    let rfc = Timestamp::parse_rfc822_zoned("Sun, 30 Aug 2015 13:36:00 +0100").ok_or("rfc")?;
+    assert_eq!(rfc.isoformat(), "2015-08-30T13:36:00+01:00");
+    let gmt = Timestamp::parse_rfc822_zoned("30 Aug 2015 12:36:00 GMT").ok_or("gmt")?;
+    assert_eq!(gmt.isoformat(), "2015-08-30T12:36:00+00:00");
+    for text in ["2015-08-30T12:36Z", "2015-02-29T00:00:00", "2015-08-30T12:36:00+24:00"] {
+        assert_eq!(Timestamp::parse_iso8601_zoned(text), None, "{text}");
+    }
+    Ok(())
+}
+
+/// `fromtimestamp(t, tz).isoformat()` for a fixed offset, seconds included.
+#[test]
+fn an_instant_in_a_fixed_zone_prints_its_wall_time() -> TestResult {
+    let instant = at_micros(SUITE * 1_000_000 + 500_000)?;
+    let cases = [
+        (0, "2015-08-30T12:36:00.500000+00:00"),
+        (19_800, "2015-08-30T18:06:00.500000+05:30"),
+        (-37_815, "2015-08-30T02:05:45.500000-10:30:15"),
+    ];
+    for (offset, iso) in cases {
+        let zoned = instant.zoned(offset).ok_or("zoned")?;
+        assert_eq!(zoned.isoformat(), iso, "{offset}");
+    }
+    assert_eq!(Timestamp::MAX.zoned(3_600), None);
+    Ok(())
+}
