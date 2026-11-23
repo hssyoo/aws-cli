@@ -106,6 +106,17 @@
         "method": "POST",
         "requestUri": "/"
       }
+    },
+    "Stamp": {
+      "name": "Stamp",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "output": {
+        "shape": "StampOutput",
+        "resultWrapper": "StampResult"
+      }
     }
   },
   "shapes": {
@@ -616,6 +627,20 @@
         "shape": "String"
       },
       "min": 1
+    },
+    "StampOutput": {
+      "type": "structure",
+      "members": {
+        "When": {
+          "shape": "Timestamp"
+        },
+        "WhenIso": {
+          "shape": "IsoTime"
+        },
+        "WhenHttp": {
+          "shape": "HttpTime"
+        }
+      }
     }
   },
   "documentation": "A fake query service for tests."

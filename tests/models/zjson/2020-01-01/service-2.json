@@ -116,6 +116,16 @@
         "method": "POST",
         "requestUri": "/"
       }
+    },
+    "Stamp": {
+      "name": "Stamp",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "output": {
+        "shape": "StampOutput"
+      }
     }
   },
   "shapes": {
@@ -653,6 +663,17 @@
         "senderFault": true
       },
       "exception": true
+    },
+    "StampOutput": {
+      "type": "structure",
+      "members": {
+        "WhenIso": {
+          "shape": "IsoTime"
+        },
+        "WhenHttp": {
+          "shape": "HttpTime"
+        }
+      }
     }
   },
   "documentation": "A fake json service for tests."

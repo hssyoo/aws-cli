@@ -115,11 +115,21 @@ fn streams(model: &Model, shape: ShapeId) -> bool {
     })
 }
 
-/// Whether `shape` reaches a timestamp member, whose wire value the
-/// session's timestamp parser reads.
-pub fn reaches_timestamp(model: &Model, shape: ShapeId) -> bool {
+/// Whether `shape` reaches a timestamp the wire sends as an epoch, which
+/// `iso8601` output reads in the local zone (`parse_timestamp` of a
+/// number): a member or shape whose `timestampFormat` is `unixTimestamp`,
+/// or one with none under a json protocol, whose default it is. ISO 8601
+/// and RFC 822 text carries its own offset, and is the XML protocols'
+/// default.
+pub fn reaches_epoch_timestamp(model: &Model, shape: ShapeId) -> bool {
+    let json = client::protocol::resolved_protocol(model.metadata())
+        .is_ok_and(|protocol| matches!(protocol, "json" | "rest-json"));
     reaches(model, shape, &mut Vec::new(), &|found| {
         matches!(found.kind, ShapeKind::Timestamp)
+            && match found.traits.timestamp_format.as_deref() {
+                Some(format) => format == "unixTimestamp",
+                None => json,
+            }
     })
 }
 

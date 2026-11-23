@@ -257,3 +257,47 @@ async def test_the_native_route_sends_each_protocol_s_request(
     tokens = (run.calls[0].request.headers.get("user-agent") or "").split()
     assert any(token.startswith("lang/rust#") for token in tokens), tokens
     assert not any(token.startswith("md/fallback#") for token in tokens), tokens
+
+
+# A zone with daylight-saving time, whose offset dateutil's tzlocal picks
+# per instant: only Python prints an epoch in it.
+DST_ZONE: Final = "America/New_York"
+STAMPS: Final = {
+    "WhenIso": "2020-06-01T12:00:00Z",
+    "WhenHttp": "Mon, 01 Jun 2020 12:00:00 GMT",
+}
+NOON_UTC: Final = "2020-06-01T12:00:00+00:00"
+
+
+@pytest.mark.parametrize("service", ["zjson", "zquery"])
+async def test_text_timestamps_print_in_any_zone(models: ApiSession, service: str) -> None:
+    # ISO 8601 and RFC 822 text carries its own offset, so a zone with
+    # daylight-saving time changes nothing, and the native route runs it.
+    models.env["TZ"] = DST_ZONE
+    run = await models.run(f"{service} stamp", replies=STAMPS)
+    printed = json.loads(run.stdout)
+    assert {key: printed[key] for key in STAMPS} == {
+        "WhenIso": NOON_UTC,
+        "WhenHttp": NOON_UTC,
+    }, run.describe()
+
+
+async def test_an_epoch_prints_in_a_fixed_zone(models: ApiSession) -> None:
+    run = await models.run("zjson describe", replies={"When": 1591012800})
+    assert json.loads(run.stdout) == {"When": NOON_UTC}, run.describe()
+
+
+async def test_an_epoch_prints_in_a_zone_with_daylight_saving(models: ApiSession) -> None:
+    models.env["TZ"] = DST_ZONE
+    run = await models.run("zjson describe", replies={"When": 1591012800})
+    assert json.loads(run.stdout) == {"When": "2020-06-01T08:00:00-04:00"}, run.describe()
+
+
+@pytest.mark.native_only
+async def test_an_epoch_in_a_zone_with_daylight_saving_is_python_s(
+    models: ApiSession,
+) -> None:
+    models.env.update(TZ=DST_ZONE, AWS_CLI_NATIVE_ROUTER="native")
+    run = await models.run("zjson describe", replies=[], expected_rc=255)
+    assert run.calls == ()
+    assert "(unsupported_trait)" in run.stderr, run.describe()
