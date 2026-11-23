@@ -11,7 +11,7 @@
 //! validation and protocol, on the in-memory transport, which answers with
 //! the stub's response or fails as the case says. Its error goes through
 //! [`service_errors::call_failure`] and `cli_core`'s renderer.
-use cli_core::cli_error::{ErrorFormat, exit_status, render_command_failure};
+use cli_core::cli_error::{CommandFailure, ErrorFormat, exit_status, render_command_failure};
 use cli_core::client_config::user_agent::{Host, Versions};
 use cli_core::client_config::{ClientSettings, Resolved, Source};
 use client::call::{Client, ClientParts, UserAgentContext};
@@ -120,12 +120,23 @@ fn response(stub: &Value) -> TestResult<HttpResponse> {
     })
 }
 
-fn transport_failure(kind: &str) -> TestResult<TransportError> {
+fn transport_failure(case: &Value, kind: &str) -> TestResult<TransportError> {
     Ok(match kind {
+        "proxy" => TransportError::Proxy {
+            url: field(case, "env")
+                .and_then(|env| text(env, "HTTPS_PROXY"))
+                .ok_or("proxy")?
+                .replace("{port}", PORT),
+        },
         "connect" => TransportError::Connect,
         "connect_timeout" => TransportError::ConnectTimeout,
         "read_timeout" => TransportError::ReadTimeout,
         "connection_closed" => TransportError::ConnectionClosed,
+        // The CRT's message for AWS_IO_TLS_ERROR_NEGOTIATION_FAILURE, which
+        // the transport reports (`client::transport::crt`).
+        "tls" => TransportError::Tls {
+            reason: "TLS (SSL) negotiation failed".into(),
+        },
         other => return Err(format!("transport {other}").into()),
     })
 }
@@ -156,11 +167,12 @@ fn service_data(service: &str) -> TestResult<(Arc<Model>, EndpointData)> {
 fn transport_for(case: &Value, attempts: u64) -> TestResult<Arc<InMemoryTransport>> {
     let transport = Arc::new(InMemoryTransport::new());
     for _ in 0..attempts {
-        if let Some(stub) = field(case, "stub") {
-            transport.respond(response(stub)?);
-        }
+        // A case that fails in transport fails natively as it did on the
+        // Python route, whatever the stub did to cause it.
         if let Some(kind) = text(case, "transport") {
-            transport.fail(transport_failure(kind)?);
+            transport.fail(transport_failure(case, kind)?);
+        } else if let Some(stub) = field(case, "stub") {
+            transport.respond(response(stub)?);
         }
     }
     Ok(transport)
@@ -181,10 +193,13 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
         Some(Value::String(region)) => Some(region.to_string()),
         _ => Some("us-west-2".to_owned()),
     };
-    let attempts: u64 = field(case, "env")
-        .and_then(|env| text(env, "AWS_MAX_ATTEMPTS"))
-        .unwrap_or("1")
-        .parse()?;
+    // The capture sets 1 unless the case says otherwise; `null` unsets
+    // it, leaving botocore's default, 3.
+    let attempts: u64 = match field(case, "env").and_then(|env| field(env, "AWS_MAX_ATTEMPTS")) {
+        Some(Value::String(attempts)) => attempts.parse()?,
+        Some(_) => 3,
+        None => 1,
+    };
     let mut settings = ClientSettings::new(format!("{service}.test"));
     settings.max_attempts = Some(Resolved::new(attempts, Source::Env("AWS_MAX_ATTEMPTS")));
     let transport = transport_for(case, attempts)?;
@@ -195,8 +210,9 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
         endpoint: EndpointConfig::new(&EndpointInputs {
             region: region.as_deref(),
             endpoint_url: endpoint_url.as_deref(),
+            use_fips: field(case, "fips").map(|_| true),
+            use_dual_stack: field(case, "dual_stack").map(|_| true),
             signing: true,
-            ..EndpointInputs::default()
         }),
         settings,
         credentials: Arc::new(Keys(field(case, "no_credentials").is_none())),
@@ -231,6 +247,32 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
     Ok((error, model))
 }
 
+/// The case's failure, natively: a real call's, or for the cases without a
+/// service, the pager's or the credential chain's.
+fn native_failure(case: &Value) -> TestResult<CommandFailure> {
+    if field(case, "tty_stdout").is_some() {
+        let pager = field(case, "env")
+            .and_then(|env| text(env, "AWS_PAGER"))
+            .ok_or("pager")?;
+        let interrupt = cli_core::interrupt::State::new();
+        let error = format::pager::run(&[pager.to_owned()], &[], b"{}", &interrupt)
+            .err()
+            .ok_or("the pager started")?;
+        return Ok(service_errors::pager_failure(&error));
+    }
+    if text(case, "service").is_none() {
+        // The process provider's failure as the credentials crate words
+        // it, for the helper's stderr (`credentials::process`).
+        let error = credentials::LoadError::CredentialRetrieval {
+            provider: "custom-process",
+            error_msg: "boom\n".into(),
+        };
+        return Ok(service_errors::credentials_failure(&error));
+    }
+    let (error, model) = native_error(case)?;
+    Ok(service_errors::call_failure(&error, &model))
+}
+
 fn format_of(case: &Value) -> ErrorFormat {
     let argv = strings(case, "argv");
     match argv.iter().position(|arg| arg == "--cli-error-format") {
@@ -252,14 +294,21 @@ fn every_case_renders_as_the_python_route_does() -> TestResult {
         let status: u8 = std::fs::read_to_string(fixture.with_extension("status"))?
             .trim()
             .parse()?;
-        let (error, model) = native_error(case)?;
-        let failure = service_errors::call_failure(&error, &model);
+        let failure = native_failure(case)?;
         let mut rendered = Vec::new();
         render_command_failure(&mut rendered, &failure, format_of(case))?;
         let rendered = String::from_utf8_lossy(&rendered)
             .replace(&format!("127.0.0.1:{PORT}"), "127.0.0.1:{port}");
         let expected = String::from_utf8_lossy(&expected);
-        if rendered != expected || exit_status(failure.category) != status {
+        // A text whose end is the TLS library's matches up to that point.
+        let matched = match text(case, "gap") {
+            Some(prefix) => {
+                let prefix = format!("\naws: [ERROR]: {prefix}");
+                rendered.starts_with(&prefix) && expected.starts_with(&prefix)
+            }
+            None => rendered == expected,
+        };
+        if !matched || exit_status(failure.category) != status {
             mismatches.push(format!(
                 "{name}: {} {rendered:?}\n  python {status} {expected:?}",
                 exit_status(failure.category)

@@ -1,0 +1,5 @@
+
+aws: [ERROR]: An error occurred (Pager): Unable to redirect output to pager. Received the following error when opening pager:
+[Errno 2] No such file or directory: 'no-such-pager-xyz'
+
+Learn more about configuring the output pager by running "aws help config-vars".

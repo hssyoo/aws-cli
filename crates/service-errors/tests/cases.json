@@ -374,5 +374,233 @@
   "operation": "GetCallerIdentity",
   "input": {},
   "transport": "connect"
+ },
+ {
+  "name": "connect_timeout",
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "transport": "connect_timeout",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "http://192.0.2.1",
+   "--cli-connect-timeout",
+   "1"
+  ]
+ },
+ {
+  "name": "read_timeout",
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "transport": "read_timeout",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}",
+   "--cli-read-timeout",
+   "1"
+  ],
+  "stub": {
+   "kind": "silent",
+   "seconds": 3
+  }
+ },
+ {
+  "name": "connection_closed",
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "transport": "connection_closed",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "kind": "close"
+  }
+ },
+ {
+  "name": "proxy_connection",
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "transport": "proxy",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "https://sts.example.invalid"
+  ],
+  "env": {
+   "HTTPS_PROXY": "http://127.0.0.1:{port}"
+  }
+ },
+ {
+  "name": "tls_failure",
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "transport": "tls",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "https://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 200,
+   "body": "plain"
+  },
+  "gap": "SSL validation failed for https://127.0.0.1:{port}/ "
+ },
+ {
+  "name": "parse_error_xml",
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "text/xml"
+    ]
+   ],
+   "body": "<bad"
+  }
+ },
+ {
+  "name": "parse_error_error_body",
+  "service": "dynamodb",
+  "operation": "ListTables",
+  "input": {},
+  "argv": [
+   "dynamodb",
+   "list-tables",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.0"
+    ]
+   ],
+   "body": "{bad"
+  }
+ },
+ {
+  "name": "client_error_default_attempts",
+  "service": "inspector",
+  "operation": "ListAssessmentRuns",
+  "input": {},
+  "argv": [
+   "inspector",
+   "list-assessment-runs",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "env": {
+   "AWS_MAX_ATTEMPTS": null
+  },
+  "stub": {
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.1"
+    ]
+   ],
+   "body": "{\"__type\": \"InvalidInputException\", \"message\": \"bad input\", \"canRetry\": true}"
+  }
+ },
+ {
+  "name": "client_error_no_message",
+  "service": "dynamodb",
+  "operation": "ListTables",
+  "input": {},
+  "argv": [
+   "dynamodb",
+   "list-tables",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.0"
+    ]
+   ],
+   "body": "{\"__type\": \"com.amazonaws.dynamodb.v20120810#ResourceNotFoundException\"}"
+  }
+ },
+ {
+  "name": "credential_process_failure",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "credentials": "",
+  "config": "[default]\nregion = us-west-2\ncredential_process = sh -c 'echo boom >&2; exit 1'\n"
+ },
+ {
+  "name": "pager_not_found",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "tty_stdout": true,
+  "env": {
+   "AWS_PAGER": "no-such-pager-xyz"
+  },
+  "stub": {
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "text/xml"
+    ]
+   ],
+   "body": "<GetCallerIdentityResponse><GetCallerIdentityResult><Account>123456789012</Account><Arn>arn:aws:iam::123456789012:user/a</Arn><UserId>AID</UserId></GetCallerIdentityResult><ResponseMetadata><RequestId>r</RequestId></ResponseMetadata></GetCallerIdentityResponse>"
+  }
+ },
+ {
+  "name": "endpoint_variant",
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "region": "eu-isoe-west-1",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--region",
+   "eu-isoe-west-1"
+  ],
+  "env": {
+   "AWS_USE_FIPS_ENDPOINT": "true",
+   "AWS_USE_DUALSTACK_ENDPOINT": "true"
+  },
+  "fips": true,
+  "dual_stack": true
  }
 ]

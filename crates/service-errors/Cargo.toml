@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 cli-core = { path = "../cli-core" }
 client = { path = "../client" }
+credentials = { path = "../credentials" }
 format = { path = "../format" }
 model = { path = "../model" }
 

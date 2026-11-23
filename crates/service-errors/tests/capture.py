@@ -18,6 +18,7 @@ status). Stdout must be empty.
 import http.server
 import json
 import os
+import pty
 import socket
 import subprocess
 import sys
@@ -85,10 +86,10 @@ def capture(binary, case):
     with tempfile.TemporaryDirectory() as home:
         config = os.path.join(home, 'config')
         credentials = os.path.join(home, 'credentials')
-        with open(config, 'w') as f:
-            f.write(case.get('config', CONFIG))
         with open(credentials, 'w') as f:
             f.write(case.get('credentials', CREDENTIALS))
+        with open(config, 'w') as f:
+            f.write(case.get('config', CONFIG).replace('{home}', home))
         env = {
             'HOME': home,
             'PATH': '/usr/bin:/bin',
@@ -97,9 +98,21 @@ def capture(binary, case):
             'AWS_CLI_NATIVE_ROUTER': 'python',
             'AWS_MAX_ATTEMPTS': '1',
         }
-        env.update({k: substitute(v, port) for k, v in case.get('env', {}).items()})
+        for name, value in case.get('env', {}).items():
+            if value is None:
+                env.pop(name, None)
+            else:
+                env[name] = substitute(value, port)
         argv = [binary] + [substitute(a, port) for a in case['argv']]
-        done = subprocess.run(argv, env=env, capture_output=True, timeout=60)
+        if case.get('tty_stdout'):
+            # The pager starts only for a terminal; its output is dropped.
+            main, terminal = pty.openpty()
+            done = subprocess.run(argv, env=env, stdout=terminal, stderr=subprocess.PIPE, timeout=60)
+            os.close(terminal)
+            os.close(main)
+            done.stdout = b''
+        else:
+            done = subprocess.run(argv, env=env, capture_output=True, timeout=60)
     if server:
         server.shutdown()
     if done.stdout:
