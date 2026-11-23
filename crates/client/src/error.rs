@@ -1,0 +1,182 @@
+//! What a call fails with. Each error carries what its botocore exception's
+//! text needs, and reads as that text; the CLI's framing and exit status
+//! are the renderer's.
+use crate::hooks::HookError;
+use crate::http::Headers;
+use crate::transport::TransportError;
+use model::validate::Report;
+use model::value::Value;
+
+/// An error the service returned: what botocore's parsed response holds
+/// for one (`ClientError.response`: `Error`, `ResponseMetadata`, and the
+/// modelled error's members).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ServiceError {
+    /// The operation called (`ClientError.operation_name`).
+    pub operation: String,
+    /// `Error.Code`, which botocore prints as `Unknown` when absent.
+    pub code: Option<String>,
+    /// `Error.Message`, likewise.
+    pub message: Option<String>,
+    /// `ResponseMetadata.HTTPStatusCode`.
+    pub status: u16,
+    /// `ResponseMetadata.RequestId`.
+    pub request_id: Option<String>,
+    /// `ResponseMetadata.HTTPHeaders`.
+    pub headers: Headers,
+    /// The members of the modelled error shape the code names, as parsed;
+    /// `Value::Null` when it names none.
+    pub members: Value,
+    /// `ResponseMetadata.RetryAttempts`: attempts after the first.
+    pub retry_attempts: u32,
+    /// `ResponseMetadata.MaxAttemptsReached`.
+    pub max_attempts_reached: bool,
+}
+
+impl ServiceError {
+    /// An error of `operation` with `status` and nothing else known.
+    pub fn new(operation: &str, status: u16) -> Self {
+        Self {
+            operation: operation.to_owned(),
+            code: None,
+            message: None,
+            status,
+            request_id: None,
+            headers: Headers::new(),
+            members: Value::Null,
+            retry_attempts: 0,
+            max_attempts_reached: false,
+        }
+    }
+}
+
+impl std::fmt::Display for ServiceError {
+    /// `ClientError.MSG_TEMPLATE`, with `_get_retry_info`'s note when the
+    /// attempts ran out.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "An error occurred ({}) when calling the {} operation",
+            self.code.as_deref().unwrap_or("Unknown"),
+            self.operation
+        )?;
+        if self.max_attempts_reached {
+            write!(f, " (reached max retries: {})", self.retry_attempts)?;
+        }
+        write!(f, ": {}", self.message.as_deref().unwrap_or("Unknown"))
+    }
+}
+
+impl std::error::Error for ServiceError {}
+
+/// A request that could not be serialized from its input.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SerializeError {
+    pub message: String,
+}
+
+/// A response that could not be parsed: botocore's `ResponseParserError`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParseError {
+    pub message: String,
+}
+
+macro_rules! message_error {
+    ($($name:ident),+) => {$(
+        impl $name {
+            pub fn new(message: impl Into<String>) -> Self {
+                Self { message: message.into() }
+            }
+        }
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.message)
+            }
+        }
+        impl std::error::Error for $name {}
+    )+};
+}
+message_error!(SerializeError, ParseError);
+
+/// Why a call has no output.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum CallError {
+    /// `ParamValidationError`.
+    Validation(Report),
+    /// `EndpointResolutionError` and the rule errors botocore raises as
+    /// others: the text botocore prints.
+    Endpoint(String),
+    /// `NoRegionError`.
+    NoRegion,
+    /// `NoCredentialsError`.
+    NoCredentials,
+    /// A credential provider that failed, with the text of its error.
+    Credentials(String),
+    Serialize(SerializeError),
+    /// An interceptor's failure.
+    Hook(HookError),
+    /// No response, from the endpoint at `endpoint_url`.
+    Transport {
+        error: TransportError,
+        endpoint_url: String,
+    },
+    /// `ResponseParserError`.
+    Parse(ParseError),
+    /// `ClientError`.
+    Service(Box<ServiceError>),
+    /// The user interrupted the call.
+    Interrupted,
+}
+
+impl std::fmt::Display for CallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Validation(report) => f.write_str(&report.message()),
+            Self::Endpoint(text) | Self::Credentials(text) => f.write_str(text),
+            Self::NoRegion => f.write_str("You must specify a region."),
+            Self::NoCredentials => f.write_str("Unable to locate credentials"),
+            Self::Serialize(error) => error.fmt(f),
+            Self::Hook(error) => error.fmt(f),
+            Self::Transport {
+                error,
+                endpoint_url,
+            } => transport_text(f, error, endpoint_url),
+            Self::Parse(error) => error.fmt(f),
+            Self::Service(error) => error.fmt(f),
+            Self::Interrupted => f.write_str("the call was interrupted"),
+        }
+    }
+}
+
+impl std::error::Error for CallError {}
+
+/// The text of the exception botocore's session raises for `error`
+/// (botocore/exceptions.py, each class's `fmt`).
+fn transport_text(
+    f: &mut std::fmt::Formatter<'_>,
+    error: &TransportError,
+    url: &str,
+) -> std::fmt::Result {
+    match error {
+        TransportError::Connect => write!(f, "Could not connect to the endpoint URL: \"{url}\""),
+        TransportError::ConnectTimeout => write!(f, "Connect timeout on endpoint URL: \"{url}\""),
+        TransportError::ReadTimeout => write!(f, "Read timeout on endpoint URL: \"{url}\""),
+        TransportError::ConnectionClosed => write!(
+            f,
+            "Connection was closed before we received a valid response from endpoint URL: \
+             \"{url}\"."
+        ),
+        TransportError::Tls { reason } => write!(f, "SSL validation failed for {url} {reason}"),
+        TransportError::Proxy { url: proxy } => {
+            write!(f, "Failed to connect to proxy URL: \"{proxy}\"")
+        }
+        TransportError::Client { reason } => {
+            write!(f, "An HTTP Client raised an unhandled exception: {reason}")
+        }
+        TransportError::Interrupted => f.write_str("the request was interrupted"),
+    }
+}
+
+#[cfg(test)]
+mod tests;
