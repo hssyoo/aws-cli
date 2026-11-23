@@ -53,31 +53,18 @@ impl CredentialSource for Keys {
     }
 }
 
-fn field<'a>(case: &'a Value, name: &str) -> Option<&'a Value> {
-    match case {
-        Value::Map(map) => map.get(name),
-        _ => None,
-    }
-}
-
 fn text<'a>(case: &'a Value, name: &str) -> Option<&'a str> {
-    match field(case, name)? {
-        Value::String(text) => Some(text),
-        _ => None,
-    }
+    case.get(name)?.as_str()
 }
 
 fn strings(case: &Value, name: &str) -> Vec<String> {
-    match field(case, name) {
-        Some(Value::List(items)) => items
-            .iter()
-            .filter_map(|item| match item {
-                Value::String(text) => Some(text.to_string()),
-                _ => None,
-            })
-            .collect(),
-        _ => Vec::new(),
-    }
+    case.get(name)
+        .and_then(Value::as_list)
+        .unwrap_or_default()
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
 }
 
 /// The model directory of `service`: its one API version.
@@ -93,11 +80,11 @@ fn service_directory(service: &str) -> TestResult<PathBuf> {
 
 /// The stub's response, as the in-memory transport answers.
 fn response(stub: &Value) -> TestResult<HttpResponse> {
-    let status = match field(stub, "status") {
+    let status = match stub.get("status") {
         Some(Value::Integer(status)) => u16::try_from(*status)?,
         _ => return Err("stub status".into()),
     };
-    let headers: Vec<(String, String)> = match field(stub, "headers") {
+    let headers: Vec<(String, String)> = match stub.get("headers") {
         Some(Value::List(pairs)) => pairs
             .iter()
             .filter_map(|pair| match pair {
@@ -122,7 +109,8 @@ fn response(stub: &Value) -> TestResult<HttpResponse> {
 fn transport_failure(case: &Value, kind: &str) -> TestResult<TransportError> {
     Ok(match kind {
         "proxy" => TransportError::Proxy {
-            url: field(case, "env")
+            url: case
+                .get("env")
                 .and_then(|env| text(env, "HTTPS_PROXY"))
                 .ok_or("proxy")?
                 .replace("{port}", PORT),
@@ -170,7 +158,7 @@ fn transport_for(case: &Value, attempts: u64) -> TestResult<Arc<InMemoryTranspor
         // Python route, whatever the stub did to cause it.
         if let Some(kind) = text(case, "transport") {
             transport.fail(transport_failure(case, kind)?);
-        } else if let Some(stub) = field(case, "stub") {
+        } else if let Some(stub) = case.get("stub") {
             transport.respond(response(stub)?);
         }
     }
@@ -187,14 +175,14 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
         .position(|arg| arg == "--endpoint-url")
         .and_then(|at| argv.get(at + 1))
         .map(|url| url.replace("{port}", PORT));
-    let region = match field(case, "region") {
+    let region = match case.get("region") {
         Some(Value::Null) => None,
         Some(Value::String(region)) => Some(region.to_string()),
         _ => Some("us-west-2".to_owned()),
     };
     // The capture sets 1 unless the case says otherwise; `null` unsets
     // it, leaving botocore's default, 3.
-    let attempts: u64 = match field(case, "env").and_then(|env| field(env, "AWS_MAX_ATTEMPTS")) {
+    let attempts: u64 = match case.get("env").and_then(|env| env.get("AWS_MAX_ATTEMPTS")) {
         Some(Value::String(attempts)) => attempts.parse()?,
         Some(_) => 3,
         None => 1,
@@ -209,12 +197,12 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
         endpoint: EndpointConfig::new(&EndpointInputs {
             region: region.as_deref(),
             endpoint_url: endpoint_url.as_deref(),
-            use_fips: field(case, "fips").map(|_| true),
-            use_dual_stack: field(case, "dual_stack").map(|_| true),
+            use_fips: case.get("fips").map(|_| true),
+            use_dual_stack: case.get("dual_stack").map(|_| true),
             signing: true,
         }),
         settings,
-        credentials: Arc::new(Keys(field(case, "no_credentials").is_none())),
+        credentials: Arc::new(Keys(case.get("no_credentials").is_none())),
         transport,
         runtime: Arc::new(FixedRuntime::new(
             timestamp::Timestamp::from_unix_seconds(1_440_938_160).ok_or("epoch")?,
@@ -237,7 +225,8 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
             },
         },
     };
-    let input = field(case, "input")
+    let input = case
+        .get("input")
         .cloned()
         .unwrap_or(Value::Map(model::value::Map::new()));
     let operation = text(case, "operation").ok_or("operation")?;
@@ -254,8 +243,9 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
 /// The case's failure, natively: a real call's, or for the cases without a
 /// service, the pager's or the credential chain's.
 fn native_failure(case: &Value) -> TestResult<CommandFailure> {
-    if field(case, "tty_stdout").is_some() {
-        let pager = field(case, "env")
+    if case.get("tty_stdout").is_some() {
+        let pager = case
+            .get("env")
             .and_then(|env| text(env, "AWS_PAGER"))
             .ok_or("pager")?;
         let interrupt = cli_core::interrupt::State::new();
