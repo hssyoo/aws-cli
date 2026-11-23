@@ -154,3 +154,49 @@ fn help_s_events_are_never_emitted() {
     assert!(client.contains(&"after-call.zsvc.Op".to_owned()));
     assert!(client.iter().all(|event| !event.starts_with("getattr.")));
 }
+
+/// Each match names the pattern it matched by and where it came from, so
+/// coverage can be judged per pattern: a registry entry matched by two
+/// patterns is two matches.
+#[test]
+fn matches_carry_their_pattern_and_origin() -> Result<(), PatternError> {
+    let patterns = Patterns::parse(DOCUMENT.as_bytes())?;
+    let matches = patterns.matches(&subject("zsvc", true));
+    let found: Vec<(MatchKind, &str, &str)> = matches
+        .iter()
+        .map(|found| (found.kind, &*found.pattern, &*found.name))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                MatchKind::Registry,
+                "session-initialized",
+                "awscli.paramfile.register_init_uri_param_handler"
+            ),
+            (
+                MatchKind::Registry,
+                "calling-command.zsvc.*",
+                "awscli.customizations.z.fix"
+            ),
+            (
+                MatchKind::Builtin,
+                "before-call.zsvc.Op",
+                "botocore.handlers.h"
+            ),
+            (
+                MatchKind::Client,
+                "request-created.zsvc",
+                "botocore.signers.RequestSigner.handler"
+            ),
+            (
+                MatchKind::Client,
+                "before-parameter-build",
+                "botocore.discovery.block"
+            ),
+        ]
+    );
+    let names: BTreeSet<String> = matches.into_iter().map(|found| found.name).collect();
+    assert_eq!(names, patterns.touching(&subject("zsvc", true)));
+    Ok(())
+}
