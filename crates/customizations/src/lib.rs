@@ -7,7 +7,7 @@
 #![forbid(unsafe_code)]
 use cli_core::cli_error::PythonReason;
 use client::hooks::{
-    Basis, CallContext, Customization, Interceptor, Refusal, Scope, SettingDefault,
+    Basis, CallContext, Customization, HookError, Interceptor, Refusal, Scope, SettingDefault,
 };
 
 /// A basis implemented at the Rust item `at`.
@@ -212,8 +212,9 @@ struct DynamodbChecksum;
 
 impl Interceptor for DynamodbChecksum {
     /// `RetryDDBChecksumError.is_retryable`: the body's CRC32 differs from
-    /// `x-amz-crc32`. A header that is not a number botocore cannot read
-    /// either; it is left to the standard policy.
+    /// `x-amz-crc32`, read with Python's `int()`. That read is unguarded,
+    /// so a header it cannot read raises its `ValueError` and fails the
+    /// call; a negative or huge value simply mismatches.
     fn classify_retry(
         &self,
         _: &mut CallContext<'_>,
@@ -222,8 +223,15 @@ impl Interceptor for DynamodbChecksum {
         let Attempt::Response { response, .. } = attempt else {
             return None;
         };
-        let expected: u64 = response.headers.get("x-amz-crc32")?.trim().parse().ok()?;
-        (u64::from(crc32(&response.body)) != expected).then_some(RetryDecision::Retry)
+        let header = response.headers.get("x-amz-crc32")?;
+        let matches = match model::pyrepr::int_from_text(header) {
+            Err(text) => return Some(RetryDecision::Fail(HookError::Failed(text))),
+            Ok(model::value::Value::Integer(expected)) => {
+                i64::from(crc32(&response.body)) == expected
+            }
+            Ok(_) => false,
+        };
+        (!matches).then_some(RetryDecision::Retry)
     }
 }
 

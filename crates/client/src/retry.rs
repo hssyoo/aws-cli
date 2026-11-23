@@ -25,12 +25,15 @@ pub enum Attempt<'a> {
 }
 
 /// A decision that overrides the retry policy's for one attempt.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RetryDecision {
     /// Try again, within the attempts and the retry quota left.
     Retry,
     /// Do not try again.
     Stop,
+    /// The check raised, as a botocore retry checker's exception ends the
+    /// call from `needs-retry`.
+    Fail(crate::hooks::HookError),
 }
 
 /// `TransientRetryableChecker._TRANSIENT_ERROR_CODES`.

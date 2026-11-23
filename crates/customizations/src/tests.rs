@@ -118,7 +118,7 @@ fn dynamodb_retries_a_body_whose_crc32_does_not_match() -> TestResult {
     let unchecked = HttpResponse {
         status: 200,
         headers: Headers::new(),
-        body,
+        body: body.clone(),
     };
     assert_eq!(decision("dynamodb", &unchecked, None)?, None);
     // `int(checksum)` is unguarded: a header Python cannot read fails the

@@ -608,7 +608,7 @@ impl ResolvedEndpoint {
             .iter()
             .find(|scheme| BOTOCORE_AUTH_TYPES.contains(&strip(&scheme.name).as_str()))
         else {
-            let names: Vec<&str> = self.auth_schemes.iter().map(|s| s.name.as_str()).collect();
+            let names: Vec<String> = self.auth_schemes.iter().map(|s| strip(&s.name)).collect();
             return Err(format!("Unknown Signature Version: {}.", names.join(", ")));
         };
         let region = scheme.signing_region.clone().or_else(|| {
