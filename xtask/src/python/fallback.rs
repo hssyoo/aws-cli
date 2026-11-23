@@ -209,8 +209,8 @@ fn fallback_archive(
     Ok(())
 }
 
-/// Pack the AWS CLI, its runtime dependencies, and the autocomplete index
-/// into `prefix`.
+/// Pack the AWS CLI, its runtime dependencies, the autocomplete index and
+/// the customization-pattern entry into `prefix`.
 fn fallback_payload(
     root: &Path,
     pins: &Pins,
@@ -242,6 +242,7 @@ fn fallback_payload(
         for (flag, script) in [
             ("pack-tool", "pack.py"),
             ("gen-ac-index", "gen_ac_index.py"),
+            ("gen-customization-patterns", "gen_customization_patterns.py"),
         ] {
             command
                 .arg(format!("--{flag}"))
