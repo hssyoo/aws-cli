@@ -7,6 +7,7 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod layers;
 mod modules;
 
 /// Directories holding project-owned Rust sources, relative to the repository
@@ -76,6 +77,7 @@ enum Rule {
     GlobReexport,
     UnboundedLoop,
     ErasedError,
+    Layering,
 }
 
 impl Rule {
@@ -92,6 +94,7 @@ impl Rule {
             Self::GlobReexport => "glob_reexport",
             Self::UnboundedLoop => "unbounded_loop",
             Self::ErasedError => "erased_error",
+            Self::Layering => "layering",
         }
     }
 }
@@ -218,7 +221,11 @@ fn fuzz_clippy(root: &Path) -> Command {
 /// The repository source checks alone, which `cargo xtask test` also runs.
 pub(crate) fn check_sources(root: &Path) -> Result<(), TaskError> {
     let sources = inventory(root)?;
-    let diagnostics = check_inventory(&sources, &target_roots(root)?)?;
+    let workspace = metadata(root, "Cargo.toml")?;
+    let mut roots = target_roots(&workspace)?;
+    roots.extend(target_roots(&metadata(root, FUZZ_MANIFEST)?)?);
+    let mut diagnostics = check_inventory(&sources, &roots)?;
+    diagnostics.extend(layers::check(&workspace)?);
     report(root, &diagnostics, &mut io::stderr().lock())
 }
 
@@ -354,14 +361,8 @@ fn read_source(path: &Path) -> Result<String, TaskError> {
         .map_err(|error| TaskError::Io(io::Error::new(io::ErrorKind::InvalidData, error)))
 }
 
-/// Crate roots of every Cargo target and the fuzz package's.
-fn target_roots(root: &Path) -> Result<Vec<PathBuf>, TaskError> {
-    let mut roots = manifest_roots(root, "Cargo.toml")?;
-    roots.extend(manifest_roots(root, FUZZ_MANIFEST)?);
-    Ok(roots)
-}
-
-fn manifest_roots(root: &Path, manifest: &str) -> Result<Vec<PathBuf>, TaskError> {
+/// `cargo metadata` for `manifest`'s own packages.
+fn metadata(root: &Path, manifest: &str) -> Result<serde_json::Value, TaskError> {
     let output = process::output(Command::new("cargo").current_dir(root).args([
         "metadata",
         "--no-deps",
@@ -371,8 +372,11 @@ fn manifest_roots(root: &Path, manifest: &str) -> Result<Vec<PathBuf>, TaskError
         "--manifest-path",
         manifest,
     ]))?;
-    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| TaskError::Message(error.to_string()))?;
+    serde_json::from_slice(&output.stdout).map_err(|error| TaskError::Message(error.to_string()))
+}
+
+/// The crate root of every Cargo target in `metadata`.
+fn target_roots(metadata: &serde_json::Value) -> Result<Vec<PathBuf>, TaskError> {
     let packages = metadata["packages"]
         .as_array()
         .ok_or_else(|| TaskError::Message("Cargo metadata did not contain packages".into()))?;
