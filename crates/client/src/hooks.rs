@@ -289,6 +289,34 @@ pub struct Customization {
     pub replaces: &'static [&'static str],
 }
 
+/// Why native stands in for a Python handler or registry entry, so a test
+/// can check the claim instead of trusting prose. The client's
+/// `Customization::replaces` and the CLI's coverage table both use it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Basis {
+    /// Native code does what the handler does. `at` is the Rust path of the
+    /// item that does it (`crate::module::Type::method`), which
+    /// [`crate::testing::defines`] resolves in the workspace's source.
+    Implemented { at: &'static str },
+    /// The handler acts only when `acts_when`, and native refuses every
+    /// such call before it starts, as `refused_as` says.
+    Inert {
+        acts_when: &'static str,
+        refused_as: Refusal,
+    },
+}
+
+/// What refuses the calls an inert handler would act on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refusal {
+    /// [`crate::admission::static_refusal`] refuses an operation that
+    /// carries this trait, as `Unsupported::Trait` with this key.
+    Trait(&'static str),
+    /// The router sends an invocation with the setting to Python, for this
+    /// reason.
+    Router(cli_core::cli_error::PythonReason),
+}
+
 /// The defaults a client's customizations supply, each from the first in
 /// the table that supplies it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

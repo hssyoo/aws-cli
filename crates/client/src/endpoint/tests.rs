@@ -612,6 +612,55 @@ fn endpoint_rules<'a>(rules: &'a Value, under: bool, out: &mut Vec<(bool, &'a Va
     }
 }
 
+/// Every shipped rule set, by its path.
+fn shipped_rule_sets() -> TestResult<Vec<(std::path::PathBuf, Value)>> {
+    let mut found = Vec::new();
+    for service in std::fs::read_dir(repository().join("awscli/botocore/data"))? {
+        let service = service?.path();
+        if !service.is_dir() {
+            continue;
+        }
+        for version in std::fs::read_dir(&service)? {
+            let path = version?.path().join("endpoint-rule-set-1.json");
+            if let Ok(bytes) = std::fs::read(&path) {
+                found.push((path, Value::from_json(&bytes)?));
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// How many endpoints of `rules` an `AccountId` condition leads to, each
+/// checked to carry no headers and to sign with SigV4 or nothing.
+fn check_account_endpoints(path: &std::path::Path, rules: &Value) -> TestResult<usize> {
+    let mut endpoints = Vec::new();
+    endpoint_rules(
+        field(rules, "rules").unwrap_or(&Value::Null),
+        false,
+        &mut endpoints,
+    );
+    let account = endpoints.iter().filter(|(reads, _)| *reads);
+    let mut count = 0;
+    for (_, rule) in account {
+        let endpoint = field(rule, "endpoint").ok_or("endpoint")?;
+        let headers =
+            matches!(field(endpoint, "headers"), Some(Value::Map(map)) if !map.is_empty());
+        assert!(!headers, "{}", path.display());
+        let schemes = field(endpoint, "properties").and_then(|props| field(props, "authSchemes"));
+        if let Some(Value::List(schemes)) = schemes {
+            let names: Vec<Option<&str>> =
+                schemes.iter().map(|scheme| text(scheme, "name")).collect();
+            assert!(
+                names.iter().all(|name| *name == Some("sigv4")),
+                "{}",
+                path.display()
+            );
+        }
+        count += 1;
+    }
+    Ok(count)
+}
+
 /// The deferred account id resolves only in `send`, after credentials, where
 /// a refusal can no longer send the call to Python. So no shipped rule set
 /// may give an account-id endpoint a refusal its other endpoints lack: none
@@ -619,52 +668,17 @@ fn endpoint_rules<'a>(rules: &'a Value, under: bool, out: &mut Vec<(bool, &'a Va
 /// rule sets it checked.
 #[test]
 fn account_id_endpoints_refuse_nothing_more() -> TestResult {
-    let data = repository().join("awscli/botocore/data");
-    let mut checked = Vec::new();
-    for service in std::fs::read_dir(&data)? {
-        let service = service?.path();
-        if !service.is_dir() {
-            continue;
-        }
-        for version in std::fs::read_dir(&service)? {
-            let path = version?.path().join("endpoint-rule-set-1.json");
-            let Ok(bytes) = std::fs::read(&path) else {
-                continue;
-            };
-            let rules = Value::from_json(&bytes)?;
-            let reads = matches!(field(&rules, "parameters"), Some(Value::Map(parameters))
-                if parameters.iter().any(|(_, def)| text(def, "builtIn") == Some("AWS::Auth::AccountId")));
-            if !reads {
-                continue;
-            }
-            let mut endpoints = Vec::new();
-            endpoint_rules(
-                field(&rules, "rules").unwrap_or(&Value::Null),
-                false,
-                &mut endpoints,
-            );
-            let account: Vec<&Value> = endpoints
-                .iter()
-                .filter(|(reads, _)| *reads)
-                .map(|(_, rule)| *rule)
-                .collect();
-            for rule in &account {
-                let endpoint = field(rule, "endpoint").ok_or("endpoint")?;
-                let headers =
-                    matches!(field(endpoint, "headers"), Some(Value::Map(map)) if !map.is_empty());
-                assert!(!headers, "{}", path.display());
-                let schemes = field(endpoint, "properties")
-                    .and_then(|properties| field(properties, "authSchemes"));
-                if let Some(Value::List(schemes)) = schemes {
-                    for scheme in schemes {
-                        assert_eq!(text(scheme, "name"), Some("sigv4"), "{}", path.display());
-                    }
-                }
-            }
-            checked.push(format!("{} {}", path.display(), account.len()));
+    let account = |def: &Value| text(def, "builtIn") == Some("AWS::Auth::AccountId");
+    let mut checked = String::from("account-id endpoints checked:\n");
+    for (path, rules) in shipped_rule_sets()? {
+        let reads = matches!(field(&rules, "parameters"), Some(Value::Map(parameters))
+            if parameters.iter().any(|(_, def)| account(def)));
+        if reads {
+            let count = check_account_endpoints(&path, &rules)?;
+            checked.push_str(&format!("{} {count}\n", path.display()));
         }
     }
-    assert!(!checked.is_empty());
-    eprintln!("account-id endpoints checked:\n{}", checked.join("\n"));
+    assert!(checked.lines().count() > 1);
+    std::io::Write::write_all(&mut std::io::stderr(), checked.as_bytes())?;
     Ok(())
 }
