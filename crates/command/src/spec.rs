@@ -18,8 +18,9 @@ pub enum Needs {
     Client { service: Cow<'static, str> },
 }
 
-/// How the command's standard streams are buffered, and so which output
-/// globals it honors.
+/// How the command's standard streams are buffered: the only thing this
+/// says. Which globals a command honors is the router's to judge from what
+/// the command is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamPolicy {
     /// The response goes through the `--output` formatter

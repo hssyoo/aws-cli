@@ -56,6 +56,9 @@ impl OperationSource for ServiceSource<'_> {
     fn reproduces_failures(&self, root: &str, operation: Option<&str>) -> bool {
         self.models.reproduces_failures(root, operation)
     }
+    fn paginated(&self, root: &str, operation: &str) -> bool {
+        self.models.paginated(root, operation)
+    }
     fn needs(&self, root: &str) -> Needs {
         self.models.needs(root)
     }

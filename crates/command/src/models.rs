@@ -432,6 +432,13 @@ impl OperationSource for ModelSource<'_> {
         let table = self.table(root, operation);
         !service.customized && table.is_some_and(|table| !table.customized)
     }
+    fn paginated(&self, root: &str, operation: &str) -> bool {
+        self.service(root).is_some_and(|service| {
+            service
+                .operation(operation)
+                .is_some_and(|found| service.paginated(&found.name))
+        })
+    }
     fn needs(&self, root: &str) -> Needs {
         let service = self.service(root);
         let metadata = service.map(|service| service.model.metadata());

@@ -25,6 +25,9 @@ pub trait OperationSource: std::fmt::Debug {
     /// `[root, operation]` are ones the derived tables reproduce byte for
     /// byte, so they render natively.
     fn reproduces_failures(&self, root: &str, operation: Option<&str>) -> bool;
+    /// Whether `[root, operation]` paginates, as `client.can_paginate`
+    /// answers for it.
+    fn paginated(&self, root: &str, operation: &str) -> bool;
     /// What every operation of `root` needs before it runs.
     fn needs(&self, root: &str) -> Needs;
     /// Bind the completed parse of one of this source's operations.
@@ -60,6 +63,10 @@ impl Operation<'_> {
     /// What the operation needs before it runs.
     pub fn needs(&self) -> Needs {
         self.source.needs(self.root)
+    }
+    /// Whether the operation paginates.
+    pub fn paginated(&self) -> bool {
+        self.source.paginated(self.root, self.name)
     }
     /// A model operation's response is formatted.
     pub const fn streams(&self) -> StreamPolicy {

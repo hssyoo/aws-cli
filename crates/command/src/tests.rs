@@ -57,6 +57,9 @@ impl OperationSource for Fake {
     fn reproduces_failures(&self, _root: &str, _operation: Option<&str>) -> bool {
         true
     }
+    fn paginated(&self, _root: &str, _operation: &str) -> bool {
+        false
+    }
     fn needs(&self, root: &str) -> Needs {
         Needs::Client {
             service: root.to_owned().into(),

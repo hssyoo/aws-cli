@@ -21,7 +21,9 @@ pub(super) fn route<E: EnvMap>(
     let Resolution::Operation(operation) = config.registry.resolve(&names) else {
         return Verdict::Python(PythonReason::UnsupportedSubcommand);
     };
-    let target = globals::Target::Streams(operation.streams());
+    let target = globals::Target::Operation {
+        paginated: operation.paginated(),
+    };
     if let Some(reason) = globals::route_parsed_unsupported_global(result, target) {
         return Verdict::Python(reason);
     }
