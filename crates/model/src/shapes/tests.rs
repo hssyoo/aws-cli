@@ -568,3 +568,23 @@ fn a_namespace_may_be_written_as_its_uri() -> Result<()> {
     assert_eq!(namespace.prefix, None);
     Ok(())
 }
+
+#[test]
+fn the_service_id_hyphenizes_as_botocore_s_does() -> Result<()> {
+    let model = fixture()?;
+    let mut checks = Checks::default();
+    checks.eq(
+        "fixture",
+        &model.metadata().hyphenized_service_id(),
+        &Some("x-svc".to_owned()),
+    );
+    let mut metadata = Metadata::default();
+    checks.eq("absent", &metadata.hyphenized_service_id(), &None);
+    metadata.service_id = Some("Lex Runtime V2".into());
+    checks.eq(
+        "words",
+        &metadata.hyphenized_service_id(),
+        &Some("lex-runtime-v2".to_owned()),
+    );
+    checks.finish()
+}

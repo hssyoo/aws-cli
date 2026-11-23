@@ -101,6 +101,7 @@ const FALLBACK_ARCHIVE: &[&str] = &[
 ];
 const FALLBACK_PAYLOAD: &[&str] = &[
     "deps/scripts/gen_ac_index.py",
+    "deps/scripts/gen_customization_patterns.py",
     "deps/scripts/pack.py",
     "aws-cli/requirements/download-deps/system-sandbox-lock.txt",
     "aws-cli/requirements/download-deps/system-sandbox-win-lock.txt",

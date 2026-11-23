@@ -5,6 +5,8 @@
 //! keep the router's own enum path and are registered only as a pinned
 //! grammar ([`Registry::new`]).
 #![forbid(unsafe_code)]
+pub mod models;
+pub mod patterns;
 mod registry;
 mod spec;
 #[doc(inline)]

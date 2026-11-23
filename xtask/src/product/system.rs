@@ -18,6 +18,7 @@ const INPUTS: &[&str] = &[
     "deps/scripts/prepare_python_fallback.py",
     "deps/scripts/pack.py",
     "deps/scripts/gen_ac_index.py",
+    "deps/scripts/gen_customization_patterns.py",
     "deps/scripts/build_environ.py",
     "deps/scripts/build_guard.py",
     "deps/scripts/native_target.py",
@@ -308,7 +309,9 @@ fn payload_command(
     if options.python_payload == PythonPayload::Embedded {
         command
             .arg("--gen-ac-index")
-            .arg(root.join("deps/scripts/gen_ac_index.py"));
+            .arg(root.join("deps/scripts/gen_ac_index.py"))
+            .arg("--gen-customization-patterns")
+            .arg(root.join("deps/scripts/gen_customization_patterns.py"));
     }
     if let Some(source) = &options.awscrt_source {
         command

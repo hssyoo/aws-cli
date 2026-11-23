@@ -13,3 +13,6 @@ workspace = true
 awscli-argparse = { path = "../awscli-argparse" }
 awscli-config = { path = "../awscli-config" }
 cli-core = { path = "../cli-core" }
+model = { path = "../model" }
+pyload = { path = "../pyload" }
+serde_json.workspace = true

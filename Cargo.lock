@@ -96,6 +96,9 @@ dependencies = [
  "awscli-argparse",
  "awscli-config",
  "cli-core",
+ "model",
+ "pyload",
+ "serde_json",
 ]
 
 [[package]]

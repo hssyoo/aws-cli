@@ -18,7 +18,7 @@ impl Token {
         self.value.to_str()
     }
 
-    pub(crate) fn is_text(&self, text: &str) -> bool {
+    pub fn is_text(&self, text: &str) -> bool {
         self.value == text
     }
 

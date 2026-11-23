@@ -23,6 +23,7 @@ from prepare_python_fallback import (
     filter_runtime_requirements,
     compile_awscrt_sources,
     generate_autocomplete_index,
+    generate_customization_patterns,
     site_packages,
     validate_awscrt_source,
 )
@@ -231,6 +232,7 @@ def pack_embedded_payload(
     cache_dir: Path,
     pack_tool: Path,
     gen_ac_index: Path,
+    gen_customization_patterns: Path,
     requirements: Path,
     blob: Path,
     aws_cli_source: Path,
@@ -262,10 +264,20 @@ def pack_embedded_payload(
         autocomplete_index,
         env,
     )
+    customization_patterns = cache_dir / "system-customization-patterns"
+    generate_customization_patterns(
+        venv_python,
+        gen_customization_patterns,
+        aws_cli_source,
+        platlib if awscrt_source is None else awscrt_source,
+        customization_patterns,
+        env,
+    )
     specs = [
         f"{stubs}:",
         f"{aws_cli_source / 'awscli'}:awscli",
         f"{autocomplete_index}:",
+        f"{customization_patterns}:",
         f"{site_packages(venv_python, env)}:",
     ]
     if awscrt_source is not None:
@@ -283,6 +295,7 @@ def main() -> None:
     parser.add_argument("--aws-cli-source", type=Path, required=True)
     parser.add_argument("--pack-tool", type=Path, required=True)
     parser.add_argument("--gen-ac-index", type=Path)
+    parser.add_argument("--gen-customization-patterns", type=Path)
     parser.add_argument("--requirements", type=Path)
     parser.add_argument("--awscrt-source", type=Path)
     parser.add_argument("--awscrt-version")
@@ -346,11 +359,14 @@ def main() -> None:
             parser.error("embedded payload requires --requirements")
         if args.gen_ac_index is None:
             parser.error("embedded payload requires --gen-ac-index")
+        if args.gen_customization_patterns is None:
+            parser.error("embedded payload requires --gen-customization-patterns")
         pack_embedded_payload(
             system_python,
             args.cache_dir,
             args.pack_tool,
             args.gen_ac_index,
+            args.gen_customization_patterns,
             args.requirements,
             args.blob,
             aws_cli_source,

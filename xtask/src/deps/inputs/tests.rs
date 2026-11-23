@@ -325,7 +325,11 @@ fn fallback_payload_inventory_covers_packer_and_locks_without_runtime() -> Resul
         &[
             FALLBACK_SHARED,
             RUNTIME_LOCKS,
-            &["deps/scripts/gen_ac_index.py", "deps/scripts/pack.py"],
+            &[
+                "deps/scripts/gen_ac_index.py",
+                "deps/scripts/gen_customization_patterns.py",
+                "deps/scripts/pack.py",
+            ],
         ]
         .concat(),
     )?;
