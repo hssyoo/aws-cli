@@ -24,35 +24,6 @@ pub fn dispose_native<E: EnvMap>(environment: &Environment<'_, E>) -> Option<Pyt
         AutoPrompt::Off | AutoPrompt::OnPartial => None,
     }
 }
-/// Whether a formatting command's run must go to Python because its
-/// response would be paged: `OutputStreamFactory.get_output_stream` starts
-/// the pager when stdout is a terminal and the pager chain
-/// (`CLIDriver._construct_cli_pager_chain`) names one: `AWS_PAGER` when it
-/// is set, even empty, then the selected profile's `cli_pager`, then
-/// `PAGER`, then the platform's default, which `--no-cli-pager` clears
-/// (`no_pager_handler`). A nested `cli_pager` block is no command native
-/// can judge, so it counts as one. The native formatter writes stdout
-/// directly.
-pub fn dispose_formatted<E: EnvMap>(
-    environment: &Environment<'_, E>,
-    result: &ParseResult<'_>,
-) -> Option<PythonReason> {
-    let globals = &result.globals.namespace;
-    if !environment.stdout_is_tty || globals.boolean("no_cli_pager") {
-        return None;
-    }
-    let env = environment.env;
-    let profile = aws_profile::select_or_default(env, globals.string("profile"));
-    let files = environment.shared_files;
-    let pager = env.var_os("AWS_PAGER").map(OsStr::is_empty).or_else(|| {
-        if shared_config::profile_property_is_block(files, profile, "cli_pager") {
-            return Some(false);
-        }
-        shared_config::profile_property(files, profile, "cli_pager").map(str::is_empty)
-    });
-    let empty = pager.or_else(|| env.var_os("PAGER").map(OsStr::is_empty));
-    (!empty.unwrap_or(false)).then_some(PythonReason::Pager)
-}
 /// How Python would present a failure the router settled natively, given
 /// the stage it failed at. Rendering is native unless the configuration in
 /// force makes Python do something the native path does not model.

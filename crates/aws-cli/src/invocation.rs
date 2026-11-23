@@ -141,11 +141,6 @@ fn dispatch(
             if let Some(reason) = cli_error::dispose_native(environment) {
                 return Ok(Outcome::Python(reason));
             }
-            if run.streams == ::command::StreamPolicy::Formatted
-                && let Some(reason) = cli_error::dispose_formatted(environment, parsed)
-            {
-                return Ok(Outcome::Python(reason));
-            }
             // Before any native runtime starts, so a Python fallback finds
             // the process as routing left it.
             let preflight = ::command::Preflight {

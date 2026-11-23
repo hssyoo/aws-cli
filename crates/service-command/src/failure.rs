@@ -37,7 +37,12 @@ pub fn pager_failure(error: &format::SpawnError) -> CommandFailure {
     }
 }
 
-/// A Ctrl-C that ended the command.
-pub fn interrupt() -> CommandFailure {
-    CommandFailure::new(Category::Interrupt)
+/// A Ctrl-C that ended the command: `InterruptExceptionHandler` writes a
+/// newline to stdout and exits 130.
+///
+/// # Errors
+/// The write's.
+pub fn interrupted(stdout: &mut dyn std::io::Write) -> std::io::Result<u8> {
+    stdout.write_all(b"\n")?;
+    Ok(cli_core::interrupt::EXIT_STATUS)
 }

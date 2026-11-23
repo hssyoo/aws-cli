@@ -21,7 +21,7 @@ use client::http::{HttpRequest, HttpResponse};
 use client::protocol::ParseOptions;
 use client::transport::{Timeouts, Transport, TransportError};
 use command::{Context, Invocation, Preflight};
-use format::{Destination, OutputFormat, TimestampFormat, TimestampParser};
+use format::{Delivered, Destination, Outcome, OutputFormat, TimestampFormat, TimestampParser};
 use model::shapes::Model;
 use model::value::Value;
 use std::cell::OnceCell;
@@ -161,15 +161,20 @@ impl Invocation for ServiceInvocation {
 
     fn run(&self, cx: &mut Context<'_>) -> Result<u8, CommandFailure> {
         let Some(ready) = self.ready.get() else {
-            return Err(failure::interrupt());
+            return Err(CommandFailure {
+                message: b"the invocation ran without its preflight".to_vec(),
+                ..CommandFailure::new(cli_core::cli_error::Category::General)
+            });
         };
         let client = ready
             .client
             .as_ref()
             .map_err(|error| failure::call_failure(error, &self.model))?;
-        let output = client
-            .call(&self.admitted.operation, self.admitted.input.clone())
-            .map_err(|error| failure::call_failure(&error, &self.model))?;
+        let output = match client.call(&self.admitted.operation, self.admitted.input.clone()) {
+            Ok(output) => output,
+            Err(CallError::Interrupted) => return Ok(interrupted(cx)),
+            Err(error) => return Err(failure::call_failure(&error, &self.model)),
+        };
         let text = match format::render(&output.value, ready.format) {
             Ok(text) => text,
             Err(partial) => {
@@ -188,10 +193,24 @@ impl Invocation for ServiceInvocation {
             cx.stdout,
             interrupt,
         ) {
-            Ok(_) => Ok(0),
+            Ok(Delivered::Paged(Outcome::Interrupted)) => Ok(interrupted(cx)),
+            // JSONFormatter swallows a failed write; the exit-time flush then
+            // reports the closed stream as the s3 commands' does.
+            Ok(Delivered::Stdout(Err(_))) if ready.format.swallows_write_errors() => Ok(0),
+            Ok(Delivered::Stdout(Err(error))) => Err(CommandFailure {
+                message: error.to_string().into_bytes(),
+                ..CommandFailure::new(cli_core::cli_error::Category::General)
+            }),
+            Ok(Delivered::Stdout(Ok(())) | Delivered::Paged(Outcome::Exited)) => Ok(0),
             Err(error) => Err(failure::pager_failure(&error)),
         }
     }
+}
+
+/// `InterruptExceptionHandler`'s status, its newline written if stdout
+/// takes it.
+fn interrupted(cx: &mut Context<'_>) -> u8 {
+    failure::interrupted(cx.stdout).unwrap_or(cli_core::interrupt::EXIT_STATUS)
 }
 
 impl ServiceInvocation {

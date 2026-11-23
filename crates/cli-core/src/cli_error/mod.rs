@@ -10,9 +10,7 @@ use std::io::{self, Write};
 
 mod disposition;
 mod stdout_flush;
-pub use disposition::{
-    Environment, command_failure_format, dispose_failure, dispose_formatted, dispose_native,
-};
+pub use disposition::{Environment, command_failure_format, dispose_failure, dispose_native};
 pub use stdout_flush::{
     FLUSH_FAILURE_STATUS, NO_STDOUT_MESSAGE, StandardStream, StdoutFailure, Termination,
     UNREPORTED_FAILURE_STATUS, WRITE_FAILED_MESSAGE, flush_pending_stdout, flush_streams_at_exit,
@@ -175,8 +173,7 @@ pub enum PythonReason {
     /// `off`. It is `--output`, else `AWS_DEFAULT_OUTPUT`, else the
     /// profile's `output` (`CLIDriver._construct_cli_output_chain`), which
     /// `CLIOperationCaller._display_response` hands `get_formatter`; or a
-    /// `cli_timestamp_format` other than `iso8601`, whose `wire` timestamps
-    /// the native formatter does not print and whose other values
+    /// `cli_timestamp_format` other than `iso8601` and `wire`, which
     /// `add_timestamp_parser` rejects.
     OutputFormat,
     /// A setting every botocore client reads, which the model client does
@@ -188,9 +185,10 @@ pub enum PythonReason {
     /// no boolean, or a `cli_binary_format` `BinaryFormatHandler` does not
     /// know.
     ClientSetting,
-    /// A formatted response would go to a pager: stdout is a terminal and
-    /// the pager chain names one (`OutputStreamFactory.get_output_stream`),
-    /// which the native formatter does not start.
+    /// The pager a formatted response would go to is one only Python
+    /// starts as it should (`format::NeedsPython`): a `cli_pager` block, a
+    /// value that is not Unicode, a command `shlex` refuses or that splits
+    /// into nothing, or Windows, where the shell runs it.
     Pager,
 }
 impl PythonReason {

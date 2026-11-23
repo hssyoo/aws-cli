@@ -125,8 +125,8 @@ pub enum Consumer {
     Models,
     /// The router's output-format stage (`generic::output_format_refusal`).
     Output,
-    /// `cli_error::dispose_formatted`, which hands a response the pager
-    /// would show to Python.
+    /// The invocation's preflight, which starts the pager as
+    /// `OutputStreamFactory` does (`format::pager`).
     Pager,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -716,12 +716,13 @@ pub const SETTINGS: &[Setting] = &[
         scope: Scope::S3,
     },
     // A model operation's response prints its timestamps as `iso8601`
-    // formats them; `wire` keeps the response's text, and any other value
-    // fails the session (`add_timestamp_parser`).
+    // formats them or, for `wire`, as the response's text, through the
+    // invocation's timestamp parser (`format::TimestampParser`); any other
+    // value fails the session (`add_timestamp_parser`).
     Setting {
         source: Source::Profile("cli_timestamp_format"),
         support: Support::Unsupported(PythonReason::OutputFormat),
-        matching: Match::NoneOf(&["iso8601"]),
+        matching: Match::NoneOf(&["iso8601", "wire"]),
         scope: Scope::Service,
     },
     Setting {
