@@ -224,7 +224,11 @@ impl ServiceInvocation {
         let text = match format::render(response, ready.format) {
             Ok(text) => text,
             Err(partial) => {
-                let _ = cx.stdout.write_all(partial.written.as_bytes());
+                // TextFormatter flushes what it wrote before raising.
+                let _ = cx
+                    .stdout
+                    .write_all(partial.written.as_bytes())
+                    .and_then(|()| cx.stdout.flush());
                 return Err(general(partial.error.message.into_bytes()));
             }
         };

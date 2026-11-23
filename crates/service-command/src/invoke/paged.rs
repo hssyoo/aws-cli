@@ -106,8 +106,11 @@ fn text_to_stdout(
     mut scope: Scope<'_>,
 ) -> Result<u8, CommandFailure> {
     let stdout = &mut *cx.stdout;
-    let written = format::pages::text(fetched, &mut |text| stdout.write_all(text.as_bytes()))
-        .and_then(|()| stdout.flush().map_err(Stopped::Write));
+    let written = format::pages::text(fetched, &mut |text| stdout.write_all(text.as_bytes()));
+    // TextFormatter flushes the stream however the pages ended; only a
+    // failure it raised before then is passed over.
+    let flushed = stdout.flush();
+    let written = written.and_then(|()| flushed.map_err(Stopped::Write));
     scope.leave();
     match written {
         Ok(()) => Ok(0),
