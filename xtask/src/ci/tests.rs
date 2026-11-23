@@ -174,6 +174,7 @@ const LANE_TABLE: &[(Lane, &[Host], &[&str])] = &[
         ],
     ),
     (Lane::Checks, ALL, &["xtask", "check-argparse"]),
+    (Lane::Checks, ALL, &["xtask", "parity"]),
     (Lane::Checks, ALL, &["xtask", "fuzz-argparse"]),
     (Lane::Checks, UNIX, &["xtask", "fuzz", "--runs", "1000"]),
     (

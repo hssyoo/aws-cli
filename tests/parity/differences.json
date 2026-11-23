@@ -1,0 +1,12 @@
+[
+ {
+  "case": "zjson-describe-every-member",
+  "path": "a.outcomes.botocore.parsed",
+  "reason": "botocore's default parse_timestamp keeps the UTC offset a string carries (+01:00) in its datetime; Value::Timestamp holds the instant, which json_encoder prints with +00:00. Only botocore's default parsers differ; the CLI's (iso8601, wire) match."
+ },
+ {
+  "case": "zquery-describe-every-member",
+  "path": "a.outcomes.botocore.parsed",
+  "reason": "As zjson-describe-every-member: a zoned timestamp string under botocore's default parse_timestamp."
+ }
+]

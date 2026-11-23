@@ -16,6 +16,7 @@ model = { path = "../model" }
 timestamp = { path = "../timestamp" }
 
 [dev-dependencies]
+format = { path = "../format" }
 serde_json.workspace = true
 
 [lints]
