@@ -81,7 +81,11 @@ impl Protocol for Json {
 }
 
 /// `JSONSerializer._serialize`: the value as the body holds it.
-fn serialized(model: &Model, value: &Value, shape: ShapeId) -> Result<Value, SerializeError> {
+pub(super) fn serialized(
+    model: &Model,
+    value: &Value,
+    shape: ShapeId,
+) -> Result<Value, SerializeError> {
     let resolved = model.shape(shape);
     match &resolved.kind {
         ShapeKind::Structure { .. } if resolved.traits.is(Flag::Document) => Ok(value.clone()),
