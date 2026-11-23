@@ -510,7 +510,6 @@ fn botocore_s_rest_json_input_suite_passes() -> Result<()> {
 }
 
 #[test]
-#[ignore = "the rest-json parser is not written yet"]
 fn botocore_s_rest_json_output_suite_passes() -> Result<()> {
     run_suites(&["output"], &["rest-json"])
 }
