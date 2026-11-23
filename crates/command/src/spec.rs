@@ -16,6 +16,10 @@ pub struct Needs {
     /// and lowercased, which names the `AWS_ENDPOINT_URL_<SERVICE>`
     /// variable and the `services` section's entry.
     pub service: Cow<'static, str>,
+    /// The client reads the `s3` block's settings: its endpoint rule set
+    /// declares an `AWS::S3::` or `AWS::S3Control::` built-in, which
+    /// botocore fills from them (`compute_endpoint_resolver_builtin_defaults`).
+    pub reads_s3_settings: bool,
 }
 
 /// How the command's standard streams are buffered: the only thing this

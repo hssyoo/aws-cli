@@ -85,8 +85,10 @@ pub enum Scope {
     /// and `s3 sync`: `s3 ls` builds a client and no transfer manager
     /// (`ListCommand` against `S3TransferCommand`).
     Transfer,
-    /// A model operation, whose client is never S3's: S3's protocol is one
-    /// the model client does not implement (`UnsupportedProtocol`).
+    /// A model operation whose client reads none of the `s3` block's
+    /// settings (`command::Needs::reads_s3_settings`, from its rule set's
+    /// built-ins); the generic route refuses one that does before this
+    /// stage, so the S3 rows here can be Ignored.
     Service,
 }
 impl Scope {

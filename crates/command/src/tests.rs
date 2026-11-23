@@ -63,6 +63,7 @@ impl OperationSource for Fake {
     fn needs(&self, root: &str) -> Needs {
         Needs {
             service: root.to_owned().into(),
+            reads_s3_settings: false,
         }
     }
 }
@@ -93,7 +94,8 @@ fn a_source_operation_resolves_to_its_operation() {
     assert_eq!(
         operation.needs(),
         Needs {
-            service: "zsvc".into()
+            service: "zsvc".into(),
+            reads_s3_settings: false,
         }
     );
 }

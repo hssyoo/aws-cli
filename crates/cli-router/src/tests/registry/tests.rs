@@ -90,6 +90,7 @@ impl OperationSource for Fake {
     fn needs(&self, root: &str) -> Needs {
         Needs {
             service: root.to_owned().into(),
+            reads_s3_settings: false,
         }
     }
 }
@@ -168,7 +169,8 @@ fn a_root_only_the_registry_knows_parses_binds_and_runs() {
     assert_eq!(
         run.needs,
         Needs {
-            service: "sts".into()
+            service: "sts".into(),
+            reads_s3_settings: false,
         }
     );
     assert_eq!(run.streams, StreamPolicy::Formatted);

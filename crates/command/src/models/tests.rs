@@ -199,15 +199,20 @@ fn customized_tables_leave_their_failures_to_python() -> Result<()> {
     })
 }
 
+/// A client is S3's, as far as settings go, when its rule set takes S3's
+/// built-ins: botocore fills them from the `s3` block.
 #[test]
 fn a_model_operation_needs_its_service_s_client() -> Result<()> {
     with_source(None, |source| {
         assert_eq!(
             source.needs("sts"),
             Needs {
-                service: "sts".into()
+                service: "sts".into(),
+                reads_s3_settings: false,
             }
         );
+        assert!(source.needs("s3api").reads_s3_settings);
+        assert!(source.needs("s3control").reads_s3_settings);
     })
 }
 

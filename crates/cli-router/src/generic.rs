@@ -82,6 +82,11 @@ fn admit<E: EnvMap>(
         Err(::command::Admission::Python(reason)) => return Verdict::Python(reason),
     };
     let (needs, streams) = (operation.needs(), operation.streams());
+    // The `s3` block's settings are honored only on the s3 commands' path;
+    // the rows of `Scope::Service` assume a client that reads none.
+    if needs.reads_s3_settings {
+        return Verdict::Python(PythonReason::EndpointSetting);
+    }
     let ns = &result.globals.namespace;
     let globals = bind_globals(ns);
     let output = match settings(config, &globals, ns) {
