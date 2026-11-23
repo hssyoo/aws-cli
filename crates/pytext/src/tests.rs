@@ -2,7 +2,7 @@
 //! crates that re-export them (`model::pyrepr`, `model::base64`,
 //! `awscli_argparse::convert`), which predate this crate.
 use super::number::{self, C_SPACE};
-use super::repr::{self, NonAscii};
+use super::repr;
 
 #[test]
 fn floats_read_as_float_reads_them() {
@@ -33,9 +33,6 @@ fn reprs_quote_and_escape_as_python_does() {
         "'a\\xa0\u{e9}\\t\u{1f600}\\U0010ffff'"
     );
     assert_eq!(repr::bytes_repr(b"'\x00\xff"), "b\"'\\x00\\xff\"");
-    let mut verbatim = String::new();
-    repr::write_escaped(&mut verbatim, "\u{a0}\\", '\'', NonAscii::Verbatim);
-    assert_eq!(verbatim, "\u{a0}\\\\");
     assert_eq!(repr::float_repr(1e16), "1e+16");
     assert_eq!(repr::float_repr(0.0001), "0.0001");
     assert_eq!(repr::float_repr(-0.0), "-0.0");

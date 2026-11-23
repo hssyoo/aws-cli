@@ -214,6 +214,9 @@ fn what_only_python_can_decide_is_undecided() -> Result<()> {
     for (member, value) in [
         ("When", Value::String("next tuesday".into())),
         ("When", Value::String("inf".into())),
+        // Not float() (CPython strips no U+001C), nor ISO 8601 or RFC 822:
+        // dateutil decides.
+        ("When", Value::String("\u{1c}5".into())),
         ("When", Value::Float(1e300)),
         ("When", Value::Blob(b"Jan 5".to_vec())),
         ("Big", Value::Integer(1)),

@@ -60,17 +60,6 @@ fn fixed(digits: &str, point: i32) -> String {
     }
 }
 
-/// How a repr writes a character outside ASCII.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NonAscii {
-    /// `str.__repr__`: as is when printable, else `\xNN`, `\uNNNN` or
-    /// `\UNNNNNNNN`.
-    Escaped,
-    /// As is, printable or not: `awscli-argparse`'s diagnostics, which
-    /// have always written argv text this way.
-    Verbatim,
-}
-
 /// `unicode_repr`'s quote: a double quote only when the text holds a
 /// single quote and no double quote.
 pub fn quote_for(text: &[u8]) -> char {
@@ -81,8 +70,9 @@ pub fn quote_for(text: &[u8]) -> char {
     }
 }
 
-/// `text` as it appears between `quote`s in its repr.
-pub fn write_escaped(out: &mut String, text: &str, quote: char, non_ascii: NonAscii) {
+/// `text` as it appears between `quote`s in its repr: a character outside
+/// ASCII as is when printable, else `\xNN`, `\uNNNN` or `\UNNNNNNNN`.
+pub fn write_escaped(out: &mut String, text: &str, quote: char) {
     for character in text.chars() {
         match character {
             c if c == quote || c == '\\' => {
@@ -95,7 +85,7 @@ pub fn write_escaped(out: &mut String, text: &str, quote: char, non_ascii: NonAs
             c if c < ' ' || c == '\u{7f}' => {
                 let _ = write!(out, "\\x{:02x}", u32::from(c));
             }
-            c if c.is_ascii() || non_ascii == NonAscii::Verbatim || is_printable(c) => out.push(c),
+            c if c.is_ascii() || is_printable(c) => out.push(c),
             c => {
                 let code = u32::from(c);
                 let _ = match code {
@@ -113,7 +103,7 @@ pub fn str_repr(text: &str) -> String {
     let quote = quote_for(text.as_bytes());
     let mut out = String::with_capacity(text.len() + 2);
     out.push(quote);
-    write_escaped(&mut out, text, quote, NonAscii::Escaped);
+    write_escaped(&mut out, text, quote);
     out.push(quote);
     out
 }

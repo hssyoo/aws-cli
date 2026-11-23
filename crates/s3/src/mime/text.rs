@@ -1,4 +1,4 @@
-use pytext::repr::{NonAscii, quote_for, write_escaped};
+use pytext::repr::{quote_for, write_escaped};
 use std::fmt::Write as _;
 
 pub(super) fn lower(bytes: &[u8]) -> Vec<u8> {
@@ -90,12 +90,7 @@ pub(crate) fn repr(bytes: &[u8]) -> Vec<u8> {
     let mut buffer = [0; 4];
     for (code, _) in CodePoints(bytes) {
         match char::from_u32(code) {
-            Some(c) => write_escaped(
-                &mut result,
-                c.encode_utf8(&mut buffer),
-                quote,
-                NonAscii::Escaped,
-            ),
+            Some(c) => write_escaped(&mut result, c.encode_utf8(&mut buffer), quote),
             None => {
                 let _ = write!(result, "\\u{code:04x}");
             }

@@ -45,6 +45,18 @@ fn decimal(text: &str) -> Option<f64> {
     text.replace('_', "").parse().ok()
 }
 
+/// `sys.get_int_max_str_digits()`'s default.
+pub const INT_MAX_STR_DIGITS: usize = 4300;
+
+/// The ValueError `int()` raises for a literal of `digits` digits past
+/// [`INT_MAX_STR_DIGITS`].
+pub fn digit_limit_message(digits: usize) -> String {
+    format!(
+        "Exceeds the limit ({INT_MAX_STR_DIGITS} digits) for integer string conversion: value \
+         has {digits} digits; use sys.set_int_max_str_digits() to increase the limit"
+    )
+}
+
 /// `int(text)` in base 10 of stripped text: a sign and ASCII digits with
 /// single underscores between them, as canonical decimal text (no leading
 /// zeros, no `-0`) of any length. A caller that must refuse what

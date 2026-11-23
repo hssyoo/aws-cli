@@ -48,7 +48,7 @@ const _: () = {
 /// counting neither the sign, the surrounding whitespace nor underscores,
 /// however small the value: `int("0" * 4300 + "5")` fails while
 /// `int("0" * 4299 + "5")` is 5.
-pub const PYTHON_INT_MAX_STR_DIGITS: usize = 4300;
+pub const PYTHON_INT_MAX_STR_DIGITS: usize = pytext::number::INT_MAX_STR_DIGITS;
 /// Integer parsing failure preserves the native signed 64-bit policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseIntError {

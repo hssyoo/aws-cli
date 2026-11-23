@@ -1,15 +1,14 @@
 //! Python diagnostic string representation and code-point precision, over
-//! [`pytext::repr`]. Non-ASCII text is written as is
-//! ([`NonAscii::Verbatim`]), where `str.__repr__` escapes what is not
-//! printable: a difference kept from before `pytext`.
+//! [`pytext::repr`]: `str.__repr__`'s escapes, what `str.isprintable`
+//! rejects included.
 use crate::Value;
-use pytext::repr::{NonAscii, quote_for, write_escaped};
-/// Quote strings with Python's ASCII escaping, non-ASCII text as is.
+use pytext::repr::{quote_for, write_escaped};
+/// Quote strings as `str.__repr__` does.
 pub fn repr(text: &str) -> String {
     quoted(text.as_bytes(), |each| decode_bytes(text.as_bytes(), each))
 }
-/// Quote a string as Python does for ASCII, preserving non-ASCII UTF-8;
-/// every repr in this module builds on it. Text reads as Python decodes
+/// Quote a string as `str.__repr__` does; every repr in this module builds
+/// on it. Text reads as Python decodes
 /// argv, so each byte outside a valid UTF-8 sequence is its lone
 /// surrogate's `\udcXX` escape.
 pub fn write(value: &[u8], output: &mut Vec<u8>) {
@@ -21,7 +20,7 @@ fn quoted(value: &[u8], visit: impl FnOnce(&mut dyn FnMut(Piece<'_>))) -> String
     let mut output = String::with_capacity(value.len() + 2);
     output.push(quote);
     visit(&mut |piece| match piece {
-        Piece::Text(text) => write_escaped(&mut output, text, quote, NonAscii::Verbatim),
+        Piece::Text(text) => write_escaped(&mut output, text, quote),
         Piece::Surrogate(unit) => output.push_str(&escaped_surrogate(unit)),
     });
     output.push(quote);

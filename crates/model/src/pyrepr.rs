@@ -8,13 +8,13 @@ use pytext::number;
 use pytext::repr::{bytes_repr, str_repr};
 pub use pytext::repr::{float_repr, is_printable};
 
-/// What model's readers strip before a literal: Unicode whitespace and the
-/// separators U+001C to U+001F, which `str.strip()` removes. CPython's
-/// `float()` and `int()` strip only C's six from ASCII
-/// ([`pytext::number::C_SPACE`]), so they refuse the separators these
-/// accept: a difference kept, as before this crate.
+/// What CPython's `float()` and `int()` strip before a literal: C's six
+/// from ASCII ([`pytext::number::C_SPACE`]), not the separators U+001C to
+/// U+001F that `str.strip()` also removes, and Unicode whitespace beyond
+/// ASCII (`_PyUnicode_TransformDecimalAndSpaceToASCII`). Unicode's
+/// `White_Space` is exactly that set.
 fn stripped(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
+    text.trim_matches(char::is_whitespace)
 }
 
 /// `float(text)`: [`pytext::number::float`] after [`stripped`].
@@ -23,11 +23,18 @@ pub fn float_from_text(text: &str) -> Option<f64> {
 }
 
 /// `int(text)` in base 10, after [`stripped`]: an `Integer` or, beyond
-/// `i64`, a `BigInteger`, of any length. Python also reads non-ASCII
-/// decimal digits; those are refused here.
-pub fn int_from_text(text: &str) -> Option<Value> {
-    let canonical = number::int(stripped(text))?;
-    Some(match canonical.parse::<i64>() {
+/// `i64`, a `BigInteger`, of at most `sys.get_int_max_str_digits()` digits.
+/// `Err` holds the ValueError's text. Python also reads non-ASCII decimal
+/// digits; those are refused here.
+pub fn int_from_text(text: &str) -> Result<Value, String> {
+    let body = stripped(text);
+    let canonical = number::int(body)
+        .ok_or_else(|| format!("invalid literal for int() with base 10: {}", str_repr(text)))?;
+    let digits = number::digit_count(body);
+    if digits > number::INT_MAX_STR_DIGITS {
+        return Err(number::digit_limit_message(digits));
+    }
+    Ok(match canonical.parse::<i64>() {
         Ok(value) => Value::Integer(value),
         Err(_) => Value::BigInteger(canonical.into()),
     })
