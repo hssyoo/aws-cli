@@ -95,3 +95,41 @@ fn coverage_is_per_pattern_and_per_scope() -> Result<()> {
         assert!(uncovered(&found, &[&elsewhere], "sts", "GetCallerIdentity").is_some());
     })
 }
+
+const PAGINATOR_FIX: &str =
+    "awscli.customizations.dynamodb.paginatorfix.register_dynamodb_paginator_fix";
+
+/// With the client's real table, dynamodb's discovery block is covered
+/// (`customizations::DYNAMODB`); what keeps its operations Python's is the
+/// CLI's own: the paginator fix on its calls and the wizard commands on its
+/// command table.
+#[test]
+fn dynamodb_is_uncovered_only_by_its_cli_customizations() -> Result<()> {
+    with_models(|models| {
+        let table = &customizations::TABLE[..];
+        let found = matches(&models, "dynamodb", "describe-table");
+        let missing: Vec<(&str, &str)> = found
+            .iter()
+            .filter(|one| {
+                uncovered(
+                    std::slice::from_ref(*one),
+                    table,
+                    "dynamodb",
+                    "DescribeTable",
+                )
+                .is_some()
+            })
+            .map(|one| (&*one.pattern, &*one.name))
+            .collect();
+        assert_eq!(
+            missing,
+            [
+                (
+                    "building-command-table.dynamodb",
+                    "awscli.customizations.wizard.commands.register_wizard_commands"
+                ),
+                ("calling-command.dynamodb.*", PAGINATOR_FIX),
+            ]
+        );
+    })
+}
