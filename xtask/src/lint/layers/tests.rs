@@ -96,6 +96,7 @@ fn the_table_keeps_the_plan_s_dependency_rules() {
         assert!(!row(name).contains(&"client"), "{name}");
     }
     assert!(!row("customizations").contains(&"s3"));
+    assert!(!row("service-errors").contains(&"s3") && !row("service-errors").contains(&"command"));
 }
 
 /// Every crate a row allows has a row of its own.

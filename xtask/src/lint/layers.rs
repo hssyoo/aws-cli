@@ -56,6 +56,10 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ),
     // L3: the command API, over format and the model, never the client.
     ("command", COMMAND),
+    // The CLI's rendering of a call's errors (`errorhandler.py`): over the
+    // client's errors, format and the command API's floor, never a command
+    // crate.
+    ("service-errors", SERVICE_ERRORS),
     // L4: the command crates. `customizations` holds the per-service
     // edits and hooks, over the client and the command API (§4.2); its
     // one drawn edge to `s3` goes through a trait in `command`.
@@ -96,6 +100,16 @@ const CUSTOMIZATIONS: &[&str] = &[
     "cli-core",
     "client",
     "command",
+    "format",
+    "model",
+    "pytext",
+    "timestamp",
+];
+const SERVICE_ERRORS: &[&str] = &[
+    "awscli-config",
+    "cli-core",
+    "client",
+    "credentials",
     "format",
     "model",
     "pytext",
