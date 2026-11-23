@@ -536,3 +536,15 @@ fn json_payloads_are_the_parsed_body() -> TestResult {
     );
     Ok(())
 }
+
+/// A gzip body, which botocore leaves compressed (`URLLib3Session.send`'s
+/// `decode_content=False`), fails as its `bytes.decode` does.
+#[test]
+fn a_gzip_body_fails_as_its_decode_does() {
+    assert_eq!(
+        output("Go", &[("Content-Encoding", "gzip")], b"\x1f\x8b\x08\x00"),
+        Err(ParseError::new(
+            "'utf-8' codec can't decode byte 0x8b in position 1: invalid start byte"
+        ))
+    );
+}

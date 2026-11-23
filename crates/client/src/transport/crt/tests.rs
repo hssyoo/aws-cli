@@ -67,8 +67,9 @@ fn signed_post(url: &str) -> TestResult<HttpRequest> {
 /// names, answers `response`, and returns the head and the body.
 fn serve_once(
     listener: TcpListener,
-    response: &'static [u8],
+    response: &[u8],
 ) -> std::thread::JoinHandle<std::io::Result<(String, Vec<u8>)>> {
+    let response = response.to_vec();
     std::thread::spawn(move || {
         let (mut stream, _) = listener.accept()?;
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
@@ -87,7 +88,7 @@ fn serve_once(
                     .and_then(|v| v.parse::<usize>().ok())
                     .unwrap_or(0);
                 if raw.len() >= split + 4 + length {
-                    stream.write_all(response)?;
+                    stream.write_all(&response)?;
                     return Ok((head, raw[split + 4..split + 4 + length].to_vec()));
                 }
             }
@@ -238,5 +239,98 @@ fn failures_map_to_botocore_s_transport_errors() -> TestResult {
         "{untrusted:?}"
     );
     server.finish()?;
+    Ok(())
+}
+
+/// `putrequest`'s defaults give way to the request's own headers of their
+/// names, in any case (`skip_host`, `skip_accept_encoding`); the others
+/// keep their place.
+#[test]
+fn a_request_s_own_host_or_accept_encoding_replaces_the_default() {
+    let names = |own: &[(&str, &str)]| {
+        let own = Headers::from_pairs(own.iter().copied());
+        wire_headers("h.example", &own)
+            .into_iter()
+            .map(|(name, value)| format!("{name}: {value}"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        names(&[("User-Agent", "u")]),
+        [
+            "Host: h.example",
+            "Accept-Encoding: identity",
+            "User-Agent: u"
+        ]
+    );
+    assert_eq!(
+        names(&[("accept-encoding", "gzip"), ("User-Agent", "u")]),
+        ["Host: h.example", "accept-encoding: gzip", "User-Agent: u"]
+    );
+    assert_eq!(
+        names(&[("User-Agent", "u"), ("HOST", "other.example")]),
+        [
+            "Accept-Encoding: identity",
+            "User-Agent: u",
+            "HOST: other.example"
+        ]
+    );
+}
+
+/// `{"records": []}` as `gzip.compress(..., mtime=0)` writes it.
+const GZIPPED: &[u8] = b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x02\xff\xab\x56\x2a\x4a\x4d\xce\
+    \x2f\x4a\x29\x56\xb2\x52\x88\x8e\xad\x05\x00\x9a\x75\x09\xb7\x0f\x00\x00\x00";
+
+/// neptunedata `GetPropertygraphStream --encoding gzip`: the member's
+/// `Accept-Encoding` goes out alone, in the request's order, and the
+/// signature over it verifies. The gzip answer comes back as it arrived,
+/// `Content-Encoding` and all, as botocore reads it (`decode_content=False`).
+#[test]
+fn a_model_accept_encoding_is_sent_once_and_its_answer_is_not_decoded() -> TestResult {
+    let head = b"HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 35\r\n\r\n";
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    let server = serve_once(listener, &[&head[..], GZIPPED].concat());
+    let mut request = HttpRequest {
+        method: Method::Get,
+        url: Url::parse(&format!("http://127.0.0.1:{port}/propertygraph/stream")).ok_or("url")?,
+        headers: Headers::from_pairs([("Accept-Encoding", "gzip"), ("User-Agent", "aws-cli/2")]),
+        body: Vec::new(),
+    };
+    let credentials = SigningCredentials {
+        access_key_id: "AKIDTRANSPORT".into(),
+        secret_access_key: SECRET.into(),
+        session_token: None,
+        account_id: None,
+    };
+    auth::sign(
+        "us-east-1",
+        "neptune-db",
+        &credentials,
+        timestamp::Timestamp::now(),
+        &mut request,
+    );
+    let transport = transport(::crt::runtime::Trust::Platform, env(&[]))?;
+    let response = transport.send(&request, TIMEOUTS)?;
+    let (head, body) = server.join().map_err(|_| "server panicked")??;
+    sigv4::testing::verify(&head, &body, SECRET, sigv4::PathEncoding::Normalized)?;
+    let names: Vec<&str> = head
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .map(|(name, _)| name)
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "Host",
+            "Accept-Encoding",
+            "User-Agent",
+            "X-Amz-Date",
+            "Authorization"
+        ]
+    );
+    assert!(head.contains("\r\nAccept-Encoding: gzip\r\n"), "{head}");
+    assert_eq!(response.headers.get("content-encoding"), Some("gzip"));
+    assert_eq!(response.body, GZIPPED);
     Ok(())
 }
