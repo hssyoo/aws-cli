@@ -17,10 +17,9 @@ use client::endpoint::{EndpointConfig, EndpointInputs};
 use client::error::{CallError, ParseError};
 use client::hooks::Customization;
 use client::http::{HttpRequest, HttpResponse};
-use client::protocol::ParseOptions;
 use client::transport::{Timeouts, Transport, TransportError};
 use command::{Context, Invocation, Preflight};
-use format::{Delivered, Destination, Outcome, OutputFormat, TimestampFormat, TimestampParser};
+use format::{Delivered, Destination, Outcome, OutputFormat, TimestampParser};
 use model::shapes::Model;
 use model::value::Value;
 use std::cell::OnceCell;
@@ -81,31 +80,6 @@ impl ServiceInvocation {
     }
 }
 
-/// The session's `timestamp_parser`, set once by the preflight; the
-/// client's parse options are `'static` functions that read it.
-static TIMESTAMPS: OnceLock<TimestampParser> = OnceLock::new();
-
-fn parse_timestamp(wire: &Value) -> Result<Value, ParseError> {
-    let parser = TIMESTAMPS
-        .get()
-        .copied()
-        .unwrap_or_else(|| TimestampParser::new(TimestampFormat::Iso8601, Some(0)));
-    parser
-        .parse(wire)
-        .map_err(|error| ParseError::new(format!("{error:?}")))
-}
-
-/// The CLI's identity blob parser (`register_identity_blob_parser`): a blob
-/// prints as the base64 text it arrived as.
-fn identity_blob(text: &str) -> Result<Value, ParseError> {
-    Ok(Value::String(text.to_owned()))
-}
-
-const CLI_PARSE: ParseOptions<'static> = ParseOptions {
-    timestamp: &parse_timestamp,
-    blob: &identity_blob,
-};
-
 impl Invocation for ServiceInvocation {
     fn preflight(&self, cx: &Preflight<'_>) -> Result<(), PythonReason> {
         let format = cx.output.format;
@@ -122,7 +96,6 @@ impl Invocation for ServiceInvocation {
         {
             return Err(PythonReason::OutputEncoding);
         }
-        let _ = TIMESTAMPS.set(parser);
         let failure = |error: CallError| service_errors::call_failure(&error, &self.model);
         let client = match self.client(cx)? {
             Ok(Ok(client)) => {
@@ -266,7 +239,7 @@ impl ServiceInvocation {
                 cli_core::interrupt::process_state(),
             )),
             customizations: self.customizations,
-            parse: cli_parse_hooks(),
+            parse: cli_parse_hooks(cx.output.timestamps),
             user_agent: UserAgentContext {
                 host: cli_core::client_config::user_agent::host(),
                 distribution: cli_core::client_config::user_agent::distribution(),
@@ -277,11 +250,18 @@ impl ServiceInvocation {
     }
 }
 
-/// The CLI's response parse handlers, owned by the client.
-fn cli_parse_hooks() -> client::protocol::ParseHooks {
+/// The CLI's response parse handlers, which the client owns: the session's
+/// timestamp parser (`add_timestamp_parser`), and the identity blob parser
+/// (`register_identity_blob_parser`), which leaves a blob as the base64 text
+/// it arrived as.
+fn cli_parse_hooks(timestamps: TimestampParser) -> client::protocol::ParseHooks {
     client::protocol::ParseHooks {
-        timestamp: Arc::new(CLI_PARSE.timestamp),
-        blob: Arc::new(CLI_PARSE.blob),
+        timestamp: Arc::new(move |wire: &Value| {
+            timestamps
+                .parse(wire)
+                .map_err(|error| ParseError::new(format!("{error:?}")))
+        }),
+        blob: Arc::new(|text: &str| Ok(Value::String(text.to_owned()))),
     }
 }
 
