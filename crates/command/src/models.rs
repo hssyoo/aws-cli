@@ -186,6 +186,11 @@ impl<'a> ModelSource<'a> {
         }
     }
 
+    /// The search path the models come from.
+    pub const fn search(&self) -> &SearchSource<'a> {
+        &self.models
+    }
+
     pub const fn patterns(&self) -> &Patterns {
         &self.patterns
     }

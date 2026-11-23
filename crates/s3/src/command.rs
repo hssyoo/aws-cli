@@ -176,6 +176,12 @@ pub fn embeds_trust_bundle(payload: &[u8]) -> bool {
     cacert::find(payload).is_some()
 }
 
+/// botocore's CA bundle as the payload embeds it, which a model operation's
+/// client trusts as the s3 commands do when nothing configures another.
+pub fn embedded_trust_bundle(payload: &[u8]) -> Option<&[u8]> {
+    cacert::find(payload)
+}
+
 fn embedded_ca(context: &CommandContext<'_, impl EnvMap>, options: &mut RuntimeOptions) {
     let embedded = matches!(
         context.client.settings.trust.value,
@@ -348,7 +354,9 @@ pub fn source_delete_user_agent(client: &cli_core::client_config::ClientConfig) 
     )
 }
 
-fn user_agent_versions() -> cli_core::client_config::user_agent::Versions<'static> {
+/// The versions every native client's User-Agent names: this CLI's, the
+/// CRT's it was built with, and the compiler's.
+pub fn user_agent_versions() -> cli_core::client_config::user_agent::Versions<'static> {
     cli_core::client_config::user_agent::Versions {
         cli: cli_core::AWS_CLI_VERSION,
         crt: env!("AWSCRT_VERSION"),

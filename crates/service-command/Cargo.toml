@@ -14,6 +14,9 @@ awscli-argparse = { path = "../awscli-argparse" }
 cli-core = { path = "../cli-core" }
 client = { path = "../client" }
 command = { path = "../command" }
+credentials = { path = "../credentials" }
+crt = { path = "../crt" }
+format = { path = "../format" }
 model = { path = "../model" }
 
 [dev-dependencies]

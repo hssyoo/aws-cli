@@ -28,7 +28,7 @@ fn keys(value: &Value) -> Vec<&str> {
 #[test]
 fn members_bind_in_model_order_as_add_to_params_stores_them() -> Result<()> {
     with_models(|models| {
-        let source = ServiceSource::new(models, &[]);
+        let source = crate::testing::source(models, &[]);
         let value = input(
             &source,
             &[

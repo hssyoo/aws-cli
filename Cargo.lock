@@ -20,9 +20,11 @@ dependencies = [
  "command",
  "crt",
  "crt-sys",
+ "customizations",
  "pyload",
  "python-fallback",
  "s3",
+ "service-command",
 ]
 
 [[package]]
@@ -378,6 +380,9 @@ dependencies = [
  "cli-core",
  "client",
  "command",
+ "credentials",
+ "crt",
+ "format",
  "model",
  "pyload",
 ]

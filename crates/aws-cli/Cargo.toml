@@ -20,7 +20,9 @@ cli-core = { path = "../cli-core" }
 cli-router = { path = "../cli-router" }
 command = { path = "../command" }
 crt = { path = "../crt" }
+customizations = { path = "../customizations" }
 s3 = { path = "../s3" }
+service-command = { path = "../service-command" }
 pyload = { path = "../pyload", features = ["embedded"] }
 
 [target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]

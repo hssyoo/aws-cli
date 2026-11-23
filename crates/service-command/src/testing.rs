@@ -88,3 +88,16 @@ pub fn replacing_all(
     }));
     Box::leak(Box::new([&*customization]))
 }
+
+/// The registry's source over `models`, trusting the platform's roots.
+pub fn source<'a>(
+    models: ModelSource<'a>,
+    customizations: &'static [&'static Customization],
+) -> crate::ServiceSource<'a> {
+    let versions = cli_core::client_config::user_agent::Versions {
+        cli: "2.0.0",
+        crt: "0.0.0",
+        rust: "1.96.0",
+    };
+    crate::ServiceSource::new(models, customizations, None, versions)
+}

@@ -82,7 +82,12 @@ pub fn unimplemented_trait(service: &Service, operation: &Operation) -> bool {
         || [operation.input, operation.output]
             .into_iter()
             .flatten()
-            .any(|shape| streams(model, shape) || reaches_document(model, shape, &mut Vec::new()))
+            .any(|shape| {
+                streams(model, shape)
+                    || reaches(model, shape, &mut Vec::new(), &|found| {
+                        found.traits.is(Flag::Document)
+                    })
+            })
 }
 
 fn streams(model: &Model, shape: ShapeId) -> bool {
@@ -92,23 +97,36 @@ fn streams(model: &Model, shape: ShapeId) -> bool {
     })
 }
 
-fn reaches_document(model: &Model, shape: ShapeId, seen: &mut Vec<ShapeId>) -> bool {
+/// Whether `shape` reaches a timestamp member, whose wire value the
+/// session's timestamp parser reads.
+pub fn reaches_timestamp(model: &Model, shape: ShapeId) -> bool {
+    reaches(model, shape, &mut Vec::new(), &|found| {
+        matches!(found.kind, ShapeKind::Timestamp)
+    })
+}
+
+fn reaches(
+    model: &Model,
+    shape: ShapeId,
+    seen: &mut Vec<ShapeId>,
+    wanted: &dyn Fn(&model::shapes::Shape) -> bool,
+) -> bool {
     if seen.contains(&shape) {
         return false;
     }
     seen.push(shape);
     let found = model.shape(shape);
-    if found.traits.is(Flag::Document) {
+    if wanted(found) {
         return true;
     }
     match found.kind {
         ShapeKind::Structure { .. } => model
             .members(shape)
             .iter()
-            .any(|member| reaches_document(model, member.shape, seen)),
-        ShapeKind::List { member } => reaches_document(model, member, seen),
+            .any(|member| reaches(model, member.shape, seen, wanted)),
+        ShapeKind::List { member } => reaches(model, member, seen, wanted),
         ShapeKind::Map { key, value } => {
-            reaches_document(model, key, seen) || reaches_document(model, value, seen)
+            reaches(model, key, seen, wanted) || reaches(model, value, seen, wanted)
         }
         _ => false,
     }

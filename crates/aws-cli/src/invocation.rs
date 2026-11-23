@@ -47,7 +47,8 @@ fn route_and_dispatch(env: &SnapshotEnv, arguments: &[OsString]) -> io::Result<O
         prog: arguments.first().cloned().unwrap_or_else(|| "aws".into()),
         formatter_width: command::formatter_width(env, columns),
     };
-    let registry = crate::registry::REGISTRY;
+    let source = crate::registry::source(env);
+    let registry = crate::registry::registry(source.as_ref());
     let mut parsed = awscli_argparse::parse_os(argv, &options, &registry.tables());
     let files = shared_config::load(&awscli_config::StdFs, env).map_err(io::Error::other)?;
     let boto_config_credentials =
@@ -86,7 +87,7 @@ fn route_and_dispatch(env: &SnapshotEnv, arguments: &[OsString]) -> io::Result<O
         stdout_is_tty,
         shared_files: &files,
     };
-    dispatch(verdict, &parsed, &environment, &directory)
+    dispatch(verdict, &parsed, &environment, &directory, &variables)
 }
 fn terminal_columns(is_terminal: bool) -> Option<usize> {
     #[cfg(unix)]
@@ -106,6 +107,7 @@ fn dispatch(
     parsed: &awscli_argparse::ParseResult<'_>,
     environment: &cli_error::Environment<'_, SnapshotEnv>,
     directory: &std::path::Path,
+    variables: &HashMap<String, OsString>,
 ) -> io::Result<Outcome> {
     match verdict {
         Verdict::Python(reason) => Ok(Outcome::Python(reason)),
@@ -142,6 +144,20 @@ fn dispatch(
             if run.streams == ::command::StreamPolicy::Formatted
                 && let Some(reason) = cli_error::dispose_formatted(environment, parsed)
             {
+                return Ok(Outcome::Python(reason));
+            }
+            // Before any native runtime starts, so a Python fallback finds
+            // the process as routing left it.
+            let preflight = ::command::Preflight {
+                env: environment.env,
+                variables,
+                shared_files: environment.shared_files,
+                globals: &run.globals,
+                directory,
+                settings: &run.settings,
+                stdout_is_tty: environment.stdout_is_tty,
+            };
+            if let Err(reason) = run.invocation.preflight(&preflight) {
                 return Ok(Outcome::Python(reason));
             }
             let status = crate::bootstrap::run_after_preparation(

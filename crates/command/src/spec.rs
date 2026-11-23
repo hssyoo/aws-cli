@@ -61,9 +61,37 @@ pub enum Admission {
 
 /// A bound, admitted command: everything argv decided, ready to run.
 pub trait Invocation: std::fmt::Debug {
+    /// What the command decides from the process's settings before any
+    /// native runtime starts, any request is sent or anything is written:
+    /// a reason the invocation is Python's after all. It runs once, before
+    /// [`Invocation::run`].
+    fn preflight(&self, _cx: &Preflight<'_>) -> Result<(), PythonReason> {
+        Ok(())
+    }
     /// Run the command; the status it exits with, or the failure the
     /// error-handler chain renders.
     fn run(&self, cx: &mut Context<'_>) -> Result<u8, CommandFailure>;
+}
+
+/// What an invocation's preflight reads.
+pub struct Preflight<'a> {
+    pub env: &'a cli_core::SnapshotEnv,
+    /// The process's environment, as the unpack loop and the pager read it.
+    pub variables: &'a std::collections::HashMap<String, std::ffi::OsString>,
+    pub shared_files: &'a ParsedFiles,
+    pub globals: &'a Globals,
+    pub directory: &'a Path,
+    /// The settings the router resolved for the command's client.
+    pub settings: &'a cli_core::client_config::ClientSettings,
+    pub stdout_is_tty: bool,
+}
+impl std::fmt::Debug for Preflight<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Preflight")
+            .field("globals", self.globals)
+            .field("stdout_is_tty", &self.stdout_is_tty)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What an invocation may read and write as it runs.

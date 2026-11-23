@@ -20,7 +20,7 @@ fn admitted(
 fn a_covered_operation_is_admitted_with_its_request() -> Result<()> {
     with_models(|models| {
         let everything = replacing_all(&models, "zquery", "get-thing");
-        let source = ServiceSource::new(models, everything);
+        let source = crate::testing::source(models, everything);
         let found = admitted(
             &source,
             everything,
@@ -38,7 +38,7 @@ fn a_covered_operation_is_admitted_with_its_request() -> Result<()> {
 fn each_stage_names_its_refusal() -> Result<()> {
     with_models(|models| {
         let everything = replacing_all(&models, "zjson", "list-things");
-        let source = ServiceSource::new(models, everything);
+        let source = crate::testing::source(models, everything);
         let refused = |customizations: &[&Customization], argv: &[&str]| {
             admitted(&source, customizations, argv).err()
         };

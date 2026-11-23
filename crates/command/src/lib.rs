@@ -12,6 +12,8 @@ mod spec;
 #[doc(inline)]
 pub use registry::{Operation, OperationSource, Registry, Resolution};
 #[doc(inline)]
-pub use spec::{Admission, BindFn, CommandSpec, Context, Invocation, Needs, StreamPolicy};
+pub use spec::{
+    Admission, BindFn, CommandSpec, Context, Invocation, Needs, Preflight, StreamPolicy,
+};
 #[cfg(test)]
 mod tests;
