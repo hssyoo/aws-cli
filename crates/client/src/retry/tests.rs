@@ -239,3 +239,36 @@ fn the_quota_limits_retries_across_calls() {
         None
     );
 }
+
+/// `_get_retry_after_delay`: `int(value) / 1000.0` as Python reads it
+/// (whitespace, a sign, underscores), ignored when negative, unreadable or
+/// beyond a float (`OverflowError`); a value too large for the delay to
+/// hold still counts, as the cap at `t_i + 5` makes any such value equal.
+#[test]
+fn retry_after_is_read_as_python_s_int() {
+    let after = |value: &str| retry_after(&Headers::from_pairs([("x-amz-retry-after", value)]));
+    assert_eq!(after(" 1500 "), Some(Duration::from_millis(1500)));
+    assert_eq!(after("+2_000"), Some(Duration::from_secs(2)));
+    assert_eq!(after("-1"), None);
+    assert_eq!(after("soon"), None);
+    assert_eq!(after("1.5"), None);
+    assert_eq!(after(&"9".repeat(30)), Some(Duration::MAX));
+    assert_eq!(after(&"9".repeat(400)), None);
+}
+
+/// When the quota refuses a retry, the verdict still carries the delay
+/// botocore computes for a long-polling operation's sleep.
+#[test]
+fn an_exhausted_quota_still_reports_the_delay() {
+    let policy = Standard::new(100, Duration::from_millis(50));
+    let mut refused = None;
+    for attempt in 1..60 {
+        let verdict = policy.needs_retry(attempt, Some(ErrorKind::Transient), None, 0.5);
+        if verdict.delay.is_none() {
+            refused = Some(verdict);
+            break;
+        }
+    }
+    let refused = refused.unwrap_or_else(|| panic!("the quota never ran out"));
+    assert!(refused.exhausted_delay.is_some_and(|delay| delay > Duration::ZERO));
+}

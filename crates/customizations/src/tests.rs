@@ -417,3 +417,39 @@ fn a_planted_service_name_is_found() -> TestResult {
     assert!(named_services("let x = \"not-a-service\";", &names).is_empty());
     Ok(())
 }
+
+/// botocore's `_LONG_POLLING_OPERATIONS` (retries/standard.py), each by the
+/// model directory its hyphenized service id names: `sfn` is
+/// `stepfunctions`. The table here is that one, and botocore still lists
+/// each operation.
+#[test]
+fn long_polling_operations_are_botocore_s() -> TestResult {
+    let standard =
+        std::fs::read_to_string(data().join("retries/standard.py"))?;
+    let mut found: Vec<(&str, &str)> = TABLE
+        .iter()
+        .filter(|customization| {
+            customization
+                .interceptors
+                .iter()
+                .any(|interceptor| interceptor.long_polls())
+        })
+        .filter_map(|customization| {
+            Some((customization.scope.service?, customization.scope.operation?))
+        })
+        .collect();
+    found.sort_unstable();
+    assert_eq!(
+        found,
+        [
+            ("sqs", "ReceiveMessage"),
+            ("stepfunctions", "GetActivityTask"),
+            ("swf", "PollForActivityTask"),
+            ("swf", "PollForDecisionTask"),
+        ]
+    );
+    for (_, operation) in found {
+        assert!(standard.contains(&format!("'{operation}'")), "{operation}");
+    }
+    Ok(())
+}

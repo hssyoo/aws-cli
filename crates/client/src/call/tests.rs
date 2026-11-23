@@ -909,3 +909,43 @@ fn the_answering_provider_s_features_join_the_user_agent() -> TestResult {
     );
     Ok(())
 }
+
+/// Marks its operation long-polling.
+#[derive(Debug)]
+struct LongPoll;
+
+impl Interceptor for LongPoll {
+    fn long_polls(&self) -> bool {
+        true
+    }
+}
+
+static LONG_POLL: Customization = Customization {
+    id: "long-poll",
+    scope: Scope::operation("zfake", "Op"),
+    setting_defaults: &[],
+    builtins: &[],
+    interceptors: &[&LongPoll],
+    replaces: &[],
+};
+static LONG_POLLS: [&Customization; 1] = [&LONG_POLL];
+
+/// `RetryHandler.needs_retry`: once the quota refuses a retry, a
+/// long-polling operation sleeps the delay it would have waited, then
+/// stops; another operation stops at once.
+#[test]
+fn a_long_polling_operation_sleeps_when_the_quota_runs_out() -> TestResult {
+    for (customizations, sleeps) in [(&LONG_POLLS[..], true), (&[][..], false)] {
+        let mut settings = settings();
+        settings.max_attempts = Some(Resolved::new(100, Source::Env("AWS_MAX_ATTEMPTS")));
+        let f = fixture(settings, keys(), customizations)?;
+        for _ in 0..40 {
+            f.transport.respond(status(500, "InternalError"));
+        }
+        assert!(f.client.call("Op", input("a")).is_err());
+        assert_eq!(f.transport.sent().len(), 36);
+        // One sleep per retry, and with long polling one more at the end.
+        assert_eq!(f.runtime.slept().len(), if sleeps { 36 } else { 35 });
+    }
+    Ok(())
+}
