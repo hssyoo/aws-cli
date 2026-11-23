@@ -1,6 +1,8 @@
 #include "native.h"
 #include "testing.h"
 #include <aws/auth/auth.h>
+#include <aws/cal/hash.h>
+#include <aws/cal/hmac.h>
 #include <aws/common/allocator.h>
 #include <aws/common/cross_process_lock.h>
 #include <aws/common/error.h>
@@ -140,6 +142,8 @@ CHECK(aws_endpoints_resolved_endpoint_get_url,int,const struct aws_endpoints_res
 CHECK(aws_endpoints_resolved_endpoint_get_properties,int,const struct aws_endpoints_resolved_endpoint *,struct aws_byte_cursor *);
 CHECK(aws_endpoints_resolved_endpoint_get_headers,int,const struct aws_endpoints_resolved_endpoint *,const struct aws_hash_table **);
 CHECK(aws_hash_table_get_entry_count,size_t,const struct aws_hash_table *);
+CHECK(aws_sha256_compute,int,struct aws_allocator *,const struct aws_byte_cursor *,struct aws_byte_buf *,size_t);
+CHECK(aws_sha256_hmac_compute,int,struct aws_allocator *,const struct aws_byte_cursor *,const struct aws_byte_cursor *,struct aws_byte_buf *,size_t);
 CHECK(aws_endpoints_resolved_endpoint_get_error,int,const struct aws_endpoints_resolved_endpoint *,struct aws_byte_cursor *);
 CHECK(aws_endpoints_resolved_endpoint_release,struct aws_endpoints_resolved_endpoint *,struct aws_endpoints_resolved_endpoint *);
 _Static_assert(AWS_ENDPOINTS_RESOLVED_ERROR == 1,"endpoint rule error type");

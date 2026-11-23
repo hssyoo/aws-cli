@@ -327,6 +327,8 @@ c_functions! {
     pub fn aws_cross_process_lock_release(instance_lock: *mut AwsCrossProcessLock);
 }
 
+#[cfg(feature = "testing")]
+pub mod cal;
 pub mod endpoints;
 pub mod native;
 #[cfg(all(feature = "testing", not(windows)))]

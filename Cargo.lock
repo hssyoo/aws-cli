@@ -138,6 +138,7 @@ dependencies = [
  "crt-sys",
  "libc",
  "numa",
+ "sha256",
  "sigv4",
  "timestamp",
 ]

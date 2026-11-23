@@ -21,6 +21,7 @@ arbitrary = { workspace = true, optional = true }
 
 [dev-dependencies]
 arbitrary.workspace = true
+sha256 = { path = "../sha256" }
 crt-sys = { path = "../crt-sys", features = ["testing"] }
 sigv4 = { path = "../sigv4", features = ["testing"] }
 timestamp = { path = "../timestamp" }
