@@ -592,3 +592,79 @@ fn an_endpoint_with_headers_is_refused() -> TestResult {
     );
     Ok(())
 }
+
+/// Every endpoint rule under `rules`, with whether a condition on the way
+/// to it reads `AccountId`.
+fn endpoint_rules<'a>(rules: &'a Value, under: bool, out: &mut Vec<(bool, &'a Value)>) {
+    let Value::List(rules) = rules else {
+        return;
+    };
+    for rule in rules {
+        let conditions = field(rule, "conditions").map(model::pyrepr::py_repr);
+        let reads = under || conditions.is_some_and(|text| text.contains("'AccountId'"));
+        match text(rule, "type") {
+            Some("tree") => {
+                endpoint_rules(field(rule, "rules").unwrap_or(&Value::Null), reads, out)
+            }
+            Some("endpoint") => out.push((reads, rule)),
+            _ => {}
+        }
+    }
+}
+
+/// The deferred account id resolves only in `send`, after credentials, where
+/// a refusal can no longer send the call to Python. So no shipped rule set
+/// may give an account-id endpoint a refusal its other endpoints lack: none
+/// carries headers, and each signs with SigV4 or nothing. Prints the
+/// rule sets it checked.
+#[test]
+fn account_id_endpoints_refuse_nothing_more() -> TestResult {
+    let data = repository().join("awscli/botocore/data");
+    let mut checked = Vec::new();
+    for service in std::fs::read_dir(&data)? {
+        let service = service?.path();
+        if !service.is_dir() {
+            continue;
+        }
+        for version in std::fs::read_dir(&service)? {
+            let path = version?.path().join("endpoint-rule-set-1.json");
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            let rules = Value::from_json(&bytes)?;
+            let reads = matches!(field(&rules, "parameters"), Some(Value::Map(parameters))
+                if parameters.iter().any(|(_, def)| text(def, "builtIn") == Some("AWS::Auth::AccountId")));
+            if !reads {
+                continue;
+            }
+            let mut endpoints = Vec::new();
+            endpoint_rules(
+                field(&rules, "rules").unwrap_or(&Value::Null),
+                false,
+                &mut endpoints,
+            );
+            let account: Vec<&Value> = endpoints
+                .iter()
+                .filter(|(reads, _)| *reads)
+                .map(|(_, rule)| *rule)
+                .collect();
+            for rule in &account {
+                let endpoint = field(rule, "endpoint").ok_or("endpoint")?;
+                let headers =
+                    matches!(field(endpoint, "headers"), Some(Value::Map(map)) if !map.is_empty());
+                assert!(!headers, "{}", path.display());
+                let schemes = field(endpoint, "properties")
+                    .and_then(|properties| field(properties, "authSchemes"));
+                if let Some(Value::List(schemes)) = schemes {
+                    for scheme in schemes {
+                        assert_eq!(text(scheme, "name"), Some("sigv4"), "{}", path.display());
+                    }
+                }
+            }
+            checked.push(format!("{} {}", path.display(), account.len()));
+        }
+    }
+    assert!(!checked.is_empty());
+    eprintln!("account-id endpoints checked:\n{}", checked.join("\n"));
+    Ok(())
+}
