@@ -2,6 +2,7 @@ use super::super::{Model, Uninterpreted};
 use super::*;
 use crate::testing::{self, Result};
 use serde_json::{Map, Value as Json};
+use std::collections::BTreeMap;
 
 type Object = Map<String, Json>;
 
@@ -180,7 +181,7 @@ fn object(value: Option<&Json>) -> &Object {
 }
 
 /// How often each ignored key occurs in `json`, by list.
-fn ignored_occurrences(json: &Json, counts: &mut std::collections::BTreeMap<String, usize>) {
+fn ignored_occurrences(json: &Json, counts: &mut BTreeMap<String, usize>) {
     let mut count = |list: &str, object: &Object, ignored: &[&str]| {
         for key in object.keys().filter(|key| ignored.contains(&key.as_str())) {
             *counts.entry(format!("{list} {key}")).or_default() += 1;
@@ -219,6 +220,39 @@ fn ignored_occurrences(json: &Json, counts: &mut std::collections::BTreeMap<Stri
     }
 }
 
+/// Counts, per uninterpreted key of `service`, the operations reaching it,
+/// and checks every recorded key is reached.
+fn count_reached(service: &str, model: &Model, reached: &mut BTreeMap<String, usize>) {
+    for operation in model.operations() {
+        for key in model.uninterpreted_reached(operation) {
+            *reached.entry(format!("{service} {key}")).or_default() += 1;
+        }
+    }
+    for key in model.uninterpreted() {
+        let row = format!("{service} {key}");
+        assert!(reached.contains_key(&row), "{row}");
+    }
+}
+
+fn print_census(
+    heading: &str,
+    reached: &BTreeMap<String, usize>,
+    ignored: &BTreeMap<String, usize>,
+) -> Result<()> {
+    let mut table = format!("{heading}uninterpreted key -> operations refused\n");
+    for (key, count) in reached {
+        table.push_str(&format!("  {key}: {count}\n"));
+    }
+    table.push_str("ignored key -> occurrences\n");
+    for (key, count) in ignored {
+        table.push_str(&format!("  {key}: {count}\n"));
+    }
+    Ok(std::io::Write::write_all(
+        &mut std::io::stderr(),
+        table.as_bytes(),
+    )?)
+}
+
 /// The census of every shipped model (client F1): the operations each
 /// uninterpreted key reaches, which a client refuses, and how often each
 /// ignored key occurs. It prints the table and asserts its structure: every
@@ -229,8 +263,8 @@ fn ignored_occurrences(json: &Json, counts: &mut std::collections::BTreeMap<Stri
 fn census_of_the_shipped_models() -> Result<()> {
     use crate::source::{DirSource, Kind, Source, latest_version};
     let source = DirSource::new(testing::data_dir());
-    let (mut operations, mut reached) = (0, std::collections::BTreeMap::<String, usize>::new());
-    let mut ignored = std::collections::BTreeMap::new();
+    let (mut operations, mut reached) = (0, BTreeMap::new());
+    let mut ignored = BTreeMap::new();
     let services = source.services(Kind::Service)?;
     for service in &services {
         let version = latest_version(&source, service, Kind::Service)?;
@@ -241,30 +275,10 @@ fn census_of_the_shipped_models() -> Result<()> {
         ignored_occurrences(&json, &mut ignored);
         let model = Model::from_value(&json)?;
         operations += model.operations().len();
-        for operation in model.operations() {
-            for key in model.uninterpreted_reached(operation) {
-                *reached.entry(format!("{service} {key}")).or_default() += 1;
-            }
-        }
-        for key in model.uninterpreted() {
-            assert!(
-                reached.contains_key(&format!("{service} {key}")),
-                "{service} {key}"
-            );
-        }
+        count_reached(service, &model, &mut reached);
     }
-    let mut table = format!(
-        "{} services, {operations} operations\nuninterpreted key -> operations refused\n",
-        services.len()
-    );
-    for (key, count) in &reached {
-        table.push_str(&format!("  {key}: {count}\n"));
-    }
-    table.push_str("ignored key -> occurrences\n");
-    for (key, count) in &ignored {
-        table.push_str(&format!("  {key}: {count}\n"));
-    }
-    std::io::Write::write_all(&mut std::io::stderr(), table.as_bytes())?;
+    let heading = format!("{} services, {operations} operations\n", services.len());
+    print_census(&heading, &reached, &ignored)?;
     let lists = [
         ("document", DOCUMENT_IGNORED),
         ("metadata", METADATA_IGNORED),
