@@ -5,6 +5,7 @@ use client::hooks::{CallContext, Hooks};
 use client::http::{Headers, HttpResponse};
 use client::retry::{Attempt, RetryDecision};
 use model::shapes::Model;
+use model::value::Value;
 use std::time::Duration;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -88,14 +89,20 @@ fn sts_retries_an_idp_communication_error() -> TestResult {
         headers: Headers::new(),
         body: Vec::new(),
     };
-    let mut error = ServiceError::new("AssumeRoleWithWebIdentity", 400);
-    error.code = Some("IDPCommunicationError".into());
+    let coded = |code: &str| {
+        let mut error = ServiceError::new("AssumeRoleWithWebIdentity", 400);
+        error
+            .error
+            .insert("Code".into(), Value::String(code.into()));
+        error
+    };
+    let mut error = coded("IDPCommunicationError");
     assert_eq!(
         decision("sts", &response, Some(&error))?,
         Some(RetryDecision::Retry)
     );
     assert_eq!(decision("iam", &response, Some(&error))?, None);
-    error.code = Some("AccessDenied".into());
+    error = coded("AccessDenied");
     assert_eq!(decision("sts", &response, Some(&error))?, None);
     Ok(())
 }

@@ -47,6 +47,16 @@ impl OperationSource for Fake {
             _ => None,
         }
     }
+    fn overrides(
+        &self,
+        _root: &str,
+        _operation: &str,
+    ) -> Cow<'_, [awscli_argparse::tables::RequiredOverride<'_>]> {
+        Cow::Borrowed(&[])
+    }
+    fn reproduces_failures(&self, _root: &str, _operation: Option<&str>) -> bool {
+        true
+    }
     fn needs(&self, root: &str) -> Needs {
         Needs::Client {
             service: root.to_owned().into(),

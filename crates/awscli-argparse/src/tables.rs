@@ -65,6 +65,30 @@ pub struct Node<'a> {
     /// The children's names, in table order, when the command has a
     /// subcommand or operation argument; they are its choices.
     pub subcommands: Option<Cow<'a, [&'a str]>>,
+    /// Options whose presence makes every required argument of the table
+    /// optional, as `OverrideRequiredArgsArgument.override_required_args`
+    /// does before the operation's parser is built.
+    pub overrides: Cow<'a, [RequiredOverride<'a>]>,
+}
+/// One option that lifts the table's required arguments when its exact
+/// spelling is among the command's arguments, unless the argument after it
+/// is `unless_next` (`GenerateCliSkeletonArgument.override_required_args`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequiredOverride<'a> {
+    /// The spelling, `--` included.
+    pub option: &'a str,
+    pub unless_next: Option<&'a str>,
+}
+impl RequiredOverride<'_> {
+    /// Whether `args` holds the option, so the required arguments lift.
+    /// `list.index` finds the first occurrence.
+    pub fn applies(&self, args: &[crate::token::Token]) -> bool {
+        let Some(at) = args.iter().position(|token| token.is_text(self.option)) else {
+            return false;
+        };
+        let next = args.get(at + 1);
+        !matches!((self.unless_next, next), (Some(word), Some(token)) if token.is_text(word))
+    }
 }
 impl<'a> Node<'a> {
     /// The node of a pinned command.
@@ -76,6 +100,7 @@ impl<'a> Node<'a> {
             subcommands: command
                 .subcommands
                 .map(|children| Cow::Owned(children.iter().map(|child| child.name).collect())),
+            overrides: Cow::Borrowed(&[]),
         }
     }
 }

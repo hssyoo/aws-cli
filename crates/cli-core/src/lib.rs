@@ -6,6 +6,8 @@ pub mod client_config;
 pub mod command;
 pub mod endpoint_config;
 pub mod interrupt;
+#[cfg(unix)]
+pub mod local_zone;
 pub mod output;
 #[cfg(unix)]
 mod passwd;

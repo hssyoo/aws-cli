@@ -113,7 +113,7 @@ impl Interceptor for StsIdpRetry {
         else {
             return None;
         };
-        (error.code.as_deref() == Some("IDPCommunicationError")).then_some(RetryDecision::Retry)
+        (error.code() == Some("IDPCommunicationError")).then_some(RetryDecision::Retry)
     }
 }
 

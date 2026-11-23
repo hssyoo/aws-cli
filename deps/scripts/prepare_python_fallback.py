@@ -466,6 +466,32 @@ def generate_autocomplete_index(
     )
 
 
+def generate_customization_patterns(
+    venv_python: Path,
+    gen_customization_patterns: Path,
+    aws_cli_src: Path,
+    awscrt_python: Path,
+    output_root: Path,
+    env: dict[str, str],
+) -> None:
+    """Write the customization-pattern entry the payload packs, imported
+    from the same AWS CLI source the fallback runs. `awscrt_python` is the
+    directory holding the `awscrt` package, as for the autocomplete index."""
+    run(
+        [
+            str(venv_python),
+            str(gen_customization_patterns),
+            "--output-root",
+            str(output_root),
+            "--python-path",
+            str(aws_cli_src),
+            "--python-path",
+            str(awscrt_python),
+        ],
+        env=env,
+    )
+
+
 def pack_blob(
     host_python: Path,
     pack_tool: Path,
@@ -476,6 +502,7 @@ def pack_blob(
     venv_python: Path,
     stubs_dir: Path,
     autocomplete_index: Path,
+    customization_patterns: Path,
     blob: Path,
     env: dict[str, str],
 ) -> None:
@@ -501,6 +528,7 @@ def pack_blob(
             f"{stdlib}:",
             f"{aws_cli_src / 'awscli'}:awscli",
             f"{autocomplete_index}:",
+            f"{customization_patterns}:",
             f"{awscrt_src / 'awscrt'}:awscrt",
             f"{site_packages(venv_python, env)}:",
         ],
@@ -744,6 +772,7 @@ def parse_args() -> argparse.Namespace:
     payload.add_argument("--pack-tool", required=True)
     payload.add_argument("--requirements", required=True)
     payload.add_argument("--gen-ac-index", required=True)
+    payload.add_argument("--gen-customization-patterns", required=True)
     payload.add_argument("--blob", required=True)
     runtime.add_argument("--blob", required=True)
     runtime.add_argument("--runtime-source", required=True)
@@ -784,6 +813,15 @@ def prepare_payload(
         autocomplete_index,
         env,
     )
+    customization_patterns = cache_dir / "generated" / "customization-patterns"
+    generate_customization_patterns(
+        venv_python,
+        Path(args.gen_customization_patterns),
+        aws_cli_src,
+        awscrt_src,
+        customization_patterns,
+        env,
+    )
     pack_blob(
         host_python,
         Path(args.pack_tool),
@@ -794,6 +832,7 @@ def prepare_payload(
         venv_python,
         stubs_dir,
         autocomplete_index,
+        customization_patterns,
         Path(args.blob),
         env,
     )

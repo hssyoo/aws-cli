@@ -134,3 +134,53 @@ fn type_names_are_python_class_strings() {
         assert_eq!(py_type(&value), name);
     }
 }
+
+/// `float(text)` in CPython: whitespace, signs, underscores between digits,
+/// the names it knows, and what it refuses.
+#[test]
+fn float_from_text_reads_what_python_float_reads() {
+    let cases = [
+        (" 1_000.5 ", Some(1000.5)),
+        ("-12e3", Some(-12_000.0)),
+        ("+.5", Some(0.5)),
+        ("5.", Some(5.0)),
+        ("\u{1c}7\t", Some(7.0)),
+        ("Infinity", Some(f64::INFINITY)),
+        ("-inf", Some(f64::NEG_INFINITY)),
+        ("1__0", None),
+        ("_1", None),
+        ("1_", None),
+        ("1e", None),
+        (".", None),
+        ("", None),
+        ("0x10", None),
+        ("1 2", None),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(float_from_text(text), expected, "{text:?}");
+    }
+    assert!(float_from_text("NaN").is_some_and(f64::is_nan));
+}
+
+/// `int(text)` in CPython 3.14, for the ASCII digits read here.
+#[test]
+fn int_from_text_reads_what_python_int_reads() {
+    let cases = [
+        (" 12 ", Some(Value::Integer(12))),
+        ("-0", Some(Value::Integer(0))),
+        ("+5", Some(Value::Integer(5))),
+        ("1_000", Some(Value::Integer(1000))),
+        ("007", Some(Value::Integer(7))),
+        (
+            "-99999999999999999999",
+            Some(Value::BigInteger("-99999999999999999999".into())),
+        ),
+        ("1__0", None),
+        ("0x10", None),
+        ("1.5", None),
+        ("", None),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(int_from_text(text), expected, "{text:?}");
+    }
+}

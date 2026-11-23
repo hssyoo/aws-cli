@@ -6,7 +6,7 @@ use crate::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
 use crate::error::{CallError, ParseError, SerializeError, ServiceError};
 use crate::hooks::{CallContext, Customization, HookResult, Interceptor, Scope, SettingDefault};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method};
-use crate::protocol::{Protocol, Serialized};
+use crate::protocol::{ParseOptions, Protocol, Serialized};
 use crate::retry::{Attempt, RetryDecision};
 use crate::testing::{FixedRuntime, InMemoryTransport};
 use crate::transport::TransportError;
@@ -27,7 +27,9 @@ const SERVICE: &str = r#"{
         "Op": {"name": "Op", "http": {"method": "POST", "requestUri": "/"},
             "input": {"shape": "OpInput"}},
         "Open": {"name": "Open", "http": {"method": "POST", "requestUri": "/"},
-            "auth": ["smithy.api#noAuth"]}
+            "auth": ["smithy.api#noAuth"]},
+        "Prefixed": {"name": "Prefixed", "http": {"method": "POST", "requestUri": "/"},
+            "endpoint": {"hostPrefix": "data."}}
     },
     "shapes": {
         "OpInput": {"type": "structure", "members": {
@@ -59,8 +61,8 @@ const PARTITIONS: &str = r#"{"version": "1.1", "partitions": [{"id": "aws",
         "supportsFIPS": true, "supportsDualStack": true, "implicitGlobalRegion": "us-east-1"}}]}"#;
 
 /// The fake protocol: a JSON-ish body of the input as given, two headers
-/// of its own, a body `bad` that fails to parse, and the error code from
-/// `x-fake-code`.
+/// of its own, the operation's host prefix as written, a body `bad` that
+/// fails to parse, and the error code from `x-fake-code`.
 #[derive(Debug)]
 struct Fake;
 
@@ -85,6 +87,7 @@ impl Protocol for Fake {
                 ("Content-Type", "application/x-amz-json-1.0"),
             ]),
             body: body.into_bytes(),
+            host_prefix: op.host_prefix.as_deref().map(Into::into),
         })
     }
     fn parse(
@@ -92,6 +95,7 @@ impl Protocol for Fake {
         _: &Model,
         _: &Operation,
         response: &HttpResponse,
+        _: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
         if response.body == b"bad" {
             return Err(ParseError::new("Unable to parse response"));
@@ -103,12 +107,25 @@ impl Protocol for Fake {
         );
         Ok(Value::Map(output))
     }
-    fn parse_error(&self, _: &Model, op: &Operation, response: &HttpResponse) -> ServiceError {
-        ServiceError {
-            code: response.headers.get("x-fake-code").map(Into::into),
-            message: Some("fake".into()),
-            ..ServiceError::new(&op.name, response.status)
+    fn parse_error(
+        &self,
+        _: &Model,
+        op: &Operation,
+        response: &HttpResponse,
+        _: &ParseOptions<'_>,
+    ) -> Result<ServiceError, ParseError> {
+        if response.body == b"bad" {
+            return Err(ParseError::new("Unable to parse response"));
         }
+        let mut error = Map::new();
+        if let Some(code) = response.headers.get("x-fake-code") {
+            error.insert("Code".into(), Value::String(code.into()));
+        }
+        error.insert("Message".into(), Value::String("fake".into()));
+        Ok(ServiceError {
+            error,
+            ..ServiceError::new(&op.name, response.status)
+        })
     }
 }
 
@@ -172,6 +189,7 @@ fn fixture(
             transport: transport.clone(),
             runtime: runtime.clone(),
             customizations,
+            parse: ParseOptions::BOTOCORE,
             user_agent: UserAgentContext {
                 host: Host {
                     system: "Linux".into(),
@@ -378,6 +396,36 @@ fn a_parse_failure_is_not_retried() -> TestResult {
     let error = f.client.call("Op", input("a")).err().ok_or("no error")?;
     assert!(matches!(error, CallError::Parse(_)), "{error:?}");
     assert_eq!(f.transport.sent().len(), 1);
+    Ok(())
+}
+
+/// An error response whose body cannot be read is botocore's
+/// `ResponseParserError`, raised before `needs-retry`: not retried, even
+/// for a status that would be.
+#[test]
+fn an_unreadable_error_body_is_not_retried() -> TestResult {
+    let f = fixture(settings(), keys(), &[])?;
+    f.transport.respond(HttpResponse {
+        status: 503,
+        headers: Headers::new(),
+        body: b"bad".to_vec(),
+    });
+    let error = f.client.call("Op", input("a")).err().ok_or("no error")?;
+    assert!(matches!(error, CallError::Parse(_)), "{error:?}");
+    assert_eq!(f.transport.sent().len(), 1);
+    Ok(())
+}
+
+/// `_urljoin`: the serializer's host prefix goes before the endpoint's
+/// host, and the request is signed for the prefixed host.
+#[test]
+fn a_host_prefix_goes_before_the_endpoint_s_host() -> TestResult {
+    let f = fixture(settings(), keys(), &[])?;
+    f.transport.respond(ok("{}"));
+    f.client.call("Prefixed", Value::Map(Map::new()))?;
+    let sent = f.transport.sent();
+    let url = sent[0].0.url.to_string();
+    assert_eq!(url, "https://data.zfake.us-west-2.example.com/");
     Ok(())
 }
 

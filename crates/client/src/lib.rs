@@ -26,6 +26,7 @@ pub mod retry;
 pub mod runtime;
 pub mod transport;
 pub mod useragent;
+pub mod xml;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

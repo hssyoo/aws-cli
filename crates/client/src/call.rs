@@ -15,7 +15,7 @@ use crate::endpoint::{self, EndpointConfig, EndpointData, ResolvedEndpoint};
 use crate::error::{CallError, ServiceError};
 use crate::hooks::{CallContext, Customization, Hooks};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method, Url};
-use crate::protocol::{self, Protocol, Serialized};
+use crate::protocol::{self, ParseOptions, Protocol, Serialized};
 use crate::retry::{self, Attempt, ErrorKind, RetryDecision, Standard};
 use crate::runtime::Runtime;
 use crate::transport::{Timeouts, Transport, TransportError};
@@ -43,6 +43,9 @@ pub struct ClientParts {
     pub transport: Arc<dyn Transport>,
     pub runtime: Arc<dyn Runtime>,
     pub customizations: &'static [&'static Customization],
+    /// The response parsers' timestamp and blob handlers: the CLI's own,
+    /// which it sets on every client (`add_timestamp_parser`).
+    pub parse: ParseOptions<'static>,
     pub user_agent: UserAgentContext,
 }
 
@@ -179,9 +182,6 @@ impl Client {
                 return Err(CallError::Unsupported(Unsupported::Validation(undecided)));
             }
         }
-        if operation.host_prefix.is_some() {
-            return Err(CallError::Unsupported(Unsupported::HostPrefix));
-        }
         let serialized = self
             .protocol
             .serialize(&parts.model, operation, &input)
@@ -304,8 +304,10 @@ impl Client {
 }
 
 /// `prepare_request_dict`: the serialized request joined to the endpoint
-/// (`_urljoin`), its query after the endpoint's, and `User-Agent` set
-/// after the serializer's headers.
+/// (`_urljoin`), its host prefix before the endpoint's host, its query
+/// after the endpoint's, and `User-Agent` set after the serializer's
+/// headers. Host prefix injection is always on: the router sends
+/// `disable_host_prefix_injection` to Python.
 fn join(
     serialized: Serialized,
     endpoint: &str,
@@ -313,6 +315,9 @@ fn join(
 ) -> Result<HttpRequest, CallError> {
     let mut url = Url::parse(endpoint)
         .ok_or_else(|| CallError::Endpoint(format!("Invalid endpoint: {endpoint}")))?;
+    if let Some(prefix) = &serialized.host_prefix {
+        url.authority.insert_str(0, prefix);
+    }
     let path = &serialized.path;
     if !(path.is_empty() || path == "/") {
         match (url.path.strip_suffix('/'), path.starts_with('/')) {
@@ -480,16 +485,19 @@ impl Client {
                 return Step::Done(Err(CallError::Hook(error)));
             }
         }
+        // A body neither parse can read is `ResponseParserError`, which
+        // botocore raises before `needs-retry`.
+        let (model, options) = (&self.parts.model, &self.parts.parse);
         if response.status >= 300 {
-            let error = self
+            return match self
                 .protocol
-                .parse_error(&self.parts.model, cx.operation, &response);
-            return self.service_error(cx, attempt, &response, error);
+                .parse_error(model, cx.operation, &response, options)
+            {
+                Err(error) => Step::Done(Err(CallError::Parse(error))),
+                Ok(error) => self.service_error(cx, attempt, &response, error),
+            };
         }
-        match self
-            .protocol
-            .parse(&self.parts.model, cx.operation, &response)
-        {
+        match self.protocol.parse(model, cx.operation, &response, options) {
             Err(error) => Step::Done(Err(CallError::Parse(error))),
             Ok(value) => self.succeeded(cx, attempt, response, value, last_cost),
         }

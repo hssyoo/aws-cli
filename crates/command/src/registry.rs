@@ -1,7 +1,7 @@
 //! Resolving a lineage to what binds it, and supplying the parse's
 //! command tables.
 use crate::spec::{Admission, CommandSpec, Invocation, Needs, StreamPolicy};
-use awscli_argparse::tables::{self, CommandKind, Node, Roots, Tables};
+use awscli_argparse::tables::{self, CommandKind, Node, RequiredOverride, Roots, Tables};
 use awscli_argparse::{Argument, ParseResult};
 use std::borrow::Cow;
 
@@ -19,6 +19,12 @@ pub trait OperationSource: std::fmt::Debug {
     /// The argument table of `[root, operation]`, or `None` for a pair the
     /// source does not derive.
     fn arguments(&self, root: &str, operation: &str) -> Option<Cow<'_, [Argument<'_>]>>;
+    /// The options that lift `[root, operation]`'s required arguments.
+    fn overrides(&self, root: &str, operation: &str) -> Cow<'_, [RequiredOverride<'_>]>;
+    /// Whether the parse failures of `root` (no operation) or of
+    /// `[root, operation]` are ones the derived tables reproduce byte for
+    /// byte, so they render natively.
+    fn reproduces_failures(&self, root: &str, operation: Option<&str>) -> bool;
     /// What every operation of `root` needs before it runs.
     fn needs(&self, root: &str) -> Needs;
     /// Bind the completed parse of one of this source's operations.
@@ -123,12 +129,16 @@ impl<'s> Registry<'s> {
     pub fn reproduces_failures(&self, lineage: &[&str]) -> bool {
         match self.resolve(lineage) {
             Resolution::Spec(spec) => spec.bind.is_some() || !spec.subcommands.is_empty(),
-            Resolution::Operation(_) => true,
+            Resolution::Operation(operation) => operation
+                .source
+                .reproduces_failures(operation.root, Some(operation.name)),
             Resolution::Unknown => match lineage {
                 [root] => {
                     self.pinned.find(&[root]).is_none()
                         && self.spec_root(root).is_none()
-                        && self.source.is_some_and(|source| source.is_root(root))
+                        && self.source.is_some_and(|source| {
+                            source.is_root(root) && source.reproduces_failures(root, None)
+                        })
                 }
                 _ => false,
             },
@@ -157,6 +167,7 @@ fn spec_node<'a>(spec: &'static CommandSpec) -> Node<'a> {
         arguments: Cow::Borrowed(spec.arguments),
         subcommands: (!spec.subcommands.is_empty())
             .then(|| Cow::Owned(spec.subcommands.iter().map(|child| child.name).collect())),
+        overrides: Cow::Borrowed(&[]),
     }
 }
 
@@ -174,6 +185,7 @@ impl<'a, 's: 'a> Roots<'a> for Registry<'s> {
             kind: CommandKind::Service,
             arguments: Cow::Borrowed(&[]),
             subcommands: Some(source.operations(name)?),
+            overrides: Cow::Borrowed(&[]),
         })
     }
     fn subcommand(&self, lineage: &[&str], name: &str) -> Option<Node<'a>> {
@@ -199,6 +211,7 @@ impl<'a, 's: 'a> Roots<'a> for Registry<'s> {
             kind: CommandKind::Operation,
             arguments: source.arguments(root, name)?,
             subcommands: None,
+            overrides: source.overrides(root, name),
         })
     }
 }

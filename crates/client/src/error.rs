@@ -6,28 +6,31 @@ use crate::hooks::HookError;
 use crate::http::Headers;
 use crate::transport::TransportError;
 use model::validate::Report;
-use model::value::Value;
+use model::value::{Map, Value};
 
 /// An error the service returned: what botocore's parsed response holds
 /// for one (`ClientError.response`: `Error`, `ResponseMetadata`, and the
-/// modelled error's members).
+/// modelled error's members), each key where botocore puts it and in its
+/// order, as the CLI's error formatters read them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ServiceError {
     /// The operation called (`ClientError.operation_name`).
     pub operation: String,
-    /// `Error.Code`, which botocore prints as `Unknown` when absent.
-    pub code: Option<String>,
-    /// `Error.Message`, likewise.
-    pub message: Option<String>,
+    /// `parsed['Error']` in full: `Code` and `Message`, then whatever else
+    /// the protocol's error parse put there (a query error's `Type`, a
+    /// query-compatible error's `Type` and `QueryErrorCode`).
+    pub error: Map,
     /// `ResponseMetadata.HTTPStatusCode`.
     pub status: u16,
     /// `ResponseMetadata.RequestId`.
     pub request_id: Option<String>,
     /// `ResponseMetadata.HTTPHeaders`.
     pub headers: Headers,
-    /// The members of the modelled error shape the code names, as parsed;
-    /// `Value::Null` when it names none.
-    pub members: Value,
+    /// The other top-level keys of the parsed response, `Error` and
+    /// `ResponseMetadata` aside, in order: the modelled error's members,
+    /// which botocore's second parse adds there, and what a query error's
+    /// body holds besides `Error` and `RequestId`.
+    pub members: Map,
     /// `ResponseMetadata.RetryAttempts`: attempts after the first.
     pub retry_attempts: u32,
     /// `ResponseMetadata.MaxAttemptsReached`.
@@ -39,14 +42,32 @@ impl ServiceError {
     pub fn new(operation: &str, status: u16) -> Self {
         Self {
             operation: operation.to_owned(),
-            code: None,
-            message: None,
+            error: Map::new(),
             status,
             request_id: None,
             headers: Headers::new(),
-            members: Value::Null,
+            members: Map::new(),
             retry_attempts: 0,
             max_attempts_reached: false,
+        }
+    }
+}
+
+impl ServiceError {
+    /// `Error.Code`, which botocore prints as `Unknown` when absent.
+    pub fn code(&self) -> Option<&str> {
+        self.text("Code")
+    }
+
+    /// `Error.Message`, likewise.
+    pub fn message(&self) -> Option<&str> {
+        self.text("Message")
+    }
+
+    fn text(&self, key: &str) -> Option<&str> {
+        match self.error.get(key)? {
+            Value::String(text) => Some(text),
+            _ => None,
         }
     }
 }
@@ -58,13 +79,13 @@ impl std::fmt::Display for ServiceError {
         write!(
             f,
             "An error occurred ({}) when calling the {} operation",
-            self.code.as_deref().unwrap_or("Unknown"),
+            self.code().unwrap_or("Unknown"),
             self.operation
         )?;
         if self.max_attempts_reached {
             write!(f, " (reached max retries: {})", self.retry_attempts)?;
         }
-        write!(f, ": {}", self.message.as_deref().unwrap_or("Unknown"))
+        write!(f, ": {}", self.message().unwrap_or("Unknown"))
     }
 }
 

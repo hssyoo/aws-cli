@@ -21,6 +21,7 @@ timestamp = { path = "../timestamp" }
 [dev-dependencies]
 crt = { path = "../crt", features = ["loopback"] }
 sigv4 = { path = "../sigv4", features = ["testing"] }
+serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -56,6 +56,43 @@ pub struct Civil {
     pub microsecond: u32,
 }
 
+/// A wall time and the UTC offset it is in, in seconds east, or `None` for
+/// a naive time: what `datetime.isoformat` prints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Zoned {
+    pub civil: Civil,
+    pub offset_seconds: Option<i32>,
+}
+
+impl Zoned {
+    /// `datetime.isoformat()`: `YYYY-MM-DDTHH:MM:SS`, `.ffffff` when there
+    /// are microseconds, then the offset as `+HH:MM`, with `:SS` when it has
+    /// seconds.
+    pub fn isoformat(&self) -> String {
+        let c = self.civil;
+        let mut text = format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+            c.year, c.month, c.day, c.hour, c.minute, c.second
+        );
+        if c.microsecond != 0 {
+            text.push_str(&format!(".{:06}", c.microsecond));
+        }
+        if let Some(offset) = self.offset_seconds {
+            let sign = if offset < 0 { '-' } else { '+' };
+            let magnitude = offset.unsigned_abs();
+            text.push_str(&format!(
+                "{sign}{:02}:{:02}",
+                magnitude / 3_600,
+                magnitude % 3_600 / 60
+            ));
+            if magnitude % 60 != 0 {
+                text.push_str(&format!(":{:02}", magnitude % 60));
+            }
+        }
+        text
+    }
+}
+
 impl Timestamp {
     /// 0001-01-01T00:00:00Z, `datetime.datetime.min` in UTC.
     pub const MIN: Self = Self {
@@ -106,6 +143,42 @@ impl Timestamp {
             + i64::from(civil.minute) * 60
             + i64::from(civil.second);
         Self::from_unix_micros(seconds * MICROS_PER_SECOND + i64::from(civil.microsecond))
+    }
+    /// `datetime.datetime.fromtimestamp(value, tz)`'s instant: the float's
+    /// fraction rounds half to even at the microsecond
+    /// (`_PyTime_ObjectToTimeval`). `None` for a value that is not finite or
+    /// is outside the range.
+    pub fn from_epoch_float(value: f64) -> Option<Self> {
+        if !value.is_finite() {
+            return None;
+        }
+        let mut whole = value.trunc();
+        let mut micros = ((value - whole) * 1e6).round_ties_even();
+        if micros >= 1e6 {
+            micros -= 1e6;
+            whole += 1.0;
+        } else if micros < 0.0 {
+            micros += 1e6;
+            whole -= 1.0;
+        }
+        if !(FIRST_SECOND as f64..=LAST_SECOND as f64).contains(&whole) {
+            return None;
+        }
+        // Both are whole numbers in range, so the conversions are exact.
+        Self::from_unix_micros(whole as i64 * MICROS_PER_SECOND + micros as i64)
+    }
+    /// This instant's wall time `offset_seconds` east of UTC, as
+    /// `fromtimestamp(t, tz)` gives it for a fixed-offset zone. `None` when
+    /// the wall time is outside the range.
+    pub fn zoned(&self, offset_seconds: i32) -> Option<Zoned> {
+        let shifted = self
+            .micros
+            .checked_add(i64::from(offset_seconds) * MICROS_PER_SECOND)
+            .and_then(Self::from_unix_micros)?;
+        Some(Zoned {
+            civil: shifted.civil(),
+            offset_seconds: Some(offset_seconds),
+        })
     }
     /// Microseconds since the epoch.
     pub fn unix_micros(&self) -> i64 {

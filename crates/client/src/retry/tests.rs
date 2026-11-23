@@ -31,8 +31,10 @@ fn response(status: u16) -> HttpResponse {
 }
 
 fn error(code: &str, status: u16) -> ServiceError {
+    let mut error = model::value::Map::new();
+    error.insert("Code".into(), model::value::Value::String(code.into()));
     ServiceError {
-        code: Some(code.into()),
+        error,
         ..ServiceError::new("Op", status)
     }
 }

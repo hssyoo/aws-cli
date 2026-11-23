@@ -63,6 +63,80 @@ fn fixed(digits: &str, point: i32) -> String {
     }
 }
 
+/// `float(text)`: surrounding whitespace, a sign, digits with single
+/// underscores between them, an optional fraction and exponent, or `inf`,
+/// `infinity` or `nan` in any case.
+pub fn float_from_text(text: &str) -> Option<f64> {
+    let trimmed =
+        text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c));
+    let unsigned = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
+    let negative = trimmed.starts_with('-');
+    let word = unsigned.to_ascii_lowercase();
+    let magnitude = match word.as_str() {
+        "inf" | "infinity" => f64::INFINITY,
+        "nan" => f64::NAN,
+        _ => decimal(unsigned)?,
+    };
+    Some(if negative { -magnitude } else { magnitude })
+}
+
+/// A decimal literal as `float()` reads it, underscores removed.
+fn decimal(text: &str) -> Option<f64> {
+    let (mantissa, exponent) = match text.find(['e', 'E']) {
+        Some(at) => (&text[..at], Some(&text[at + 1..])),
+        None => (text, None),
+    };
+    let (whole, fraction) = match mantissa.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (mantissa, None),
+    };
+    let has_digits = !whole.is_empty() || fraction.is_some_and(|f| !f.is_empty());
+    let valid = has_digits
+        && (whole.is_empty() || digit_part(whole))
+        && fraction.is_none_or(|f| f.is_empty() || digit_part(f))
+        && exponent.is_none_or(|e| digit_part(e.strip_prefix(['+', '-']).unwrap_or(e)));
+    if !valid {
+        return None;
+    }
+    text.replace('_', "").parse().ok()
+}
+
+/// `digit (_? digit)*`.
+fn digit_part(text: &str) -> bool {
+    !text.is_empty()
+        && !text.starts_with('_')
+        && !text.ends_with('_')
+        && !text.contains("__")
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'_')
+}
+
+/// `int(text)` in base 10: surrounding whitespace, a sign, and ASCII digits
+/// with single underscores between them, as an `Integer` or, beyond `i64`,
+/// a `BigInteger`. Python also reads non-ASCII decimal digits; those are
+/// refused here.
+pub fn int_from_text(text: &str) -> Option<Value> {
+    let trimmed =
+        text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c));
+    let digits = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
+    if !digit_part(digits) {
+        return None;
+    }
+    let negative = trimmed.starts_with('-');
+    let digits = digits.replace('_', "");
+    let digits = digits.trim_start_matches('0');
+    let canonical = match (negative, digits) {
+        (_, "") => "0".to_owned(),
+        (true, digits) => format!("-{digits}"),
+        (false, digits) => digits.to_owned(),
+    };
+    Some(match canonical.parse::<i64>() {
+        Ok(value) => Value::Integer(value),
+        Err(_) => Value::BigInteger(canonical.into()),
+    })
+}
+
 /// `repr(value)` for the Python object the value stands for.
 pub fn py_repr(value: &Value) -> String {
     let mut out = String::new();

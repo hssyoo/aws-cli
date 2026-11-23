@@ -20,9 +20,6 @@ pub enum Unsupported {
     Trait(&'static str),
     /// A protocol not implemented, as botocore resolves it for the model.
     Protocol(String),
-    /// An operation whose endpoint has a host prefix (`endpoint.hostPrefix`),
-    /// which the serializer does not yet fill.
-    HostPrefix,
 }
 
 impl std::fmt::Display for Unsupported {
@@ -34,7 +31,6 @@ impl std::fmt::Display for Unsupported {
             Self::Validation(undecided) => write!(f, "a validation of {undecided:?}"),
             Self::Trait(name) => write!(f, "the {name} trait"),
             Self::Protocol(name) => write!(f, "the {name} protocol"),
-            Self::HostPrefix => f.write_str("an endpoint host prefix"),
         }
     }
 }
