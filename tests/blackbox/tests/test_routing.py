@@ -74,7 +74,9 @@ async def assert_refused(
 @pytest.mark.parametrize(
     "arguments,reason",
     [
-        (["ec2", "describe-instances", "--help"], "unsupported_command"),
+        # A hand-written command Python adds to the main table.
+        (["configure", "list", "--help"], "unsupported_command"),
+        (["ec2", "describe-instances", "--help"], "help_requested"),
         (["s3", "website", "-h"], "unsupported_subcommand"),
         (["--version"], "version_requested"),
         (["s3", "ls", "help"], "help_requested"),
@@ -105,6 +107,7 @@ async def assert_refused(
     ],
     ids=[
         "unsupported-command",
+        "model-operation-help",
         "unsupported-subcommand",
         "version",
         "help",

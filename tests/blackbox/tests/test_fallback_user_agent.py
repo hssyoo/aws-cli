@@ -57,9 +57,11 @@ PYTHON_ROUTED: Final = {
     "forced-python": Case(
         LISTING, "env_override", environment={ROUTER: "python"}
     ),
-    "unsupported-command": Case(
+    # A model operation of a protocol the native client does not speak
+    # (rest-xml), the one service the in-memory store answers.
+    "unsupported-protocol": Case(
         ("s3api", "list-objects-v2", "--bucket", BUCKET),
-        "unsupported_command",
+        "unsupported_protocol",
     ),
     "plugins-listing": Case(LISTING, "plugins", config=PLUGINS),
     # Upstream's CRT client sends the download's GetObject, as it does for
