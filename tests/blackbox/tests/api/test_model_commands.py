@@ -377,9 +377,10 @@ async def test_a_redirect_is_a_client_error(models: ApiSession) -> None:
     ), run.describe()
 
 
-def counting_process(models: ApiSession) -> Path:
+def counting_process(models: ApiSession, *, fails: bool = False) -> Path:
     """A credential_process that appends a line to a counter file per run,
-    configured as the session's only credentials."""
+    configured as the session's only credentials; one that fails writes
+    `boom` to stderr and exits 1."""
     for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
         models.env.pop(name, None)
     runs = models.cwd / "runs"
@@ -387,8 +388,12 @@ def counting_process(models: ApiSession) -> Path:
     script.write_text(
         "#!/bin/sh\n"
         f"echo run >> '{runs}'\n"
-        'printf \'{"Version": 1, "AccessKeyId": "process_key", '
-        '"SecretAccessKey": "process_secret"}\'\n',
+        + (
+            "printf boom >&2\nexit 1\n"
+            if fails
+            else 'printf \'{"Version": 1, "AccessKeyId": "process_key", '
+            '"SecretAccessKey": "process_secret"}\'\n'
+        ),
         encoding="utf-8",
     )
     script.chmod(0o755)
@@ -427,4 +432,19 @@ async def test_a_native_operation_runs_the_credential_process_once(
 ) -> None:
     runs = counting_process(models)
     run = await models.run("zjson ping", replies={})
+    assert runs_of(runs) == 1, run.describe()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the process is a POSIX shell command")
+async def test_a_failing_credential_process_is_reported_before_invalid_input(
+    models: ApiSession,
+) -> None:
+    # botocore walks the chain as it creates the client, before it
+    # validates the input.
+    runs = counting_process(models, fails=True)
+    run = await models.run(["zjson", "strict", "--name", "", "--size", "0"], expected_rc=255)
+    assert run.calls == ()
+    assert run.stderr == (
+        "\naws: [ERROR]: Error when retrieving credentials from custom-process: boom\n"
+    ), run.describe()
     assert runs_of(runs) == 1, run.describe()

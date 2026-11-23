@@ -103,6 +103,38 @@ fn the_preflight_runs_no_credential_provider() -> crate::testing::Result<()> {
     Ok(())
 }
 
+/// botocore walks the chain as it creates the client, before it validates
+/// the input, so a failing provider is reported over invalid input; the
+/// process runs once.
+#[test]
+#[cfg(unix)]
+fn a_failing_credential_chain_is_reported_before_invalid_input() -> crate::testing::Result<()> {
+    let process = FailingProcess::new("invalid-input")?;
+    let run = process.preflight(&["zjson", "strict", "--name", "", "--size", "0"])?;
+    let env = crate::testing::environment(&[]);
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut cx = Context {
+        env: &env,
+        shared_files: &process.files,
+        globals: &run.globals,
+        directory: &process.directory,
+        stdout: &mut stdout,
+        stderr: &mut stderr,
+    };
+    let failure = run
+        .invocation
+        .run(&mut cx)
+        .err()
+        .ok_or("the run succeeded")?;
+    let message = String::from_utf8_lossy(&failure.message);
+    assert!(
+        message.starts_with("Error when retrieving credentials from custom-process"),
+        "{message}"
+    );
+    assert_eq!(process.runs()?, 1);
+    Ok(())
+}
+
 /// Each client's parse hooks keep the timestamp parser they were built
 /// with: a second client with another format does not get the first's,
 /// as it did from a process-global parser set once.
