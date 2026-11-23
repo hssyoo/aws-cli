@@ -13,21 +13,12 @@
 //!   of each named root, the awscli entries and botocore handlers that touch
 //!   it, one `<command> <operation> <name>` line each.
 #![forbid(unsafe_code)]
-use awscli_argparse::unpack::{self, expand_user, expand_vars};
+use awscli_argparse::unpack;
 use command::models::ModelSource;
-use std::collections::HashMap;
-use std::ffi::OsString;
+use model_tools::Error;
 use std::io::Write;
-use std::path::{Path, PathBuf};
-use {
-    awscli_config as _, cli_core as _, client as _, credentials as _, format as _, model as _,
-    service_errors as _,
-};
-// The library's test dependencies.
-#[cfg(test)]
-use {cli_router as _, customizations as _};
-
-type Error = Box<dyn std::error::Error>;
+use std::path::Path;
+use {cli_core as _, client as _, customizations as _, pyload as _, service_command as _};
 
 fn main() -> Result<(), Error> {
     let mut args = std::env::args_os().skip(1);
@@ -38,24 +29,18 @@ fn main() -> Result<(), Error> {
     let rest = args
         .map(|arg| arg.into_string().map_err(|_| "an argument is not Unicode"))
         .collect::<Result<Vec<String>, _>>()?;
-    let prefix = std::env::var_os("AWS_NATIVE_FALLBACK_PREFIX")
-        .ok_or("AWS_NATIVE_FALLBACK_PREFIX must name the fallback payload prefix")?;
-    let bytes = std::fs::read(PathBuf::from(prefix).join("awscli-v2.blob"))?;
-    let view = pyload::View::new(&bytes)?;
-    let mut env: HashMap<String, OsString> = std::env::vars_os()
-        .filter_map(|(name, value)| Some((name.into_string().ok()?, value)))
-        .collect();
-    env.insert("HOME".to_owned(), home);
-    let expand = |path: &[u8]| expand_user(&expand_vars(path, &env)?, &env);
-    let data_path = env.get("AWS_DATA_PATH").map(OsString::as_os_str);
-    let edits = service_command::coverage::table_edits();
-    let source = ModelSource::from_payload(view, data_path, &expand, &edits)?;
+    let data_path = std::env::var_os("AWS_DATA_PATH");
+    model_tools::with_source(home, data_path, |source| run(source, &rest))?
+}
+
+/// The mode `rest` names, over `source`, to stdout.
+fn run(source: &ModelSource<'_>, rest: &[String]) -> Result<(), Error> {
     let mut stdout = std::io::BufWriter::new(std::io::stdout().lock());
-    match rest.as_slice() {
-        [mode, requests] if mode == "parse" => parse(&source, Path::new(requests), &mut stdout)?,
-        [mode, commands @ ..] if mode == "touching" => touching(&source, commands, &mut stdout)?,
+    match rest {
+        [mode, requests] if mode == "parse" => parse(source, Path::new(requests), &mut stdout)?,
+        [mode, commands @ ..] if mode == "touching" => touching(source, commands, &mut stdout)?,
         commands => {
-            let tables = command::models::dump::tables(&source, commands);
+            let tables = model_tools::dump::tables(source, commands);
             serde_json::to_writer(&mut stdout, &tables)?;
             writeln!(stdout)?;
         }

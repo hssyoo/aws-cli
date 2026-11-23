@@ -60,26 +60,56 @@ pub fn run_tool(root: &Path, args: &[String]) -> Result<(), TaskError> {
     process::run(&mut derive)
 }
 
-/// Build `derive-tables`, which derives the tables and parses over them,
-/// with the native dependencies its crate's client links.
+/// Build `derive-tables`, which derives the tables and parses over them.
 pub fn build_tool(
     root: &Path,
     environment: &deps::NativeEnvironment,
+) -> Result<PathBuf, TaskError> {
+    build_bin(root, environment, "derive-tables")
+}
+
+/// Build one of `model-tools`' binaries, a target the product build never
+/// compiles, with the native dependencies its crates' client links.
+fn build_bin(
+    root: &Path,
+    environment: &deps::NativeEnvironment,
+    bin: &str,
 ) -> Result<PathBuf, TaskError> {
     let mut build = Command::new("cargo");
     build.current_dir(root).args([
         "build",
         "--locked",
         "--package",
-        "service-command",
+        "model-tools",
         "--bin",
-        "derive-tables",
+        bin,
     ]);
     environment.apply(&mut build);
     process::run(&mut build)?;
     Ok(root
-        .join("target/debug/derive-tables")
+        .join("target/debug")
+        .join(bin)
         .with_extension(std::env::consts::EXE_EXTENSION))
+}
+
+/// `cargo xtask census`: the eligibility census over the shipped models
+/// alone (no `AWS_DATA_PATH`, an empty home), printed and written to
+/// `target/service-eligibility.txt`.
+pub fn census(root: &Path) -> Result<(), TaskError> {
+    deps::native_host()?;
+    let environment = deps::native_environment(root, false)?;
+    let tool = build_bin(root, &environment, "eligibility")?;
+    let home = root.join("target/census/home");
+    fs::create_dir_all(&home)?;
+    let mut census = Command::new(tool);
+    census.arg("--home").arg(&home);
+    environment.apply(&mut census);
+    isolate(&mut census, root);
+    census.env_remove("AWS_DATA_PATH");
+    let output = process::output(&mut census)?;
+    fs::write(root.join("target/service-eligibility.txt"), &output.stdout)?;
+    io::stdout().write_all(&output.stdout)?;
+    Ok(())
 }
 
 /// The parse oracle's derived cases (`parse_oracle.py --derived-parser`):

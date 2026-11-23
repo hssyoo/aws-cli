@@ -1,8 +1,8 @@
 //! The derived tables in the form `cargo xtask check-argparse --derived`
 //! compares with the AWS CLI's own (`tests/argparse/argtables.py`).
-use super::*;
-use awscli_argparse::{Action, Nargs};
-use serde_json::{Map, json};
+use awscli_argparse::{Action, Nargs, ValueType};
+use command::models::{DerivedArgument, ModelSource};
+use serde_json::{Map, Value as Json, json};
 
 fn action(action: Action) -> &'static str {
     match action {

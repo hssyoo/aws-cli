@@ -18,11 +18,10 @@ command = { path = "../command" }
 credentials = { path = "../credentials" }
 format = { path = "../format" }
 model = { path = "../model" }
-pyload = { path = "../pyload" }
-serde_json.workspace = true
 service-errors = { path = "../service-errors" }
 
 [dev-dependencies]
+pyload = { path = "../pyload" }
 cli-router = { path = "../cli-router" }
 client = { path = "../client", features = ["testing"] }
 customizations = { path = "../customizations" }

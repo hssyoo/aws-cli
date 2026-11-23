@@ -92,6 +92,7 @@ fn dispatch(root: &Path, args: &[String]) -> Result<(), TaskError> {
         "test" => verification::run(root, rest),
         "blackbox" => blackbox::run(root, rest),
         "parity" => parity::run(root, rest),
+        "census" => argparse::census(root, rest),
         "harness-test" => harness::self_test(root, rest),
         "dump-arg-tables" | "check-argparse" | "fuzz-argparse" | "derive-tables" => {
             argparse::run(root, command, rest)
@@ -127,6 +128,7 @@ const COMMANDS: &[&str] = &[
     "test",
     "blackbox",
     "parity",
+    "census",
     "harness-test",
     "dump-arg-tables",
     "check-argparse",

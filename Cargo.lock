@@ -263,6 +263,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "model-tools"
+version = "0.1.0"
+dependencies = [
+ "awscli-argparse",
+ "cli-core",
+ "client",
+ "command",
+ "customizations",
+ "pyload",
+ "serde_json",
+ "service-command",
+]
+
+[[package]]
 name = "numa"
 version = "0.1.0"
 dependencies = [
@@ -403,7 +417,6 @@ dependencies = [
  "format",
  "model",
  "pyload",
- "serde_json",
  "service-errors",
 ]
 

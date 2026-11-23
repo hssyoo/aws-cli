@@ -19,6 +19,17 @@ struct Options {
     forwarded: Vec<String>,
 }
 
+/// `cargo xtask census`: the eligibility census of the shipped models, for
+/// `tests/numbers/measure.py --census`. It takes no options.
+pub fn census(root: &Path, args: &[String]) -> Result<(), TaskError> {
+    if let Some(arg) = args.first() {
+        return Err(TaskError::Message(format!(
+            "census takes no options: {arg}"
+        )));
+    }
+    derived::census(root)
+}
+
 pub fn run(root: &Path, command: &str, args: &[String]) -> Result<(), TaskError> {
     deps::native_host()?;
     if command == "derive-tables" {

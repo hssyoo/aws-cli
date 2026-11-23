@@ -80,6 +80,9 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("aws-cli", BINARY),
     ("python-fallback", &["build-support", "pyload"]),
     ("xtask", &["build-support"]),
+    // Tooling over the derived tables (`derive-tables`, the census), which
+    // the product build never compiles.
+    ("model-tools", MODEL_TOOLS),
 ];
 
 const CLIENT: &[&str] = &[
@@ -112,6 +115,15 @@ const CUSTOMIZATIONS: &[&str] = &[
     "model",
     "pytext",
     "timestamp",
+];
+const MODEL_TOOLS: &[&str] = &[
+    "awscli-argparse",
+    "cli-core",
+    "client",
+    "command",
+    "customizations",
+    "pyload",
+    "service-command",
 ];
 const SERVICE_ERRORS: &[&str] = &[
     "awscli-config",

@@ -1,0 +1,25 @@
+[package]
+name = "model-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Tooling over the model-derived command tables, which the product build
+# (`cargo xtask build`, the aws-cli package) never compiles:
+# `derive-tables` (check-argparse --derived, the parse oracle) and
+# `eligibility` (cargo xtask census).
+
+[lints]
+workspace = true
+
+[dependencies]
+awscli-argparse = { path = "../awscli-argparse" }
+cli-core = { path = "../cli-core" }
+client = { path = "../client" }
+command = { path = "../command" }
+customizations = { path = "../customizations" }
+pyload = { path = "../pyload" }
+serde_json.workspace = true
+service-command = { path = "../service-command" }

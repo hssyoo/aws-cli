@@ -21,8 +21,8 @@ Prints one table per measurement, each with what produced it:
   (`release-safe` at 1cc2b0482), its sections (`size -m` on macOS,
   `size -A` elsewhere), and the `__text` bytes per crate from `nm`'s
   symbols, by each symbol's first path segment.
-- **Eligibility census** (`service-command`'s): its command,
-  and with `--census` its counts.
+- **Eligibility census** (`cargo xtask census`, over the shipped models
+  only): its command, and with `--census` its counts.
 
 Every command gets a cleared environment, fake keys, empty config and
 credentials files, and a loopback endpoint; nothing reaches a real host.
@@ -251,9 +251,8 @@ def measure_size(binary):
 
 
 def census(run):
-    command = ["cargo", "xtask", "test", "-p", "service-command", "--filter",
-               "every_operation_has_a_standing"]
-    print("\n## Eligibility census (service-command)\n")
+    command = ["cargo", "xtask", "census"]
+    print("\n## Eligibility census (shipped models)\n")
     print(f"`{' '.join(command)}`, which writes `target/service-eligibility.txt`.\n")
     if run:
         subprocess.run(command, cwd=ROOT, check=True, capture_output=True)

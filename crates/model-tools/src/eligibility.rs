@@ -1,11 +1,11 @@
-//! How many operations of the payload's services the native route runs:
-//! with no arguments, with scalar arguments only, or why not. Its test
-//! writes the counts to `target/service-eligibility.txt`; nothing is
-//! committed.
-use crate::admit;
+//! How many operations of the shipped services the native route runs: with
+//! no arguments, with scalar arguments only, or why not. `cargo xtask
+//! census` prints the counts and writes them to
+//! `target/service-eligibility.txt`; nothing is committed.
 use cli_core::cli_error::PythonReason;
 use client::hooks::Customization;
 use command::models::{ModelSource, Unpack};
+use service_command::admit;
 use std::collections::BTreeMap;
 
 /// One operation's standing, before any argument is given.
@@ -74,6 +74,17 @@ pub fn census(
         }
     }
     counts
+}
+
+/// The census as `cargo xtask census` prints it: the total, then each
+/// standing's count.
+pub fn report(counts: &BTreeMap<Standing, usize>) -> String {
+    let total: usize = counts.values().sum();
+    let mut report = format!("{total} operations\n");
+    for (standing, count) in counts {
+        report.push_str(&format!("{count:>6} {standing:?}\n"));
+    }
+    report
 }
 
 #[cfg(test)]

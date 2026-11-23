@@ -19,7 +19,6 @@ use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
-pub mod dump;
 mod table;
 #[doc(inline)]
 pub use table::{DerivedArgument, Origin, Table, Unpack, ValueType, kind_name};
