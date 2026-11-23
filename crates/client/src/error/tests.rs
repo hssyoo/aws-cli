@@ -1,9 +1,14 @@
 use super::*;
 
 fn service_error(code: Option<&str>, message: Option<&str>) -> ServiceError {
+    let mut error = Map::new();
+    for (key, text) in [("Code", code), ("Message", message)] {
+        if let Some(text) = text {
+            error.insert(key.into(), Value::String(text.into()));
+        }
+    }
     ServiceError {
-        code: code.map(Into::into),
-        message: message.map(Into::into),
+        error,
         request_id: Some("req-1".into()),
         ..ServiceError::new("GetCallerIdentity", 403)
     }

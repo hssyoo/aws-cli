@@ -15,5 +15,8 @@ cli-core = { path = "../cli-core" }
 model = { path = "../model" }
 timestamp = { path = "../timestamp" }
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true
