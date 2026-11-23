@@ -77,11 +77,11 @@ fn admit<E: EnvMap>(
     operation: Operation<'_>,
     directory: &std::path::Path,
 ) -> Verdict {
-    let invocation = match operation.bind(result) {
-        Ok(invocation) => invocation,
+    let ::command::Bound { invocation, needs } = match operation.bind(result) {
+        Ok(bound) => bound,
         Err(::command::Admission::Python(reason)) => return Verdict::Python(reason),
     };
-    let (needs, streams) = (operation.needs(), operation.streams());
+    let streams = operation.streams();
     // The `s3` block's settings are honored only on the s3 commands' path;
     // the rows of `Scope::Service` assume a client that reads none.
     if needs.reads_s3_settings {

@@ -1,6 +1,6 @@
 //! Resolving a lineage to what binds it, and supplying the parse's
 //! command tables.
-use crate::spec::{Admission, Invocation, Needs, StreamPolicy};
+use crate::spec::{Admission, Bound, StreamPolicy};
 use awscli_argparse::tables::{self, CommandKind, Node, RequiredOverride, Roots, Tables};
 use awscli_argparse::{Argument, ParseResult};
 use cli_core::cli_error::PythonReason;
@@ -29,14 +29,12 @@ pub trait OperationSource: std::fmt::Debug {
     /// Whether `[root, operation]` paginates, as `client.can_paginate`
     /// answers for it.
     fn paginated(&self, root: &str, operation: &str) -> bool;
-    /// What every operation of `root` needs before it runs.
-    fn needs(&self, root: &str) -> Needs;
 }
 
 /// What binds the completed parse of a source's operation to an
-/// invocation, or names why Python runs it.
+/// invocation, and says what it needs, or names why Python runs it.
 pub trait Binder: std::fmt::Debug {
-    fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission>;
+    fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission>;
 }
 
 /// The root table: pinned grammars, then a model source, in that
@@ -68,10 +66,6 @@ pub struct Operation<'r> {
     pub name: &'r str,
 }
 impl Operation<'_> {
-    /// What the operation needs before it runs.
-    pub fn needs(&self) -> Needs {
-        self.source.needs(self.root)
-    }
     /// Whether the operation paginates.
     pub fn paginated(&self) -> bool {
         self.source.paginated(self.root, self.name)
@@ -83,7 +77,7 @@ impl Operation<'_> {
     /// Bind the completed parse through the registry's binder. A registry
     /// without one (the derivation tool's) parses its source's commands and
     /// binds none.
-    pub fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
+    pub fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission> {
         match self.binder {
             Some(binder) => binder.bind(parsed),
             None => Err(Admission::Python(PythonReason::UnsupportedSubcommand)),

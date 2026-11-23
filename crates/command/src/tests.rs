@@ -60,20 +60,21 @@ impl OperationSource for Fake {
     fn paginated(&self, _root: &str, _operation: &str) -> bool {
         false
     }
-    fn needs(&self, root: &str) -> Needs {
-        Needs {
-            service: root.to_owned().into(),
-            reads_s3_settings: false,
-        }
-    }
 }
 impl Binder for Fake {
-    fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
-        match parsed.values.string("thing_id") {
-            Some("refused") => Err(Admission::Python(PythonReason::UnsupportedValue)),
-            Some(id) => Ok(Box::new(Echo(id.to_owned()))),
-            None => Ok(Box::new(Echo("all".into()))),
-        }
+    fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission> {
+        let echo = match parsed.values.string("thing_id") {
+            Some("refused") => return Err(Admission::Python(PythonReason::UnsupportedValue)),
+            Some(id) => Echo(id.to_owned()),
+            None => Echo("all".into()),
+        };
+        Ok(Bound {
+            invocation: Box::new(echo),
+            needs: Needs {
+                service: "zsvc".into(),
+                reads_s3_settings: false,
+            },
+        })
     }
 }
 
@@ -91,13 +92,6 @@ fn a_source_operation_resolves_to_its_operation() {
         panic!("a source operation resolves to an operation");
     };
     assert_eq!((operation.root, operation.name), ("zsvc", "get-thing"));
-    assert_eq!(
-        operation.needs(),
-        Needs {
-            service: "zsvc".into(),
-            reads_s3_settings: false,
-        }
-    );
 }
 
 #[test]
@@ -226,10 +220,11 @@ fn a_parsed_lineage_binds_through_its_source() {
             Resolution::Operation(operation) => operation.bind(&parsed),
             other => panic!("{args:?}: {other:?}"),
         };
-        let Ok(invocation) = bound else {
+        let Ok(bound) = bound else {
             panic!("{args:?} binds");
         };
-        let (status, stdout) = run(invocation.as_ref());
+        assert_eq!(bound.needs.service, "zsvc");
+        let (status, stdout) = run(bound.invocation.as_ref());
         assert_eq!(status, Ok(0));
         assert_eq!(stdout, text.as_bytes(), "{args:?}");
     }

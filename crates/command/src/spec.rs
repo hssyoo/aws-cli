@@ -22,6 +22,13 @@ pub struct Needs {
     pub reads_s3_settings: bool,
 }
 
+/// A bound command, and what it needs before it runs.
+#[derive(Debug)]
+pub struct Bound {
+    pub invocation: Box<dyn Invocation>,
+    pub needs: Needs,
+}
+
 /// How the command's standard streams are buffered: the only thing this
 /// says. Which globals a command honors is the router's to judge from what
 /// the command is.

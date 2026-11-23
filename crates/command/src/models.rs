@@ -8,7 +8,6 @@
 //! cross-cutting arguments (`table`).
 use crate::patterns::{Match, Patterns, Subject, TableOp};
 use crate::registry::OperationSource;
-use crate::spec::Needs;
 use awscli_argparse::tables::RequiredOverride;
 use awscli_argparse::{Argument, CliType, DefaultValue};
 use model::search::SearchSource;
@@ -412,31 +411,6 @@ impl OperationSource for ModelSource<'_> {
                 .operation(operation)
                 .is_some_and(|found| service.paginated(&found.name))
         })
-    }
-    fn needs(&self, root: &str) -> Needs {
-        let service = self.service(root);
-        let metadata = service.map(|service| service.model.metadata());
-        let id = metadata.and_then(model::shapes::Metadata::hyphenized_service_id);
-        let builtins = service
-            .and_then(|service| {
-                load_service_model(&self.models, &service.name, Kind::EndpointRuleSet).ok()
-            })
-            .map(|document| document.json);
-        let reads_s3_settings = builtins
-            .as_ref()
-            .and_then(|rules| rules.get("parameters")?.as_object())
-            .is_some_and(|parameters| {
-                parameters.values().any(|parameter| {
-                    parameter
-                        .get("builtIn")
-                        .and_then(Json::as_str)
-                        .is_some_and(|builtin| builtin.starts_with("AWS::S3"))
-                })
-            });
-        Needs {
-            service: id.unwrap_or_else(|| root.to_owned()).into(),
-            reads_s3_settings,
-        }
     }
 }
 

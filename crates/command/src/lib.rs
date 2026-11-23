@@ -14,6 +14,6 @@ mod spec;
 pub use output::{OutputFormat, OutputGlobals, OutputSettings, PagerProfile, PagerSettings};
 #[doc(inline)]
 pub use registry::{Binder, Operation, OperationSource, Registry, Resolution};
-pub use spec::{Admission, Context, Invocation, Needs, Preflight, StreamPolicy};
+pub use spec::{Admission, Bound, Context, Invocation, Needs, Preflight, StreamPolicy};
 #[cfg(test)]
 mod tests;

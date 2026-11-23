@@ -3,7 +3,7 @@
 //! `s3` commands, to `Verdict::Run`.
 use super::*;
 use ::command::{
-    Admission, Binder, Context, Invocation, Needs, OperationSource, Registry, StreamPolicy,
+    Admission, Binder, Bound, Context, Invocation, Needs, OperationSource, Registry, StreamPolicy,
 };
 use awscli_argparse::Argument;
 use cli_core::cli_error::{Category, CommandFailure, Rendering};
@@ -87,20 +87,21 @@ impl OperationSource for Fake {
     fn paginated(&self, _root: &str, operation: &str) -> bool {
         operation == "decode-authorization-message"
     }
-    fn needs(&self, root: &str) -> Needs {
-        Needs {
-            service: root.to_owned().into(),
-            reads_s3_settings: false,
-        }
-    }
 }
 impl Binder for Fake {
-    fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
-        match parsed.values.string("role_session_name") {
-            Some("refused") => Err(Admission::Python(PythonReason::UnsupportedOption)),
-            Some(name) => Ok(Box::new(Echo(name.to_owned()))),
-            None => Ok(Box::new(Echo("identity".into()))),
-        }
+    fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission> {
+        let echo = match parsed.values.string("role_session_name") {
+            Some("refused") => return Err(Admission::Python(PythonReason::UnsupportedOption)),
+            Some(name) => Echo(name.to_owned()),
+            None => Echo("identity".into()),
+        };
+        Ok(Bound {
+            invocation: Box::new(echo),
+            needs: Needs {
+                service: "sts".into(),
+                reads_s3_settings: false,
+            },
+        })
     }
 }
 
