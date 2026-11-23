@@ -93,6 +93,9 @@ impl Fault {
     }
 }
 
+/// An attribute as written: its name, its value, and where its name starts.
+type RawAttribute = (String, String, usize);
+
 /// A fault at a byte offset of the decoded text.
 type Failure = (Fault, usize);
 type Step<T> = Result<T, Failure>;
@@ -223,20 +226,18 @@ impl Reader<'_> {
     fn comment(&mut self) -> Step<()> {
         let start = self.at;
         self.at += 4;
-        loop {
-            let Some(index) = self.rest().find("--") else {
-                return Err(self.end(Fault::Unclosed, start));
-            };
-            self.check_chars(index)?;
-            self.at += index + 2;
-            if self.eat(">") {
-                return Ok(());
-            }
-            if self.peek().is_none() {
-                return Err(self.end(Fault::Unclosed, start));
-            }
-            return Err((Fault::InvalidToken, self.at));
+        let Some(index) = self.rest().find("--") else {
+            return Err(self.end(Fault::Unclosed, start));
+        };
+        self.check_chars(index)?;
+        self.at += index + 2;
+        if self.eat(">") {
+            return Ok(());
         }
+        if self.peek().is_none() {
+            return Err(self.end(Fault::Unclosed, start));
+        }
+        Err((Fault::InvalidToken, self.at))
     }
 
     fn instruction(&mut self) -> Step<()> {
@@ -310,8 +311,8 @@ impl Reader<'_> {
 
     /// The attributes after a start tag's name, and whether the tag ends
     /// with `/>`.
-    fn attributes(&mut self, start: usize) -> Step<(Vec<(String, String, usize)>, bool)> {
-        let mut attributes: Vec<(String, String, usize)> = Vec::new();
+    fn attributes(&mut self, start: usize) -> Step<(Vec<RawAttribute>, bool)> {
+        let mut attributes: Vec<RawAttribute> = Vec::new();
         loop {
             let before = self.at;
             self.skip_space();
@@ -386,7 +387,7 @@ impl Reader<'_> {
     }
 
     /// The namespace declarations among `attributes`.
-    fn bind(&self, attributes: &[(String, String, usize)]) -> HashMap<String, String> {
+    fn bind(&self, attributes: &[RawAttribute]) -> HashMap<String, String> {
         let mut scope = HashMap::new();
         for (name, value, _) in attributes {
             if name == "xmlns" {
@@ -411,12 +412,7 @@ impl Reader<'_> {
     }
 
     /// The element with its names in ElementTree's spelling.
-    fn resolve(
-        &self,
-        start: usize,
-        name: &str,
-        raw: Vec<(String, String, usize)>,
-    ) -> Step<Element> {
+    fn resolve(&self, start: usize, name: &str, raw: Vec<RawAttribute>) -> Step<Element> {
         let tag = self
             .expand(name, true)
             .ok_or((Fault::UnboundPrefix, start))?;
@@ -488,7 +484,6 @@ impl Reader<'_> {
         if self.rest().starts_with("<!--") {
             self.comment()?;
         } else if self.rest().starts_with("<![CDATA[") {
-            let start = self.at;
             self.at += 9;
             let Some(end) = self.rest().find("]]>") else {
                 return Err(self.end(Fault::UnclosedCdata, self.text.len()));
@@ -615,7 +610,8 @@ fn is_name_start(c: char) -> bool {
 /// XML 1.0 (fifth edition)'s `NameChar`.
 fn is_name_char(c: char) -> bool {
     is_name_start(c)
-        || matches!(c, '-' | '.' | '0'..='9' | '\u{b7}' | '\u{300}'..='\u{36f}' | '\u{203f}'..='\u{2040}')
+        || matches!(c, '-' | '.' | '0'..='9' | '\u{b7}')
+        || matches!(c, '\u{300}'..='\u{36f}' | '\u{203f}'..='\u{2040}')
 }
 
 #[cfg(test)]
