@@ -265,13 +265,34 @@ impl ServiceInvocation {
                 cli_core::interrupt::process_state(),
             )),
             customizations: self.customizations,
-            parse: CLI_PARSE,
+            parse: cli_parse_hooks(),
             user_agent: UserAgentContext {
                 host: cli_core::client_config::user_agent::host(),
                 distribution: cli_core::client_config::user_agent::distribution(),
                 versions: self.versions,
+                extras: session_extras(settings),
             },
         })))
+    }
+}
+
+/// The CLI's response parse handlers, owned by the client.
+fn cli_parse_hooks() -> client::protocol::ParseHooks {
+    client::protocol::ParseHooks {
+        timestamp: Arc::new(CLI_PARSE.timestamp),
+        blob: Arc::new(CLI_PARSE.blob),
+    }
+}
+
+/// The CLI session's `User-Agent` extras: the install source, the prompt
+/// mode, and the command.
+fn session_extras(
+    settings: &cli_core::client_config::ClientSettings,
+) -> client::useragent::SessionExtras {
+    client::useragent::SessionExtras {
+        installer: "other",
+        prompt: "off",
+        command: settings.command.clone(),
     }
 }
 

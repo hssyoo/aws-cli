@@ -48,6 +48,6 @@ impl std::fmt::Display for ResolveError {
 impl std::error::Error for ResolveError {}
 mod native;
 #[doc(inline)]
-pub use native::resolve;
+pub use native::{resolve, resolve_with_headers};
 #[cfg(test)]
 mod tests;

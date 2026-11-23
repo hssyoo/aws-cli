@@ -1,6 +1,6 @@
 //! Narrow endpoint-rule declarations over opaque CRT-owned objects.
 use crate::{AwsAllocator, AwsByteCursor};
-use std::ffi::c_int;
+use std::ffi::{c_int, c_void};
 macro_rules! opaque {
     ($($name:ident),+) => {
         $(
@@ -74,6 +74,13 @@ c_functions! {
         endpoint: *const Resolved,
         out: *mut AwsByteCursor,
     ) -> c_int;
+    /// The resolved endpoint's headers, an `aws_hash_table` of header
+    /// names to lists of values, borrowed from the endpoint.
+    pub fn aws_endpoints_resolved_endpoint_get_headers(
+        endpoint: *const Resolved,
+        out: *mut *const c_void,
+    ) -> c_int;
+    pub fn aws_hash_table_get_entry_count(map: *const c_void) -> usize;
     pub fn aws_endpoints_resolved_endpoint_get_error(
         endpoint: *const Resolved,
         out: *mut AwsByteCursor,

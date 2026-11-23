@@ -115,7 +115,7 @@ fn parameters_come_from_each_source_in_rule_set_order() -> TestResult {
         operation,
         &Value::Map(input),
         &builtins,
-        || Some("123456789012".into()),
+        Some("123456789012"),
     );
     let named: Vec<(&str, &ParamValue)> = params.iter().collect();
     let string = |text: &str| ParamValue::String(text.into());
@@ -133,32 +133,58 @@ fn parameters_come_from_each_source_in_rule_set_order() -> TestResult {
     Ok(())
 }
 
-/// What admission refuses: operation context parameters (JMESPath, not
-/// implemented), and a built-in core does not know that the rule set
-/// requires without a default, unless an interceptor set it.
+/// A built-in the rule set requires without a default, which core does not
+/// supply, is missing unless a customization in scope for the service names
+/// it among those it sets.
 #[test]
-fn admission_refuses_what_core_cannot_supply() -> TestResult {
-    let (model, data) = fixture()?;
-    let find = model.operation("Find").ok_or("Find")?;
-    let get = model.operation("Get").ok_or("Get")?;
-    let empty = EndpointParams::default();
-    assert_eq!(
-        unsupported(&data, find, &empty),
-        Some(Unsupported::OperationContextParams)
-    );
-    assert_eq!(unsupported(&data, get, &empty), None);
+fn a_required_built_in_needs_core_or_a_customization() -> TestResult {
+    let (_, data) = fixture()?;
+    assert_eq!(missing_builtin(&data, "zjson", &[]), None);
     let required = RULES.replace(
         r#""Other": {"type": "String", "builtIn": "AWS::Other::Thing", "required": false}"#,
         r#""Other": {"type": "String", "builtIn": "AWS::Other::Thing", "required": true}"#,
     );
     let data = EndpointData::from_documents(required.into_bytes(), b"{}".to_vec(), None)?;
     assert_eq!(
-        unsupported(&data, get, &empty),
-        Some(Unsupported::Builtin("AWS::Other::Thing".into()))
+        missing_builtin(&data, "zjson", &[]),
+        Some("AWS::Other::Thing".to_owned())
     );
-    let mut supplied = EndpointParams::default();
-    supplied.set("Other", ParamValue::String("x".into()));
-    assert_eq!(unsupported(&data, get, &supplied), None);
+    static SUPPLIER: crate::hooks::Customization = crate::hooks::Customization {
+        id: "supplier",
+        scope: crate::hooks::Scope::service("zjson"),
+        setting_defaults: &[],
+        builtins: &["AWS::Other::Thing"],
+        interceptors: &[],
+        replaces: &[],
+    };
+    assert_eq!(missing_builtin(&data, "zjson", &[&SUPPLIER]), None);
+    assert_eq!(
+        missing_builtin(&data, "zquery", &[&SUPPLIER]),
+        Some("AWS::Other::Thing".to_owned())
+    );
+    Ok(())
+}
+
+/// Core supplies the constants botocore gives every client
+/// (`compute_endpoint_resolver_builtin_defaults`), the STS and S3 global
+/// endpoint switches off among them.
+#[test]
+fn core_supplies_botocore_s_constant_built_ins() -> TestResult {
+    let (_, data) = fixture()?;
+    let config = EndpointConfig::new(&EndpointInputs {
+        region: Some("us-east-1"),
+        signing: true,
+        ..EndpointInputs::default()
+    });
+    let builtins = config.builtins(&data)?;
+    for name in ["AWS::STS::UseGlobalEndpoint", "AWS::S3::UseGlobalEndpoint"] {
+        assert_eq!(
+            builtins.get(name),
+            Some(&ParamValue::Boolean(false)),
+            "{name}"
+        );
+    }
+    assert_eq!(builtins.get("AWS::Auth::AccountId"), None);
     Ok(())
 }
 
@@ -180,14 +206,14 @@ fn no_region_needs_a_partition_endpoint() -> TestResult {
         Some((endpoints("zjson").as_bytes(), "zjson")),
     )?;
     assert_eq!(
-        config.builtins(&global)?.region.as_deref(),
-        Some("aws-global")
+        config.builtins(&global)?.get("AWS::Region"),
+        Some(&ParamValue::String("aws-global".into()))
     );
     let with_endpoint = EndpointConfig::new(&EndpointInputs {
         endpoint_url: Some("http://localhost:4566"),
         ..EndpointInputs::default()
     });
-    assert_eq!(with_endpoint.builtins(&global)?.region, None);
+    assert_eq!(with_endpoint.builtins(&global)?.get("AWS::Region"), None);
     let regional = EndpointData::from_documents(
         RULES.as_bytes().to_vec(),
         b"{}".to_vec(),
@@ -434,7 +460,7 @@ fn native(case: &Value) -> TestResult<Value> {
                 operation,
                 &Value::Map(Map::new()),
                 &builtins,
-                || None,
+                None,
             );
             resolve(&data, &params)
         });
@@ -538,5 +564,31 @@ fn endpoints_json_is_parsed_only_when_needed() -> TestResult {
         none.client_region(&broken),
         Err(CallError::Unsupported(Unsupported::EndpointData))
     ));
+    Ok(())
+}
+
+/// A resolution that returns endpoint headers is refused: the client does
+/// not send them, and sending without them would be a different request.
+#[test]
+fn an_endpoint_with_headers_is_refused() -> TestResult {
+    let rules = r#"{"version": "1.0", "parameters": {
+        "Region": {"type": "String", "builtIn": "AWS::Region", "required": false}},
+        "rules": [{"conditions": [], "type": "endpoint", "endpoint":
+            {"url": "https://zjson.example.com", "headers": {"x-amz-thing": ["on"]}}}]}"#;
+    let partitions = r#"{"version": "1.1", "partitions": [{"id": "aws",
+        "regionRegex": "^(us|eu)\\-\\w+\\-\\d+$", "regions": {},
+        "outputs": {"name": "aws", "dnsSuffix": "example.com", "dualStackDnsSuffix": "example.com",
+        "supportsFIPS": true, "supportsDualStack": true, "implicitGlobalRegion": "us-east-1"}}]}"#;
+    let data = EndpointData::from_documents(
+        rules.as_bytes().to_vec(),
+        partitions.as_bytes().to_vec(),
+        None,
+    )?;
+    let mut params = EndpointParams::default();
+    params.set("Region", ParamValue::String("us-west-2".into()));
+    assert_eq!(
+        resolve(&data, &params).err(),
+        Some(CallError::Unsupported(Unsupported::EndpointHeaders))
+    );
     Ok(())
 }

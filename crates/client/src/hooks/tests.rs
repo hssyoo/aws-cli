@@ -40,6 +40,7 @@ static EVERYWHERE: Customization = Customization {
     id: "everywhere",
     scope: Scope::ALL,
     setting_defaults: &[],
+    builtins: &[],
     interceptors: &[&LAST_A, &DEFAULT_B],
     replaces: &["awscli.example.everywhere"],
 };
@@ -47,6 +48,7 @@ static ZQUERY: Customization = Customization {
     id: "zquery",
     scope: Scope::service("zquery"),
     setting_defaults: &[SettingDefault::MaxAttempts(4)],
+    builtins: &[],
     interceptors: &[&FIRST_C, &DEFAULT_D],
     replaces: &[],
 };
@@ -54,6 +56,7 @@ static ZQUERY_ONE: Customization = Customization {
     id: "zquery-one",
     scope: Scope::operation("zquery", "GetThing"),
     setting_defaults: &[],
+    builtins: &[],
     interceptors: &[&ONE_OPERATION],
     replaces: &[],
 };
@@ -64,6 +67,7 @@ static ZJSON: Customization = Customization {
         SettingDefault::MaxAttempts(5),
         SettingDefault::RetryBaseDelay(Duration::from_millis(25)),
     ],
+    builtins: &[],
     interceptors: &[&OTHER],
     replaces: &[],
 };
@@ -148,6 +152,7 @@ fn only_service_wide_customizations_default_settings() {
         id: "one-op-default",
         scope: Scope::operation("zquery", "GetThing"),
         setting_defaults: &[SettingDefault::MaxAttempts(9)],
+        builtins: &[],
         interceptors: &[],
         replaces: &[],
     };
@@ -162,6 +167,7 @@ fn the_first_default_in_the_table_wins() {
         id: "later",
         scope: Scope::ALL,
         setting_defaults: &[SettingDefault::MaxAttempts(7)],
+        builtins: &[],
         interceptors: &[],
         replaces: &[],
     };
@@ -209,8 +215,8 @@ fn every_stage_defaults_to_doing_nothing() -> TestResult {
         body: Vec::new(),
     };
     let before = request.clone();
-    let mut params = EndpointParams::default();
-    hook.endpoint_params(&mut cx, &mut params)?;
+    let mut params = Builtins::default();
+    hook.endpoint_builtins(&mut cx, &mut params)?;
     hook.after_serialize(&mut cx, &mut request)?;
     hook.before_sign(&mut cx, &mut request)?;
     assert_eq!(hook.select_auth(&mut cx, &AuthScheme::None), None);
@@ -225,7 +231,7 @@ fn every_stage_defaults_to_doing_nothing() -> TestResult {
     let mut output = Value::Null;
     hook.modify_output(&mut cx, &mut output)?;
     assert_eq!(request, before);
-    assert_eq!(params, EndpointParams::default());
+    assert_eq!(params, Builtins::default());
     assert_eq!(output, Value::Null);
     Ok(())
 }
