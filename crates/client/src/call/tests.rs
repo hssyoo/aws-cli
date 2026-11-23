@@ -246,9 +246,11 @@ fn names(request: &HttpRequest) -> Vec<&str> {
     request.headers.iter().map(|(name, _)| name).collect()
 }
 
-/// botocore's order on the wire (REPORT-m1 finding 1): the serializer's
-/// headers, `User-Agent`, the signer's, then the unsigned trio; the
-/// signature covers none of the trio.
+/// botocore's order on the wire: the serializer's headers, `User-Agent`,
+/// the signer's, then the unsigned trio; the signature covers none of the
+/// trio, which botocore adds after `RequestSigner.handler` has signed
+/// (`add_retry_headers` on the generic `request-created`, then
+/// `AWSRequestPreparer._prepare_headers`'s `Content-Length`).
 #[test]
 fn headers_go_out_in_botocore_s_order_with_the_trio_unsigned() -> TestResult {
     let f = fixture(settings(), keys(), &[])?;
@@ -390,8 +392,9 @@ fn a_client_error_is_not_retried_and_exhaustion_is_reported() -> TestResult {
     Ok(())
 }
 
-/// A response that fails to parse is the call's error at once
-/// (REPORT-m1 finding 4).
+/// A response that fails to parse is the call's error at once: botocore's
+/// `Endpoint._do_get_response` calls `parser.parse` outside its `try`, so a
+/// `ResponseParserError` leaves `_send_request` before `_needs_retry` runs.
 #[test]
 fn a_parse_failure_is_not_retried() -> TestResult {
     let f = fixture(settings(), keys(), &[])?;

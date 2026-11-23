@@ -1,7 +1,9 @@
 //! Whether the native route runs a model operation, decided from the model,
 //! the customization patterns and the completed parse, before any request.
-//! The first refusal names its reason; the order is the plan's (PLAN §2.2,
-//! native eligibility).
+//! The first refusal names its reason. What the model and the patterns
+//! decide alone comes first (the protocol, the traits, then the
+//! customizations), so an operation's verdict on those is the same whatever
+//! its arguments; the arguments' binding and validation come last.
 use crate::coverage;
 use awscli_argparse::ParseResult;
 use cli_core::cli_error::PythonReason;

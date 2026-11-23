@@ -1,5 +1,5 @@
 //! The settings a model operation's client runs with, and the verdict of
-//! each setting the generic path audits (T4). The fake source's `sts` stands
+//! each setting the generic path audits. The fake source's `sts` stands
 //! for any client that is not S3's.
 use super::*;
 use cli_core::client_config::{Resolved, RetryMode, Source};

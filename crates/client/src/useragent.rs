@@ -1,8 +1,9 @@
 //! The `User-Agent` a call sends (botocore's `UserAgentString.to_string`,
 //! awscli's session extras): the client-wide parts from the settings, and
 //! the feature ids the call itself registers, which [`render`] emits in
-//! the order `cli_core` declares them (sorted, PLAN §2.1 Q3) where Python's
-//! come in set order.
+//! the order `cli_core` declares them, so the header is the same on every
+//! run; Python's come in set order (useragent.py
+//! `UserAgentString._build_feature_metadata` joins a set), which varies.
 //!
 //! [`render`]: cli_core::client_config::user_agent::render
 use crate::endpoint::{EndpointParams, ParamValue};

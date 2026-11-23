@@ -1,4 +1,4 @@
-//! The only door to the network: the CRT adapter (T5b) sends through
+//! The only door to the network: the CRT adapter sends through
 //! `crt::http`, and tests use [`crate::testing::InMemoryTransport`].
 use crate::http::{HttpRequest, HttpResponse};
 use std::time::Duration;

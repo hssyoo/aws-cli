@@ -132,7 +132,8 @@ pub fn select(
 }
 
 /// Signs `request` as `SigV4Auth.add_auth` does: over the Host the
-/// transport sends for its URL (`credentials::Location`, M069), the body's
+/// transport sends for its URL (both come from `credentials::Location`, so
+/// the signed Host is the Host on the wire), the body's
 /// SHA-256, and the session token, replacing any signing header the
 /// request already carries.
 pub fn sign(

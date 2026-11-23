@@ -158,8 +158,9 @@ fn client(case: &Json) -> Result<(Client, Arc<InMemoryTransport>)> {
 }
 
 /// A request as the oracle records it, `User-Agent` reduced to its `m/`
-/// feature codes as a set (PLAN §2.1, decision 3): the rest of the value
-/// names the product and its host.
+/// feature codes as a set, since botocore joins its set in no fixed order
+/// (useragent.py `UserAgentString._build_feature_metadata`): the rest of
+/// the value names the product and its host.
 fn request_json(request: &HttpRequest) -> Json {
     let headers: Vec<Json> = request
         .headers

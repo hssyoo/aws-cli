@@ -1,7 +1,12 @@
-//! The crate layering rule of the plan's layer diagram (`plan/PLAN.md` §1.2,
-//! dependency rules §2.2): a workspace crate's normal and build
-//! dependencies on other workspace crates must appear in its row of
-//! [`ALLOWED`], and every workspace crate must have a row.
+//! The crate layering rule: the workspace's crates stand in layers, from
+//! the leaves (L0) up to the binary (L6), and a crate may depend only on
+//! crates in lower layers, plus the few siblings its row names. So the
+//! model, the formatter and the command API never pull in the network
+//! client, nothing below the commands pulls in a command or the router,
+//! and only the client among the dynamic-client crates reaches the CRT. A
+//! workspace crate's normal and build dependencies on other workspace
+//! crates must appear in its row of [`ALLOWED`], and every workspace crate
+//! must have a row.
 //!
 //! Dev-dependencies are not checked: a crate's tests may assemble layers
 //! above it (the parity test renders `client`'s results with `format`).
@@ -11,8 +16,8 @@ use super::{Diagnostic, Report, Rule, TaskError, read_source};
 use std::path::Path;
 
 /// Each workspace crate and the workspace crates it may depend on, by layer.
-/// Arrows point down, so a row names only lower layers, plus the siblings
-/// the diagram draws. Only `client` among the crates added for the dynamic
+/// Dependencies point down, so a row names only lower layers, plus the
+/// siblings it lists. Only `client` among the crates added for the dynamic
 /// client may depend on `crt`; `command` and `format` never depend on
 /// `client`; `credentials` never does; and nothing below the commands may
 /// depend on `s3`, `cli-router`, `aws-cli` or `python-fallback`.
@@ -61,15 +66,15 @@ const ALLOWED: &[(&str, &[&str])] = &[
     // crate.
     ("service-errors", SERVICE_ERRORS),
     // L4: the command crates. `customizations` holds the per-service
-    // edits and hooks, over the client and the command API (§4.2); its
-    // one drawn edge to `s3` goes through a trait in `command`.
+    // edits and hooks, over the client and the command API; what it needs
+    // of `s3` goes through a trait in `command`, not a dependency.
     ("s3", S3),
     ("customizations", CUSTOMIZATIONS),
     // The generic service command: admission, binding and the call, over
     // the command API, the client and the CLI's error rendering.
     ("service-command", SERVICE_COMMAND),
-    // L5: routing. Its `s3` and `command` edges are the arms the plan's
-    // §2.2 rule 2 removes when the binary assembles the registry.
+    // L5: routing. Its `s3` and `command` edges stay only while the router,
+    // not the binary, assembles the registry of native commands.
     ("cli-router", ROUTER),
     // L6: the binary and the embedded interpreter.
     ("aws-cli", BINARY),
@@ -181,7 +186,12 @@ pub(super) fn check(metadata: &serde_json::Value) -> Result<Vec<Diagnostic>, Tas
             if checked && dependency["path"].is_string() && !allowed.contains(&on) {
                 let key = dependency["rename"].as_str().unwrap_or(on);
                 let line = declared_line(manifest, key)?;
-                let detail = format!("{name} may not depend on {on} (plan/PLAN.md §1.2, §2.2)");
+                let detail = format!(
+                    "{name} may not depend on {on}: a crate depends only on lower layers \
+                     (leaves; cli-core, credentials, crt, model; client, format; the command \
+                     API; the commands; routing; the binary), as `ALLOWED` in \
+                     xtask/src/lint/layers.rs lists them"
+                );
                 report.add(manifest, line, Rule::Layering, detail)?;
             }
         }

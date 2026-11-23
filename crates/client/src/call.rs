@@ -7,7 +7,14 @@
 //! a caller can send a call it cannot run natively to the Python route
 //! before anything is sent. [`Client::send`] runs the attempts: sign, add
 //! the unsigned `amz-sdk-invocation-id`, `amz-sdk-request` and
-//! `Content-Length` (REPORT-m1 finding 1), send, parse, and retry.
+//! `Content-Length`, send, parse, and retry. botocore signs first:
+//! `RequestSigner.handler` is registered on `request-created.<service>`,
+//! which the emitter runs before `handlers.add_retry_headers` on the
+//! generic `request-created` (hooks.py `PrefixTrie.prefix_search`: the more
+//! specific event's handlers first), and `Content-Length` is set after the
+//! event, when `Endpoint.create_request` prepares the request
+//! (awsrequest.py `AWSRequestPreparer._prepare_headers`). So the signature
+//! covers none of the three.
 use crate::admission::Unsupported;
 use crate::auth::{self, AuthScheme};
 use crate::credentials::CredentialSource;

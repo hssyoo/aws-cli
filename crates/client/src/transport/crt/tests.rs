@@ -146,7 +146,8 @@ fn a_signed_post_goes_direct_and_verifies() -> TestResult {
     Ok(())
 }
 
-/// M036's other half: an `https` endpoint behind `HTTPS_PROXY` goes through
+/// An STS-shaped POST through an HTTPS proxy: an `https` endpoint behind
+/// `HTTPS_PROXY` goes through
 /// the proxy's CONNECT tunnel, verified with the CA bundle the transport was
 /// given, and arrives signed as sent.
 #[test]

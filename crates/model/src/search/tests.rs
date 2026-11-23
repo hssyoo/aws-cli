@@ -123,8 +123,9 @@ fn an_empty_entry_is_kept_and_names_no_directory() -> Result<()> {
     Ok(())
 }
 
-/// The layout of the Python-route check in the T2 report: `zver` has a newer
-/// version in the second location, `zfirst` the same file in both.
+/// Two search locations, as a Python-route check of the loader's order
+/// lays them out: `zver` has a newer version in the second location,
+/// `zfirst` the same file in both.
 fn two_locations() -> Result<(Scratch, Scratch, Scratch)> {
     let (a, b, home) = (
         Scratch::new("a")?,

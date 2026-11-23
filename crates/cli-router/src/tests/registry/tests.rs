@@ -49,7 +49,7 @@ const ASSUME_ROLE: &[Argument] = &[
     },
 ];
 
-/// A stand-in for the model source T8 writes: `sts` with its real
+/// A stand-in for the model source (`command::models`): `sts` with its real
 /// operation names, two of them with tables.
 #[derive(Debug)]
 struct Fake;

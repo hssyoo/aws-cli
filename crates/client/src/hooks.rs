@@ -17,8 +17,8 @@ use std::any::Any;
 use std::time::Duration;
 
 /// Which calls something applies to: a service, by its model directory
-/// name (botocore's `service_name`, PLAN §2.1), and an operation, by its
-/// model name. `None` matches every one.
+/// name (botocore's `ServiceModel.service_name`, the name the loader finds
+/// the model under), and an operation, by its model name. `None` matches every one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scope {
     pub service: Option<&'static str>,
@@ -189,8 +189,9 @@ pub trait Interceptor: Sync + std::fmt::Debug {
     }
 }
 
-/// A default for a client setting the user left unset (REPORT-m1
-/// finding 8): the user's value, whatever it is, wins.
+/// A default for a client setting the user left unset: the user's value,
+/// whatever it is, wins, as `ClientCreator._register_v2_standard_retries`
+/// passes a configured `max_attempts` over `_SERVICE_MAX_ATTEMPTS`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SettingDefault {
     /// `max_attempts`, as botocore's per-service table supplies it
@@ -211,8 +212,9 @@ pub struct Customization {
     /// customization for a whole service supplies them.
     pub setting_defaults: &'static [SettingDefault],
     pub interceptors: &'static [&'static dyn Interceptor],
-    /// The Python handlers this ports, as `module.function`, the way the
-    /// derived pattern entry names them (PLAN §2.2).
+    /// The Python handlers this ports, as `module.qualname`, the way the
+    /// customization-pattern payload entry names them
+    /// (`command::patterns`).
     pub replaces: &'static [&'static str],
 }
 

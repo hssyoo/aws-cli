@@ -975,8 +975,10 @@ pub const SETTINGS: &[Setting] = &[
     // Settings botocore reads for every client, as a model operation's
     // meets them. No client reads `sts_regional_endpoints`: the endpoint
     // rules' global-endpoint input is always false
-    // (`compute_endpoint_resolver_builtin_defaults`), and `api_versions` and
-    // the profile's `data_path` reach no loader (the T2 finding).
+    // (`compute_endpoint_resolver_builtin_defaults`). No code in botocore or
+    // awscli reads an `api_versions` setting, and the profile's `data_path`
+    // never wins: `awscli/__init__.py` always sets `AWS_DATA_PATH`, which
+    // `configprovider.py`'s `data_path` chain reads before the profile.
     Setting {
         source: Source::Chain("AWS_STS_REGIONAL_ENDPOINTS", "sts_regional_endpoints"),
         support: Support::Ignored,

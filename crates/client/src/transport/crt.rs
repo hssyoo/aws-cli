@@ -13,7 +13,8 @@
 //! - **On the wire**: `http.client`'s Host header and
 //!   `Accept-Encoding: identity` first (`putrequest`), then the request's
 //!   headers in order. The Host is the one the request was signed with:
-//!   both come from [`credentials::Location`] (M069).
+//!   both come from [`credentials::Location`], so a signature always
+//!   covers the Host that goes out.
 //! - **Keep-alive**: `tcp_keepalive` sets SO_KEEPALIVE at the system's
 //!   timings, as botocore adds it to urllib3's socket options
 //!   (`_compute_socket_options`). Each request connects anew.

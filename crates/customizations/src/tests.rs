@@ -306,9 +306,11 @@ fn named_services<'a>(source: &str, names: &'a [String]) -> Vec<&'a str> {
         .collect()
 }
 
-/// No service name in core (PLAN §2.2): every name is derived from the
-/// models' directory, and none appears as a string literal in the
-/// non-test source of the core crates or the router's generic path.
+/// No service name in core: what is particular to a service lives in this
+/// crate, keyed by the model directory names, so the core crates serve any
+/// service the models describe. Every name is derived from the models'
+/// directory, and none appears as a string literal in the non-test source
+/// of the core crates or the router's generic path.
 #[test]
 fn no_core_source_names_a_service() -> TestResult {
     let names = service_names()?;

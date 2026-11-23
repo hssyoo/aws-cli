@@ -5,8 +5,8 @@
 Prints one table per measurement, each with what produced it:
 
 - **Startup**: a native parse failure, `aws sts get-caller-identity
-  --no-such-option` (exit 252, the plan's "native local command or parse
-  failure"), forced native and forced Python. `aws --version` is no
+  --no-such-option` (exit 252), the cost of a native command that sends
+  nothing, forced native and forced Python. `aws --version` is no
   measure: every form of it routes to Python (`version_requested`).
 - **End to end**: `aws sts get-caller-identity` against a stub on
   loopback, on the native route and the Python route
@@ -21,7 +21,7 @@ Prints one table per measurement, each with what produced it:
   (`release-safe` at 1cc2b0482), its sections (`size -m` on macOS,
   `size -A` elsewhere), and the `__text` bytes per crate from `nm`'s
   symbols, by each symbol's first path segment.
-- **Eligibility census** (`service-command`'s, builder 3's): its command,
+- **Eligibility census** (`service-command`'s): its command,
   and with `--census` its counts.
 
 Every command gets a cleared environment, fake keys, empty config and

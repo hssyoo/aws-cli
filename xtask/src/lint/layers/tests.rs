@@ -44,7 +44,9 @@ fn a_planted_upward_dependency_fails_on_its_manifest_line() -> Result<(), TaskEr
     );
     assert_eq!(
         diagnostics[0].detail,
-        "format may not depend on client (plan/PLAN.md §1.2, §2.2)"
+        "format may not depend on client: a crate depends only on lower layers (leaves; \
+         cli-core, credentials, crt, model; client, format; the command API; the commands; \
+         routing; the binary), as `ALLOWED` in xtask/src/lint/layers.rs lists them"
     );
     Ok(())
 }
@@ -74,9 +76,13 @@ fn registry_dependencies_are_not_layered() -> Result<(), TaskError> {
     Ok(())
 }
 
-/// The table keeps the plan's rules (§2.2) that T11a names.
+/// The table keeps the rules the layering exists for: nothing below the
+/// commands depends on `s3`, the router, the binary or the fallback; only
+/// `client` among the dynamic-client crates reaches `crt`; `command`,
+/// `format` and `credentials` never depend on `client`; and neither
+/// `customizations` nor `service-errors` depends on a command crate.
 #[test]
-fn the_table_keeps_the_plan_s_dependency_rules() {
+fn the_table_keeps_the_dependency_rules() {
     let above = ["s3", "cli-router", "aws-cli", "python-fallback"];
     for name in ["model", "client", "format", "command"] {
         assert!(row(name).iter().all(|on| !above.contains(on)), "{name}");

@@ -10,7 +10,10 @@ use crate::endpoint_config::{self, Variant};
 /// What any client the invocation builds needs from its configuration.
 /// A setting a customization may default is an `Option` that stays `None`
 /// when nothing configures it, so the default applies first and the user's
-/// value last (REPORT-m1, finding 8).
+/// value last: botocore passes `max_attempts` on only when the user set it
+/// (client.py `ClientCreator._register_v2_standard_retries`), and only then
+/// does `retries/standard.py` `register_retry_handler` skip its per-service
+/// `_SERVICE_MAX_ATTEMPTS`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientSettings {
     /// `md/command#<lineage>`: the command's names joined by dots

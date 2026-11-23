@@ -32,6 +32,6 @@
  {
   "case": "dynamodb-idempotency-token",
   "path": "b",
-  "reason": "TransactWriteItems has operationContextParams, which T5b's admission leaves to the Python route (CallError::Unsupported before any request), so the native call is never made: layer B records the Python route's call only."
+  "reason": "TransactWriteItems has operationContextParams, which the client's admission leaves to the Python route (CallError::Unsupported before any request), so the native call is never made: layer B records the Python route's call only."
  }
 ]
