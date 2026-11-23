@@ -99,7 +99,9 @@ pub struct TableHandler {
 }
 
 /// A registry initializer whose handlers do nothing but edit root command
-/// tables, with the handlers the pack saw it register, in its order. The
+/// tables, with the handlers the pack saw it register: by event, and each
+/// event's in the order it registered them, which is the order they run
+/// in (the order across events decides nothing, and is not kept). The
 /// pack refuses one the registry lists under any pattern but a root's
 /// table event (`building-command-table.<command>`), or that registers
 /// anywhere else or reads its table.

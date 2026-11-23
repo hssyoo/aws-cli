@@ -44,8 +44,12 @@ method by its class and method name, and a callable object by its class.
 
 `command_table_edits` holds the registry initializers whose handlers do
 nothing but edit command tables (`TABLE_EDITORS`): the handlers each
-registers, in its order, and what each does to the table of its event,
-which is code, not data. This script runs each initializer against a
+registers, by event and each event's in the order it registered them,
+and what each does to the table of its event, which is code, not data.
+Only the order within an event decides a table; the order across events
+is the filesystem's where an editor lists a directory
+(`WizardLoader.list_commands_with_wizards`), so it is not kept, and the
+entry's bytes are the same on any filesystem. This script runs each initializer against a
 registry that records what it registers, then runs each handler against
 a table that records the names it sets (`command_table[name] = ...`) and
 deletes (`del command_table[name]`), in its order. The pack refuses an
@@ -299,8 +303,8 @@ class StandIn:
 
 
 def command_table_edits(registry: Any) -> list[Any]:
-    """Each of `TABLE_EDITORS`: the handlers it registers and the names
-    each sets and deletes in its event's table, run as
+    """Each of `TABLE_EDITORS`: the handlers it registers, by event, and
+    the names each sets and deletes in its event's table, run as
     `ServiceCommand._create_command_table` emits the event (clidriver.py),
     with no session."""
     rows = []
@@ -325,6 +329,8 @@ def command_table_edits(registry: Any) -> list[Any]:
                 command_object=StandIn(event.split(".")[1]),
             )
             handlers.append([event, handler_name(handler), table.edits])
+        # A stable sort: each event's handlers keep the order they run in.
+        handlers.sort(key=lambda row: row[0])
         rows.append([[module, function], handlers])
     return rows
 
