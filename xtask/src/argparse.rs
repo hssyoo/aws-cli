@@ -21,6 +21,9 @@ struct Options {
 
 pub fn run(root: &Path, command: &str, args: &[String]) -> Result<(), TaskError> {
     deps::native_host()?;
+    if command == "derive-tables" {
+        return derived::run_tool(root, args);
+    }
     let options = options(args)?;
     if let Some(commands) = &options.derived {
         if command != "check-argparse" {

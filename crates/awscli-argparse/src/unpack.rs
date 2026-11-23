@@ -204,6 +204,14 @@ pub fn unpack(
             .iter()
             .find(|a| Argument::new(a.name).matches_dest(&entry.dest));
         let mut value = entry.value.clone();
+        if arg.is_some_and(|argument| argument.cli_type == Some(CliType::Deferred))
+            && !value.is_null()
+        {
+            return Err(UnpackError {
+                dest: entry.dest.clone(),
+                failure: None,
+            });
+        }
         if value.contains_os_string()
             && !arg.is_some_and(|argument| {
                 argument.positional
@@ -283,7 +291,9 @@ fn convert(argument: Option<&Argument>, value: Value) -> Result<Value, Option<Fa
     if arg.nargs.is_some() || value.is_null() {
         return Ok(value);
     }
-    if let (Some(CliType::Integer), Value::OsString(text)) = (arg.cli_type, &value) {
+    if let (Some(CliType::Integer | CliType::UnboundedInteger), Value::OsString(text)) =
+        (arg.cli_type, &value)
+    {
         return parse_int_os(text).map(Value::from).map_err(Some);
     }
     let Value::String(text) = &value else {
@@ -293,6 +303,17 @@ fn convert(argument: Option<&Argument>, value: Value) -> Result<Value, Option<Fa
         Some(CliType::Integer) => parse_int(text)
             .map(Value::from)
             .map_err(|e| Some(Failure::integer(text, e))),
+        Some(CliType::UnboundedInteger) => match parse_int(text) {
+            Ok(number) => Ok(Value::from(number)),
+            Err(ParseIntError::OutOfRange) => match crate::convert::convert(
+                crate::ValueType::Int,
+                std::ffi::OsStr::new(text.as_str()),
+            ) {
+                crate::convert::Converted::Value(digits) => Ok(Value::Number(digits)),
+                _ => Err(None),
+            },
+            Err(e) => Err(Some(Failure::integer(text, e))),
+        },
         Some(CliType::Map) => convert_map(arg, text),
         _ => Ok(value),
     }

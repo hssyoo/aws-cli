@@ -8,7 +8,10 @@
 //! - `derive-tables --home <dir> parse <jsonl>`: each request's parse over
 //!   the registry the binary assembles (the pinned `s3` tree and this
 //!   source), one result per line as `argparse-tool parse` writes them (the
-//!   parse oracle's derived cases).
+//!   parse oracle's derived cases);
+//! - `derive-tables --home <dir> touching <command>...`: for every operation
+//!   of each named root, the awscli entries and botocore handlers that touch
+//!   it, one `<command> <operation> <name>` line each.
 #![forbid(unsafe_code)]
 use awscli_argparse::unpack::{self, expand_user, expand_vars};
 use command::models::ModelSource;
@@ -43,6 +46,7 @@ fn main() -> Result<(), Error> {
     let mut stdout = std::io::BufWriter::new(std::io::stdout().lock());
     match rest.as_slice() {
         [mode, requests] if mode == "parse" => parse(&source, Path::new(requests), &mut stdout)?,
+        [mode, commands @ ..] if mode == "touching" => touching(&source, commands, &mut stdout)?,
         commands => {
             let tables = command::models::dump::tables(&source, commands);
             serde_json::to_writer(&mut stdout, &tables)?;
@@ -50,6 +54,23 @@ fn main() -> Result<(), Error> {
         }
     }
     stdout.flush()?;
+    Ok(())
+}
+
+/// The entries that touch each operation of `commands`.
+fn touching(
+    source: &ModelSource<'_>,
+    commands: &[String],
+    output: &mut dyn Write,
+) -> Result<(), Error> {
+    for command in commands {
+        let service = source.service(command).ok_or("no such root")?;
+        for operation in &service.operations {
+            for name in source.touching(command, operation).unwrap_or_default() {
+                writeln!(output, "{command} {operation} {name}")?;
+            }
+        }
+    }
     Ok(())
 }
 

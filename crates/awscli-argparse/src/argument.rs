@@ -27,6 +27,15 @@ pub enum CliType {
     Integer,
     Blob,
     Map,
+    /// A model operation's integer member: `unpack_scalar_cli_arg`'s
+    /// `int()` of the text, at any magnitude, which the request carries as
+    /// it is.
+    UnboundedInteger,
+    /// A model operation's argument whose value only Python unpacks or
+    /// binds (a list, map, structure, blob, timestamp, float or JSON value
+    /// member, or a customization's option): a supplied value stops the
+    /// unpack loop at its destination, before its parameter file is read.
+    Deferred,
 }
 /// Constant values representable in pinned and derived tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

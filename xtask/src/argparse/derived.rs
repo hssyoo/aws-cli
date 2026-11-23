@@ -44,6 +44,22 @@ pub fn check(root: &Path, commands: &[String]) -> Result<(), TaskError> {
     process::run(&mut oracle)
 }
 
+/// `derive-tables [--] <args>`: the tool as the derived check runs it, over
+/// the payload and the fake models, with an empty home, its output on
+/// stdout. Its own `--home` is supplied.
+pub fn run_tool(root: &Path, args: &[String]) -> Result<(), TaskError> {
+    let args = args.strip_prefix(&["--".to_owned()]).unwrap_or(args);
+    let environment = deps::native_environment(root, false)?;
+    let tool = build_tool(root)?;
+    let home = root.join("target/argtables/derived/home");
+    fs::create_dir_all(&home)?;
+    let mut derive = Command::new(tool);
+    derive.arg("--home").arg(&home).args(args);
+    environment.apply(&mut derive);
+    isolate(&mut derive, root);
+    process::run(&mut derive)
+}
+
 /// Build `derive-tables`, which derives the tables and parses over them.
 pub fn build_tool(root: &Path) -> Result<PathBuf, TaskError> {
     process::run(Command::new("cargo").current_dir(root).args([

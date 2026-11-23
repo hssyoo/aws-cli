@@ -34,6 +34,8 @@ fn argument_json(arg: &Argument) -> Value {
         CliType::Integer => "integer",
         CliType::Blob => "blob",
         CliType::Map => "map",
+        CliType::UnboundedInteger => "unbounded_integer",
+        CliType::Deferred => "deferred",
     });
     Value::object([
         ("name", arg.name.into()),
