@@ -79,6 +79,11 @@ pub fn static_refusal(
         let name = crate::protocol::resolved_protocol(model.metadata()).unwrap_or_default();
         return Some(Unsupported::Protocol(name.to_owned()));
     }
+    // A key the model loader does not interpret may change what botocore
+    // does with the call; the first one the operation reaches refuses it.
+    if let Some(uninterpreted) = model.uninterpreted_reached(operation).first() {
+        return Some(Unsupported::Trait(uninterpreted.key.to_string()));
+    }
     if let Some(unsupported) = unimplemented_trait(operation).or_else(|| streams(model, operation))
     {
         return Some(unsupported);

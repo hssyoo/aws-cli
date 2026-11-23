@@ -102,3 +102,22 @@ fn static_refusals_need_only_the_model_and_the_rule_set() -> Result<(), Box<dyn 
     );
     Ok(())
 }
+
+/// A key the model loader does not interpret, which the operation reaches,
+/// refuses it by that key: fail closed when a model gains a trait.
+#[test]
+fn an_uninterpreted_key_refuses_the_operations_that_reach_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let planted = SERVICE.replace(
+        r#""Plain": {"name": "Plain","#,
+        r#""Plain": {"name": "Plain", "newTrait": true,"#,
+    );
+    let model = Model::from_json(planted.as_bytes())?;
+    let data = EndpointData::from_documents(RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
+    let plain = model.operation("Plain").ok_or("Plain")?;
+    assert_eq!(
+        static_refusal(&model, plain, &data, "zjson", &[]),
+        Some(Unsupported::Trait("newTrait".into()))
+    );
+    Ok(())
+}
