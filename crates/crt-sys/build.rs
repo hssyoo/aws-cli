@@ -133,7 +133,50 @@ fn proxy_state(include: &Path, system: bool, crt_static: bool) -> Result<bool, B
         )
         .into());
     }
-    Ok(crt_static && present)
+    let compiled = crt_static && present;
+    if compiled {
+        proxy_state_reviewed(include_str!("../../deps/pins.toml"))?;
+    }
+    Ok(compiled)
+}
+
+/// The aws-c-http commit whose private proxy state and CONNECT path
+/// (`proxy_impl.h`, `proxy_connection.c`) the shim's tunnel deadline was
+/// checked against: the fields it reads, the states it expects, and that
+/// the negotiator's `connect_request_transform` runs on the proxy
+/// connection's channel thread with the CONNECT not yet answered.
+const PROXY_STATE_REVIEWED: &str = "d19eabf4c5dc78ee1e07033a5015e9d50d04ec31";
+
+/// Fails the build when the pinned aws-c-http is not the reviewed one. The
+/// header and the library come from the same pinned source, so their layouts
+/// always agree; what a bump can change unseen is what the fields mean, and
+/// a renamed field is the only change the compiler would catch. Every prefix
+/// that carries the header has it from `deps/pins.toml`'s source (`cargo
+/// xtask deps crt` installs it, for the managed and the system-built CRT).
+fn proxy_state_reviewed(pins: &str) -> Result<(), Box<dyn Error>> {
+    let pinned = pins
+        .split("\n[")
+        .find(|section| section.starts_with("sources.aws_c_http]"))
+        .and_then(|section| {
+            section
+                .lines()
+                .find_map(|line| line.strip_prefix("original_url = \""))
+        })
+        .and_then(|url| url.trim_end_matches('"').rsplit_once('#'))
+        .map(|(_, commit)| commit)
+        .ok_or("deps/pins.toml names no aws-c-http commit")?;
+    if pinned == PROXY_STATE_REVIEWED {
+        return Ok(());
+    }
+    Err(format!(
+        "aws-c-http is pinned at {pinned}, but the shim's CONNECT deadline \
+         (native.c, zaws_tunnel_strategy) reads its private proxy state as of \
+         {PROXY_STATE_REVIEWED}. Check s_tunnel_arm against that commit's \
+         proxy_impl.h and proxy_connection.c (or delete the deadline if \
+         aws-c-http now times the proxy connection itself), then set \
+         PROXY_STATE_REVIEWED in crates/crt-sys/build.rs."
+    )
+    .into())
 }
 
 /// What the shim is compiled with beyond its fixed sources.

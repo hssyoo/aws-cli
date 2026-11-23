@@ -92,8 +92,9 @@ struct zaws_runtime *zaws_runtime_allocate(void) {
  * aws-c-http hands the negotiator no handle on that connection, only its private proxy state
  * (`struct aws_http_proxy_user_data`, aws/http/private/proxy_impl.h). The shim compiles against
  * that header only where build.rs defines ZAWS_PROXY_STATE: a static CRT whose prefix carries the
- * header from the pinned source that built it (aws-c-http d19eabf4), so a pin bump that changes
- * the struct fails to compile. Elsewhere, a shared system CRT in particular, the strategy only
+ * header from the pinned source that built it (aws-c-http d19eabf4), so the layout read is the
+ * layout linked. A pin bump fails the build until this code is checked against the new commit
+ * (build.rs, PROXY_STATE_REVIEWED): a change in what the fields mean would compile. Elsewhere, a shared system CRT in particular, the strategy only
  * forwards and the CONNECT is sent untimed, as aws-c-http sends it; crt::http's Rust backstop
  * still bounds its own requests. As a second line, the state is read only when it checks out: the
  * allocator the negotiator was built with, a CONNECT being made, no status or error yet, and a
