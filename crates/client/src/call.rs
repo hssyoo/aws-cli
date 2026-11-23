@@ -159,6 +159,10 @@ impl Client {
         let prepared = self.prepare_with_features(operation, input, features)?;
         self.send(prepared)
     }
+    /// The service's model.
+    pub(crate) fn model(&self) -> &Model {
+        &self.parts.model
+    }
 }
 
 /// A timeout in milliseconds as the transport takes it: 0, botocore's
