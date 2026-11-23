@@ -1,0 +1,28 @@
+{
+  "pagination": {
+    "ListThings": {
+      "input_token": "NextToken",
+      "output_token": "NextToken",
+      "result_key": "Things"
+    },
+    "DescribeWidgets": {
+      "input_token": "Marker",
+      "output_token": "Marker",
+      "limit_key": "MaxRecords",
+      "result_key": "Widgets"
+    },
+    "DescribeDefaults": {
+      "input_token": "Marker",
+      "output_token": "Defaults.Marker",
+      "limit_key": "MaxRecords",
+      "result_key": "Defaults.Parameters"
+    },
+    "ListJobs": {
+      "input_token": "Marker",
+      "output_token": "Jobs[-1].JobId",
+      "more_results": "IsTruncated",
+      "limit_key": "MaxJobs",
+      "result_key": "Jobs"
+    }
+  }
+}
