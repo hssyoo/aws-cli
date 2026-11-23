@@ -1,6 +1,10 @@
 use super::super::{Model, Uninterpreted};
 use super::*;
 use crate::testing::{self, Result};
+use serde_json::{Map, Value as Json};
+use std::collections::BTreeMap;
+
+type Object = Map<String, Json>;
 
 /// A model with an uninterpreted key at every level the arena reads, each
 /// beside an ignored key at the same level.
@@ -111,7 +115,8 @@ fn a_model_of_known_and_ignored_keys_has_none() -> Result<()> {
 /// waiter configs, `deprecated` on an operation (`OperationModel.
 /// deprecated`, which the arena reads), a rule-set parameter
 /// (`endpoint_provider.py`) and an `endpoints.json` entry (`regions.py`),
-/// never on the document.
+/// never on the document; `serviceFullName` and `serviceAbbreviation` in
+/// `utils.get_service_module_name`, which names a client's Python class.
 #[test]
 fn the_ignore_lists_name_only_keys_botocore_does_not_act_on() -> Result<()> {
     let botocore = testing::data_dir()
@@ -138,6 +143,8 @@ fn the_ignore_lists_name_only_keys_botocore_does_not_act_on() -> Result<()> {
             "deprecated",
             &["model.py", "endpoint_provider.py", "regions.py"],
         ),
+        ("serviceFullName", &["utils.py"]),
+        ("serviceAbbreviation", &["utils.py"]),
     ];
     let ignored = [
         DOCUMENT_IGNORED,
@@ -146,6 +153,7 @@ fn the_ignore_lists_name_only_keys_botocore_does_not_act_on() -> Result<()> {
         SHAPE_IGNORED,
         REFERENCE_IGNORED,
         CLIENT_CONTEXT_PARAM_IGNORED,
+        HTTP_IGNORED,
     ];
     for key in ignored.iter().flat_map(|list| list.iter()) {
         let allowed = readers
@@ -159,6 +167,132 @@ fn the_ignore_lists_name_only_keys_botocore_does_not_act_on() -> Result<()> {
                 !quoted || allowed.contains(&file),
                 "{key} is read in {}",
                 path.display()
+            );
+        }
+    }
+    Ok(())
+}
+
+static EMPTY: std::sync::LazyLock<Object> = std::sync::LazyLock::new(Object::new);
+
+/// A JSON object, or the empty one.
+fn object(value: Option<&Json>) -> &Object {
+    value.and_then(Json::as_object).unwrap_or(&EMPTY)
+}
+
+/// How often each ignored key occurs in `json`, by list.
+fn ignored_occurrences(json: &Json, counts: &mut BTreeMap<String, usize>) {
+    let mut count = |list: &str, object: &Object, ignored: &[&str]| {
+        for key in object.keys().filter(|key| ignored.contains(&key.as_str())) {
+            *counts.entry(format!("{list} {key}")).or_default() += 1;
+        }
+    };
+    let Some(document) = json.as_object() else {
+        return;
+    };
+    count("document", document, DOCUMENT_IGNORED);
+    count(
+        "metadata",
+        object(document.get("metadata")),
+        METADATA_IGNORED,
+    );
+    for operation in object(document.get("operations")).values() {
+        let operation = object(Some(operation));
+        count("operation", operation, OPERATION_IGNORED);
+        count("http", object(operation.get("http")), HTTP_IGNORED);
+        for key in ["input", "output"] {
+            count("reference", object(operation.get(key)), REFERENCE_IGNORED);
+        }
+    }
+    for shape in object(document.get("shapes")).values() {
+        let shape = object(Some(shape));
+        count("shape", shape, SHAPE_IGNORED);
+        for member in object(shape.get("members")).values() {
+            count("reference", object(Some(member)), REFERENCE_IGNORED);
+        }
+    }
+    for param in object(document.get("clientContextParams")).values() {
+        count(
+            "clientContextParam",
+            object(Some(param)),
+            CLIENT_CONTEXT_PARAM_IGNORED,
+        );
+    }
+}
+
+/// Counts, per uninterpreted key of `service`, the operations reaching it,
+/// and checks every recorded key is reached.
+fn count_reached(service: &str, model: &Model, reached: &mut BTreeMap<String, usize>) {
+    for operation in model.operations() {
+        for key in model.uninterpreted_reached(operation) {
+            *reached.entry(format!("{service} {key}")).or_default() += 1;
+        }
+    }
+    for key in model.uninterpreted() {
+        let row = format!("{service} {key}");
+        assert!(reached.contains_key(&row), "{row}");
+    }
+}
+
+fn print_census(
+    heading: &str,
+    reached: &BTreeMap<String, usize>,
+    ignored: &BTreeMap<String, usize>,
+) -> Result<()> {
+    let mut table = format!("{heading}uninterpreted key -> operations refused\n");
+    for (key, count) in reached {
+        table.push_str(&format!("  {key}: {count}\n"));
+    }
+    table.push_str("ignored key -> occurrences\n");
+    for (key, count) in ignored {
+        table.push_str(&format!("  {key}: {count}\n"));
+    }
+    Ok(std::io::Write::write_all(
+        &mut std::io::stderr(),
+        table.as_bytes(),
+    )?)
+}
+
+/// The census of every shipped model (client F1): the operations each
+/// uninterpreted key reaches, which a client refuses, and how often each
+/// ignored key occurs. It prints the table and asserts its structure: every
+/// recorded key is reached by some operation or is the service's, and every
+/// ignored key occurs in some shipped model, so the list holds no
+/// speculative entry. Run with `RUST_TEST_NOCAPTURE=1` to see the table.
+#[test]
+fn census_of_the_shipped_models() -> Result<()> {
+    use crate::source::{DirSource, Kind, Source, latest_version};
+    let source = DirSource::new(testing::data_dir());
+    let (mut operations, mut reached) = (0, BTreeMap::new());
+    let mut ignored = BTreeMap::new();
+    let services = source.services(Kind::Service)?;
+    for service in &services {
+        let version = latest_version(&source, service, Kind::Service)?;
+        let bytes = source
+            .read(&format!("{service}/{version}/service-2"))?
+            .ok_or("model")?;
+        let json: Json = serde_json::from_slice(&bytes)?;
+        ignored_occurrences(&json, &mut ignored);
+        let model = Model::from_value(&json)?;
+        operations += model.operations().len();
+        count_reached(service, &model, &mut reached);
+    }
+    let heading = format!("{} services, {operations} operations\n", services.len());
+    print_census(&heading, &reached, &ignored)?;
+    let lists = [
+        ("document", DOCUMENT_IGNORED),
+        ("metadata", METADATA_IGNORED),
+        ("operation", OPERATION_IGNORED),
+        ("shape", SHAPE_IGNORED),
+        ("reference", REFERENCE_IGNORED),
+        ("clientContextParam", CLIENT_CONTEXT_PARAM_IGNORED),
+        ("http", HTTP_IGNORED),
+    ];
+    for (list, keys) in lists {
+        for key in keys {
+            assert!(
+                ignored.contains_key(&format!("{list} {key}")),
+                "{list} {key} never occurs"
             );
         }
     }

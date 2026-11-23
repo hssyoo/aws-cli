@@ -37,6 +37,15 @@ fn texts(values: &[&str]) -> Box<[Box<str>]> {
     values.iter().map(|value| Box::from(*value)).collect()
 }
 
+/// Keys no call reads are neither stored nor uninterpreted: the fixture's
+/// `serviceFullName`, `globalEndpoint`, `checksumFormat`, an operation's
+/// `deprecated` and `http.responseCode`.
+#[test]
+fn keys_no_call_reads_are_ignored() -> Result<()> {
+    assert_eq!(fixture()?.uninterpreted(), &[]);
+    Ok(())
+}
+
 #[test]
 fn metadata_and_client_context_parameters_are_read() -> Result<()> {
     let model = fixture()?;
@@ -49,17 +58,10 @@ fn metadata_and_client_context_parameters_are_read() -> Result<()> {
         ("jsonVersion", &metadata.json_version, "1.1"),
         ("targetPrefix", &metadata.target_prefix, "X"),
         ("serviceId", &metadata.service_id, "X Svc"),
-        ("serviceFullName", &metadata.service_full_name, "X Service"),
         ("signatureVersion", &metadata.signature_version, "v4"),
         ("signingName", &metadata.signing_name, "xs"),
         ("uid", &metadata.uid, "x-2020-01-01"),
         ("xmlNamespace", &metadata.xml_namespace, "https://x/"),
-        (
-            "globalEndpoint",
-            &metadata.global_endpoint,
-            "x.amazonaws.com",
-        ),
-        ("checksumFormat", &metadata.checksum_format, "md5"),
     ] {
         checks.eq(label, actual, &text(expected));
     }
@@ -89,7 +91,6 @@ fn operations_keep_model_order_and_their_traits() -> Result<()> {
     let http = Http {
         method: text("POST"),
         request_uri: text("/"),
-        response_code: Some(200),
     };
     checks.eq("http", &zeta.http, &http);
     checks.eq("hostPrefix", &zeta.host_prefix, &text("{Name}."));
@@ -112,7 +113,6 @@ fn operations_keep_model_order_and_their_traits() -> Result<()> {
     );
     checks.eq("authtype", &zeta.auth_type, &text("v4"));
     checks.is("unsignedPayload", zeta.unsigned_payload);
-    checks.is("deprecated", zeta.deprecated);
     checks.is("not endpointoperation", !zeta.endpoint_operation);
     checks.eq(
         "endpointdiscovery",

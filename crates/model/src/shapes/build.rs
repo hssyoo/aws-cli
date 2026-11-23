@@ -182,9 +182,9 @@ impl Builder<'_> {
         let out = &mut self.uninterpreted;
         let (known, ignored) = (keys::OPERATION, keys::OPERATION_IGNORED);
         record(object, known, ignored, &at(String::new()), out);
-        for (key, known) in keys::OPERATION_NESTED {
+        for (key, known, ignored) in keys::OPERATION_NESTED {
             if let Some(nested) = object.get(*key).and_then(Json::as_object) {
-                record(nested, known, &[], &at(format!("{key}.")), out);
+                record(nested, known, ignored, &at(format!("{key}.")), out);
             }
         }
         let params = [
@@ -295,7 +295,6 @@ impl Builder<'_> {
             input,
             output,
             errors,
-            deprecated: read.flag("deprecated"),
             endpoint_discovery: read.endpoint_discovery()?,
             endpoint_operation: read.flag("endpointoperation"),
             auth: read.texts("auth")?,
@@ -386,11 +385,9 @@ impl Fields<'_> {
         let Some(http) = self.nested("http")? else {
             return Ok(Http::default());
         };
-        let code = http.object.get("responseCode").and_then(Json::as_u64);
         Ok(Http {
             method: http.text("method")?,
             request_uri: http.text("requestUri")?,
-            response_code: code.and_then(|code| u16::try_from(code).ok()),
         })
     }
 
@@ -478,14 +475,10 @@ fn metadata(metadata: Option<&Json>, out: &mut Vec<Uninterpreted>) -> Result<Met
         json_version: read.text("jsonVersion")?,
         target_prefix: read.text("targetPrefix")?,
         service_id: read.text("serviceId")?,
-        service_full_name: read.text("serviceFullName")?,
-        service_abbreviation: read.text("serviceAbbreviation")?,
         signature_version: read.text("signatureVersion")?,
         signing_name: read.text("signingName")?,
         uid: read.text("uid")?,
         xml_namespace: read.text("xmlNamespace")?,
-        global_endpoint: read.text("globalEndpoint")?,
-        checksum_format: read.text("checksumFormat")?,
         auth: read.texts("auth")?,
         aws_query_compatible: object.contains_key("awsQueryCompatible"),
     })
