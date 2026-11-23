@@ -85,6 +85,7 @@ fn coverage_is_per_pattern_and_per_scope() -> Result<()> {
             id: "elsewhere",
             scope: client::hooks::Scope::service("zquery"),
             setting_defaults: &[],
+            builtins: &[],
             interceptors: &[],
             replaces: everything[0].replaces,
         };

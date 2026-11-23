@@ -1,6 +1,5 @@
 use super::*;
 use cli_core as _;
-use client::endpoint::{EndpointParams, ParamValue};
 use client::error::ServiceError;
 use client::hooks::{CallContext, Hooks};
 use client::http::{Headers, HttpResponse};
@@ -50,26 +49,15 @@ fn stub_model() -> Result<Model, Box<dyn std::error::Error>> {
     )?)
 }
 
-/// `compute_endpoint_resolver_builtin_defaults`: `AWS::STS::UseGlobalEndpoint`
-/// is false for sts.
+/// sts needs no interceptor for its global endpoint switch: core supplies
+/// `AWS::STS::UseGlobalEndpoint` false for every client, as
+/// `compute_endpoint_resolver_builtin_defaults` does, and no customization
+/// sets a built-in.
 #[test]
-fn sts_never_uses_its_global_endpoint_unless_its_rules_do() -> TestResult {
-    let model = stub_model()?;
-    let mut cx = context_for("sts", &model)?;
-    let mut params = EndpointParams::default();
-    for hook in Hooks::for_service(&TABLE, "sts").interceptors("Op") {
-        hook.endpoint_params(&mut cx, &mut params)?;
+fn no_customization_sets_a_built_in() {
+    for customization in TABLE {
+        assert!(customization.builtins.is_empty(), "{}", customization.id);
     }
-    assert_eq!(
-        params.get("UseGlobalEndpoint"),
-        Some(&ParamValue::Boolean(false))
-    );
-    let mut other = EndpointParams::default();
-    for hook in Hooks::for_service(&TABLE, "iam").interceptors("Op") {
-        hook.endpoint_params(&mut cx, &mut other)?;
-    }
-    assert_eq!(other, EndpointParams::default());
-    Ok(())
 }
 
 fn decision(

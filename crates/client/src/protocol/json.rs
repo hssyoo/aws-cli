@@ -19,6 +19,9 @@ impl Protocol for Json {
     fn name(&self) -> &'static str {
         "json"
     }
+    fn epoch_timestamps(&self) -> bool {
+        true
+    }
 
     /// `JSONSerializer.serialize_to_request`.
     fn serialize(

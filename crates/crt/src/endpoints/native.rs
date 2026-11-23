@@ -39,6 +39,14 @@ pub fn resolve(
     documents: Documents<'_>,
     parameters: Parameters<'_>,
 ) -> Result<Resolved, ResolveError> {
+    resolve_with_headers(documents, parameters).map(|(resolved, _)| resolved)
+}
+/// [`resolve`], and how many headers the endpoint carries (none for a rule
+/// error), which a caller that does not send them must refuse.
+pub fn resolve_with_headers(
+    documents: Documents<'_>,
+    parameters: Parameters<'_>,
+) -> Result<(Resolved, usize), ResolveError> {
     let library = SdkutilsLibrary::acquire();
     // SAFETY: default allocator is process-lifetime; constructors synchronously
     // consume the JSON cursors and return independent counted owners.
@@ -91,7 +99,7 @@ fn add_parameters(context: &Context<'_>, parameters: Parameters<'_>) -> Result<(
     }
     Ok(())
 }
-fn copy_result(result: &ResultOwner<'_>) -> Result<Resolved, ResolveError> {
+fn copy_result(result: &ResultOwner<'_>) -> Result<(Resolved, usize), ResolveError> {
     let mut url = Cursor::from_bytes(&[]);
     let mut properties = url;
     // SAFETY: each borrowed cursor is copied before the counted result is freed.
@@ -102,7 +110,7 @@ fn copy_result(result: &ResultOwner<'_>) -> Result<Resolved, ResolveError> {
             if c::aws_endpoints_resolved_endpoint_get_error(result.0.as_ptr(), &mut url) != 0 {
                 return Err(ResolveError::ResolveFailed);
             }
-            return Ok(Resolved::RuleError(copy_cursor(url)));
+            return Ok((Resolved::RuleError(copy_cursor(url)), 0));
         }
         if c::aws_endpoints_resolved_endpoint_get_url(result.0.as_ptr(), &mut url) != 0
             || c::aws_endpoints_resolved_endpoint_get_properties(result.0.as_ptr(), &mut properties)
@@ -110,10 +118,20 @@ fn copy_result(result: &ResultOwner<'_>) -> Result<Resolved, ResolveError> {
         {
             return Err(ResolveError::ResolveFailed);
         }
-        Ok(Resolved::Endpoint {
+        let mut headers = std::ptr::null();
+        if c::aws_endpoints_resolved_endpoint_get_headers(result.0.as_ptr(), &mut headers) != 0 {
+            return Err(ResolveError::ResolveFailed);
+        }
+        let header_count = if headers.is_null() {
+            0
+        } else {
+            c::aws_hash_table_get_entry_count(headers)
+        };
+        let endpoint = Resolved::Endpoint {
             url: copy_cursor(url),
             properties: copy_cursor(properties),
-        })
+        };
+        Ok((endpoint, header_count))
     }
 }
 fn add_string(context: &Context<'_>, name: &str, value: &str) -> Result<(), ResolveError> {

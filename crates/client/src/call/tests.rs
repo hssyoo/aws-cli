@@ -4,7 +4,9 @@ use super::*;
 use crate::credentials::{CredentialError, CredentialSource, SigningCredentials};
 use crate::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
 use crate::error::{CallError, ParseError, SerializeError, ServiceError};
-use crate::hooks::{CallContext, Customization, HookResult, Interceptor, Scope, SettingDefault};
+use crate::hooks::{
+    CallContext, Customization, HookError, HookResult, Interceptor, Scope, SettingDefault,
+};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method};
 use crate::protocol::{ParseOptions, Protocol, Serialized};
 use crate::retry::{Attempt, RetryDecision};
@@ -69,6 +71,9 @@ struct Fake;
 impl Protocol for Fake {
     fn name(&self) -> &'static str {
         "json"
+    }
+    fn epoch_timestamps(&self) -> bool {
+        false
     }
     fn serialize(
         &self,
@@ -168,9 +173,18 @@ fn fixture(
     credentials: Arc<dyn CredentialSource>,
     customizations: &'static [&'static Customization],
 ) -> TestResult<Fixture> {
+    fixture_with(RULES, settings, credentials, customizations)
+}
+
+fn fixture_with(
+    rules: &str,
+    settings: ClientSettings,
+    credentials: Arc<dyn CredentialSource>,
+    customizations: &'static [&'static Customization],
+) -> TestResult<Fixture> {
     let model = Arc::new(Model::from_json(SERVICE.as_bytes())?);
     let endpoints = EndpointData::from_documents(
-        RULES.as_bytes().to_vec(),
+        rules.as_bytes().to_vec(),
         PARTITIONS.as_bytes().to_vec(),
         None,
     )?;
@@ -192,7 +206,7 @@ fn fixture(
             transport: transport.clone(),
             runtime: runtime.clone(),
             customizations,
-            parse: ParseOptions::BOTOCORE,
+            parse: crate::protocol::ParseHooks::botocore(),
             user_agent: UserAgentContext {
                 host: Host {
                     system: "Linux".into(),
@@ -204,6 +218,11 @@ fn fixture(
                     cli: "2.0.0",
                     crt: "0.1.0",
                     rust: "1.96.0",
+                },
+                extras: crate::useragent::SessionExtras {
+                    installer: "other",
+                    prompt: "off",
+                    command: "zfake.op".into(),
                 },
             },
         },
@@ -476,6 +495,7 @@ fn max_attempts_come_from_the_user_then_a_customization() -> TestResult {
         id: "four",
         scope: Scope::service("zfake"),
         setting_defaults: &[SettingDefault::MaxAttempts(4)],
+        builtins: &[],
         interceptors: &[],
         replaces: &[],
     };
@@ -598,12 +618,12 @@ impl Interceptor for Recorder {
         self.note(cx, "modify_input");
         Ok(())
     }
-    fn endpoint_params(
+    fn endpoint_builtins(
         &self,
         cx: &mut CallContext<'_>,
-        _: &mut crate::endpoint::EndpointParams,
+        _: &mut crate::endpoint::Builtins,
     ) -> HookResult {
-        self.note(cx, "endpoint_params");
+        self.note(cx, "endpoint_builtins");
         Ok(())
     }
     fn after_serialize(&self, cx: &mut CallContext<'_>, _: &mut HttpRequest) -> HookResult {
@@ -655,6 +675,7 @@ fn every_stage_runs_in_order_in_scope_and_can_short_circuit() -> TestResult {
         id: "in-scope",
         scope: Scope::operation("zfake", "Op"),
         setting_defaults: &[],
+        builtins: &[],
         interceptors: &[&ZFAKE],
         replaces: &[],
     };
@@ -662,6 +683,7 @@ fn every_stage_runs_in_order_in_scope_and_can_short_circuit() -> TestResult {
         id: "out",
         scope: Scope::service("zother"),
         setting_defaults: &[],
+        builtins: &[],
         interceptors: &[&OTHER],
         replaces: &[],
     };
@@ -680,9 +702,154 @@ fn every_stage_runs_in_order_in_scope_and_can_short_circuit() -> TestResult {
         .join("");
     assert_eq!(
         trail,
-        "short:modify_input short:endpoint_params short:after_serialize short:select_auth \
+        "short:modify_input short:endpoint_builtins short:after_serialize short:select_auth \
          short:before_sign short:before_transmit short:after_receive short:classify_retry \
          short:modify_output"
     );
+    Ok(())
+}
+
+/// Credentials that count how often they are asked for.
+#[derive(Debug, Default)]
+struct Counted {
+    asked: std::sync::atomic::AtomicUsize,
+    account_id: Option<String>,
+}
+
+impl Counted {
+    fn asked(&self) -> usize {
+        self.asked.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl CredentialSource for Counted {
+    fn credentials(&self) -> Result<Option<SigningCredentials>, CredentialError> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Some(SigningCredentials {
+            access_key_id: "AKIDEXAMPLE".into(),
+            secret_access_key: "SECRET".into(),
+            session_token: None,
+            account_id: self.account_id.clone(),
+        }))
+    }
+}
+
+/// `prepare` decides every refusal without credentials, so a caller that
+/// falls back to Python after it has run no credential provider; `send`
+/// asks for them to sign.
+#[test]
+fn prepare_asks_for_no_credentials() -> TestResult {
+    let counted = Arc::new(Counted::default());
+    let f = fixture(settings(), counted.clone(), &[])?;
+    let prepared = f.client.prepare("Op", input("a"))?;
+    assert_eq!(counted.asked(), 0);
+    f.transport.respond(ok("{}"));
+    f.client.send(prepared)?;
+    assert!(counted.asked() >= 1);
+    Ok(())
+}
+
+const ACCOUNT_RULES: &str = r#"{
+    "version": "1.0",
+    "parameters": {
+        "Region": {"type": "String", "builtIn": "AWS::Region", "required": false},
+        "AccountId": {"type": "String", "builtIn": "AWS::Auth::AccountId", "required": false}
+    },
+    "rules": [
+        {"conditions": [{"fn": "isSet", "argv": [{"ref": "AccountId"}]}],
+         "endpoint": {"url": "https://{AccountId}.zfake.{Region}.example.com"}, "type": "endpoint"},
+        {"conditions": [{"fn": "isSet", "argv": [{"ref": "Region"}]}],
+         "endpoint": {"url": "https://zfake.{Region}.example.com"}, "type": "endpoint"},
+        {"conditions": [], "error": "Missing Region", "type": "error"}
+    ]
+}"#;
+
+/// `AWS::Auth::AccountId` is deferred (`credentials.get_deferred_property`):
+/// prepare resolves without it and asks no credentials; send asks, and an
+/// account id the credentials carry gives the endpoint it selects.
+#[test]
+fn the_deferred_account_id_resolves_when_the_call_is_sent() -> TestResult {
+    for (account_id, url) in [
+        (
+            Some("123456789012"),
+            "https://123456789012.zfake.us-west-2.example.com/",
+        ),
+        (None, "https://zfake.us-west-2.example.com/"),
+    ] {
+        let counted = Arc::new(Counted {
+            account_id: account_id.map(str::to_owned),
+            ..Counted::default()
+        });
+        let f = fixture_with(ACCOUNT_RULES, settings(), counted.clone(), &[])?;
+        let prepared = f.client.prepare("Op", input("a"))?;
+        assert_eq!(counted.asked(), 0);
+        f.transport.respond(ok("{}"));
+        f.client.send(prepared)?;
+        let sent = f.transport.sent();
+        assert_eq!(sent[0].0.url.to_string(), url);
+    }
+    Ok(())
+}
+
+/// Refuses at the stage it names.
+#[derive(Debug)]
+struct Refuser(&'static str);
+
+impl Interceptor for Refuser {
+    fn modify_input(&self, _: &mut CallContext<'_>, _: &mut Value) -> HookResult {
+        match self.0 {
+            "modify_input" => Err(HookError::Refuse("not ported".into())),
+            _ => Ok(()),
+        }
+    }
+    fn before_sign(&self, _: &mut CallContext<'_>, _: &mut HttpRequest) -> HookResult {
+        match self.0 {
+            "before_sign" => Err(HookError::Refuse("not ported".into())),
+            _ => Ok(()),
+        }
+    }
+}
+
+static REFUSE_EARLY: Customization = Customization {
+    id: "early",
+    scope: Scope::ALL,
+    setting_defaults: &[],
+    builtins: &[],
+    interceptors: &[&Refuser("modify_input")],
+    replaces: &[],
+};
+static REFUSE_LATE: Customization = Customization {
+    id: "late",
+    scope: Scope::ALL,
+    setting_defaults: &[],
+    builtins: &[],
+    interceptors: &[&Refuser("before_sign")],
+    replaces: &[],
+};
+static EARLY: [&Customization; 1] = [&REFUSE_EARLY];
+static LATE: [&Customization; 1] = [&REFUSE_LATE];
+
+/// A customization may leave a call to Python only before anything is
+/// sent: in prepare's stages the refusal is `Unsupported::Hook`; later it
+/// is a failure of the call, since credentials have run.
+#[test]
+fn a_hook_refuses_only_before_the_call_starts() -> TestResult {
+    let f = fixture(settings(), keys(), &EARLY)?;
+    let refused = f.client.prepare("Op", input("a")).err();
+    assert_eq!(
+        refused,
+        Some(CallError::Unsupported(Unsupported::Hook(
+            "not ported".into()
+        )))
+    );
+    let f = fixture(settings(), keys(), &LATE)?;
+    f.transport.respond(ok("{}"));
+    let failed = f.client.call("Op", input("a")).err();
+    let late = |text: &str| text.contains("not ported");
+    assert!(
+        matches!(&failed, Some(CallError::Hook(HookError::Failed(text))) if late(text)),
+        "{failed:?}"
+    );
+    assert!(f.transport.sent().is_empty());
     Ok(())
 }

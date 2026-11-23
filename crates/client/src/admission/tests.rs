@@ -36,9 +36,69 @@ fn operations_with_unimplemented_traits_are_refused() -> Result<(), Box<dyn std:
         let operation = model.operation(name).ok_or(name)?;
         assert_eq!(
             unimplemented_trait(operation),
-            refused.map(Unsupported::Trait),
+            refused.map(|name: &str| Unsupported::Trait(name.to_owned())),
             "{name}"
         );
     }
+    Ok(())
+}
+
+const RULES: &str = r#"{"version": "1.0", "parameters": {
+    "Region": {"type": "String", "builtIn": "AWS::Region", "required": false},
+    "Thing": {"type": "String", "builtIn": "AWS::Other::Thing", "required": true}},
+    "rules": [{"conditions": [], "error": "unused", "type": "error"}]}"#;
+
+const SERVICE: &str = r#"{"metadata": {"protocol": "json", "jsonVersion": "1.0",
+    "signatureVersion": "v4", "targetPrefix": "Z"},
+    "operations": {
+        "Plain": {"name": "Plain", "http": {"method": "POST", "requestUri": "/"}},
+        "Streamed": {"name": "Streamed", "http": {"method": "POST", "requestUri": "/"},
+            "output": {"shape": "Blobby"}},
+        "Contexted": {"name": "Contexted", "http": {"method": "POST", "requestUri": "/"},
+            "operationContextParams": {"Thing": {"path": "a.b"}}},
+        "SignedA": {"name": "SignedA", "http": {"method": "POST", "requestUri": "/"},
+            "auth": ["aws.auth#sigv4a"]},
+        "Unsigned": {"name": "Unsigned", "http": {"method": "POST", "requestUri": "/"},
+            "unsignedPayload": true}
+    },
+    "shapes": {
+        "Blobby": {"type": "structure", "members": {"Body": {"shape": "Stream"}}},
+        "Stream": {"type": "blob", "streaming": true}
+    }
+}"#;
+
+/// Each refusal the model and the rule set decide alone, before any
+/// configuration, input or credentials: the protocol, a streaming member,
+/// context parameters, the auth type, an unsigned payload, and a required
+/// built-in no one supplies.
+#[test]
+fn static_refusals_need_only_the_model_and_the_rule_set() -> Result<(), Box<dyn std::error::Error>>
+{
+    let model = Model::from_json(SERVICE.as_bytes())?;
+    let data = EndpointData::from_documents(RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
+    let refusal = |name: &str| -> Result<Option<Unsupported>, String> {
+        let operation = model.operation(name).ok_or(name)?;
+        Ok(static_refusal(&model, operation, &data, "zjson", &[]))
+    };
+    assert_eq!(
+        refusal("Streamed")?,
+        Some(Unsupported::Trait("streaming".into()))
+    );
+    assert_eq!(
+        refusal("Contexted")?,
+        Some(Unsupported::OperationContextParams)
+    );
+    assert_eq!(refusal("SignedA")?, Some(Unsupported::Auth("v4a".into())));
+    assert_eq!(refusal("Unsigned")?, Some(Unsupported::UnsignedPayload));
+    assert_eq!(
+        refusal("Plain")?,
+        Some(Unsupported::Builtin("AWS::Other::Thing".into()))
+    );
+    let xml = Model::from_json(SERVICE.replace(r#""json""#, r#""rest-xml""#).as_bytes())?;
+    let plain = xml.operation("Plain").ok_or("Plain")?;
+    assert_eq!(
+        static_refusal(&xml, plain, &data, "zjson", &[]),
+        Some(Unsupported::Protocol("rest-xml".into()))
+    );
     Ok(())
 }

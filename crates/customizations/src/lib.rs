@@ -5,8 +5,7 @@
 //!
 //! [`TABLE`] is the table a client chooses from (`Hooks::for_service`).
 #![forbid(unsafe_code)]
-use client::endpoint::{EndpointParams, ParamValue};
-use client::hooks::{CallContext, Customization, HookResult, Interceptor, Scope, SettingDefault};
+use client::hooks::{CallContext, Customization, Interceptor, Scope, SettingDefault};
 use client::retry::{Attempt, RetryDecision};
 use std::time::Duration;
 
@@ -50,6 +49,7 @@ pub static CORE: Customization = Customization {
     id: "core",
     scope: Scope::ALL,
     setting_defaults: &[],
+    builtins: &[],
     interceptors: &[],
     replaces: &[
         "botocore.handlers.generate_idempotent_uuid",
@@ -83,6 +83,7 @@ pub static DYNAMODB: Customization = Customization {
     id: "dynamodb",
     scope: Scope::service("dynamodb"),
     setting_defaults: &DYNAMODB_RETRIES,
+    builtins: &[],
     interceptors: &[&DynamodbChecksum],
     replaces: &["botocore.discovery.block_endpoint_discovery_required_operations"],
 };
@@ -93,6 +94,7 @@ pub static DYNAMODB_STREAMS: Customization = Customization {
     id: "dynamodbstreams",
     scope: Scope::service("dynamodbstreams"),
     setting_defaults: &DYNAMODB_RETRIES,
+    builtins: &[],
     interceptors: &[],
     replaces: &[],
 };
@@ -102,28 +104,20 @@ const DYNAMODB_RETRIES: [SettingDefault; 2] = [
     SettingDefault::RetryBaseDelay(Duration::from_millis(25)),
 ];
 
-/// sts: the `AWS::STS::UseGlobalEndpoint` built-in, false
-/// (`compute_endpoint_resolver_builtin_defaults`), and
-/// `special.RetryIDPCommunicationError`. AssumeRoleWithSAML and
+/// sts: `special.RetryIDPCommunicationError`. (Its rule set's
+/// `AWS::STS::UseGlobalEndpoint` built-in is core's: botocore gives every
+/// client `False`, `compute_endpoint_resolver_builtin_defaults`.)
+/// AssumeRoleWithSAML and
 /// AssumeRoleWithWebIdentity go unsigned by their models' `noAuth`, which
 /// is what `disable_signing` makes them.
 pub static STS: Customization = Customization {
     id: "sts",
     scope: Scope::service("sts"),
     setting_defaults: &[],
-    interceptors: &[&StsGlobalEndpoint, &StsIdpRetry],
+    builtins: &[],
+    interceptors: &[&StsIdpRetry],
     replaces: &["botocore.handlers.disable_signing"],
 };
-
-#[derive(Debug)]
-struct StsGlobalEndpoint;
-
-impl Interceptor for StsGlobalEndpoint {
-    fn endpoint_params(&self, _: &mut CallContext<'_>, params: &mut EndpointParams) -> HookResult {
-        params.set("UseGlobalEndpoint", ParamValue::Boolean(false));
-        Ok(())
-    }
-}
 
 #[derive(Debug)]
 struct StsIdpRetry;
