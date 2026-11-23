@@ -76,12 +76,11 @@ pub(super) const OPERATION: &[&str] = &[
     "endpoint",
 ];
 /// Operation keys no call reads: `documentation` (`OperationModel.
-/// documentation`, for docs), and `documentationUrl`, `deprecatedMessage`,
-/// `deprecatedSince`, `idempotent` and `readonly`, which botocore never
-/// reads (`deprecated` itself is read).
+/// documentation`, for docs), and `deprecatedMessage`, `deprecatedSince`,
+/// `idempotent` and `readonly`, which botocore never reads (`deprecated`
+/// itself is read).
 pub(super) const OPERATION_IGNORED: &[&str] = &[
     "documentation",
-    "documentationUrl",
     "deprecatedMessage",
     "deprecatedSince",
     "idempotent",
