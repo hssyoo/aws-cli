@@ -54,8 +54,11 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ),
     // L3: the command API, over format and the model, never the client.
     ("command", COMMAND),
-    // L4: the command crates.
+    // L4: the command crates. `customizations` holds the per-service
+    // edits and hooks, over the client and the command API (§4.2); its
+    // one drawn edge to `s3` goes through a trait in `command`.
     ("s3", S3),
+    ("customizations", CUSTOMIZATIONS),
     // L5: routing. Its `s3` and `command` edges are the arms the plan's
     // §2.2 rule 2 removes when the binary assembles the registry.
     ("cli-router", ROUTER),
@@ -82,6 +85,15 @@ const COMMAND: &[&str] = &[
     "format",
     "model",
     "pyload",
+    "timestamp",
+];
+const CUSTOMIZATIONS: &[&str] = &[
+    "awscli-config",
+    "cli-core",
+    "client",
+    "command",
+    "format",
+    "model",
     "timestamp",
 ];
 const S3: &[&str] = &[

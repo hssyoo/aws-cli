@@ -232,53 +232,6 @@ fn epoch_seconds_print_as_python_prints_them() -> TestResult {
     Ok(())
 }
 
-#[test]
-fn epoch_seconds_parse_to_the_microsecond() -> TestResult {
-    for (text, micros) in [
-        ("0", 0),
-        ("1440938160", SUITE * 1_000_000),
-        ("+1440938160", SUITE * 1_000_000),
-        ("1440938160.5", SUITE * 1_000_000 + 500_000),
-        ("1440938160.", SUITE * 1_000_000),
-        (".5", 500_000),
-        ("-1.5", -1_500_000),
-        ("1.003691", 1_003_691),
-        // Past six digits, to the nearest microsecond, ties to even.
-        ("1.0000005", 1_000_000),
-        ("1.0000015", 1_000_002),
-        ("1.00000051", 1_000_001),
-        ("0.9999999", 1_000_000),
-        // Exponents, as `repr` writes them below 1e-4.
-        ("1e9", 1_000_000_000_000_000),
-        ("1E+9", 1_000_000_000_000_000),
-        ("1e-06", 1),
-        ("-1e-06", -1),
-        ("9.9e-05", 99),
-        ("1.5e-6", 2),
-        ("14409381.605e2", SUITE * 1_000_000 + 500_000),
-        ("0e999999", 0),
-        ("1e-99999", 0),
-    ] {
-        assert_eq!(
-            Timestamp::parse_epoch_seconds(text),
-            Some(at_micros(micros)?),
-            "{text}"
-        );
-    }
-    for text in [
-        "", "-", ".", "abc", "e9", "1e", "1e+", "1e1.5", ".e1", " 1", "1 ", "1.5.5", "0x10",
-        "1_000", "inf", "nan",
-    ] {
-        assert_eq!(Timestamp::parse_epoch_seconds(text), None, "{text}");
-    }
-    let past_the_range = (LAST + 1).to_string();
-    assert_eq!(Timestamp::parse_epoch_seconds(&past_the_range), None);
-    assert_eq!(Timestamp::parse_epoch_seconds("99999999999999999999"), None);
-    assert_eq!(Timestamp::parse_epoch_seconds("1e12"), None);
-    assert_eq!(Timestamp::parse_epoch_seconds("1e99999"), None);
-    Ok(())
-}
-
 /// botocore's `_timestamp_rfc822`: `formatdate(..., usegmt=True)`, whole
 /// seconds.
 #[test]
@@ -349,10 +302,13 @@ fn every_form_reads_back_what_it_writes() -> TestResult {
             Some(whole)
         );
         assert_eq!(Timestamp::parse_rfc822(&instant.rfc822()), Some(whole));
-        // Python's float holds every microsecond to 2**33 seconds.
+        // botocore reads the number back through `float` and
+        // `fromtimestamp`; a double holds every microsecond to 2**33
+        // seconds.
         if instant.unix_seconds().abs() < 1 << 33 {
+            let seconds: f64 = instant.epoch_seconds().parse()?;
             assert_eq!(
-                Timestamp::parse_epoch_seconds(&instant.epoch_seconds()),
+                Timestamp::from_epoch_float(seconds),
                 Some(instant),
                 "{}",
                 instant.epoch_seconds()

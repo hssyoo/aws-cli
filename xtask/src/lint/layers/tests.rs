@@ -95,6 +95,7 @@ fn the_table_keeps_the_plan_s_dependency_rules() {
     for name in ["command", "format", "credentials"] {
         assert!(!row(name).contains(&"client"), "{name}");
     }
+    assert!(!row("customizations").contains(&"s3"));
     for (name, allowed) in ALLOWED {
         for on in *allowed {
             assert!(

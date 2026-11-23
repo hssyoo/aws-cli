@@ -18,15 +18,25 @@ pub fn parse(bytes: &[u8]) {
     if let Some(zoned) = Timestamp::parse_rfc822_zoned(text) {
         assert!(zoned.offset_seconds.is_some());
     }
-    let readers: [(fn(&str) -> Option<Timestamp>, fn(&Timestamp) -> String); 4] = [
+    let readers: [(fn(&str) -> Option<Timestamp>, fn(&Timestamp) -> String); 3] = [
         (Timestamp::parse_iso8601, Timestamp::iso8601),
         (Timestamp::parse_iso8601_basic, Timestamp::iso8601_basic),
-        (Timestamp::parse_epoch_seconds, Timestamp::epoch_seconds),
         (Timestamp::parse_rfc822, Timestamp::rfc822),
     ];
     for (read, print) in readers {
         if let Some(instant) = read(text) {
             assert_eq!(read(&print(&instant)), Some(instant), "{text:?}");
         }
+    }
+    // Epoch seconds as botocore reads them, `float` then `fromtimestamp`,
+    // read back from what they print, where a double holds each
+    // microsecond (to 2**33 seconds).
+    let from_float = |text: &str| text.parse().ok().and_then(Timestamp::from_epoch_float);
+    if let Some(instant) = from_float(text).filter(|i| i.unix_seconds().abs() < 1 << 33) {
+        assert_eq!(
+            from_float(&instant.epoch_seconds()),
+            Some(instant),
+            "{text:?}"
+        );
     }
 }

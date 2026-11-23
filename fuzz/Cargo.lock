@@ -51,6 +51,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "client"
+version = "0.1.0"
+dependencies = [
+ "cli-core",
+ "credentials",
+ "crt",
+ "model",
+ "sigv4",
+ "timestamp",
+]
+
+[[package]]
 name = "credentials"
 version = "0.1.0"
 dependencies = [
@@ -301,9 +313,13 @@ dependencies = [
 name = "source-pool-fuzz"
 version = "0.1.0"
 dependencies = [
+ "awscli-argparse",
+ "client",
  "crt",
  "libfuzzer-sys",
+ "model",
  "s3",
+ "timestamp",
 ]
 
 [[package]]
