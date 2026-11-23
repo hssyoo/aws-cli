@@ -257,7 +257,7 @@ impl ServiceInvocation {
         let transport = Arc::new(LazyTransport::new(
             trust(settings, self.embedded_trust),
             settings.keep_alive.value,
-            cli_core::SnapshotEnv::capture(),
+            cx.env.clone(),
             globals.debug,
         ));
         Ok(Ok(Client::new(ClientParts {
