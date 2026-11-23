@@ -499,3 +499,41 @@ fn a_region_that_is_no_host_label_is_refused() -> TestResult {
     );
     Ok(())
 }
+
+/// `endpoints.json` is read only when a call needs it: no region (its
+/// `partitionEndpoint`) or FIPS or dual-stack (the variant check). A call
+/// with a region and neither never parses it, so a document that does not
+/// parse fails only the calls that need it, and those as unsupported.
+#[test]
+fn endpoints_json_is_parsed_only_when_needed() -> TestResult {
+    let (_, data) = fixture()?;
+    let rules = data.rules.clone();
+    let partitions = data.partitions.clone();
+    let broken = EndpointData::from_documents(rules, partitions, Some((b"{not json", "sts")))?;
+    let regional = EndpointConfig::new(&EndpointInputs {
+        region: Some("us-west-2"),
+        signing: true,
+        ..EndpointInputs::default()
+    });
+    assert!(regional.check(&broken).is_ok());
+    assert_eq!(regional.client_region(&broken)?, Some("us-west-2".to_owned()));
+    let fips = EndpointConfig::new(&EndpointInputs {
+        region: Some("us-west-2"),
+        use_fips: Some(true),
+        signing: true,
+        ..EndpointInputs::default()
+    });
+    assert!(matches!(
+        fips.check(&broken),
+        Err(CallError::Unsupported(Unsupported::EndpointData))
+    ));
+    let none = EndpointConfig::new(&EndpointInputs {
+        signing: true,
+        ..EndpointInputs::default()
+    });
+    assert!(matches!(
+        none.client_region(&broken),
+        Err(CallError::Unsupported(Unsupported::EndpointData))
+    ));
+    Ok(())
+}
