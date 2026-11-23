@@ -114,7 +114,8 @@ fn a_model_of_known_and_ignored_keys_has_none() -> Result<()> {
 /// waiter configs, `deprecated` on an operation (`OperationModel.
 /// deprecated`, which the arena reads), a rule-set parameter
 /// (`endpoint_provider.py`) and an `endpoints.json` entry (`regions.py`),
-/// never on the document.
+/// never on the document; `serviceFullName` and `serviceAbbreviation` in
+/// `utils.get_service_module_name`, which names a client's Python class.
 #[test]
 fn the_ignore_lists_name_only_keys_botocore_does_not_act_on() -> Result<()> {
     let botocore = testing::data_dir()
@@ -141,6 +142,8 @@ fn the_ignore_lists_name_only_keys_botocore_does_not_act_on() -> Result<()> {
             "deprecated",
             &["model.py", "endpoint_provider.py", "regions.py"],
         ),
+        ("serviceFullName", &["utils.py"]),
+        ("serviceAbbreviation", &["utils.py"]),
     ];
     let ignored = [
         DOCUMENT_IGNORED,
@@ -149,6 +152,7 @@ fn the_ignore_lists_name_only_keys_botocore_does_not_act_on() -> Result<()> {
         SHAPE_IGNORED,
         REFERENCE_IGNORED,
         CLIENT_CONTEXT_PARAM_IGNORED,
+        HTTP_IGNORED,
     ];
     for key in ignored.iter().flat_map(|list| list.iter()) {
         let allowed = readers
@@ -194,6 +198,7 @@ fn ignored_occurrences(json: &Json, counts: &mut std::collections::BTreeMap<Stri
     for operation in object(document.get("operations")).values() {
         let operation = object(Some(operation));
         count("operation", operation, OPERATION_IGNORED);
+        count("http", object(operation.get("http")), HTTP_IGNORED);
         for key in ["input", "output"] {
             count("reference", object(operation.get(key)), REFERENCE_IGNORED);
         }
@@ -267,6 +272,7 @@ fn census_of_the_shipped_models() -> Result<()> {
         ("shape", SHAPE_IGNORED),
         ("reference", REFERENCE_IGNORED),
         ("clientContextParam", CLIENT_CONTEXT_PARAM_IGNORED),
+        ("http", HTTP_IGNORED),
     ];
     for (list, keys) in lists {
         for key in keys {

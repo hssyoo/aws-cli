@@ -84,20 +84,15 @@ pub struct Metadata {
     pub json_version: Option<Box<str>>,
     pub target_prefix: Option<Box<str>>,
     pub service_id: Option<Box<str>>,
-    pub service_full_name: Option<Box<str>>,
-    pub service_abbreviation: Option<Box<str>>,
     pub signature_version: Option<Box<str>>,
     pub signing_name: Option<Box<str>>,
     pub uid: Option<Box<str>>,
     pub xml_namespace: Option<Box<str>>,
-    pub global_endpoint: Option<Box<str>>,
-    pub checksum_format: Option<Box<str>>,
     pub auth: Option<Box<[Box<str>]>>,
     /// `ServiceModel.is_query_compatible`: the key is present.
     pub aws_query_compatible: bool,
 }
 
-/// One of `ServiceModel.client_context_parameters`.
 impl Metadata {
     /// `ServiceId.hyphenize()`: `serviceId` lowercased, as Python's
     /// `str.lower` does, with each space a hyphen. botocore keys its
@@ -109,18 +104,20 @@ impl Metadata {
     }
 }
 
+/// One of `ServiceModel.client_context_parameters`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientContextParam {
     pub name: Box<str>,
     pub type_name: Box<str>,
 }
 
-/// An operation's `http` object.
+/// An operation's `http` object. `requestUri` is botocore's REST
+/// serializers' (`serialize.py`), which the query and json serializers do
+/// not read: it is held for the REST protocols, not ignored.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Http {
     pub method: Option<Box<str>>,
     pub request_uri: Option<Box<str>>,
-    pub response_code: Option<u16>,
 }
 
 /// An operation's `endpointdiscovery` object.
@@ -187,7 +184,6 @@ pub struct Operation {
     pub input: Option<ShapeId>,
     pub output: Option<ShapeId>,
     pub errors: Box<[ShapeId]>,
-    pub deprecated: bool,
     pub endpoint_discovery: Option<EndpointDiscovery>,
     /// `endpointoperation`.
     pub endpoint_operation: bool,
@@ -307,6 +303,7 @@ impl Model {
     }
 
     /// The number of named shapes (`len(ServiceModel.shape_names)`).
+    #[cfg(test)]
     pub const fn shape_count(&self) -> usize {
         self.named
     }
