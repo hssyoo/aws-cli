@@ -16,6 +16,8 @@
 //! assert_eq!(rfc822.as_deref(), Some("Sun, 30 Aug 2015 12:36:00 GMT"));
 //! ```
 #![forbid(unsafe_code)]
+#[cfg(any(test, feature = "testing"))]
+pub mod fuzz;
 mod parse;
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -250,7 +252,7 @@ impl Timestamp {
         }
         // Exact: every microsecond of the range is below 2**53, and the
         // division rounds once, as Python's true division of integers does.
-        python_float_repr(self.micros as f64 / 1e6)
+        pytext::repr::float_repr(self.micros as f64 / 1e6)
     }
     /// `Day, DD Mon YYYY HH:MM:SS GMT`, whole seconds: `formatdate(seconds,
     /// usegmt=True)`, as botocore's `Serializer._timestamp_rfc822` calls it.
@@ -269,25 +271,6 @@ impl Timestamp {
             civil.minute,
             civil.second
         )
-    }
-}
-
-/// Python's `repr` of a float that is not a whole number and is below
-/// 1e16: the shortest digits that read back as `value`, with an exponent
-/// of at least two digits below 1e-4.
-fn python_float_repr(value: f64) -> String {
-    if value != 0.0 && value.abs() < 1e-4 {
-        let text = format!("{value:e}");
-        return match text.split_once("e-") {
-            Some((digits, exponent)) => format!("{digits}e-{exponent:0>2}"),
-            None => text,
-        };
-    }
-    let text = value.to_string();
-    if text.contains('.') {
-        text
-    } else {
-        format!("{text}.0")
     }
 }
 

@@ -61,39 +61,6 @@ impl Timestamp {
             offset,
         )
     }
-    /// Reads seconds since the epoch as Python's `float` reads a decimal:
-    /// an optional sign, digits with an optional point and digits on at
-    /// least one side of it, and an optional exponent, `e` or `E` with an
-    /// optional sign and digits, as `repr` writes one below 1e-4. Past six
-    /// places the fraction is rounded to the microsecond, ties to even.
-    /// Spaces, underscores and the names `float` knows are refused.
-    pub fn parse_epoch_seconds(text: &str) -> Option<Self> {
-        let (negative, unsigned) = match text.as_bytes().first()? {
-            b'-' => (true, &text[1..]),
-            b'+' => (false, &text[1..]),
-            _ => (false, text),
-        };
-        let (mantissa, exponent) = match unsigned.split_once(['e', 'E']) {
-            Some((mantissa, exponent)) => (mantissa, exponent_value(exponent)?),
-            None => (unsigned, 0),
-        };
-        let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-        let all_digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
-        if whole.len() + fraction.len() == 0 || !all_digits(whole) || !all_digits(fraction) {
-            return None;
-        }
-        let (whole, fraction) = shift_point(whole, fraction, exponent)?;
-        // Past 19 digits no second is in the range.
-        let seconds: i64 = match whole.as_str() {
-            "" => 0,
-            _ if whole.len() > 19 => return None,
-            digits => digits.parse().ok()?,
-        };
-        let micros = seconds
-            .checked_mul(MICROS_PER_SECOND)?
-            .checked_add(rounded_micros(&fraction))?;
-        Self::from_unix_micros(if negative { -micros } else { micros })
-    }
     /// Reads `Day, DD Mon YYYY HH:MM:SS GMT`: the day's name is optional,
     /// the day of the month may have one digit, and the zone may be `GMT`,
     /// `UTC` or an offset `+HHMM`, which is taken away. The day's name is
@@ -173,82 +140,6 @@ fn civil(
         second: small(second)?,
         microsecond,
     })
-}
-
-/// An exponent's value: an optional sign and one or more digits, `None`
-/// for anything else. A magnitude past a million is a million, which moves
-/// the point as far past every instant of the range as any larger one.
-fn exponent_value(text: &str) -> Option<i64> {
-    const LIMIT: i64 = 1_000_000;
-    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
-    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    let significant = digits.trim_start_matches('0');
-    let magnitude = match significant.len() {
-        0 => 0,
-        1..=6 => significant.parse::<i64>().ok()?.min(LIMIT),
-        _ => LIMIT,
-    };
-    Some(if text.starts_with('-') {
-        -magnitude
-    } else {
-        magnitude
-    })
-}
-
-/// The whole and fraction digits of `whole.fraction` times ten to the
-/// `exponent`, the whole part without leading zeros, and the fraction empty
-/// when it is below half a microsecond. `None` for a whole part longer than
-/// any second of the range.
-fn shift_point(whole: &str, fraction: &str, exponent: i64) -> Option<(String, String)> {
-    let digits = format!("{whole}{fraction}");
-    let significant = digits.trim_start_matches('0');
-    let leading = digits.len() - significant.len();
-    let point = i64::try_from(whole.len()).ok()? + exponent - i64::try_from(leading).ok()?;
-    let length = i64::try_from(significant.len()).ok()?;
-    // Below the seventh place a fraction rounds to no microsecond.
-    if significant.is_empty() || point < -6 {
-        return Some((String::new(), String::new()));
-    }
-    if point > 20 {
-        return None;
-    }
-    Some(match point {
-        _ if point <= 0 => {
-            let zeros = "0".repeat(usize::try_from(-point).ok()?);
-            (String::new(), format!("{zeros}{significant}"))
-        }
-        _ if point >= length => {
-            let zeros = "0".repeat(usize::try_from(point - length).ok()?);
-            (format!("{significant}{zeros}"), String::new())
-        }
-        _ => {
-            let (left, right) = significant.split_at(usize::try_from(point).ok()?);
-            (left.to_owned(), right.to_owned())
-        }
-    })
-}
-
-/// The microseconds of a fraction's digits, rounded at the seventh, ties
-/// to even: at most one million.
-fn rounded_micros(fraction: &str) -> i64 {
-    let digits = fraction.as_bytes();
-    let kept = digits
-        .iter()
-        .chain(std::iter::repeat(&b'0'))
-        .take(6)
-        .fold(0, |value, digit| value * 10 + i64::from(digit - b'0'));
-    let rest = digits.get(6..).unwrap_or(&[]);
-    let Some((&first, after)) = rest.split_first() else {
-        return kept;
-    };
-    let above_half = first > b'5' || (first == b'5' && after.iter().any(|digit| *digit != b'0'));
-    let half = first == b'5' && !above_half;
-    match above_half || (half && kept % 2 == 1) {
-        true => kept + 1,
-        false => kept,
-    }
 }
 
 /// A cursor over the text being read.

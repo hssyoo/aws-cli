@@ -378,16 +378,19 @@ fn utf8_mode(env: &cli_core::SnapshotEnv) -> bool {
 
 /// What the client trusts: a configured bundle, else the payload's, else
 /// the platform's.
-fn trust(settings: &ClientSettings, embedded: Option<&'static [u8]>) -> ::crt::runtime::Trust {
+fn trust(
+    settings: &ClientSettings,
+    embedded: Option<&'static [u8]>,
+) -> client::transport::crt::Trust {
     match &settings.trust.value {
-        Trust::File(path) => ::crt::runtime::Trust::File {
+        Trust::File(path) => client::transport::crt::Trust::File {
             path: path.clone(),
             setting: settings.trust.source.setting_name(),
         },
-        Trust::Embedded => embedded.map_or(::crt::runtime::Trust::Platform, |pem| {
-            ::crt::runtime::Trust::Pem(pem.to_vec())
+        Trust::Embedded => embedded.map_or(client::transport::crt::Trust::Platform, |pem| {
+            client::transport::crt::Trust::Pem(pem.to_vec())
         }),
-        Trust::Platform => ::crt::runtime::Trust::Platform,
+        Trust::Platform => client::transport::crt::Trust::Platform,
     }
 }
 
@@ -396,13 +399,20 @@ fn trust(settings: &ClientSettings, embedded: Option<&'static [u8]>) -> ::crt::r
 /// the process as the router left it.
 #[derive(Debug)]
 struct LazyTransport {
-    inputs: Mutex<Option<(::crt::runtime::Trust, bool, cli_core::SnapshotEnv, bool)>>,
+    inputs: Mutex<
+        Option<(
+            client::transport::crt::Trust,
+            bool,
+            cli_core::SnapshotEnv,
+            bool,
+        )>,
+    >,
     built: OnceLock<Result<client::transport::crt::CrtTransport, TransportError>>,
 }
 
 impl LazyTransport {
     fn new(
-        trust: ::crt::runtime::Trust,
+        trust: client::transport::crt::Trust,
         keep_alive: bool,
         env: cli_core::SnapshotEnv,
         debug: bool,
@@ -431,7 +441,7 @@ impl Transport for LazyTransport {
                 trust,
                 keep_alive,
                 env,
-                ::crt::debug::Logger::new(debug),
+                client::transport::crt::Logger::new(debug),
             )
         });
         match built {

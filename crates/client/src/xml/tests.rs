@@ -75,6 +75,12 @@ fn corpus() -> Vec<Vec<u8>> {
         b"<a>\r\nline\rtwo</a>",
         b"<a><b><c>deep</c></b><b/></a>",
         b"<a><?pi data?>x</a>",
+        // A processing instruction's `?>` must follow its `<?` (found by
+        // the client_xml fuzz target).
+        b"<?><a/>",
+        b"<a><?></a>",
+        b"<??><a/>",
+        b"<?x?><a/>",
         b"<a>\xe4\xb8\xad\xf0\x9f\x98\x80</a>",
         b"<a>&quot;&apos;&gt;</a>",
         b"<a></a>\n<!-- end -->\n",

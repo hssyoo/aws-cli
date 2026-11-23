@@ -23,6 +23,11 @@ use cli_core::proxy::{Environment, Forward, ForwardProxy};
 use credentials::Location;
 use std::sync::Arc;
 
+/// What [`CrtTransport::new`] takes: the TLS trust and the CRT's logger,
+/// named here so a caller of the transport needs no `crt` dependency.
+pub use ::crt::debug::Logger;
+pub use ::crt::runtime::Trust;
+
 /// Sends over a CRT runtime of its own.
 #[derive(Debug)]
 pub struct CrtTransport {

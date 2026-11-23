@@ -6,8 +6,8 @@
 //! python3 -I -c 'print([c for c in range(0x110000) if not chr(c).isprintable()])'
 //! ```
 //!
-//! folded into inclusive ranges. `pyrepr::tests` checks every code point
-//! against the toolchain's CPython.
+//! folded into inclusive ranges. `model::pyrepr`'s tests check every code
+//! point against the toolchain's CPython, through its re-export.
 
 /// Non-printable code points as sorted inclusive `first, last` pairs.
 pub(super) const NON_PRINTABLE: &[u32] = &[

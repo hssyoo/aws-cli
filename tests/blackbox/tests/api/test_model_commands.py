@@ -14,7 +14,14 @@ from typing import Final
 import pytest
 import pytest_asyncio
 
-from apihelpers import ApiSession, Reply, api_session, fake_model_protocol
+from apihelpers import (
+    ApiSession,
+    Reply,
+    api_session,
+    attempt_limit,
+    fake_model_protocol,
+    retries_clause,
+)
 from localstub import HTTPResponse
 
 pytestmark = pytest.mark.asyncio
@@ -124,26 +131,27 @@ CONFLICT: Final = Reply(
     },
     status=409,
 )
-CONFLICT_TEXT: Final = (
-    "\naws: [ERROR]: An error occurred (Conflict) when calling the Describe "
-    "operation (reached max retries: 0): in use\n"
-)
-
-
 async def test_a_modelled_error_names_its_code(models: ApiSession) -> None:
     run = await models.run("zjson describe", replies=CONFLICT, expected_rc=254)
-    assert run.stderr == CONFLICT_TEXT, run.describe()
+    retries = retries_clause(models.env, retryable=False)
+    assert run.stderr == (
+        "\naws: [ERROR]: An error occurred (Conflict) when calling the Describe "
+        f"operation{retries}: in use\n"
+    ), run.describe()
 
 
 async def test_a_server_error_without_a_body_names_its_status(models: ApiSession) -> None:
+    # A 503 is retried: one reply for each attempt.
+    unavailable = HTTPResponse(status=503, headers={}, body=b"")
     run = await models.run(
         "zjson ping",
-        replies=HTTPResponse(status=503, headers={}, body=b""),
+        replies=[unavailable] * attempt_limit(models.env),
         expected_rc=254,
     )
+    retries = retries_clause(models.env, retryable=True)
     assert run.stderr == (
-        "\naws: [ERROR]: An error occurred (503) when calling the Ping operation "
-        "(reached max retries: 0): Service Unavailable\n"
+        "\naws: [ERROR]: An error occurred (503) when calling the Ping "
+        f"operation{retries}: Service Unavailable\n"
     ), run.describe()
 
 
@@ -183,3 +191,16 @@ async def test_a_global_rule_set_names_one_host(models: ApiSession) -> None:
         run = await models.run(["zglobal", "whoami", "--region", region], replies={})
         hosts.add(run.calls[0].request.headers.get("host"))
     assert len(hosts) == 1, hosts
+
+
+# Ping has no output: botocore's query parser still reads the body as
+# XML, so an empty one fails on either route; GetThing has output.
+@pytest.mark.native_only
+@pytest.mark.parametrize("service", ["zjson", "zjson11", "zquery"])
+async def test_the_native_route_sends_each_protocol_s_request(
+    models: ApiSession, service: str
+) -> None:
+    run = await models.run([service, "get-thing", "--thing-id", "t"], replies={})
+    tokens = (run.calls[0].request.headers.get("user-agent") or "").split()
+    assert any(token.startswith("lang/rust#") for token in tokens), tokens
+    assert not any(token.startswith("md/fallback#") for token in tokens), tokens

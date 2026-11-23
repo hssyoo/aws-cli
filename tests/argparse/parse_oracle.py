@@ -187,6 +187,16 @@ def catalog() -> list[dict[str, Any]]:
                 "color": True,
             },
             {"argv": ["s3", "ls", "--debug=\u200b"], "scope": "global"},
+            # A character str.isprintable rejects, in each repr a message
+            # quotes: an explicit argument, a choice, an int() literal.
+            {"argv": ["s3", "ls", "--debug=\u00a0"], "scope": "global"},
+            {"argv": ["--output", "json\u00a0", "s3", "ls"], "scope": "global"},
+            {
+                "argv": ["s3", "cp", "--storage-class", "STANDARD\u00a0", "./a", "./b"],
+                "scope": "s3",
+            },
+            {"argv": ["s3", "ls", "--page-size", "1\u00a0x"], "scope": "s3"},
+            {"argv": ["s3", "sycn\u00a0"], "scope": "s3"},
             {"argv": ["s3", "ls", "--page-size", "x" * 250], "scope": "s3"},
             {
                 "argv": ["--cli-connect-timeout", "x" * 250, "s3", "ls"],
@@ -539,41 +549,14 @@ def fuzz_cases(tables: dict[str, Any], count: int, seed: int) -> list[dict[str, 
 
 
 def native_error_text(error: dict[str, Any]) -> str:
-    """Apply only the explicitly permitted repr text differences.
+    """The text native must print: Python's, unless the capture measured a
+    native spelling (a json_number schema report).
 
     Invalid-choice suggestions are compared exactly: the native parser ports
-    difflib.get_close_matches.
+    difflib.get_close_matches. Reprs are compared exactly too: native
+    escapes what str.isprintable rejects, as str.__repr__ does.
     """
-    if "native_text" in error:
-        # The capture measured the native spelling of a schema report.
-        return error["native_text"]
-    text = error["text"]
-    prefix = re.match(r"^argument [^:]+: ignored explicit argument ", text)
-    if prefix is None:
-        prefix = re.match(r"^invalid literal for int\(\) with base 10: ", text)
-    if prefix is None:
-        return text
-    end = text.find("\n", prefix.end())
-    end = len(text) if end < 0 else end
-    try:
-        value = ast.literal_eval(text[prefix.end() : end])
-    except (ValueError, SyntaxError):
-        # Precision-truncated repr is already checked byte for byte.
-        return text
-    quote = '"' if "'" in value and '"' not in value else "'"
-    parts = [quote]
-    for char in value:
-        if char in {quote, "\\"}:
-            parts.append("\\" + char)
-        elif char in {"\n", "\r", "\t"}:
-            parts.append({"\n": "\\n", "\r": "\\r", "\t": "\\t"}[char])
-        elif ord(char) < 32 or ord(char) == 127:
-            parts.append(f"\\x{ord(char):02x}")
-        else:
-            parts.append(char)
-    parts.append(quote)
-    rendered = "".join(parts)
-    return text[: prefix.end()] + rendered + text[end:]
+    return error.get("native_text", error["text"])
 
 
 RAW_KEYS = (
@@ -747,11 +730,6 @@ def classify_expected(actual: dict[str, Any], expected: dict[str, Any]) -> None:
         and expected["error"].get("comparison") == "json_number"
     ):
         expected["comparison"] = "json_number"
-    elif (
-        expected["error"] is not None
-        and native_error_text(expected["error"]) != expected["error"]["text"]
-    ):
-        expected["comparison"] = "declared_diagnostic_difference"
 
 
 def compare_unsupported(native: dict[str, Any], oracle: dict[str, Any]) -> bool:

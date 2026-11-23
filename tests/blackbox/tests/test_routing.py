@@ -176,6 +176,21 @@ async def test_forced_native_refuses_a_python_command_line(
         # urllib3 rejects a negative connect timeout when the client is built.
         ({}, "", ["--cli-connect-timeout", "-5", "s3", "ls"],
          "python_only_global"),
+        # Model operations: s3's protocol (rest-xml) is not the native
+        # client's; ListTables pages; every dynamodb operation meets the
+        # paginator fix, which no native customization replaces; table is a
+        # format only Python writes; client-side monitoring sends metrics
+        # over UDP; --cli-input-json is an option only Python binds.
+        ({}, "", ["s3api", "list-buckets"], "unsupported_protocol"),
+        ({}, "", ["dynamodb", "list-tables"], "unsupported_trait"),
+        ({}, "", ["dynamodb", "describe-table", "--table-name", "t"],
+         "unported_customization"),
+        ({}, "", ["sts", "get-caller-identity", "--output", "table"],
+         "output_format"),
+        ({"AWS_CSM_ENABLED": "true"}, "", ["sts", "get-caller-identity"],
+         "client_setting"),
+        ({}, "", ["sts", "get-caller-identity", "--cli-input-json", "{}"],
+         "unsupported_option"),
     ],
     ids=[
         "structured-error-format",
@@ -195,6 +210,12 @@ async def test_forced_native_refuses_a_python_command_line(
         "missing-profile",
         "ca-bundle-flag",
         "negative-connect-timeout",
+        "model-protocol",
+        "model-paginator",
+        "model-customization",
+        "model-output-table",
+        "model-client-monitoring",
+        "model-cli-input-json",
     ],
 )
 async def test_forced_native_refuses_a_python_setting(

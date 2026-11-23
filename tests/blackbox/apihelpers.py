@@ -36,6 +36,7 @@ from localstub.handlers import handle_expect_header
 
 from awswire import AwsWireProtocol, create_aws_wire_protocol
 from credhelpers import run_command
+from harness_plugin import COMMAND_ENVIRONMENT
 from tests.blackbox.utils import mock_server
 
 REGION: Final = "us-east-1"
@@ -205,6 +206,25 @@ def _protocol() -> AwsWireProtocol:
     # Each model costs a parse of its botocore JSON, so the session's
     # tests share one protocol.
     return create_aws_wire_protocol()
+
+
+def attempt_limit(env: Mapping[str, str]) -> int:
+    """The attempts a command makes: what the run's `--env` imposes, else
+    the test's environment, else botocore's standard default."""
+    configured = COMMAND_ENVIRONMENT.get("AWS_MAX_ATTEMPTS") or env.get(
+        "AWS_MAX_ATTEMPTS"
+    )
+    return int(configured) if configured else 3
+
+
+def retries_clause(env: Mapping[str, str], *, retryable: bool) -> str:
+    """ClientError's ` (reached max retries: N)`, which botocore writes
+    when the attempts ran out: for any error with a single attempt, and for
+    a retryable one after every attempt."""
+    limit = attempt_limit(env)
+    if limit == 1 or retryable:
+        return f" (reached max retries: {limit - 1})"
+    return ""
 
 
 def fake_model_protocol(models: Path, services: Sequence[str]) -> AwsWireProtocol:

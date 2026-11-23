@@ -8,6 +8,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use timestamp::Timestamp;
 
+pub mod fuzz;
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }

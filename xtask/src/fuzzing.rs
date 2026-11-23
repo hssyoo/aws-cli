@@ -14,7 +14,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const TARGETS: [&str; 11] = [
+const TARGETS: [&str; 17] = [
     "pool_reservations",
     "pool_ownership",
     "pool_operations",
@@ -26,6 +26,12 @@ const TARGETS: [&str; 11] = [
     "scheduler_phases",
     "path_containment",
     "error_body",
+    "client_xml",
+    "protocol_responses",
+    "model_json",
+    "model_validate",
+    "timestamp_text",
+    "argparse_convert",
 ];
 const RUNNER_VERSION: &str = "cargo-fuzz 0.13.2";
 /// The longest input any campaign mutates. Each model bounds its own loops,

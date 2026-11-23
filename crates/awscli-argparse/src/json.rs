@@ -506,12 +506,12 @@ impl JsonValue {
             Self::String(value) => write_string(value, writer),
             Self::OsString(value) => {
                 writer.write_all(b"{\"$os_bytes\":")?;
-                write_string(&base64(value.as_encoded_bytes()), writer)?;
+                write_string(&pytext::base64::encode(value.as_encoded_bytes()), writer)?;
                 writer.write_all(b"}")
             }
             Self::Bytes(value) => {
                 writer.write_all(b"{\"$bytes\":")?;
-                write_string(&base64(value), writer)?;
+                write_string(&pytext::base64::encode(value), writer)?;
                 writer.write_all(b"}")
             }
             Self::Array(values) => {
@@ -638,27 +638,4 @@ impl PartialEq<str> for JsonValue {
     fn eq(&self, other: &str) -> bool {
         self.as_str() == Some(other)
     }
-}
-
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut text = String::new();
-    for chunk in bytes.chunks(3) {
-        let a = chunk[0];
-        let b = chunk.get(1).copied().unwrap_or(0);
-        let c = chunk.get(2).copied().unwrap_or(0);
-        text.push(char::from(ALPHABET[usize::from(a >> 2)]));
-        text.push(char::from(ALPHABET[usize::from((a & 3) << 4 | b >> 4)]));
-        text.push(if chunk.len() > 1 {
-            char::from(ALPHABET[usize::from((b & 15) << 2 | c >> 6)])
-        } else {
-            '='
-        });
-        text.push(if chunk.len() > 2 {
-            char::from(ALPHABET[usize::from(c & 63)])
-        } else {
-            '='
-        });
-    }
-    text
 }

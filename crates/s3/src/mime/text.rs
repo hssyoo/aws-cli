@@ -1,4 +1,5 @@
-use super::printable::is_printable;
+use pytext::repr::{quote_for, write_escaped};
+use std::fmt::Write as _;
 
 pub(super) fn lower(bytes: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(bytes.len());
@@ -80,52 +81,23 @@ fn whitespace_width(bytes: &[u8]) -> Option<usize> {
 
 /// `repr()` of a str as CPython spells it, the bytes decoded as CPython
 /// decodes a path: UTF-8, with each byte of an invalid sequence its own lone
-/// surrogate. It quotes with `"` when only `'` occurs and with `'` otherwise,
-/// escaping that quote, backslashes, and what `str.isprintable` rejects.
+/// surrogate. The quoting and escapes are [`pytext::repr`]'s, what
+/// `str.isprintable` rejects escaped; a lone surrogate is `\udcXX`.
 pub(crate) fn repr(bytes: &[u8]) -> Vec<u8> {
-    let quote = if bytes.contains(&b'\'') && !bytes.contains(&b'"') {
-        b'"'
-    } else {
-        b'\''
-    };
-    let mut result = vec![quote];
-    for (code, encoded) in CodePoints(bytes) {
-        write_escaped(&mut result, quote, code, encoded);
+    let quote = quote_for(bytes);
+    let mut result = String::with_capacity(bytes.len() + 2);
+    result.push(quote);
+    let mut buffer = [0; 4];
+    for (code, _) in CodePoints(bytes) {
+        match char::from_u32(code) {
+            Some(c) => write_escaped(&mut result, c.encode_utf8(&mut buffer), quote),
+            None => {
+                let _ = write!(result, "\\u{code:04x}");
+            }
+        }
     }
     result.push(quote);
-    result
-}
-
-fn write_escaped(result: &mut Vec<u8>, quote: u8, code: u32, encoded: &[u8]) {
-    let byte = match u8::try_from(code) {
-        Ok(byte) if byte.is_ascii() => byte,
-        _ => return write_escaped_wide(result, code, encoded),
-    };
-    match byte {
-        _ if byte == quote || byte == b'\\' => result.extend_from_slice(&[b'\\', byte]),
-        b'\t' => result.extend_from_slice(b"\\t"),
-        b'\n' => result.extend_from_slice(b"\\n"),
-        b'\r' => result.extend_from_slice(b"\\r"),
-        ..b' ' | 0x7f => result.extend_from_slice(format!("\\x{byte:02x}").as_bytes()),
-        _ => result.push(byte),
-    }
-}
-
-/// One code point past ASCII of a `repr`: itself when printable, else the
-/// shortest of the `\x`, `\u` and `\U` escapes that holds it.
-fn write_escaped_wide(result: &mut Vec<u8>, code: u32, encoded: &[u8]) {
-    if is_printable(code) {
-        result.extend_from_slice(encoded);
-        return;
-    }
-    let escape = if code <= 0xff {
-        format!("\\x{code:02x}")
-    } else if code <= 0xffff {
-        format!("\\u{code:04x}")
-    } else {
-        format!("\\U{code:08x}")
-    };
-    result.extend_from_slice(escape.as_bytes());
+    result.into_bytes()
 }
 
 #[cfg(test)]

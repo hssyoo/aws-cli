@@ -5,12 +5,12 @@ fn arguments(args: &[&str]) -> Vec<String> {
 }
 
 #[test]
-fn default_campaign_matches_all_eleven_targets() -> Result<(), TaskError> {
+fn default_campaign_matches_all_seventeen_targets() -> Result<(), TaskError> {
     let options = options(&[])?;
     assert_eq!(options, Options::default());
     assert_eq!(budget_flags(&options), ["-runs=1000"]);
     assert_eq!(budget_text(&options), "1000 runs");
-    assert_eq!(TARGETS.len(), 11);
+    assert_eq!(TARGETS.len(), 17);
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or_else(|| deps::error("root"))?;

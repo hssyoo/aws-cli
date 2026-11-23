@@ -8,12 +8,15 @@ fn trust_follows_the_setting_and_the_payload() {
     settings.trust.value = Trust::Embedded;
     assert_eq!(
         trust(&settings, Some(b"pem")),
-        ::crt::runtime::Trust::Pem(b"pem".to_vec())
+        client::transport::crt::Trust::Pem(b"pem".to_vec())
     );
-    assert_eq!(trust(&settings, None), ::crt::runtime::Trust::Platform);
+    assert_eq!(
+        trust(&settings, None),
+        client::transport::crt::Trust::Platform
+    );
     settings.trust.value = Trust::Platform;
     assert_eq!(
         trust(&settings, Some(b"pem")),
-        ::crt::runtime::Trust::Platform
+        client::transport::crt::Trust::Platform
     );
 }
