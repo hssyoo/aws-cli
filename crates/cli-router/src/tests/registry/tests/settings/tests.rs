@@ -243,20 +243,19 @@ fn account_id_endpoint_mode_is_python_s() {
     assert_python(verdict, PythonReason::EndpointSetting, "account id");
 }
 
+/// Both values `add_timestamp_parser` knows run natively; any other fails
+/// the session, which Python reports.
 #[test]
-fn cli_timestamp_format_is_native_as_iso8601_only() {
-    assert_runs(
-        identity_verdict(&[], "[default]\ncli_timestamp_format = iso8601\n"),
-        "iso",
-    );
-    for value in ["wire", "bogus"] {
+fn cli_timestamp_format_is_native_as_iso8601_or_wire() {
+    for value in ["iso8601", "wire"] {
         let config = format!("[default]\ncli_timestamp_format = {value}\n");
-        assert_python(
-            identity_verdict(&[], &config),
-            PythonReason::OutputFormat,
-            value,
-        );
+        assert_runs(identity_verdict(&[], &config), value);
     }
+    assert_python(
+        identity_verdict(&[], "[default]\ncli_timestamp_format = bogus\n"),
+        PythonReason::OutputFormat,
+        "bogus",
+    );
 }
 
 #[test]
@@ -273,8 +272,8 @@ fn cli_binary_format_is_validated() {
     );
 }
 
-/// The pager depends on the terminal, which the router cannot see:
-/// `cli_error::dispose_formatted` decides it as the run is dispatched.
+/// The pager depends on the terminal, which the router cannot see: the
+/// invocation's preflight decides it (`format::pager::destination`).
 #[test]
 fn pager_settings_leave_the_verdict_to_dispatch() {
     for (pairs, config) in [
