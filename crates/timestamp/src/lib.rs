@@ -9,7 +9,7 @@
 //! ```
 //! use timestamp::Timestamp;
 //!
-//! let instant = Timestamp::parse_iso8601("2015-08-30T12:36:00.5Z");
+//! let instant = Timestamp::from_unix_micros(1_440_938_160_500_000);
 //! assert_eq!(instant.map(|t| t.iso8601_basic()).as_deref(), Some("20150830T123600Z"));
 //! assert_eq!(instant.map(|t| t.epoch_seconds()).as_deref(), Some("1440938160.5"));
 //! let rfc822 = instant.map(|t| t.rfc822());

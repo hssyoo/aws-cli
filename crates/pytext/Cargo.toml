@@ -6,5 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# The toolchain CPython as an oracle, for the tests of crates built on this.
+testing = []
+
 [lints]
 workspace = true

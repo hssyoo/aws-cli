@@ -16,6 +16,7 @@ serde_json.workspace = true
 timestamp = { path = "../timestamp" }
 
 [dev-dependencies]
+pytext = { path = "../pytext", features = ["testing"] }
 awscli-argparse = { path = "../awscli-argparse" }
 pyload = { path = "../pyload", features = ["testing"] }
 
