@@ -36,6 +36,9 @@ USAGE: Final = (
     "aws <command> help\n  aws <command> <subcommand> help\n"
 )
 
+# The run forces the native route, which refuses what it cannot run.
+FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get("AWS_CLI_NATIVE_ROUTER") == "native"
+
 
 @pytest_asyncio.fixture
 async def models(aws_cli: str, tmp_path: Path) -> AsyncIterator[ApiSession]:
@@ -289,6 +292,7 @@ async def test_an_epoch_prints_in_a_fixed_zone(models: ApiSession) -> None:
     assert json.loads(run.stdout) == {"When": NOON_UTC}, run.describe()
 
 
+@pytest.mark.skipif(FORCED_NATIVE, reason="forced native refuses it (local_zone), as checked below")
 async def test_an_epoch_prints_in_a_zone_with_daylight_saving(models: ApiSession) -> None:
     models.env["TZ"] = DST_ZONE
     run = await models.run("zjson describe", replies={"When": 1591012800})
@@ -371,9 +375,6 @@ async def test_a_redirect_is_a_client_error(models: ApiSession) -> None:
     assert run.stderr == (
         f"\naws: [ERROR]: An error occurred (301) when calling the Ping operation{retries}:\n"
     ), run.describe()
-
-
-FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get("AWS_CLI_NATIVE_ROUTER") == "native"
 
 
 def counting_process(models: ApiSession) -> Path:
