@@ -1,0 +1,2 @@
+
+aws: [ERROR]: Could not connect to the endpoint URL: "http://127.0.0.1:{port}/"

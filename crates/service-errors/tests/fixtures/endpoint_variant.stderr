@@ -1,0 +1,2 @@
+
+aws: [ERROR]: Unable to construct a modeled endpoint with the following variant(s) ['dualstack', 'fips']:

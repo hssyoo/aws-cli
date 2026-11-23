@@ -298,7 +298,7 @@ pub fn list_command_failure(result: &ListResult, endpoint: &str) -> CommandFailu
     let transfer = &result.transfer;
     let mut failure = CommandFailure {
         crt_code: transfer.error_code,
-        crt_name: String::from_utf8_lossy(transfer.crt_name.as_bytes()).into_owned(),
+        crt_name: String::from_utf8_lossy(transfer.crt_name.as_bytes()).into(),
         http_status: transfer.response_status,
         ..CommandFailure::new(Category::General)
     };

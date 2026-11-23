@@ -1035,7 +1035,7 @@ fn a_repeated_token_is_the_paginators_general_error() {
     );
     assert_eq!(failure.http_status, 200);
     assert_eq!(failure.crt_code, 0);
-    assert_eq!(failure.crt_name, "");
+    assert_eq!(&*failure.crt_name, "");
 }
 #[test]
 fn a_later_page_failure_keeps_earlier_output_and_prints_no_summary() {

@@ -160,6 +160,8 @@ impl Client {
     /// [`CallError::Unsupported`] for a call to leave to the Python route.
     pub fn prepare(&self, operation: &str, input: Value) -> Result<Prepared<'_>, CallError> {
         let parts = &self.parts;
+        // What botocore's client creation raises once a region resolves.
+        parts.endpoint.check(&parts.endpoints)?;
         let operation = parts
             .model
             .operation(operation)

@@ -1,0 +1,2 @@
+
+aws: [ERROR]: An error occurred (InternalServerError) when calling the ListTables operation (reached max retries: 1): Internal server error

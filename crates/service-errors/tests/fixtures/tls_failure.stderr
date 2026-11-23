@@ -1,0 +1,2 @@
+
+aws: [ERROR]: SSL validation failed for https://127.0.0.1:{port}/ [SSL: WRONG_VERSION_NUMBER] wrong version number (_ssl.c:1082)

@@ -1,6 +1,7 @@
 //! Shared command-line settings, formatting, and injected process inputs.
 
 pub mod aws_profile;
+pub mod botocore_error;
 pub mod cli_error;
 pub mod client_config;
 pub mod command;

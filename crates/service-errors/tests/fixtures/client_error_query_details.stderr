@@ -1,0 +1,5 @@
+
+aws: [ERROR]: An error occurred (VerificationException) when calling the ListTopics operation (reached max retries: 0): The OTP is not valid
+
+Additional error details:
+Status: Failed

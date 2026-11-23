@@ -1,0 +1,2 @@
+
+aws: [ERROR]: An error occurred (AccessDenied) when calling the GetCallerIdentity operation (reached max retries: 0): User is not authorized

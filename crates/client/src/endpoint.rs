@@ -92,6 +92,8 @@ pub struct EndpointData {
     /// The partition endpoint `endpoints.json`'s first partition gives the
     /// service, which a client with no region resolves to.
     partition_endpoint: Option<String>,
+    /// `endpoints.json`'s partitions, for the variant check.
+    legacy: Option<legacy::Legacy>,
 }
 
 impl EndpointData {
@@ -123,15 +125,20 @@ impl EndpointData {
         endpoints: Option<(&[u8], &str)>,
     ) -> Result<Self, DataError> {
         let parameters = parameter_defs(&rules)?;
-        let partition_endpoint = match endpoints {
-            Some((json, prefix)) => partition_endpoint(json, prefix)?,
-            None => None,
+        let (partition_endpoint, legacy) = match endpoints {
+            Some((json, prefix)) => {
+                let document = document(json, "endpoints.json")?;
+                let legacy = legacy::Legacy::parse(&document, prefix);
+                (partition_endpoint(&document, prefix)?, legacy)
+            }
+            None => (None, None),
         };
         Ok(Self {
             rules,
             partitions,
             parameters,
             partition_endpoint,
+            legacy,
         })
     }
     pub fn parameters(&self) -> &[ParamDef] {
@@ -174,9 +181,8 @@ fn parameter_defs(rules: &[u8]) -> Result<Vec<ParamDef>, DataError> {
 /// `EndpointResolver._endpoint_for_partition` with no region: the first
 /// partition decides, and the service resolves only to its
 /// `partitionEndpoint` there.
-fn partition_endpoint(endpoints: &[u8], prefix: &str) -> Result<Option<String>, DataError> {
-    let endpoints = document(endpoints, "endpoints.json")?;
-    let Some(Value::List(partitions)) = map_field(&endpoints, "partitions") else {
+fn partition_endpoint(endpoints: &Value, prefix: &str) -> Result<Option<String>, DataError> {
+    let Some(Value::List(partitions)) = map_field(endpoints, "partitions") else {
         return Err(DataError::Invalid("endpoints.json partitions"));
     };
     let service = partitions
@@ -217,6 +223,12 @@ pub struct EndpointInputs<'a> {
 /// them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EndpointConfig {
+    /// The region as given, which `validate_region_name` reads.
+    given_region: Option<String>,
+    /// FIPS and dual-stack as the legacy resolver is asked for them,
+    /// endpoint URL or not.
+    variant_fips: bool,
+    variant_dual_stack: bool,
     region: Option<String>,
     use_fips: bool,
     use_dual_stack: bool,
@@ -235,6 +247,9 @@ impl EndpointConfig {
         };
         let custom = inputs.endpoint_url.is_some();
         Self {
+            given_region: inputs.region.map(str::to_owned),
+            variant_fips: pseudo || inputs.use_fips.unwrap_or(false),
+            variant_dual_stack: inputs.use_dual_stack.unwrap_or(false),
             region,
             use_fips: !custom && (pseudo || inputs.use_fips.unwrap_or(false)),
             use_dual_stack: !custom && inputs.use_dual_stack.unwrap_or(false),
@@ -263,6 +278,34 @@ impl EndpointConfig {
             "preferred"
         } else {
             "disabled"
+        }
+    }
+    /// What client creation refuses before anything resolves: a region
+    /// that is no host label (`validate_region_name`), and FIPS or
+    /// dual-stack without the variant in `endpoints.json`
+    /// (`EndpointVariantError`, [`legacy`]).
+    ///
+    /// # Errors
+    /// Their text; [`Unsupported::RegionPattern`] for a partition pattern
+    /// the variant check cannot read.
+    pub fn check(&self, data: &EndpointData) -> Result<(), CallError> {
+        if let Some(region) = self.given_region.as_deref()
+            && !cli_core::region::is_valid_name(region)
+        {
+            return Err(CallError::Endpoint(format!(
+                "Provided region_name '{region}' doesn't match a supported format."
+            )));
+        }
+        let region = self.region.as_ref().or(data.partition_endpoint.as_ref());
+        let (Some(region), Some(legacy)) = (region, &data.legacy) else {
+            return Ok(());
+        };
+        match legacy.check(region, self.variant_dual_stack, self.variant_fips) {
+            Ok(()) => Ok(()),
+            Err(legacy::Refusal::Variant(text)) => Err(CallError::Endpoint(text)),
+            Err(legacy::Refusal::Pattern) => {
+                Err(CallError::Unsupported(Unsupported::RegionPattern))
+            }
         }
     }
     /// The region the client resolves with (`ClientEndpointBridge.resolve`):
@@ -614,6 +657,8 @@ fn auth_schemes(properties: &[u8]) -> Vec<SchemeProps> {
         })
         .collect()
 }
+
+mod legacy;
 
 #[cfg(test)]
 mod tests;
