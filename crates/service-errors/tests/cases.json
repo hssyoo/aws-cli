@@ -254,7 +254,9 @@
   "name": "no_region",
   "argv": [
    "dynamodb",
-   "list-tables"
+   "list-tables",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
   ],
   "config": "[default]\n",
   "service": "dynamodb",
@@ -267,6 +269,8 @@
   "argv": [
    "dynamodb",
    "list-tables",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}",
    "--cli-error-format",
    "legacy"
   ],
@@ -593,6 +597,8 @@
   "argv": [
    "sts",
    "get-caller-identity",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}",
    "--region",
    "eu-isoe-west-1"
   ],
