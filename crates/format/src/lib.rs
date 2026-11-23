@@ -56,11 +56,12 @@ pub fn render(response: &Value, format: OutputFormat) -> Result<String, Partial>
     if format != OutputFormat::Off
         && let Some(class) = not_iterable(response)
     {
-        // `'ResponseMetadata' in response_data` raises for these.
+        // `'ResponseMetadata' in response_data` raises for these, with
+        // CPython 3.14's text.
         return Err(Partial {
             written: String::new(),
             error: PythonError {
-                message: format!("argument of type '{class}' is not iterable"),
+                message: format!("argument of type '{class}' is not a container or iterable"),
             },
         });
     }

@@ -1,12 +1,13 @@
 //! `cargo xtask parity [--service NAME]... [--filter TEXT]`: the
 //! differential test against botocore.
 //!
-//! `tests/parity/run.py` provisions the harness venv from the in-tree AWS
-//! CLI's runtime lock, captures botocore's results for every case under
-//! `tests/parity/cases` into `target/parity/vectors` (keyed by every input,
-//! so a stale capture is never reused), and names the capture and the venv
-//! interpreter. The tests that need that venv are ignored under `xtask
-//! test` and run here with `--ignored`; a run that executes none fails.
+//! `tests/parity/run.py`, on the managed CPython the product embeds,
+//! provisions the harness venv from the in-tree AWS CLI's runtime lock,
+//! captures botocore's results for every case under `tests/parity/cases`
+//! into `target/parity/vectors` (keyed by every input, so a stale capture
+//! is never reused), and names the capture and the venv interpreter. The
+//! tests that need that venv are ignored under `xtask test` and run here
+//! with `--ignored`; a run that executes none fails.
 use crate::{TaskError, deps, process};
 use std::io::Write;
 use std::path::Path;
@@ -41,8 +42,15 @@ fn options(args: &[String]) -> Result<Options, TaskError> {
 pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
     let options = options(args)?;
     deps::native_host()?;
-    let capture = capture(root)?;
     let environment = deps::native_environment(root, !cfg!(windows))?;
+    // The capture runs, and its venv is built, on the interpreter the
+    // product embeds, so version-dependent texts are the embedded CLI's.
+    let python = environment.cpython().join(if cfg!(windows) {
+        "python.exe"
+    } else {
+        "bin/python3"
+    });
+    let capture = capture(root, &python)?;
     let mut command = Command::new("cargo");
     command.current_dir(root).args([
         "test",
@@ -90,8 +98,8 @@ struct Capture {
 }
 
 /// Runs the capture and reads where it wrote.
-fn capture(root: &Path) -> Result<Capture, TaskError> {
-    let mut command = Command::new("python3");
+fn capture(root: &Path, python: &Path) -> Result<Capture, TaskError> {
+    let mut command = Command::new(python);
     command
         .current_dir(root)
         .arg("-B")

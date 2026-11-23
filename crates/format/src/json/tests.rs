@@ -38,7 +38,7 @@ fn a_response_python_cannot_search_fails_as_the_formatter_does() {
     let message = error.map(|partial| partial.error.message);
     assert_eq!(
         message.as_deref(),
-        Some("argument of type 'NoneType' is not iterable")
+        Some("argument of type 'NoneType' is not a container or iterable")
     );
     assert_eq!(
         crate::render(&Value::Null, crate::OutputFormat::Off),

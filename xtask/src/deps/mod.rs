@@ -67,6 +67,11 @@ pub struct NativeEnvironment {
 }
 
 impl NativeEnvironment {
+    /// The managed CPython's install prefix, the interpreter the product
+    /// embeds.
+    pub fn cpython(&self) -> &Path {
+        &self.cpython
+    }
     pub fn apply(&self, command: &mut Command) {
         if let Some((environment, path)) = &self.msvc {
             environment.apply(command);

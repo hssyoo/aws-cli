@@ -200,6 +200,9 @@ def pin_clock_and_uuid():
     pinned = types.SimpleNamespace(uuid4=lambda: PINNED_UUID)
     endpoint.uuid = pinned
     handlers.uuid = pinned
+    # Retries do not wait: the endpoint's backoff sleep is a no-op, so the
+    # standard mode's jitter changes nothing captured.
+    endpoint.time = types.SimpleNamespace(sleep=lambda seconds: None)
 
 
 class Raw:

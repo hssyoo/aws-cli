@@ -4,8 +4,8 @@ results for every case into target/parity, and print where they are.
 The capture runs in the venv the upstream runtime lock pins, with a cleared,
 explicit environment: nothing from the caller's shell reaches botocore, and
 nothing is sent. Vectors are keyed by everything that shapes them (the
-oracle, the cases, the fake models, the in-tree AWS CLI's Python sources and
-the lock), so a change to any of them captures afresh.
+interpreter, the oracle, the cases, the fake models, the in-tree AWS CLI's
+Python sources and the lock), so a change to any of them captures afresh.
 """
 
 from __future__ import annotations
@@ -31,8 +31,8 @@ def files(*roots: Path, pattern: str = "*") -> list[Path]:
     return found
 
 
-def key(paths: list[Path]) -> str:
-    digest = hashlib.sha256()
+def key(paths: list[Path], interpreter: str) -> str:
+    digest = hashlib.sha256(interpreter.encode())
     for path in paths:
         digest.update(str(path).encode())
         digest.update(harness_venv.sha256(path).encode())
@@ -55,7 +55,7 @@ def main() -> None:
     inputs = [here / "oracle.py", here / "run.py", lock]
     inputs += files(args.cases.resolve(), args.models.resolve())
     inputs += files(source / "awscli", pattern="*.py")
-    vectors = cache / "vectors" / f"{key(inputs)}.json"
+    vectors = cache / "vectors" / f"{key(inputs, harness_venv.host_python_id())}.json"
     if not vectors.exists():
         capture(python, source, cache, args, vectors)
     print(json.dumps({"vectors": str(vectors), "python": str(python)}))
