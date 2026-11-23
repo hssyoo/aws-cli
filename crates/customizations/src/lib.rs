@@ -5,12 +5,29 @@
 //!
 //! [`TABLE`] is the table a client chooses from (`Hooks::for_service`).
 #![forbid(unsafe_code)]
-use client::hooks::{CallContext, Customization, Interceptor, Scope, SettingDefault};
+use cli_core::cli_error::PythonReason;
+use client::hooks::{
+    Basis, CallContext, Customization, HookError, Interceptor, Refusal, Scope, SettingDefault,
+};
+
+/// A basis implemented at the Rust item `at`.
+const fn implemented(at: &'static str) -> Basis {
+    Basis::Implemented { at }
+}
 use client::retry::{Attempt, RetryDecision};
 use std::time::Duration;
 
 /// Every customization, in the order a client applies them.
-pub static TABLE: [&Customization; 4] = [&CORE, &DYNAMODB, &DYNAMODB_STREAMS, &STS];
+pub static TABLE: [&Customization; 8] = [
+    &CORE,
+    &DYNAMODB,
+    &DYNAMODB_STREAMS,
+    &STS,
+    &SQS_RECEIVE_MESSAGE,
+    &SFN_GET_ACTIVITY_TASK,
+    &SWF_POLL_FOR_ACTIVITY_TASK,
+    &SWF_POLL_FOR_DECISION_TASK,
+];
 
 /// The botocore handlers registered for every service
 /// (`botocore.handlers.BUILTIN_HANDLERS`, the rows without a service in
@@ -52,19 +69,71 @@ pub static CORE: Customization = Customization {
     builtins: &[],
     interceptors: &[],
     replaces: &[
-        "botocore.handlers.generate_idempotent_uuid",
-        "botocore.handlers.add_retry_headers",
-        "botocore.handlers.set_operation_specific_signer",
-        "botocore.handlers._set_auth_scheme_preference_signer",
-        "botocore.handlers._handle_request_validation_mode_member",
-        "botocore.handlers.inject_api_version_header_if_needed",
-        "botocore.handlers.handle_service_name_alias",
-        "botocore.signers.add_generate_presigned_url",
-        "botocore.signers.RequestSigner.handler",
-        "botocore.useragent.UserAgentString.rebuild_and_replace_user_agent_handler",
-        "botocore.retries.standard.MaxAttemptsSeeder.seed_max_attempts",
-        "botocore.retries.standard.RetryHandler.needs_retry",
-        "botocore.retries.standard.RetryQuotaChecker.release_retry_quota",
+        (
+            "botocore.handlers.generate_idempotent_uuid",
+            implemented("client::call::Client::fill_idempotency_tokens"),
+        ),
+        (
+            "botocore.handlers.add_retry_headers",
+            implemented("client::call::Client::attempt_request"),
+        ),
+        (
+            "botocore.handlers.set_operation_specific_signer",
+            implemented("client::auth::select"),
+        ),
+        (
+            "botocore.handlers._set_auth_scheme_preference_signer",
+            Basis::Inert {
+                acts_when: "auth_scheme_preference is configured",
+                refused_as: Refusal::Router(PythonReason::ClientSetting),
+            },
+        ),
+        (
+            "botocore.handlers._handle_request_validation_mode_member",
+            Basis::Inert {
+                acts_when: "the operation has httpChecksum",
+                refused_as: Refusal::Trait("httpChecksum"),
+            },
+        ),
+        (
+            "botocore.handlers.inject_api_version_header_if_needed",
+            Basis::Inert {
+                acts_when: "the operation is the endpoint-discovery operation",
+                refused_as: Refusal::Trait("endpointoperation"),
+            },
+        ),
+        (
+            "botocore.handlers.handle_service_name_alias",
+            implemented("command::models::ModelSource::roots"),
+        ),
+        (
+            "botocore.signers.add_generate_presigned_url",
+            Basis::Inert {
+                acts_when: "a hand-written command calls generate_presigned_url (s3 presign, \
+                            eks get-token, ec2-instance-connect, cloudfront sign)",
+                refused_as: Refusal::Router(PythonReason::UnsupportedSubcommand),
+            },
+        ),
+        (
+            "botocore.signers.RequestSigner.handler",
+            implemented("client::auth::sign"),
+        ),
+        (
+            "botocore.useragent.UserAgentString.rebuild_and_replace_user_agent_handler",
+            implemented("client::useragent::header"),
+        ),
+        (
+            "botocore.retries.standard.MaxAttemptsSeeder.seed_max_attempts",
+            implemented("client::call::Client::attempt_request"),
+        ),
+        (
+            "botocore.retries.standard.RetryHandler.needs_retry",
+            implemented("client::retry::Standard::needs_retry"),
+        ),
+        (
+            "botocore.retries.standard.RetryQuotaChecker.release_retry_quota",
+            implemented("client::retry::Standard::succeeded"),
+        ),
     ],
 };
 
@@ -85,7 +154,13 @@ pub static DYNAMODB: Customization = Customization {
     setting_defaults: &DYNAMODB_RETRIES,
     builtins: &[],
     interceptors: &[&DynamodbChecksum],
-    replaces: &["botocore.discovery.block_endpoint_discovery_required_operations"],
+    replaces: &[(
+        "botocore.discovery.block_endpoint_discovery_required_operations",
+        Basis::Inert {
+            acts_when: "an operation's endpoint discovery is required",
+            refused_as: Refusal::Trait("endpointdiscovery"),
+        },
+    )],
 };
 
 /// dynamodb-streams, which the same two tables name; the checksum check is
@@ -116,7 +191,10 @@ pub static STS: Customization = Customization {
     setting_defaults: &[],
     builtins: &[],
     interceptors: &[&StsIdpRetry],
-    replaces: &["botocore.handlers.disable_signing"],
+    replaces: &[(
+        "botocore.handlers.disable_signing",
+        implemented("client::auth::select"),
+    )],
 };
 
 #[derive(Debug)]
@@ -143,8 +221,9 @@ struct DynamodbChecksum;
 
 impl Interceptor for DynamodbChecksum {
     /// `RetryDDBChecksumError.is_retryable`: the body's CRC32 differs from
-    /// `x-amz-crc32`. A header that is not a number botocore cannot read
-    /// either; it is left to the standard policy.
+    /// `x-amz-crc32`, read with Python's `int()`. That read is unguarded,
+    /// so a header it cannot read raises its `ValueError` and fails the
+    /// call; a negative or huge value simply mismatches.
     fn classify_retry(
         &self,
         _: &mut CallContext<'_>,
@@ -153,8 +232,54 @@ impl Interceptor for DynamodbChecksum {
         let Attempt::Response { response, .. } = attempt else {
             return None;
         };
-        let expected: u64 = response.headers.get("x-amz-crc32")?.trim().parse().ok()?;
-        (u64::from(crc32(&response.body)) != expected).then_some(RetryDecision::Retry)
+        let header = response.headers.get("x-amz-crc32")?;
+        let matches = match model::pyrepr::int_from_text(header) {
+            Err(text) => return Some(RetryDecision::Fail(HookError::Failed(text))),
+            Ok(model::value::Value::Integer(expected)) => {
+                i64::from(crc32(&response.body)) == expected
+            }
+            Ok(_) => false,
+        };
+        (!matches).then_some(RetryDecision::Retry)
+    }
+}
+
+/// botocore's `_LONG_POLLING_OPERATIONS` (retries/standard.py), a table of
+/// operations by hyphenized service id that its source says the
+/// `aws.api#longPoll` trait will replace: once the retry quota refuses a
+/// retry, the call still sleeps the delay it would have waited.
+const fn long_polling(
+    id: &'static str,
+    service: &'static str,
+    operation: &'static str,
+) -> Customization {
+    Customization {
+        id,
+        scope: Scope::operation(service, operation),
+        setting_defaults: &[],
+        builtins: &[],
+        interceptors: &[&LongPoll],
+        replaces: &[],
+    }
+}
+
+pub static SQS_RECEIVE_MESSAGE: Customization =
+    long_polling("sqs-long-poll", "sqs", "ReceiveMessage");
+/// `sfn` in botocore's table, the hyphenized id of the `stepfunctions`
+/// model.
+pub static SFN_GET_ACTIVITY_TASK: Customization =
+    long_polling("sfn-long-poll", "stepfunctions", "GetActivityTask");
+pub static SWF_POLL_FOR_ACTIVITY_TASK: Customization =
+    long_polling("swf-activity-long-poll", "swf", "PollForActivityTask");
+pub static SWF_POLL_FOR_DECISION_TASK: Customization =
+    long_polling("swf-decision-long-poll", "swf", "PollForDecisionTask");
+
+#[derive(Debug)]
+struct LongPoll;
+
+impl Interceptor for LongPoll {
+    fn long_polls(&self) -> bool {
+        true
     }
 }
 

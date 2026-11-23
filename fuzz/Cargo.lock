@@ -61,6 +61,7 @@ dependencies = [
  "credentials",
  "crt",
  "model",
+ "pytext",
  "sigv4",
  "timestamp",
 ]

@@ -206,6 +206,10 @@ const HTTP_ERROR_CODES_END: i32 = 3 * 1024;
 /// `AWS_IO_SOCKET_TIMEOUT`: a connect that outlasted its timeout.
 pub const SOCKET_TIMEOUT_ERROR_CODE: i32 = ffi::AWS_IO_SOCKET_TIMEOUT;
 
+/// `AWS_AUTH_SIGNING_NO_CREDENTIALS`: a request that asks to be signed on a
+/// runtime with no credentials, as its signer would report it.
+pub const NO_CREDENTIALS_ERROR_CODE: i32 = ffi::AWS_AUTH_SIGNING_NO_CREDENTIALS;
+
 /// `AWS_IO_TLS_ERROR_NEGOTIATION_FAILURE`: a TLS handshake that failed, a
 /// certificate the runtime's trust does not verify among the causes.
 pub const TLS_FAILURE_ERROR_CODE: i32 = ffi::AWS_IO_TLS_ERROR_NEGOTIATION_FAILURE;
@@ -273,7 +277,7 @@ impl Shared {
         exchange: &Arc<Exchange>,
     ) -> Result<NonNull<c::HttpCall>, Error> {
         if request.signing.is_some() && !self.signs {
-            return Err(Error::Connect(crate::s3::NO_CREDENTIALS_ERROR_CODE));
+            return Err(Error::Connect(NO_CREDENTIALS_ERROR_CODE));
         }
         let cursor = |text: &str| ffi::AwsByteCursor::from_bytes(text.as_bytes());
         let length = request.body.len().to_string();

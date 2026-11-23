@@ -44,27 +44,21 @@ pub enum Refusal {
 #[derive(Clone, Debug)]
 pub struct Legacy(Vec<Partition>);
 
-fn field<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
-    match value {
-        Value::Map(map) => map.get(name),
-        _ => None,
-    }
-}
-
-fn text(value: Option<&Value>) -> Option<String> {
-    match value? {
-        Value::String(text) => Some(text.clone()),
-        _ => None,
-    }
+/// A string value, owned.
+fn owned_text(value: Option<&Value>) -> Option<String> {
+    value.and_then(Value::as_str).map(str::to_owned)
 }
 
 /// A `variants` list's tag sets, each sorted, so equal sets compare equal.
 fn variants(data: Option<&Value>) -> Vec<Vec<String>> {
-    let Some(Value::List(variants)) = data.and_then(|data| field(data, "variants")) else {
+    let Some(Value::List(variants)) = data.and_then(|data| data.get("variants")) else {
         return Vec::new();
     };
-    let tags = |variant: &Value| match field(variant, "tags") {
-        Some(Value::List(tags)) => tags.iter().filter_map(|tag| text(Some(tag))).collect(),
+    let tags = |variant: &Value| match variant.get("tags") {
+        Some(Value::List(tags)) => tags
+            .iter()
+            .filter_map(|tag| owned_text(Some(tag)))
+            .collect(),
         _ => Vec::new(),
     };
     variants
@@ -80,7 +74,7 @@ fn variants(data: Option<&Value>) -> Vec<Vec<String>> {
 
 impl Legacy {
     pub fn parse(endpoints: &Value, prefix: &str) -> Option<Self> {
-        let Some(Value::List(partitions)) = field(endpoints, "partitions") else {
+        let Some(Value::List(partitions)) = endpoints.get("partitions") else {
             return None;
         };
         Some(Self(
@@ -172,31 +166,33 @@ impl Partition {
 }
 
 fn partition(value: &Value, prefix: &str) -> Partition {
-    let service = field(value, "services").and_then(|services| field(services, prefix));
-    let endpoints = match service.and_then(|service| field(service, "endpoints")) {
+    let service = value
+        .get("services")
+        .and_then(|services| services.get(prefix));
+    let endpoints = match service.and_then(|service| service.get("endpoints")) {
         Some(Value::Map(map)) => map
             .iter()
             .map(|(name, data)| (name.to_owned(), variants(Some(data))))
             .collect(),
         _ => Vec::new(),
     };
-    let regions = match field(value, "regions") {
+    let regions = match value.get("regions") {
         Some(Value::Map(map)) => map.keys().map(str::to_owned).collect(),
         _ => Vec::new(),
     };
     Partition {
-        name: text(field(value, "partition")).unwrap_or_default(),
+        name: owned_text(value.get("partition")).unwrap_or_default(),
         regions,
-        prefixes: text(field(value, "regionRegex")).and_then(|regex| prefixes(&regex)),
-        defaults: variants(field(value, "defaults")),
+        prefixes: owned_text(value.get("regionRegex")).and_then(|regex| prefixes(&regex)),
+        defaults: variants(value.get("defaults")),
         service: Service {
             endpoints,
-            defaults: variants(service.and_then(|service| field(service, "defaults"))),
-            partition_endpoint: text(
-                service.and_then(|service| field(service, "partitionEndpoint")),
+            defaults: variants(service.and_then(|service| service.get("defaults"))),
+            partition_endpoint: owned_text(
+                service.and_then(|service| service.get("partitionEndpoint")),
             ),
             regionalized: !matches!(
-                service.and_then(|s| field(s, "isRegionalized")),
+                service.and_then(|s| s.get("isRegionalized")),
                 Some(Value::Bool(false))
             ),
         },

@@ -608,19 +608,46 @@ impl Client {
     }
     /// The retry kind of an attempt: a `classify_retry` interceptor's
     /// decision, else standard mode's.
-    fn classify(&self, cx: &mut CallContext<'_>, attempt: &Attempt<'_>) -> Option<ErrorKind> {
+    ///
+    /// # Errors
+    /// An interceptor's check that raised ([`RetryDecision::Fail`]).
+    fn classify(
+        &self,
+        cx: &mut CallContext<'_>,
+        attempt: &Attempt<'_>,
+    ) -> Result<Option<ErrorKind>, CallError> {
         let decided = self
             .hooks
             .interceptors(&cx.operation.name)
             .find_map(|hook| hook.classify_retry(cx, attempt));
-        match decided {
+        Ok(match decided {
             Some(RetryDecision::Stop) => None,
             Some(RetryDecision::Retry) => Some(
                 retry::classify(&self.parts.model, cx.operation, attempt)
                     .unwrap_or(ErrorKind::Transient),
             ),
+            Some(RetryDecision::Fail(error)) => {
+                return Err(CallError::Hook(error.after_prepare()));
+            }
             None => retry::classify(&self.parts.model, cx.operation, attempt),
+        })
+    }
+    /// `RetryHandler.needs_retry` for a long-polling operation whose retry
+    /// only the quota refused: it sleeps the delay it would have waited.
+    fn long_poll_wait(
+        &self,
+        cx: &CallContext<'_>,
+        verdict: &retry::Verdict,
+    ) -> Result<(), CallError> {
+        if let (None, Some(delay)) = (verdict.delay, verdict.exhausted_delay)
+            && self.hooks.long_polls(&cx.operation.name)
+        {
+            self.parts
+                .runtime
+                .sleep(delay)
+                .map_err(|_| CallError::Interrupted)?;
         }
+        Ok(())
     }
     fn failed(
         &self,
@@ -629,10 +656,16 @@ impl Client {
         request: &HttpRequest,
         error: TransportError,
     ) -> Step {
-        let kind = self.classify(cx, &Attempt::Failed(&error));
+        let kind = match self.classify(cx, &Attempt::Failed(&error)) {
+            Ok(kind) => kind,
+            Err(failure) => return Step::Done(Err(failure)),
+        };
         let verdict = self
             .retry
             .needs_retry(attempt, kind, None, self.parts.runtime.random());
+        if let Err(error) = self.long_poll_wait(cx, &verdict) {
+            return Step::Done(Err(error));
+        }
         match verdict.delay {
             Some(delay) => Step::Retry {
                 delay,
@@ -656,11 +689,17 @@ impl Client {
             response,
             error: Some(&error),
         };
-        let kind = self.classify(cx, &attempted);
+        let kind = match self.classify(cx, &attempted) {
+            Ok(kind) => kind,
+            Err(failure) => return Step::Done(Err(failure)),
+        };
         let retry_after = retry::retry_after(&response.headers);
         let verdict =
             self.retry
                 .needs_retry(attempt, kind, retry_after, self.parts.runtime.random());
+        if let Err(error) = self.long_poll_wait(cx, &verdict) {
+            return Step::Done(Err(error));
+        }
         if let Some(delay) = verdict.delay {
             return Step::Retry {
                 delay,
@@ -685,10 +724,16 @@ impl Client {
             response: &response,
             error: None,
         };
-        let kind = self.classify(cx, &attempted);
+        let kind = match self.classify(cx, &attempted) {
+            Ok(kind) => kind,
+            Err(failure) => return Step::Done(Err(failure)),
+        };
         let verdict = self
             .retry
             .needs_retry(attempt, kind, None, self.parts.runtime.random());
+        if let Err(error) = self.long_poll_wait(cx, &verdict) {
+            return Step::Done(Err(error));
+        }
         if let Some(delay) = verdict.delay {
             return Step::Retry {
                 delay,

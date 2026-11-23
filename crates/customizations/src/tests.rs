@@ -1,5 +1,4 @@
 use super::*;
-use cli_core as _;
 use client::error::ServiceError;
 use client::hooks::{CallContext, Hooks};
 use client::http::{Headers, HttpResponse};
@@ -7,6 +6,7 @@ use client::retry::{Attempt, RetryDecision};
 use format as _;
 use model::shapes::Model;
 use model::value::Value;
+use pytext as _;
 use serde_json as _;
 use std::time::Duration;
 use timestamp as _;
@@ -119,9 +119,28 @@ fn dynamodb_retries_a_body_whose_crc32_does_not_match() -> TestResult {
     let unchecked = HttpResponse {
         status: 200,
         headers: Headers::new(),
-        body,
+        body: body.clone(),
     };
     assert_eq!(decision("dynamodb", &unchecked, None)?, None);
+    // `int(checksum)` is unguarded: a header Python cannot read fails the
+    // call with its ValueError, and a negative or huge one mismatches.
+    assert_eq!(
+        decision("dynamodb", &response("abc"), None)?,
+        Some(RetryDecision::Fail(client::hooks::HookError::Failed(
+            "invalid literal for int() with base 10: 'abc'".into()
+        )))
+    );
+    for value in ["-1", "99999999999999999999999", " +1 "] {
+        assert_eq!(
+            decision("dynamodb", &response(value), None)?,
+            Some(RetryDecision::Retry),
+            "{value}"
+        );
+    }
+    assert_eq!(
+        decision("dynamodb", &response(&format!(" {actual}\n")), None)?,
+        None
+    );
     Ok(())
 }
 
@@ -138,8 +157,75 @@ fn crc32_is_binascii_s() {
 #[test]
 fn replaced_handlers_exist_in_botocore() -> TestResult {
     for customization in TABLE {
-        for name in customization.replaces {
+        for (name, _) in customization.replaces {
             assert!(defined(name)?, "{name}");
+        }
+    }
+    Ok(())
+}
+
+/// The operation JSON that carries trait `key`, for checking an inert
+/// claim against the client's refusal.
+fn operation_with(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "httpChecksum" => r#""httpChecksum": {"requestChecksumRequired": true}"#,
+        "endpointoperation" => r#""endpointoperation": true"#,
+        "endpointdiscovery" => r#""endpointdiscovery": {"required": true}"#,
+        _ => return None,
+    })
+}
+
+/// A json model of one operation, `Op`, whose JSON also holds `carried`.
+fn model_with(carried: &str) -> String {
+    let operation =
+        format!(r#"{{"name": "Op", "http": {{"method": "POST", "requestUri": "/"}}, {carried}}}"#);
+    format!(
+        r#"{{"metadata": {{"protocol": "json", "jsonVersion": "1.0"}}, "shapes": {{}},
+        "operations": {{"Op": {operation}}}}}"#
+    )
+}
+
+/// Each basis holds: an implemented one names an item the source defines,
+/// and an inert one refused by a trait is refused by
+/// `client::admission::static_refusal` with that trait's key. A router
+/// refusal is the router's to check (its settings table).
+#[test]
+fn every_basis_holds() -> TestResult {
+    use client::hooks::{Basis, Refusal};
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let rules = br#"{"version": "1.0", "parameters": {}, "rules": []}"#.to_vec();
+    let endpoints = client::endpoint::EndpointData::from_documents(rules, b"{}".to_vec(), None)?;
+    for customization in TABLE {
+        for (name, basis) in customization.replaces {
+            match basis {
+                Basis::Implemented { at } => {
+                    assert!(client::testing::defines(&workspace, at)?, "{name}: {at}");
+                }
+                Basis::Inert {
+                    refused_as: Refusal::Trait(key),
+                    ..
+                } => {
+                    let carried = operation_with(key).ok_or(*key)?;
+                    let model = Model::from_json(model_with(carried).as_bytes())?;
+                    let operation = model.operation("Op").ok_or("Op")?;
+                    let refused = client::admission::static_refusal(
+                        &model,
+                        operation,
+                        &endpoints,
+                        "zjson",
+                        &[],
+                    );
+                    assert_eq!(
+                        refused,
+                        Some(client::admission::Unsupported::Trait((*key).to_owned())),
+                        "{name}"
+                    );
+                }
+                Basis::Inert {
+                    refused_as: Refusal::Router(_),
+                    ..
+                } => {}
+            }
         }
     }
     Ok(())
@@ -171,164 +257,37 @@ fn defined(name: &str) -> TestResult<bool> {
     Ok(false)
 }
 
-/// The string literals of Rust source, skipping comments and character
-/// literals; raw strings included.
-fn literals(source: &str) -> Vec<String> {
-    let bytes = source.as_bytes();
-    let mut found = Vec::new();
-    let mut at = 0;
-    while at < bytes.len() {
-        match bytes[at] {
-            b'/' if bytes.get(at + 1) == Some(&b'/') => {
-                at = source[at..].find('\n').map_or(bytes.len(), |end| at + end);
-            }
-            b'/' if bytes.get(at + 1) == Some(&b'*') => {
-                at = source[at + 2..]
-                    .find("*/")
-                    .map_or(bytes.len(), |end| at + end + 4);
-            }
-            b'\'' => at = skip_char(bytes, at),
-            b'r' if matches!(bytes.get(at + 1), Some(b'"' | b'#')) && !word_before(bytes, at) => {
-                let hashes = bytes[at + 1..].iter().take_while(|b| **b == b'#').count();
-                let start = at + 2 + hashes;
-                let close = format!("\"{}", "#".repeat(hashes));
-                let end = source[start..]
-                    .find(&close)
-                    .map_or(bytes.len(), |end| start + end);
-                found.push(source[start.min(end)..end].to_owned());
-                at = end + close.len();
-            }
-            b'"' => {
-                let mut end = at + 1;
-                while end < bytes.len() && bytes[end] != b'"' {
-                    end += if bytes[end] == b'\\' { 2 } else { 1 };
-                }
-                found.push(source[at + 1..end.min(bytes.len())].to_owned());
-                at = end + 1;
-            }
-            _ => at += 1,
-        }
-    }
-    found
-}
-
-fn word_before(bytes: &[u8], at: usize) -> bool {
-    at > 0 && (bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_')
-}
-
-/// Past a character literal, or past a lifetime's quote.
-fn skip_char(bytes: &[u8], at: usize) -> usize {
-    match (bytes.get(at + 1), bytes.get(at + 2), bytes.get(at + 3)) {
-        (Some(b'\\'), _, _) => {
-            at + bytes[at + 2..]
+/// botocore's `_LONG_POLLING_OPERATIONS` (retries/standard.py), each by the
+/// model directory its hyphenized service id names: `sfn` is
+/// `stepfunctions`. The table here is that one, and botocore still lists
+/// each operation.
+#[test]
+fn long_polling_operations_are_botocore_s() -> TestResult {
+    let standard = std::fs::read_to_string(data().join("retries/standard.py"))?;
+    let mut found: Vec<(&str, &str)> = TABLE
+        .iter()
+        .filter(|customization| {
+            customization
+                .interceptors
                 .iter()
-                .position(|b| *b == b'\'')
-                .map_or(1, |end| end + 3)
-        }
-        (Some(_), Some(b'\''), _) => at + 3,
-        _ => at + 1,
-    }
-}
-
-/// Literals that are a service's directory name and mean something else:
-/// each with why.
-const NOT_SERVICES: [(&str, &str); 3] = [
-    (
-        "amp",
-        "the XML entity for `&`, which the XML reader decodes",
-    ),
-    (
-        "location",
-        "a model trait key (`location`), not the Location service",
-    ),
-    ("ec2", "a wire protocol's name in botocore's priority list"),
-];
-
-fn service_names() -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let mut names = Vec::new();
-    for entry in std::fs::read_dir(data().join("data"))? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            names.push(entry.file_name().to_string_lossy().into_owned());
-        }
-    }
-    Ok(names)
-}
-
-/// The non-test source the rule covers: the core crates, and the router's
-/// generic path.
-fn core_sources() -> Result<Vec<std::path::PathBuf>, Box<dyn std::error::Error>> {
-    let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let mut files = vec![crates.join("cli-router/src/generic.rs")];
-    let mut directories: Vec<std::path::PathBuf> = ["model", "client", "command", "format"]
-        .iter()
-        .map(|name| crates.join(name).join("src"))
-        .filter(|path| path.is_dir())
+                .any(|interceptor| interceptor.long_polls())
+        })
+        .filter_map(|customization| {
+            Some((customization.scope.service?, customization.scope.operation?))
+        })
         .collect();
-    while let Some(directory) = directories.pop() {
-        for entry in std::fs::read_dir(&directory)? {
-            let path = entry?.path();
-            let name = path
-                .file_name()
-                .map(|name| name.to_string_lossy().into_owned());
-            if path.is_dir() {
-                directories.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "rs")
-                && !matches!(name.as_deref(), Some("tests.rs" | "testing.rs"))
-            {
-                files.push(path);
-            }
-        }
+    found.sort_unstable();
+    assert_eq!(
+        found,
+        [
+            ("sqs", "ReceiveMessage"),
+            ("stepfunctions", "GetActivityTask"),
+            ("swf", "PollForActivityTask"),
+            ("swf", "PollForDecisionTask"),
+        ]
+    );
+    for (_, operation) in found {
+        assert!(standard.contains(&format!("'{operation}'")), "{operation}");
     }
-    Ok(files)
-}
-
-/// The service names among `source`'s literals, but the known exceptions.
-fn named_services<'a>(source: &str, names: &'a [String]) -> Vec<&'a str> {
-    let literals = literals(source);
-    names
-        .iter()
-        .map(String::as_str)
-        .filter(|name| !NOT_SERVICES.iter().any(|(exception, _)| exception == name))
-        .filter(|name| literals.iter().any(|literal| literal == name))
-        .collect()
-}
-
-/// No service name in core: what is particular to a service lives in this
-/// crate, keyed by the model directory names, so the core crates serve any
-/// service the models describe. Every name is derived from the models'
-/// directory, and none appears as a string literal in the non-test source
-/// of the core crates or the router's generic path.
-#[test]
-fn no_core_source_names_a_service() -> TestResult {
-    let names = service_names()?;
-    assert!(names.len() > 400, "{} services", names.len());
-    let mut found = Vec::new();
-    let sources = core_sources()?;
-    assert!(sources.len() > 20, "{sources:?}");
-    for path in sources {
-        let source = std::fs::read_to_string(&path)?;
-        for name in named_services(&source, &names) {
-            found.push(format!("{}: {name:?}", path.display()));
-        }
-    }
-    assert!(found.is_empty(), "{found:#?}");
-    Ok(())
-}
-
-/// The check finds a planted name, in an ordinary and in a raw string, and
-/// not in a comment, a character literal or an exception.
-#[test]
-fn a_planted_service_name_is_found() -> TestResult {
-    let names = service_names()?;
-    let planted = r##"
-        // "sts" in a comment is fine
-        let quote = '"';
-        let entity = "amp";
-        let service = "dynamodb";
-        let raw = r#"sts"#;
-    "##;
-    assert_eq!(named_services(planted, &names), ["dynamodb", "sts"]);
-    assert!(named_services("let x = \"not-a-service\";", &names).is_empty());
     Ok(())
 }

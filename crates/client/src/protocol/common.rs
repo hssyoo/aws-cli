@@ -88,7 +88,7 @@ pub(super) fn parse_error(
         return Err(ParseError::new("'NoneType' object has no attribute 'get'"));
     };
     let code = match parsed.get("Error") {
-        Some(Value::Map(error)) => error.get("Code").and_then(text_value),
+        Some(Value::Map(error)) => error.get("Code").and_then(Value::as_str).map(str::to_owned),
         _ => None,
     };
     if let Some(shape) = code
@@ -105,13 +105,6 @@ pub(super) fn parse_error(
     Ok(service_error(&operation.name, response, parsed))
 }
 
-fn text_value(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) => Some(text.clone()),
-        _ => None,
-    }
-}
-
 /// The parsed error response as `ClientError` holds it.
 fn service_error(operation: &str, response: &HttpResponse, parsed: Map) -> ServiceError {
     let mut error = ServiceError::new(operation, response.status);
@@ -120,7 +113,10 @@ fn service_error(operation: &str, response: &HttpResponse, parsed: Map) -> Servi
         match (key.as_str(), value) {
             ("Error", Value::Map(map)) => error.error = map,
             ("ResponseMetadata", Value::Map(metadata)) => {
-                error.request_id = metadata.get("RequestId").and_then(text_value);
+                error.request_id = metadata
+                    .get("RequestId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
             }
             (_, value) => {
                 error.members.insert(key, value);
@@ -267,7 +263,7 @@ fn written(text: &str) -> Option<Timestamp> {
 
 /// botocore's default `blob_parser`, `base64.b64decode`.
 pub(super) fn decode_blob(text: &str) -> Result<Value, ParseError> {
-    model::base64::decode(text)
+    pytext::base64::decode(text)
         .map(Value::Blob)
         .map_err(ParseError::new)
 }
@@ -291,8 +287,8 @@ pub(super) fn timestamp_out(value: &Value, format: &str) -> Result<Value, Serial
 /// `Serializer._get_base64`: text is encoded as UTF-8 first.
 pub(super) fn base64_in(value: &Value) -> Result<String, SerializeError> {
     match value {
-        Value::String(text) => Ok(model::base64::encode(text.as_bytes())),
-        Value::Blob(bytes) => Ok(model::base64::encode(bytes)),
+        Value::String(text) => Ok(pytext::base64::encode(text.as_bytes())),
+        Value::Blob(bytes) => Ok(pytext::base64::encode(bytes)),
         other => Err(SerializeError::new(format!(
             "a bytes-like object is required, not '{}'",
             short_type(other)

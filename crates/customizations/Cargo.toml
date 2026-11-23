@@ -7,13 +7,14 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+cli-core = { path = "../cli-core" }
 client = { path = "../client" }
+model = { path = "../model" }
 
 [dev-dependencies]
-cli-core = { path = "../cli-core" }
+pytext = { path = "../pytext" }
 client = { path = "../client", features = ["testing"] }
 format = { path = "../format" }
-model = { path = "../model" }
 serde_json.workspace = true
 timestamp = { path = "../timestamp" }
 

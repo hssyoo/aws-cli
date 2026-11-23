@@ -250,6 +250,12 @@ pub trait Interceptor: Sync + std::fmt::Debug {
     ) -> Option<RetryDecision> {
         None
     }
+    /// Whether the call long-polls: once the retry quota refuses a retry, it
+    /// still sleeps the delay a retry would have waited, then stops
+    /// (`RetryHandler._is_long_polling_operation`).
+    fn long_polls(&self) -> bool {
+        false
+    }
     /// The output before it is returned (`after-call`).
     fn modify_output(&self, _cx: &mut CallContext<'_>, _output: &mut Value) -> HookResult {
         Ok(())
@@ -283,10 +289,10 @@ pub struct Customization {
     /// built-in is supplied ([`crate::admission::static_refusal`]).
     pub builtins: &'static [&'static str],
     pub interceptors: &'static [&'static dyn Interceptor],
-    /// The Python handlers this ports, as `module.qualname`, the way the
-    /// customization-pattern payload entry names them
-    /// (`command::patterns`).
-    pub replaces: &'static [&'static str],
+    /// The Python handlers this stands in for, as `module.qualname`, the
+    /// way the customization-pattern payload entry names them
+    /// (`command::patterns`), each with why native may.
+    pub replaces: &'static [(&'static str, Basis)],
 }
 
 /// Why native stands in for a Python handler or registry entry, so a test
@@ -347,6 +353,10 @@ pub struct Hooks {
 
 impl Hooks {
     /// The customizations of `table` whose scope names `service`.
+    /// Whether an interceptor in scope for `operation` long-polls.
+    pub fn long_polls(&self, operation: &str) -> bool {
+        self.interceptors(operation).any(|hook| hook.long_polls())
+    }
     pub fn for_service(table: &[&'static Customization], service: &str) -> Self {
         let matching: Vec<&Customization> = table
             .iter()

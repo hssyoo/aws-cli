@@ -682,3 +682,65 @@ fn account_id_endpoints_refuse_nothing_more() -> TestResult {
     std::io::Write::write_all(&mut std::io::stderr(), checked.as_bytes())?;
     Ok(())
 }
+
+/// `UnknownSignatureVersionError` names the schemes as botocore has
+/// rebound them, without their `sig` prefix (`auth_schemes_to_signing_ctx`
+/// strips them before it builds `auth_type_options`).
+#[test]
+fn an_unknown_scheme_is_named_without_its_sig_prefix() {
+    let scheme = |name: &str| SchemeProps {
+        name: name.into(),
+        ..SchemeProps::default()
+    };
+    let endpoint = ResolvedEndpoint {
+        url: "https://zjson.example.com".into(),
+        auth_schemes: vec![scheme("sigv5"), scheme("custom")],
+    };
+    assert_eq!(
+        endpoint.signing_context().err().as_deref(),
+        Some("Unknown Signature Version: v5, custom.")
+    );
+}
+
+const CONTEXT_RULES: &str = r#"{"version": "1.0", "parameters": {
+    "Region": {"type": "String", "builtIn": "AWS::Region", "required": false},
+    "ServiceType": {"type": "String", "required": true}},
+    "rules": [{"conditions": [], "error": "unused", "type": "error"}]}"#;
+
+const CONTEXT_SERVICE: &str = r#"{"metadata": {"protocol": "json", "jsonVersion": "1.1"},
+    "clientContextParams": {"ServiceType": {"type": "string"}},
+    "operations": {
+        "Pinned": {"name": "Pinned", "http": {"method": "POST", "requestUri": "/"},
+            "staticContextParams": {"ServiceType": {"value": "ACM"}}},
+        "Loose": {"name": "Loose", "http": {"method": "POST", "requestUri": "/"}}
+    },
+    "shapes": {}}"#;
+
+/// `_resolve_param_as_client_context_param` comes after the operation's
+/// context parameters and before the built-ins, and the CLI's client
+/// context is empty: a required client-context parameter is supplied only
+/// by an operation that sets it, and an operation that does not is refused
+/// before any call (acm's `ServiceType` is set statically by every
+/// operation).
+#[test]
+fn a_required_client_context_parameter_needs_the_operation() -> TestResult {
+    let model = Model::from_json(CONTEXT_SERVICE.as_bytes())?;
+    let data =
+        EndpointData::from_documents(CONTEXT_RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
+    let pinned = model.operation("Pinned").ok_or("Pinned")?;
+    let loose = model.operation("Loose").ok_or("Loose")?;
+    assert_eq!(missing_client_context(&data, &model, pinned), None);
+    assert_eq!(
+        missing_client_context(&data, &model, loose),
+        Some("ServiceType".to_owned())
+    );
+    let builtins = Builtins::default();
+    let params = provider_params(&data, &model, loose, &Value::Null, &builtins, None);
+    assert_eq!(params.get("ServiceType"), None);
+    let params = provider_params(&data, &model, pinned, &Value::Null, &builtins, None);
+    assert_eq!(
+        params.get("ServiceType"),
+        Some(&ParamValue::String("ACM".into()))
+    );
+    Ok(())
+}

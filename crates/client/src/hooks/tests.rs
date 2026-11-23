@@ -42,7 +42,12 @@ static EVERYWHERE: Customization = Customization {
     setting_defaults: &[],
     builtins: &[],
     interceptors: &[&LAST_A, &DEFAULT_B],
-    replaces: &["awscli.example.everywhere"],
+    replaces: &[(
+        "awscli.example.everywhere",
+        Basis::Implemented {
+            at: "client::hooks::Hooks::for_service",
+        },
+    )],
 };
 static ZQUERY: Customization = Customization {
     id: "zquery",

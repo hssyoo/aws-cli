@@ -182,29 +182,24 @@ fn document(json: &[u8], what: &'static str) -> Result<Value, DataError> {
     Value::from_json(json).map_err(|_| DataError::Invalid(what))
 }
 
-fn map_field<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
-    match value {
-        Value::Map(map) => map.get(name),
-        _ => None,
-    }
-}
-
 fn parameter_defs(rules: &[u8]) -> Result<Vec<ParamDef>, DataError> {
     let rules = document(rules, "endpoint rule set")?;
-    let Some(Value::Map(parameters)) = map_field(&rules, "parameters") else {
+    let Some(Value::Map(parameters)) = &rules.get("parameters") else {
         return Err(DataError::Invalid("endpoint rule set parameters"));
     };
-    let flag = |def: &Value, key| matches!(map_field(def, key), Some(Value::Bool(true)));
+    let flag = |def: &Value, key| matches!(def.get(key), Some(Value::Bool(true)));
     Ok(parameters
         .iter()
         .map(|(name, def)| ParamDef {
             name: name.to_owned(),
-            builtin: match map_field(def, "builtIn") {
+            builtin: match def.get("builtIn") {
                 Some(Value::String(builtin)) => Some(builtin.clone()),
                 _ => None,
             },
             required: flag(def, "required"),
-            has_default: map_field(def, "default").is_some_and(|value| *value != Value::Null),
+            has_default: def
+                .get("default")
+                .is_some_and(|value| *value != Value::Null),
         })
         .collect())
 }
@@ -213,15 +208,15 @@ fn parameter_defs(rules: &[u8]) -> Result<Vec<ParamDef>, DataError> {
 /// partition decides, and the service resolves only to its
 /// `partitionEndpoint` there.
 fn partition_endpoint(endpoints: &Value, prefix: &str) -> Result<Option<String>, DataError> {
-    let Some(Value::List(partitions)) = map_field(endpoints, "partitions") else {
+    let Some(Value::List(partitions)) = endpoints.get("partitions") else {
         return Err(DataError::Invalid("endpoints.json partitions"));
     };
     let service = partitions
         .first()
-        .and_then(|partition| map_field(partition, "services"))
-        .and_then(|services| map_field(services, prefix));
+        .and_then(|partition| partition.get("services"))
+        .and_then(|services| services.get(prefix));
     Ok(
-        match service.and_then(|service| map_field(service, "partitionEndpoint")) {
+        match service.and_then(|service| service.get("partitionEndpoint")) {
             Some(Value::String(name)) => Some(name.clone()),
             _ => None,
         },
@@ -487,6 +482,7 @@ pub fn provider_params(
     for def in &data.parameters {
         let value = static_param(operation, &def.name)
             .or_else(|| context_param(model, operation, input, &def.name))
+            .or_else(|| client_context_param(model, &def.name))
             .or_else(|| match def.builtin.as_deref()? {
                 "AWS::Auth::AccountId" => account_id.map(|id| ParamValue::String(id.to_owned())),
                 builtin => builtins.get(builtin).cloned(),
@@ -496,6 +492,61 @@ pub fn provider_params(
         }
     }
     params
+}
+
+/// The AWS CLI's `client_context_params`: none. It builds its clients with
+/// no `Config(client_context_params=...)`, and only an S3 client folds its
+/// `s3` configuration section into the client context (args.py
+/// `ClientArgsCreator.compute_client_args`), a protocol the client does not
+/// implement.
+const CLIENT_CONTEXT: [(&str, &str); 0] = [];
+
+/// `_resolve_param_as_client_context_param`: a parameter the model declares
+/// in `clientContextParams` takes the client context's value, under the
+/// parameter's `xform_name`. The CLI's client context is empty
+/// ([`CLIENT_CONTEXT`]), so this supplies nothing; a rule set that requires
+/// such a parameter and an operation that does not set it are refused by
+/// [`missing_client_context`].
+fn client_context_param(model: &Model, name: &str) -> Option<ParamValue> {
+    model
+        .client_context_params()
+        .iter()
+        .find(|param| &*param.name == name)?;
+    CLIENT_CONTEXT
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, value)| ParamValue::String((*value).to_owned()))
+}
+
+/// The first parameter the rule set requires, without a default or a
+/// built-in, that only the client context could give `operation`: one the
+/// model declares in `clientContextParams` and the operation neither sets
+/// (`staticContextParams`) nor binds to an input member (`contextParam`).
+/// The CLI's client context is empty, so nothing supplies it.
+pub fn missing_client_context(
+    data: &EndpointData,
+    model: &Model,
+    operation: &Operation,
+) -> Option<String> {
+    let bound = |name: &str| {
+        static_param(operation, name).is_some()
+            || operation.input.is_some_and(|shape| {
+                model.members(shape).iter().any(|member| {
+                    model.shape(member.shape).traits.context_param.as_deref() == Some(name)
+                })
+            })
+    };
+    data.parameters
+        .iter()
+        .filter(|def| def.required && !def.has_default && def.builtin.is_none())
+        .filter(|def| {
+            model
+                .client_context_params()
+                .iter()
+                .any(|param| *param.name == *def.name)
+        })
+        .find(|def| !bound(&def.name))
+        .map(|def| def.name.clone())
 }
 
 fn static_param(operation: &Operation, name: &str) -> Option<ParamValue> {
@@ -613,7 +664,7 @@ impl ResolvedEndpoint {
             .iter()
             .find(|scheme| BOTOCORE_AUTH_TYPES.contains(&strip(&scheme.name).as_str()))
         else {
-            let names: Vec<&str> = self.auth_schemes.iter().map(|s| s.name.as_str()).collect();
+            let names: Vec<String> = self.auth_schemes.iter().map(|s| strip(&s.name)).collect();
             return Err(format!("Unknown Signature Version: {}.", names.join(", ")));
         };
         let region = scheme.signing_region.clone().or_else(|| {
@@ -699,10 +750,10 @@ fn auth_schemes(properties: &[u8]) -> Vec<SchemeProps> {
     let Ok(properties) = Value::from_json(properties) else {
         return Vec::new();
     };
-    let Some(Value::List(schemes)) = map_field(&properties, "authSchemes") else {
+    let Some(Value::List(schemes)) = &properties.get("authSchemes") else {
         return Vec::new();
     };
-    let text = |scheme: &Value, key| match map_field(scheme, key) {
+    let text = |scheme: &Value, key| match scheme.get(key) {
         Some(Value::String(text)) => Some(text.clone()),
         _ => None,
     };
@@ -712,7 +763,7 @@ fn auth_schemes(properties: &[u8]) -> Vec<SchemeProps> {
             name: text(scheme, "name").unwrap_or_default(),
             signing_name: text(scheme, "signingName"),
             signing_region: text(scheme, "signingRegion"),
-            signing_region_set: match map_field(scheme, "signingRegionSet") {
+            signing_region_set: match scheme.get("signingRegionSet") {
                 Some(Value::List(regions)) => Some(
                     regions
                         .iter()
@@ -724,7 +775,7 @@ fn auth_schemes(properties: &[u8]) -> Vec<SchemeProps> {
                 ),
                 _ => None,
             },
-            disable_double_encoding: match map_field(scheme, "disableDoubleEncoding") {
+            disable_double_encoding: match scheme.get("disableDoubleEncoding") {
                 Some(Value::Bool(flag)) => Some(*flag),
                 _ => None,
             },

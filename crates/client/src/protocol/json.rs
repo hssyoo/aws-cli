@@ -306,14 +306,6 @@ fn request_id(parsed: &mut Map, headers: &Headers) {
     }
 }
 
-/// The text of a JSON value botocore reads with `.get`, `''` when absent.
-fn text(body: &Value, key: &str) -> Option<Value> {
-    match body {
-        Value::Map(map) => map.get(key).cloned(),
-        _ => None,
-    }
-}
-
 impl Family for Json {
     /// `JSONParser._do_parse`.
     fn do_parse(
@@ -352,7 +344,10 @@ impl Family for Json {
     fn do_error_parse(&self, response: &HttpResponse) -> Result<Map, ParseError> {
         let body = body_json(&response.body)?;
         let mut error = Map::new();
-        let message = text(&body, "message").or_else(|| text(&body, "Message"));
+        let message = body
+            .get("message")
+            .cloned()
+            .or_else(|| body.get("Message").cloned());
         error.insert(
             "Message".into(),
             message.unwrap_or_else(|| Value::String(String::new())),
@@ -367,7 +362,7 @@ impl Family for Json {
             error.insert("Type".into(), Value::String(kind.to_owned()));
         }
         let code = code
-            .or_else(|| text(&body, "__type"))
+            .or_else(|| body.get("__type").cloned())
             .unwrap_or_else(|| Value::String(response.status.to_string()));
         error.insert("Code".into(), Value::String(error_code(&py_str(&code))));
         let mut parsed = Map::new();

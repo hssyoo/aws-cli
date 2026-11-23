@@ -24,6 +24,7 @@ fn row(refusal: &Unsupported) -> (String, String) {
         Unsupported::Protocol(name) => named("protocol", name),
         Unsupported::Trait(name) => named("trait", name),
         Unsupported::Builtin(name) => named("builtin", name),
+        Unsupported::ClientContextParam(name) => named("clientContextParam", name),
         Unsupported::Auth(name) => named("auth", name),
         Unsupported::Hook(reason) => named("hook", reason),
         Unsupported::OperationContextParams => named("operationContextParams", "-"),

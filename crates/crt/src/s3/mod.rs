@@ -427,12 +427,13 @@ pub use ownership::{
     BodyDelivery, BodyTicketOps, MetaRequestOps, OfferedBody, Submission, forward_body,
 };
 mod native;
+/// The CRT's error texts, which the S3 commands read here.
+pub use crate::crt_error::{error_message, error_name};
 #[doc(inline)]
 pub use native::{
     BodyChunk, CallbackBody, CallbackBodyFn, CallbackRequest, CrtMetaRequestOps, HeadObject,
     HttpMessage, MetaRequestHandle, Request, RequestCallbacks, RequestKind, RequestOptions,
-    TransferHeaders, error_message, error_name, parse_http_date_epoch_seconds,
-    parse_service_error_body, transfer_result,
+    TransferHeaders, parse_http_date_epoch_seconds, parse_service_error_body, transfer_result,
 };
 #[cfg(test)]
 mod tests;
