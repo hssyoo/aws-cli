@@ -61,3 +61,19 @@ fn the_preflight_runs_no_credential_provider() -> crate::testing::Result<()> {
     std::fs::remove_dir_all(&directory)?;
     Ok(())
 }
+
+/// Each client's parse hooks keep the timestamp parser they were built
+/// with: a second client with another format does not get the first's,
+/// as it did from a process-global parser set once.
+#[test]
+fn each_client_s_hooks_keep_their_own_timestamp_parser() {
+    use format::timestamps::TimestampFormat;
+    let wire = Value::Integer(1_591_012_800);
+    let iso = cli_parse_hooks(TimestampParser::new(TimestampFormat::Iso8601, Some(0)));
+    let raw = cli_parse_hooks(TimestampParser::new(TimestampFormat::Wire, Some(0)));
+    let first = (iso.timestamp)(&wire);
+    let second = (raw.timestamp)(&wire);
+    assert_eq!(second, Ok(wire.clone()));
+    assert_ne!(first, second);
+    assert_eq!((iso.timestamp)(&wire), first);
+}
