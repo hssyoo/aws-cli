@@ -62,7 +62,8 @@ fn gmtoff(at: i64) -> Option<i64> {
     // SAFETY: both pointers are to live locals for the duration of the call;
     // `localtime_r` is the reentrant form and keeps neither.
     let filled = unsafe { libc::localtime_r(&raw const time, &raw mut civil) };
-    (!filled.is_null()).then(|| i64::from(civil.tm_gmtoff))
+    // `tm_gmtoff` is a `long`, 64 bits on every target the CLI builds for.
+    (!filled.is_null()).then_some(civil.tm_gmtoff)
 }
 
 #[cfg(test)]
