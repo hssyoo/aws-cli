@@ -1,4 +1,4 @@
-//! botocore's protocol suite for the query and json protocols.
+//! botocore's protocol suite for the query, json and rest-json protocols.
 use awscli_argparse as _;
 use cli_core as _;
 use credentials as _;

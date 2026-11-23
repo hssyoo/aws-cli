@@ -1,7 +1,8 @@
 //! A wire protocol: how an operation's input becomes a request and a
 //! response becomes its output or a service error. One implementation per
-//! protocol family: [`query`] and [`json`] (1.0 and 1.1, with the
-//! query-compatible mode).
+//! protocol family: [`query`], [`json`] (1.0 and 1.1, with the
+//! query-compatible mode) and [`rest_json`], which is not yet among the
+//! protocols implemented.
 use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse, Method};
 use model::shapes::{Metadata, Model, Operation};
@@ -98,6 +99,7 @@ pub trait Protocol: Sync + std::fmt::Debug {
 mod common;
 pub mod json;
 pub mod query;
+pub mod rest_json;
 
 /// The protocols implemented, which admission asks about without building
 /// a client.

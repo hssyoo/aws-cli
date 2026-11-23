@@ -1,10 +1,10 @@
-//! botocore's protocol suite for the query and json protocols, replayed as
-//! `aws-cli/tests/unit/botocore/test_protocols.py` replays it: the same
-//! per-case model, the same comparisons, and the same ignore list, read from
-//! `protocol-tests-ignore-list.json` when the test runs.
+//! botocore's protocol suite for the query, json and rest-json protocols,
+//! replayed as `aws-cli/tests/unit/botocore/test_protocols.py` replays it:
+//! the same per-case model, the same comparisons, and the same ignore list,
+//! read from `protocol-tests-ignore-list.json` when the test runs.
 use client::error::ParseError;
 use client::http::{Headers, HttpResponse};
-use client::protocol::{ParseOptions, Protocol, json::Json, query::Query};
+use client::protocol::{ParseOptions, Protocol, json::Json, query::Query, rest_json::RestJson};
 use model::shapes::Model;
 use model::value::{Map, Value};
 use serde_json::Value as JsonDoc;
@@ -155,7 +155,19 @@ fn bytes_to_text(value: Value) -> Value {
 }
 
 fn protocol(name: &str) -> &'static dyn Protocol {
-    if name == "query" { &Query } else { &Json }
+    match name {
+        "query" => &Query,
+        "rest-json" => &RestJson,
+        _ => &Json,
+    }
+}
+
+/// The protocol a suite file's cases speak.
+fn protocol_of(file: &str) -> &str {
+    match file {
+        "query" | "rest-json" => file,
+        _ => "json",
+    }
 }
 
 /// `test_input_compliance` for one case.
@@ -357,7 +369,7 @@ struct Tally {
 
 fn run_file(kind: &str, file: &str, list: &JsonDoc) -> Result<Tally> {
     let suites = read(protocols_dir().join(kind).join(format!("{file}.json")))?;
-    let protocol_name = if file == "query" { "query" } else { "json" };
+    let protocol_name = protocol_of(file);
     let mut tally = Tally::default();
     for (suite_index, suite) in suites.as_array().ok_or("suites")?.iter().enumerate() {
         let description = suite["description"].as_str().unwrap_or_default();
@@ -391,15 +403,16 @@ fn run_file(kind: &str, file: &str, list: &JsonDoc) -> Result<Tally> {
     Ok(tally)
 }
 
-#[test]
-fn botocore_s_query_and_json_protocol_suites_pass() -> Result<()> {
+/// Every case of `files` for each of `kinds`, a report of the counts on
+/// stderr, and a failure naming each case that failed.
+fn run_suites(kinds: &[&str], files: &[&str]) -> Result<()> {
     let list = read(protocols_dir().join("protocol-tests-ignore-list.json"))?;
     let mut report =
         String::from("file                                   passed failed ignored(passing)\n");
     let mut failures = Vec::new();
     let mut passed = 0;
-    for kind in ["input", "output"] {
-        for file in FILES {
+    for kind in kinds {
+        for file in files {
             let tally = run_file(kind, file, &list)?;
             report.push_str(&format!(
                 "{:<38} {:>6} {:>6} {:>7}({})\n",
@@ -422,4 +435,21 @@ fn botocore_s_query_and_json_protocol_suites_pass() -> Result<()> {
         failures.join("\n")
     );
     Ok(())
+}
+
+#[test]
+fn botocore_s_query_and_json_protocol_suites_pass() -> Result<()> {
+    run_suites(&["input", "output"], &FILES)
+}
+
+#[test]
+#[ignore = "the rest-json serializer is not written yet"]
+fn botocore_s_rest_json_input_suite_passes() -> Result<()> {
+    run_suites(&["input"], &["rest-json"])
+}
+
+#[test]
+#[ignore = "the rest-json parser is not written yet"]
+fn botocore_s_rest_json_output_suite_passes() -> Result<()> {
+    run_suites(&["output"], &["rest-json"])
 }
