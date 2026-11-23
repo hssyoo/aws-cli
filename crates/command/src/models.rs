@@ -6,7 +6,7 @@
 //! its operations through `xform_name` (`ServiceCommand._create_command_table`),
 //! and an operation's argument table is its input members and the
 //! cross-cutting arguments (`table`).
-use crate::patterns::{CliCustomization, Patterns, Subject, TableOp};
+use crate::patterns::{CliCustomization, Match, Patterns, Subject, TableOp};
 use crate::registry::OperationSource;
 use crate::spec::{Admission, Invocation, Needs};
 use awscli_argparse::tables::RequiredOverride;
@@ -296,6 +296,12 @@ impl<'a> ModelSource<'a> {
         self.with_subject(command, operation, |subject| {
             self.patterns.touching(subject).into_iter().collect()
         })
+    }
+
+    /// Every pattern that matches `[command, operation]`'s events, with
+    /// what it names ([`Patterns::matches`]).
+    pub fn matches(&self, command: &str, operation: &str) -> Option<Vec<Match>> {
+        self.with_subject(command, operation, |subject| self.patterns.matches(subject))
     }
 
     /// The rows `[command, operation]`'s client registers as it is created

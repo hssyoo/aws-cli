@@ -91,6 +91,27 @@ pub struct Patterns {
     pub client: ClientHandlers,
 }
 
+/// Where a match comes from, which says what can cover it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MatchKind {
+    /// An awscli registry initializer (`PLUGIN_REGISTRY`).
+    Registry,
+    /// A botocore session builtin (`BUILTIN_HANDLERS`).
+    Builtin,
+    /// A row a client registers as it is created ([`ClientHandlers`]).
+    Client,
+}
+
+/// One pattern of the entry that matches an invocation's events, with the
+/// initializer or handler it names. Client rows' patterns are spelled for
+/// the subject's own service.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Match {
+    pub kind: MatchKind,
+    pub pattern: String,
+    pub name: String,
+}
+
 /// Why the entry could not be read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PatternError {
@@ -153,19 +174,6 @@ impl Patterns {
         touched
     }
 
-    /// The botocore builtin handlers whose patterns match one of `events`.
-    pub fn builtin_handlers(&self, events: &[String]) -> BTreeSet<String> {
-        self.builtins
-            .iter()
-            .filter(|row| {
-                events
-                    .iter()
-                    .any(|event| pattern_matches(&row.pattern, event))
-            })
-            .map(|row| row.handler.to_string())
-            .collect()
-    }
-
     /// The rows `subject`'s client registers as it is created whose
     /// patterns match one of `events`: the generic rows, and the service's
     /// own when the subject's model is the one the pack observed.
@@ -183,16 +191,7 @@ impl Patterns {
     /// `endpointoperation`. Admission must route any other user model to
     /// Python rather than read this as its full set.
     pub fn client_handlers(&self, subject: &Subject<'_>, events: &[String]) -> BTreeSet<String> {
-        let own = self
-            .client
-            .services
-            .iter()
-            .filter(|(service, _)| subject.packed && **service == *subject.service)
-            .flat_map(|(_, rows)| rows);
-        self.client
-            .generic
-            .iter()
-            .chain(own)
+        self.client_rows(subject)
             .filter(|row| {
                 let pattern = scoped(&row.pattern, subject.service_id);
                 events.iter().any(|event| pattern_matches(&pattern, event))
@@ -201,17 +200,73 @@ impl Patterns {
             .collect()
     }
 
-    /// Every awscli entry and botocore handler that touches `subject`. The
-    /// clients share the session's lazy emitter, so a registry entry runs
-    /// for a client's event as for the CLI's (`after-call.<service>`, say).
+    /// Every awscli entry and botocore handler that touches `subject`, by
+    /// name ([`Patterns::matches`]).
     pub fn touching(&self, subject: &Subject<'_>) -> BTreeSet<String> {
+        self.matches(subject)
+            .into_iter()
+            .map(|found| found.name)
+            .collect()
+    }
+
+    /// Every pattern that matches one of `subject`'s events, with what it
+    /// names: the registry's over the CLI's and the client's events (the
+    /// clients share the session's lazy emitter, so a registry entry runs
+    /// for a client's event as for the CLI's, `after-call.<service>` say),
+    /// then the builtins and the client rows over the client's, each in the
+    /// entry's order.
+    pub fn matches(&self, subject: &Subject<'_>) -> Vec<Match> {
         let client = subject.client_events();
         let mut events = subject.cli_events();
         events.extend(client.iter().cloned());
-        let mut touched = self.registry_entries(&events);
-        touched.extend(self.builtin_handlers(&client));
-        touched.extend(self.client_handlers(subject, &client));
-        touched
+        let meets = |events: &[String], pattern: &str| {
+            events.iter().any(|event| pattern_matches(pattern, event))
+        };
+        let mut found = Vec::new();
+        for (pattern, entries) in &self.registry {
+            if meets(&events, pattern) {
+                found.extend(entries.iter().map(|entry| Match {
+                    kind: MatchKind::Registry,
+                    pattern: pattern.to_string(),
+                    name: entry.name(),
+                }));
+            }
+        }
+        let builtins = self
+            .builtins
+            .iter()
+            .map(|row| (MatchKind::Builtin, row, row.pattern.to_string()));
+        let client_rows = self.client_rows(subject).map(|row| {
+            (
+                MatchKind::Client,
+                row,
+                scoped(&row.pattern, subject.service_id),
+            )
+        });
+        for (kind, row, pattern) in builtins.chain(client_rows) {
+            if meets(&client, &pattern) {
+                found.push(Match {
+                    kind,
+                    pattern,
+                    name: row.handler.to_string(),
+                });
+            }
+        }
+        found
+    }
+
+    /// The client rows that apply to `subject`'s client: the generic ones,
+    /// and the service's own for its packed model.
+    fn client_rows<'p>(&'p self, subject: &Subject<'_>) -> impl Iterator<Item = &'p Builtin> {
+        let packed = subject.packed;
+        let service = subject.service.to_owned();
+        let own = self
+            .client
+            .services
+            .iter()
+            .filter(move |(name, _)| packed && **name == *service)
+            .flat_map(|(_, rows)| rows);
+        self.client.generic.iter().chain(own)
     }
 }
 
