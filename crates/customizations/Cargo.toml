@@ -7,10 +7,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+cli-core = { path = "../cli-core" }
 client = { path = "../client" }
 
 [dev-dependencies]
-cli-core = { path = "../cli-core" }
 client = { path = "../client", features = ["testing"] }
 format = { path = "../format" }
 model = { path = "../model" }

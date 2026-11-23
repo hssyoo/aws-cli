@@ -261,7 +261,10 @@ pub fn uncovered<'m>(
             .any(|row| row.pattern == found.pattern && row.entry == found.name),
         MatchKind::Builtin | MatchKind::Client => !customizations.iter().any(|customization| {
             customization.scope.matches(service, operation)
-                && customization.replaces.contains(&found.name.as_str())
+                && customization
+                    .replaces
+                    .iter()
+                    .any(|(name, _)| *name == found.name.as_str())
         }),
     })
 }

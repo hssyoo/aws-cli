@@ -1,5 +1,4 @@
 use super::*;
-use cli_core as _;
 use client::error::ServiceError;
 use client::hooks::{CallContext, Hooks};
 use client::http::{Headers, HttpResponse};
@@ -138,8 +137,75 @@ fn crc32_is_binascii_s() {
 #[test]
 fn replaced_handlers_exist_in_botocore() -> TestResult {
     for customization in TABLE {
-        for name in customization.replaces {
+        for (name, _) in customization.replaces {
             assert!(defined(name)?, "{name}");
+        }
+    }
+    Ok(())
+}
+
+/// The operation JSON that carries trait `key`, for checking an inert
+/// claim against the client's refusal.
+fn operation_with(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "httpChecksum" => r#""httpChecksum": {"requestChecksumRequired": true}"#,
+        "endpointoperation" => r#""endpointoperation": true"#,
+        "endpointdiscovery" => r#""endpointdiscovery": {"required": true}"#,
+        _ => return None,
+    })
+}
+
+/// A json model of one operation, `Op`, whose JSON also holds `carried`.
+fn model_with(carried: &str) -> String {
+    let operation =
+        format!(r#"{{"name": "Op", "http": {{"method": "POST", "requestUri": "/"}}, {carried}}}"#);
+    format!(
+        r#"{{"metadata": {{"protocol": "json", "jsonVersion": "1.0"}}, "shapes": {{}},
+        "operations": {{"Op": {operation}}}}}"#
+    )
+}
+
+/// Each basis holds: an implemented one names an item the source defines,
+/// and an inert one refused by a trait is refused by
+/// `client::admission::static_refusal` with that trait's key. A router
+/// refusal is the router's to check (its settings table).
+#[test]
+fn every_basis_holds() -> TestResult {
+    use client::hooks::{Basis, Refusal};
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let rules = br#"{"version": "1.0", "parameters": {}, "rules": []}"#.to_vec();
+    let endpoints = client::endpoint::EndpointData::from_documents(rules, b"{}".to_vec(), None)?;
+    for customization in TABLE {
+        for (name, basis) in customization.replaces {
+            match basis {
+                Basis::Implemented { at } => {
+                    assert!(client::testing::defines(&workspace, at)?, "{name}: {at}");
+                }
+                Basis::Inert {
+                    refused_as: Refusal::Trait(key),
+                    ..
+                } => {
+                    let carried = operation_with(key).ok_or(*key)?;
+                    let model = Model::from_json(model_with(carried).as_bytes())?;
+                    let operation = model.operation("Op").ok_or("Op")?;
+                    let refused = client::admission::static_refusal(
+                        &model,
+                        operation,
+                        &endpoints,
+                        "zjson",
+                        &[],
+                    );
+                    assert_eq!(
+                        refused,
+                        Some(client::admission::Unsupported::Trait((*key).to_owned())),
+                        "{name}"
+                    );
+                }
+                Basis::Inert {
+                    refused_as: Refusal::Router(_),
+                    ..
+                } => {}
+            }
         }
     }
     Ok(())

@@ -5,7 +5,15 @@
 //!
 //! [`TABLE`] is the table a client chooses from (`Hooks::for_service`).
 #![forbid(unsafe_code)]
-use client::hooks::{CallContext, Customization, Interceptor, Scope, SettingDefault};
+use cli_core::cli_error::PythonReason;
+use client::hooks::{
+    Basis, CallContext, Customization, Interceptor, Refusal, Scope, SettingDefault,
+};
+
+/// A basis implemented at the Rust item `at`.
+const fn implemented(at: &'static str) -> Basis {
+    Basis::Implemented { at }
+}
 use client::retry::{Attempt, RetryDecision};
 use std::time::Duration;
 
@@ -52,19 +60,71 @@ pub static CORE: Customization = Customization {
     builtins: &[],
     interceptors: &[],
     replaces: &[
-        "botocore.handlers.generate_idempotent_uuid",
-        "botocore.handlers.add_retry_headers",
-        "botocore.handlers.set_operation_specific_signer",
-        "botocore.handlers._set_auth_scheme_preference_signer",
-        "botocore.handlers._handle_request_validation_mode_member",
-        "botocore.handlers.inject_api_version_header_if_needed",
-        "botocore.handlers.handle_service_name_alias",
-        "botocore.signers.add_generate_presigned_url",
-        "botocore.signers.RequestSigner.handler",
-        "botocore.useragent.UserAgentString.rebuild_and_replace_user_agent_handler",
-        "botocore.retries.standard.MaxAttemptsSeeder.seed_max_attempts",
-        "botocore.retries.standard.RetryHandler.needs_retry",
-        "botocore.retries.standard.RetryQuotaChecker.release_retry_quota",
+        (
+            "botocore.handlers.generate_idempotent_uuid",
+            implemented("client::call::Client::fill_idempotency_tokens"),
+        ),
+        (
+            "botocore.handlers.add_retry_headers",
+            implemented("client::call::Client::attempt_request"),
+        ),
+        (
+            "botocore.handlers.set_operation_specific_signer",
+            implemented("client::auth::select"),
+        ),
+        (
+            "botocore.handlers._set_auth_scheme_preference_signer",
+            Basis::Inert {
+                acts_when: "auth_scheme_preference is configured",
+                refused_as: Refusal::Router(PythonReason::ClientSetting),
+            },
+        ),
+        (
+            "botocore.handlers._handle_request_validation_mode_member",
+            Basis::Inert {
+                acts_when: "the operation has httpChecksum",
+                refused_as: Refusal::Trait("httpChecksum"),
+            },
+        ),
+        (
+            "botocore.handlers.inject_api_version_header_if_needed",
+            Basis::Inert {
+                acts_when: "the operation is the endpoint-discovery operation",
+                refused_as: Refusal::Trait("endpointoperation"),
+            },
+        ),
+        (
+            "botocore.handlers.handle_service_name_alias",
+            implemented("command::models::ModelSource::roots"),
+        ),
+        (
+            "botocore.signers.add_generate_presigned_url",
+            Basis::Inert {
+                acts_when: "a hand-written command calls generate_presigned_url (s3 presign, \
+                            eks get-token, ec2-instance-connect, cloudfront sign)",
+                refused_as: Refusal::Router(PythonReason::UnsupportedSubcommand),
+            },
+        ),
+        (
+            "botocore.signers.RequestSigner.handler",
+            implemented("client::auth::sign"),
+        ),
+        (
+            "botocore.useragent.UserAgentString.rebuild_and_replace_user_agent_handler",
+            implemented("client::useragent::header"),
+        ),
+        (
+            "botocore.retries.standard.MaxAttemptsSeeder.seed_max_attempts",
+            implemented("client::call::Client::attempt_request"),
+        ),
+        (
+            "botocore.retries.standard.RetryHandler.needs_retry",
+            implemented("client::retry::Standard::needs_retry"),
+        ),
+        (
+            "botocore.retries.standard.RetryQuotaChecker.release_retry_quota",
+            implemented("client::retry::Standard::succeeded"),
+        ),
     ],
 };
 
@@ -85,7 +145,13 @@ pub static DYNAMODB: Customization = Customization {
     setting_defaults: &DYNAMODB_RETRIES,
     builtins: &[],
     interceptors: &[&DynamodbChecksum],
-    replaces: &["botocore.discovery.block_endpoint_discovery_required_operations"],
+    replaces: &[(
+        "botocore.discovery.block_endpoint_discovery_required_operations",
+        Basis::Inert {
+            acts_when: "an operation's endpoint discovery is required",
+            refused_as: Refusal::Trait("endpointdiscovery"),
+        },
+    )],
 };
 
 /// dynamodb-streams, which the same two tables name; the checksum check is
@@ -116,7 +182,10 @@ pub static STS: Customization = Customization {
     setting_defaults: &[],
     builtins: &[],
     interceptors: &[&StsIdpRetry],
-    replaces: &["botocore.handlers.disable_signing"],
+    replaces: &[(
+        "botocore.handlers.disable_signing",
+        implemented("client::auth::select"),
+    )],
 };
 
 #[derive(Debug)]

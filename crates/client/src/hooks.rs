@@ -283,10 +283,10 @@ pub struct Customization {
     /// built-in is supplied ([`crate::admission::static_refusal`]).
     pub builtins: &'static [&'static str],
     pub interceptors: &'static [&'static dyn Interceptor],
-    /// The Python handlers this ports, as `module.qualname`, the way the
-    /// customization-pattern payload entry names them
-    /// (`command::patterns`).
-    pub replaces: &'static [&'static str],
+    /// The Python handlers this stands in for, as `module.qualname`, the
+    /// way the customization-pattern payload entry names them
+    /// (`command::patterns`), each with why native may.
+    pub replaces: &'static [(&'static str, Basis)],
 }
 
 /// Why native stands in for a Python handler or registry entry, so a test

@@ -72,12 +72,18 @@ pub fn replacing_all(
     command: &str,
     operation: &str,
 ) -> &'static [&'static Customization] {
-    let names: Vec<&'static str> = models
+    let names: Vec<(&'static str, client::hooks::Basis)> = models
         .matches(command, operation)
         .unwrap_or_else(|| panic!("{command} {operation}"))
         .into_iter()
         .filter(|found| found.kind != command::patterns::MatchKind::Registry)
-        .map(|found| &*Box::leak(found.name.into_boxed_str()))
+        .map(|found| {
+            let name: &'static str = Box::leak(found.name.into_boxed_str());
+            let basis = client::hooks::Basis::Implemented {
+                at: "service_command::testing::replacing_all",
+            };
+            (name, basis)
+        })
         .collect();
     let customization = Box::leak(Box::new(Customization {
         id: "test",
