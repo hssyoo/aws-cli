@@ -84,3 +84,25 @@ fn only_epoch_timestamps_need_the_local_zone() -> Result<()> {
         }
     })
 }
+
+/// A blob payload streams at either end, marked `streaming` or not
+/// (`_get_streaming_body`): apigateway's GetExport returns one and
+/// ImportRestApi sends one; GetAccount has neither.
+#[test]
+fn a_blob_payload_at_either_end_is_streaming() -> Result<()> {
+    with_models(|models| {
+        let service = models
+            .service("apigateway")
+            .unwrap_or_else(|| panic!("apigateway"));
+        for (operation, streams) in [
+            ("get-export", true),
+            ("import-rest-api", true),
+            ("get-account", false),
+        ] {
+            let found = service
+                .operation(operation)
+                .unwrap_or_else(|| panic!("{operation}"));
+            assert_eq!(unimplemented_trait(service, found), streams, "{operation}");
+        }
+    })
+}

@@ -93,8 +93,9 @@ pub fn operation(
 
 /// A trait of the operation the native route does not implement: a
 /// paginator (`CLIOperationCaller._make_client_call` paginates), an event
-/// stream or a streaming member at either end (`has_event_stream_input`,
-/// `has_streaming_output` and their kin read the top-level members), or
+/// stream, a streaming member or a blob payload at either end
+/// (`has_event_stream_input`, `has_streaming_output` and their kin read the
+/// top-level members and the payload), or
 /// one the client refuses before any request
 /// (`client::admission::unimplemented_trait`: request checksums, required
 /// endpoint discovery, the endpoint operation, request compression). A
@@ -114,7 +115,21 @@ fn streams(model: &Model, shape: ShapeId) -> bool {
     model.members(shape).iter().any(|member| {
         let traits = &model.shape(member.shape).traits;
         traits.is(Flag::Streaming) || traits.is(Flag::EventStream)
-    })
+    }) || blob_payload(model, shape)
+}
+
+/// `OperationModel._get_streaming_body`: a `payload` member that is a
+/// blob streams whether or not it is marked `streaming`, so botocore
+/// returns it as a `StreamingBody` and the CLI writes it to `outfile`.
+fn blob_payload(model: &Model, shape: ShapeId) -> bool {
+    let Some(payload) = model.shape(shape).traits.payload.as_deref() else {
+        return false;
+    };
+    model
+        .members(shape)
+        .iter()
+        .find(|member| &*member.name == payload)
+        .is_some_and(|member| matches!(model.shape(member.shape).kind, ShapeKind::Blob))
 }
 
 /// Whether `shape` reaches a timestamp the wire sends as an epoch, which

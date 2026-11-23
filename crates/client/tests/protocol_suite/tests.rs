@@ -5,7 +5,7 @@
 use client::error::ParseError;
 use client::http::{Headers, HttpResponse};
 use client::protocol::{ParseOptions, Protocol, json::Json, query::Query, rest_json::RestJson};
-use model::shapes::Model;
+use model::shapes::{Model, Operation, ShapeKind};
 use model::value::{Map, Value};
 use serde_json::Value as JsonDoc;
 use std::path::PathBuf;
@@ -177,24 +177,17 @@ fn input_case(protocol_name: &str, suite: &JsonDoc, case: &JsonDoc) -> Result<()
     let params = special_floats_in(Value::from_serde(&case["params"]));
     let request = protocol(protocol_name).serialize(&model, operation, &params)?;
     let expected = &case["serialized"];
-    if let Some(body) = expected["body"].as_str() {
-        let same = if protocol_name == "query" {
-            request.body == body.as_bytes()
-        } else {
-            python_eq(
-                &Value::from_json(&request.body)?,
-                &Value::from_json(body.as_bytes())?,
-            )
-        };
-        if !same {
-            return Err(format!(
-                "body {:?} != {body:?}",
-                String::from_utf8_lossy(&request.body)
-            )
-            .into());
-        }
+    if let Some(body) = expected["body"].as_str()
+        && !same_body(protocol_name, &request.body, body.as_bytes())?
+    {
+        return Err(format!(
+            "body {:?} != {body:?}",
+            String::from_utf8_lossy(&request.body)
+        )
+        .into());
     }
-    check_headers(protocol_name, &request.headers, expected)?;
+    let lists = list_headers(&model, operation);
+    check_headers(protocol_name, &lists, &request.headers, expected)?;
     let mut path = request.path.clone();
     if !request.query.is_empty() {
         path = format!("{path}?{}", request.query);
@@ -212,33 +205,102 @@ fn input_case(protocol_name: &str, suite: &JsonDoc, case: &JsonDoc) -> Result<()
     check_host(suite, &request.host_prefix, expected)
 }
 
-/// `_assert_expected_headers_in_request`.
-fn check_headers(protocol_name: &str, actual: &Headers, expected: &JsonDoc) -> Result<()> {
+/// `_assert_request_body`: query bodies as bytes; json and rest-json
+/// bodies as parsed JSON (`_assert_json_bodies`), a rest-json body that is
+/// not JSON, on either side, as bytes.
+fn same_body(protocol_name: &str, actual: &[u8], expected: &[u8]) -> Result<bool> {
+    if protocol_name == "query" {
+        return Ok(actual == expected);
+    }
+    match (Value::from_json(actual), Value::from_json(expected)) {
+        (Ok(actual), Ok(expected)) => Ok(python_eq(&actual, &expected)),
+        _ if protocol_name == "rest-json" => Ok(actual == expected),
+        (Err(error), _) | (_, Err(error)) => Err(error.into()),
+    }
+}
+
+/// The input's `header` list members `_clean_list_header_values` reads:
+/// each header's name, and whether its items are timestamps.
+fn list_headers(model: &Model, operation: &Operation) -> Vec<(String, bool)> {
+    let Some(input) = operation.input else {
+        return Vec::new();
+    };
+    model
+        .members(input)
+        .iter()
+        .filter_map(|member| {
+            let shape = model.shape(member.shape);
+            let ShapeKind::List { member: item } = shape.kind else {
+                return None;
+            };
+            let name = shape.traits.name.as_deref()?;
+            (shape.traits.location.as_deref() == Some("header")).then(|| {
+                let timestamps = matches!(model.shape(item).kind, ShapeKind::Timestamp);
+                (name.to_owned(), timestamps)
+            })
+        })
+        .collect()
+}
+
+/// `_assert_expected_headers_in_request`, after `_clean_list_header_values`
+/// takes the spaces after the commas of list headers out of the expected
+/// values, and out of the actual values of timestamp lists.
+fn check_headers(
+    protocol_name: &str,
+    lists: &[(String, bool)],
+    actual: &Headers,
+    expected: &JsonDoc,
+) -> Result<()> {
+    let list = |name: &str| {
+        lists
+            .iter()
+            .find(|(list, _)| list.eq_ignore_ascii_case(name))
+    };
     let mut wanted: Vec<(String, String)> = expected["headers"]
         .as_object()
         .map(|headers| {
             headers
                 .iter()
-                .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_owned()))
+                .map(|(k, v)| {
+                    let value = v.as_str().unwrap_or_default();
+                    let value = match list(k) {
+                        Some(_) => value.replace(", ", ","),
+                        None => value.to_owned(),
+                    };
+                    (k.clone(), value)
+                })
                 .collect()
         })
         .unwrap_or_default();
+    let content_type = wanted
+        .iter()
+        .position(|(k, _)| k.eq_ignore_ascii_case("Content-Type"));
     if protocol_name == "query" {
-        let position = wanted
-            .iter()
-            .position(|(k, _)| k.eq_ignore_ascii_case("Content-Type"));
-        let current = position.map(|i| wanted[i].1.clone()).unwrap_or_default();
+        let current = content_type
+            .map(|i| wanted[i].1.clone())
+            .unwrap_or_default();
         if !current.contains("charset=utf-8") {
             let value = format!("{current}; charset=utf-8");
-            match position {
+            match content_type {
                 Some(i) => wanted[i].1 = value,
                 None => wanted.push(("Content-Type".into(), value)),
             }
         }
+    } else if protocol_name == "rest-json"
+        && let Some(i) = content_type
+        && !wanted[i].1.is_empty()
+        && wanted[i].1 != "application/json"
+    {
+        // Streaming payloads get no `Content-Type` from botocore.
+        wanted.remove(i);
     }
     for (name, value) in wanted {
-        if actual.get(&name) != Some(value.as_str()) {
-            return Err(format!("header {name}: {:?} != {value:?}", actual.get(&name)).into());
+        let got = actual.get(&name).map(|got| match list(&name) {
+            Some((_, true)) => got.replace(", ", ","),
+            _ => got.to_owned(),
+        });
+        if got.as_deref() != Some(value.as_str()) {
+            return Err(format!("header {name}: {got:?} != {value:?}").into());
         }
     }
     for name in expected["forbidHeaders"].as_array().into_iter().flatten() {
@@ -443,13 +505,11 @@ fn botocore_s_query_and_json_protocol_suites_pass() -> Result<()> {
 }
 
 #[test]
-#[ignore = "the rest-json serializer is not written yet"]
 fn botocore_s_rest_json_input_suite_passes() -> Result<()> {
     run_suites(&["input"], &["rest-json"])
 }
 
 #[test]
-#[ignore = "the rest-json parser is not written yet"]
 fn botocore_s_rest_json_output_suite_passes() -> Result<()> {
     run_suites(&["output"], &["rest-json"])
 }
