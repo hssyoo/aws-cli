@@ -231,7 +231,7 @@ fn cross_cutting(
             ("cli-input-json", Origin::CliInputJson),
             ("cli-input-yaml", Origin::CliInputYaml),
         ] {
-            table.insert(plain(name, "", origin));
+            table.insert(plain(name, "string", origin));
             table.overrides.push((override_option(name), None));
         }
     }
@@ -239,7 +239,11 @@ fn cross_cutting(
         paging(table, model, operation, config, special);
     }
     if !table.has("outfile") {
-        let mut skeleton = plain("generate-cli-skeleton", "", Origin::GenerateCliSkeleton);
+        let mut skeleton = plain(
+            "generate-cli-skeleton",
+            "string",
+            Origin::GenerateCliSkeleton,
+        );
         skeleton.nargs = Some(Nargs::Optional);
         skeleton.constant = Some("input");
         skeleton.choices = &["input", "output", "yaml-input"];

@@ -39,10 +39,7 @@ fn with_source<T>(
 ) -> Result<T> {
     let bytes = payload()?;
     let view = View::new(&bytes)?;
-    let entry = model::payload::load_resource(view, crate::patterns::ENTRY)?;
-    let patterns = Patterns::parse(&entry)?;
-    let models = SearchSource::for_cli(view, data_path.as_deref(), &expand)?;
-    let source = ModelSource::new(models, patterns, SpecialCases::botocore()?);
+    let source = ModelSource::from_payload(view, data_path.as_deref(), &expand)?;
     Ok(check(&source))
 }
 

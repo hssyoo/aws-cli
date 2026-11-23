@@ -14,7 +14,5 @@ awscli-argparse = { path = "../awscli-argparse" }
 awscli-config = { path = "../awscli-config" }
 cli-core = { path = "../cli-core" }
 model = { path = "../model" }
-serde_json.workspace = true
-
-[dev-dependencies]
 pyload = { path = "../pyload" }
+serde_json.workspace = true

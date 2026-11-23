@@ -20,6 +20,7 @@ use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
+pub mod dump;
 mod table;
 #[doc(inline)]
 pub use table::{DerivedArgument, Origin, Table, ValueType, kind_name};
@@ -115,7 +116,47 @@ pub struct ModelSource<'a> {
     services: Cache<(String, Option<Service>)>,
 }
 
+/// Why a payload's models cannot be read natively.
+#[derive(Debug)]
+pub enum SourceError {
+    /// The payload has no pattern entry, as a payload packed without the
+    /// generator has none, or the entry cannot be read.
+    Patterns(String),
+    /// The search path cannot be built as Python builds it.
+    Search(model::search::SearchError),
+    /// botocore's `xform_name` cases cannot be read.
+    Xform(model::xform::XformError),
+}
+impl std::fmt::Display for SourceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Patterns(error) => f.write_str(error),
+            Self::Search(error) => error.fmt(f),
+            Self::Xform(error) => error.fmt(f),
+        }
+    }
+}
+impl std::error::Error for SourceError {}
+
 impl<'a> ModelSource<'a> {
+    /// The source of the payload `view`'s models and patterns, over the
+    /// search path the CLI builds from `aws_data_path`; `expand` is
+    /// `os.path.expanduser(os.path.expandvars(path))` (`SearchSource::for_cli`).
+    pub fn from_payload(
+        view: pyload::View<'a>,
+        aws_data_path: Option<&std::ffi::OsStr>,
+        expand: &dyn Fn(&[u8]) -> Option<Vec<u8>>,
+    ) -> Result<Self, SourceError> {
+        let entry = model::payload::load_resource(view, crate::patterns::ENTRY)
+            .map_err(|error| SourceError::Patterns(error.to_string()))?;
+        let patterns =
+            Patterns::parse(&entry).map_err(|error| SourceError::Patterns(error.to_string()))?;
+        let models =
+            SearchSource::for_cli(view, aws_data_path, expand).map_err(SourceError::Search)?;
+        let special = SpecialCases::botocore().map_err(SourceError::Xform)?;
+        Ok(Self::new(models, patterns, special))
+    }
+
     pub fn new(models: SearchSource<'a>, patterns: Patterns, special: SpecialCases) -> Self {
         Self {
             models,

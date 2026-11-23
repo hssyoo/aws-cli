@@ -6,18 +6,30 @@ use std::process::Command;
 
 use crate::{TaskError, deps, process, product};
 
+mod derived;
+
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Options {
     capture_binary: Option<PathBuf>,
     native_parser: Option<PathBuf>,
     fuzz: Option<String>,
     seed: Option<String>,
+    /// `--derived [command...]`: check the model-derived tables instead.
+    derived: Option<Vec<String>>,
     forwarded: Vec<String>,
 }
 
 pub fn run(root: &Path, command: &str, args: &[String]) -> Result<(), TaskError> {
     deps::native_host()?;
     let options = options(args)?;
+    if let Some(commands) = &options.derived {
+        if command != "check-argparse" {
+            return Err(TaskError::Message(
+                "--derived belongs to check-argparse".into(),
+            ));
+        }
+        return derived::check(root, commands);
+    }
     let parser = match &options.native_parser {
         Some(path) => absolute(root, path),
         None => build_tool(root)?,
@@ -162,6 +174,10 @@ fn options(args: &[String]) -> Result<Options, TaskError> {
     while let Some(option) = args.next() {
         if option == "--" {
             result.forwarded.extend(args.cloned());
+            break;
+        }
+        if option == "--derived" {
+            result.derived = Some(args.cloned().collect());
             break;
         }
         let value = args
