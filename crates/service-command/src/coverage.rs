@@ -18,8 +18,10 @@
 //! are Python's. [`Basis`]: why the invocation needs no Python for it when
 //! it runs, which tests check: an `Implemented` path names an item that
 //! exists, and an `Inert` row's refusal is the verdict of a case that would
-//! make the initializer act (`coverage::tests`, and cli-router's
-//! `coverage_refusals_are_the_router_s`).
+//! make the initializer act (`coverage::tests`'s
+//! `every_inert_refusal_refuses_where_the_initializer_acts`, and
+//! `every_core_router_refusal_refuses_where_the_customization_acts` for the
+//! client customizations' router refusals).
 //!
 //! An initializer is keyed by the pattern it was reached through because
 //! the lazy emitter imports it the first time any of its patterns matches
