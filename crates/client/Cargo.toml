@@ -12,8 +12,10 @@ testing = []
 
 [dependencies]
 cli-core = { path = "../cli-core" }
+credentials = { path = "../credentials" }
 crt = { path = "../crt" }
 model = { path = "../model" }
+sigv4 = { path = "../sigv4" }
 timestamp = { path = "../timestamp" }
 
 [lints]

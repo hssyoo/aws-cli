@@ -1,6 +1,7 @@
 //! What a call fails with. Each error carries what its botocore exception's
 //! text needs, and reads as that text; the CLI's framing and exit status
 //! are the renderer's.
+use crate::admission::Unsupported;
 use crate::hooks::HookError;
 use crate::http::Headers;
 use crate::transport::TransportError;
@@ -127,6 +128,11 @@ pub enum CallError {
     Service(Box<ServiceError>),
     /// The user interrupted the call.
     Interrupted,
+    /// An operation the model does not have.
+    UnknownOperation(String),
+    /// A call the model client leaves to the Python route, decided before
+    /// any request.
+    Unsupported(Unsupported),
 }
 
 impl std::fmt::Display for CallError {
@@ -145,6 +151,8 @@ impl std::fmt::Display for CallError {
             Self::Parse(error) => error.fmt(f),
             Self::Service(error) => error.fmt(f),
             Self::Interrupted => f.write_str("the call was interrupted"),
+            Self::UnknownOperation(name) => write!(f, "Unknown operation: {name}"),
+            Self::Unsupported(unsupported) => write!(f, "not supported natively: {unsupported}"),
         }
     }
 }

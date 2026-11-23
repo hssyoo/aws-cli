@@ -13,7 +13,10 @@
 //! [`hooks::Customization`].
 #![forbid(unsafe_code)]
 
+pub mod admission;
 pub mod auth;
+pub mod call;
+pub mod credentials;
 pub mod endpoint;
 pub mod error;
 pub mod hooks;
@@ -22,6 +25,7 @@ pub mod protocol;
 pub mod retry;
 pub mod runtime;
 pub mod transport;
+pub mod useragent;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

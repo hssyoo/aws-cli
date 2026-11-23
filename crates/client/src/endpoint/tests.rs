@@ -62,13 +62,15 @@ const RULES: &str = r#"{
     "version": "1.0",
     "parameters": {
         "Region": {"type": "String", "builtIn": "AWS::Region", "required": false},
-        "UseFIPS": {"type": "Boolean", "builtIn": "AWS::UseFIPS", "required": true, "default": false},
+        "UseFIPS": {"type": "Boolean", "builtIn": "AWS::UseFIPS", "required": true,
+            "default": false},
         "Endpoint": {"type": "String", "builtIn": "SDK::Endpoint", "required": false},
         "Static": {"type": "Boolean", "required": false},
         "TableName": {"type": "String", "required": false},
         "Other": {"type": "String", "builtIn": "AWS::Other::Thing", "required": false},
         "AccountId": {"type": "String", "builtIn": "AWS::Auth::AccountId", "required": false},
-        "AccountIdEndpointMode": {"type": "String", "builtIn": "AWS::Auth::AccountIdEndpointMode", "required": false}
+        "AccountIdEndpointMode": {"type": "String",
+            "builtIn": "AWS::Auth::AccountIdEndpointMode", "required": false}
     },
     "rules": [{"conditions": [], "endpoint": {"url": "https://example.com"}, "type": "endpoint"}]
 }"#;

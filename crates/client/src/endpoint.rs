@@ -6,6 +6,7 @@
 //! Endpoint headers a rule may return are not read: of the rule sets this
 //! botocore ships, only s3control's returns any, and that service's
 //! protocol is not implemented.
+use crate::admission::Unsupported;
 use crate::error::CallError;
 use model::shapes::{Metadata, Model, Operation};
 use model::source::{Kind, LoadError, Source, load_data_bytes, load_service_bytes};
@@ -410,16 +411,6 @@ fn builtin_value<F: FnOnce() -> Option<String>>(
         )),
         _ => None,
     }
-}
-
-/// Why admission sends an operation to Python before any request.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Unsupported {
-    /// `operationContextParams`, which botocore evaluates with JMESPath.
-    OperationContextParams,
-    /// A built-in core does not supply, which the rule set requires without
-    /// a default and no interceptor set.
-    Builtin(String),
 }
 
 /// What keeps `operation` from resolving natively, given the parameters

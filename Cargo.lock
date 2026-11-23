@@ -84,8 +84,10 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "cli-core",
+ "credentials",
  "crt",
  "model",
+ "sigv4",
  "timestamp",
 ]
 

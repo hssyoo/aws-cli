@@ -10,7 +10,7 @@ use crate::protocol::{Protocol, Serialized};
 use crate::retry::{Attempt, RetryDecision};
 use crate::testing::{FixedRuntime, InMemoryTransport};
 use crate::transport::TransportError;
-use cli_core::client_config::settings::ClientSettings;
+use cli_core::client_config::ClientSettings;
 use cli_core::client_config::user_agent::{Host, Versions};
 use cli_core::client_config::{Resolved, Source};
 use model::shapes::{Model, Operation};
@@ -33,7 +33,7 @@ const SERVICE: &str = r#"{
         "OpInput": {"type": "structure", "members": {
             "Name": {"shape": "Short"},
             "Token": {"shape": "S", "idempotencyToken": true}}},
-        "Short": {"type": "string", "max": 8},
+        "Short": {"type": "string", "min": 1},
         "S": {"type": "string"}
     }
 }"#;
@@ -53,6 +53,11 @@ const RULES: &str = r#"{
     ]
 }"#;
 
+const PARTITIONS: &str = r#"{"version": "1.1", "partitions": [{"id": "aws",
+    "regionRegex": "^(us|eu)\\-\\w+\\-\\d+$", "regions": {},
+    "outputs": {"name": "aws", "dnsSuffix": "example.com", "dualStackDnsSuffix": "example.com",
+        "supportsFIPS": true, "supportsDualStack": true, "implicitGlobalRegion": "us-east-1"}}]}"#;
+
 /// The fake protocol: a JSON-ish body of the input as given, two headers
 /// of its own, a body `bad` that fails to parse, and the error code from
 /// `x-fake-code`.
@@ -63,7 +68,12 @@ impl Protocol for Fake {
     fn name(&self) -> &'static str {
         "json"
     }
-    fn serialize(&self, _: &Model, op: &Operation, input: &Value) -> Result<Serialized, SerializeError> {
+    fn serialize(
+        &self,
+        _: &Model,
+        op: &Operation,
+        input: &Value,
+    ) -> Result<Serialized, SerializeError> {
         let body = model::pyjson::dumps(input, &model::pyjson::Options::compact(), None)
             .map_err(|error| SerializeError::new(error.to_string()))?;
         Ok(Serialized {
@@ -77,12 +87,20 @@ impl Protocol for Fake {
             body: body.into_bytes(),
         })
     }
-    fn parse(&self, _: &Model, _: &Operation, response: &HttpResponse) -> Result<Value, ParseError> {
+    fn parse(
+        &self,
+        _: &Model,
+        _: &Operation,
+        response: &HttpResponse,
+    ) -> Result<Value, ParseError> {
         if response.body == b"bad" {
             return Err(ParseError::new("Unable to parse response"));
         }
         let mut output = Map::new();
-        output.insert("Body".into(), Value::String(String::from_utf8_lossy(&response.body).into()));
+        output.insert(
+            "Body".into(),
+            Value::String(String::from_utf8_lossy(&response.body).into()),
+        );
         Ok(Value::Map(output))
     }
     fn parse_error(&self, _: &Model, op: &Operation, response: &HttpResponse) -> ServiceError {
@@ -131,7 +149,11 @@ fn fixture(
     customizations: &'static [&'static Customization],
 ) -> TestResult<Fixture> {
     let model = Arc::new(Model::from_json(SERVICE.as_bytes())?);
-    let endpoints = EndpointData::from_documents(RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
+    let endpoints = EndpointData::from_documents(
+        RULES.as_bytes().to_vec(),
+        PARTITIONS.as_bytes().to_vec(),
+        None,
+    )?;
     let transport = Arc::new(InMemoryTransport::new());
     let runtime = Arc::new(FixedRuntime::new(clock(), 0.0));
     let signing = settings.signing.value;
@@ -227,10 +249,16 @@ fn headers_go_out_in_botocore_s_order_with_the_trio_unsigned() -> TestResult {
             "Content-Length",
         ]
     );
-    assert_eq!(request.url.to_string(), "https://zfake.us-west-2.example.com/");
+    assert_eq!(
+        request.url.to_string(),
+        "https://zfake.us-west-2.example.com/"
+    );
     let get = |name| request.headers.get(name).unwrap_or_default();
     assert_eq!(get("X-Amz-Date"), "20150830T123600Z");
-    assert_eq!(get("amz-sdk-invocation-id"), "00000000-0000-4000-8000-000000000002");
+    assert_eq!(
+        get("amz-sdk-invocation-id"),
+        "00000000-0000-4000-8000-000000000002"
+    );
     assert_eq!(get("amz-sdk-request"), "attempt=1; max=3");
     assert_eq!(get("Content-Length"), request.body.len().to_string());
     assert!(
@@ -281,9 +309,19 @@ fn a_server_error_is_retried_with_the_same_invocation_id() -> TestResult {
     f.transport.respond(ok("done"));
     let output = f.client.call("Op", input("a"))?;
     let sent = f.transport.sent();
-    let header = |index: usize, name| sent[index].0.headers.get(name).unwrap_or_default().to_owned();
+    let header = |index: usize, name| {
+        sent[index]
+            .0
+            .headers
+            .get(name)
+            .unwrap_or_default()
+            .to_owned()
+    };
     assert_eq!(sent.len(), 2);
-    assert_eq!(header(0, "amz-sdk-invocation-id"), header(1, "amz-sdk-invocation-id"));
+    assert_eq!(
+        header(0, "amz-sdk-invocation-id"),
+        header(1, "amz-sdk-invocation-id")
+    );
     assert_eq!(header(1, "amz-sdk-request"), "attempt=2; max=3");
     assert_eq!(f.runtime.slept(), [Duration::ZERO]);
     assert_eq!(output.retry_attempts, 1);
@@ -354,7 +392,10 @@ fn an_exhausted_quota_stops_retries() -> TestResult {
     }
     let error = f.client.call("Op", input("a")).err().ok_or("no error")?;
     assert_eq!(f.transport.sent().len(), 36);
-    assert!(!error.to_string().contains("reached max retries"), "{error}");
+    assert!(
+        !error.to_string().contains("reached max retries"),
+        "{error}"
+    );
     Ok(())
 }
 
@@ -374,7 +415,12 @@ fn max_attempts_come_from_the_user_then_a_customization() -> TestResult {
         let f = fixture(settings, keys(), table)?;
         f.transport.respond(ok("{}"));
         f.client.call("Op", input("a"))?;
-        Ok(f.transport.sent()[0].0.headers.get("amz-sdk-request").unwrap_or_default().to_owned())
+        Ok(f.transport.sent()[0]
+            .0
+            .headers
+            .get("amz-sdk-request")
+            .unwrap_or_default()
+            .to_owned())
     };
     assert_eq!(header(settings(), &TABLE)?, "attempt=1; max=4");
     let mut two = settings();
@@ -412,8 +458,14 @@ fn unsigned_calls_and_missing_credentials() -> TestResult {
     let f = fixture(unsigned, keys(), &[])?;
     f.transport.respond(ok("{}"));
     f.client.call("Op", input("a"))?;
-    let unsigned_names = ["X-Amz-Target", "Content-Type", "User-Agent", "amz-sdk-invocation-id",
-        "amz-sdk-request", "Content-Length"];
+    let unsigned_names = [
+        "X-Amz-Target",
+        "Content-Type",
+        "User-Agent",
+        "amz-sdk-invocation-id",
+        "amz-sdk-request",
+        "Content-Length",
+    ];
     assert_eq!(names(&f.transport.sent()[0].0), unsigned_names);
     let f = fixture(settings(), keys(), &[])?;
     f.transport.respond(ok("{}"));
@@ -431,13 +483,22 @@ fn unsigned_calls_and_missing_credentials() -> TestResult {
 #[test]
 fn validation_is_decided_before_any_request() -> TestResult {
     let f = fixture(settings(), keys(), &[])?;
-    let error = f.client.prepare("Op", input("too-long-name")).err().ok_or("no error")?;
+    let error = f.client.prepare("Op", input("")).err().ok_or("no error")?;
     assert!(
-        error.to_string().starts_with("Parameter validation failed:\nInvalid length"),
+        error
+            .to_string()
+            .starts_with("Parameter validation failed:\nInvalid length"),
         "{error}"
     );
-    let unknown = f.client.prepare("Nope", input("a")).err().ok_or("no error")?;
-    assert!(matches!(unknown, CallError::UnknownOperation(_)), "{unknown:?}");
+    let unknown = f
+        .client
+        .prepare("Nope", input("a"))
+        .err()
+        .ok_or("no error")?;
+    assert!(
+        matches!(unknown, CallError::UnknownOperation(_)),
+        "{unknown:?}"
+    );
     assert!(f.transport.sent().is_empty());
     Ok(())
 }
@@ -455,7 +516,9 @@ impl Recorder {
     fn note(&self, cx: &mut CallContext<'_>, stage: &str) {
         cx.slot::<Trail>().0.push(format!("{}:{stage}", self.0));
         let trail = cx.slot::<Trail>().0.join(" ");
-        let mut log = LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut log = LOG
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         log.clear();
         log.push(trail);
     }
@@ -466,7 +529,11 @@ impl Interceptor for Recorder {
         self.note(cx, "modify_input");
         Ok(())
     }
-    fn endpoint_params(&self, cx: &mut CallContext<'_>, _: &mut crate::endpoint::EndpointParams) -> HookResult {
+    fn endpoint_params(
+        &self,
+        cx: &mut CallContext<'_>,
+        _: &mut crate::endpoint::EndpointParams,
+    ) -> HookResult {
         self.note(cx, "endpoint_params");
         Ok(())
     }
@@ -474,7 +541,11 @@ impl Interceptor for Recorder {
         self.note(cx, "after_serialize");
         Ok(())
     }
-    fn select_auth(&self, cx: &mut CallContext<'_>, _: &crate::auth::AuthScheme) -> Option<crate::auth::AuthScheme> {
+    fn select_auth(
+        &self,
+        cx: &mut CallContext<'_>,
+        _: &crate::auth::AuthScheme,
+    ) -> Option<crate::auth::AuthScheme> {
         self.note(cx, "select_auth");
         None
     }
@@ -482,7 +553,11 @@ impl Interceptor for Recorder {
         self.note(cx, "before_sign");
         Ok(())
     }
-    fn before_transmit(&self, cx: &mut CallContext<'_>, _: &HttpRequest) -> Result<Option<HttpResponse>, crate::hooks::HookError> {
+    fn before_transmit(
+        &self,
+        cx: &mut CallContext<'_>,
+        _: &HttpRequest,
+    ) -> Result<Option<HttpResponse>, crate::hooks::HookError> {
         self.note(cx, "before_transmit");
         Ok((self.0 == "short").then(|| ok("canned")))
     }
@@ -530,7 +605,10 @@ fn every_stage_runs_in_order_in_scope_and_can_short_circuit() -> TestResult {
         map.insert("Body".into(), Value::String("canned".into()));
         Value::Map(map)
     });
-    let trail = LOG.lock().unwrap_or_else(std::sync::PoisonError::into_inner).join("");
+    let trail = LOG
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .join("");
     assert_eq!(
         trail,
         "short:modify_input short:endpoint_params short:after_serialize short:select_auth \
