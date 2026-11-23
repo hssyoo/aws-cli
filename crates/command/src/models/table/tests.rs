@@ -75,7 +75,13 @@ fn a_streaming_output_takes_outfile_and_drops_the_input_options() {
         }
     );
     for name in ["cli-input-json", "cli-input-yaml", "generate-cli-skeleton"] {
-        assert!(!table.arguments.iter().any(|argument| &*argument.name == name), "{name}");
+        assert!(
+            !table
+                .arguments
+                .iter()
+                .any(|argument| &*argument.name == name),
+            "{name}"
+        );
     }
     assert!(table.overrides.is_empty());
 }
@@ -87,10 +93,19 @@ fn paging_hides_the_tokens_and_types_the_page_options_by_the_limit_key() {
     assert!(find(&table, "next-token").hidden && find(&table, "max-results").hidden);
     assert_eq!(find(&table, "page-size").cli_type_name.as_ref(), "integer");
     assert_eq!(find(&table, "max-items").value_type, Some(ValueType::Int));
-    let names: Vec<&str> = table.arguments.iter().map(|argument| &*argument.name).collect();
+    let names: Vec<&str> = table
+        .arguments
+        .iter()
+        .map(|argument| &*argument.name)
+        .collect();
     assert_eq!(
         names[names.len() - 4..],
-        ["starting-token", "page-size", "max-items", "generate-cli-skeleton"]
+        [
+            "starting-token",
+            "page-size",
+            "max-items",
+            "generate-cli-skeleton"
+        ]
     );
     assert!(!table.customized);
     let string: Json = serde_json::json!({"input_token": "NextToken", "limit_key": "Marker"});
@@ -98,7 +113,12 @@ fn paging_hides_the_tokens_and_types_the_page_options_by_the_limit_key() {
     assert_eq!(find(&table, "max-items").value_type, None);
     let no_limit: Json = serde_json::json!({"input_token": "NextToken"});
     let table = table_for_string_limit(&no_limit);
-    assert!(!table.arguments.iter().any(|argument| &*argument.name == "page-size"));
+    assert!(
+        !table
+            .arguments
+            .iter()
+            .any(|argument| &*argument.name == "page-size")
+    );
     assert_eq!(find(&table, "max-items").cli_type_name.as_ref(), "integer");
 }
 

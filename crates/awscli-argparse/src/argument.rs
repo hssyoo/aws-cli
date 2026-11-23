@@ -29,8 +29,13 @@ pub enum CliType {
 /// Constant values representable in pinned and derived tables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DefaultValue<'a> {
+    /// No default given: argparse's own, which a boolean action replaces
+    /// with its opposite value.
     #[default]
     None,
+    /// An explicit `default=None`, which a boolean action keeps
+    /// (`BooleanArgument.add_to_parser`).
+    Null,
     Boolean(bool),
     Integer(i64),
     String(&'a str),
@@ -39,7 +44,7 @@ impl DefaultValue<'_> {
     /// Own the table default for a namespace.
     pub fn value(self) -> Value {
         match self {
-            Self::None => Value::Null,
+            Self::None | Self::Null => Value::Null,
             Self::Boolean(v) => v.into(),
             Self::Integer(v) => v.into(),
             Self::String(v) => v.into(),
@@ -60,6 +65,9 @@ pub struct Argument<'a> {
     pub default: DefaultValue<'a>,
     pub choices: &'a [&'a str],
     pub required: bool,
+    /// `_UNDOCUMENTED`: parsed as any other, but no suggestion names it
+    /// (`get_option_suggestion_candidates`).
+    pub hidden: bool,
     pub cli_type: Option<CliType>,
 }
 impl<'a> Argument<'a> {
@@ -75,6 +83,7 @@ impl<'a> Argument<'a> {
             default: DefaultValue::None,
             choices: &[],
             required: false,
+            hidden: false,
             cli_type: None,
         }
     }

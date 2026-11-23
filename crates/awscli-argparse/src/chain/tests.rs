@@ -864,6 +864,7 @@ impl<'a> Roots<'a> for Derived {
             kind: CommandKind::Service,
             arguments: Vec::new().into(),
             subcommands: Some(vec!["assume-role", "get-caller-identity"].into()),
+            overrides: std::borrow::Cow::Borrowed(&[]),
         })
     }
     fn subcommand(&self, lineage: &[&str], name: &str) -> Option<Node<'a>> {
@@ -877,6 +878,7 @@ impl<'a> Roots<'a> for Derived {
             kind: CommandKind::Operation,
             arguments: arguments.into(),
             subcommands: None,
+            overrides: std::borrow::Cow::Borrowed(&[]),
         })
     }
 }

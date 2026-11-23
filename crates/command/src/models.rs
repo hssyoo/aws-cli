@@ -1,0 +1,347 @@
+//! The commands the service models supply, derived for the invocation from
+//! botocore's search path, with no list of anything in source: the root
+//! table is the model directories with the main table's renames and
+//! additions applied (`CLIDriver._build_builtin_commands`,
+//! `LazyInitEmitter._apply_main_command_table_ops`), a service's table is
+//! its operations through `xform_name` (`ServiceCommand._create_command_table`),
+//! and an operation's argument table is its input members and the
+//! cross-cutting arguments (`table`).
+use crate::patterns::{CliCustomization, Patterns, Subject, TableOp};
+use crate::registry::OperationSource;
+use crate::spec::{Admission, Invocation, Needs};
+use awscli_argparse::tables::RequiredOverride;
+use awscli_argparse::{Argument, DefaultValue, ParseResult};
+use cli_core::cli_error::PythonReason;
+use model::search::SearchSource;
+use model::shapes::Model;
+use model::source::{Kind, LoadError, Source, load_service_model};
+use model::xform::{SpecialCases, xform_name};
+use std::borrow::Cow;
+use std::cell::OnceCell;
+use std::collections::BTreeMap;
+
+mod table;
+#[doc(inline)]
+pub use table::{DerivedArgument, Origin, Table, ValueType, kind_name};
+
+type Json = serde_json::Value;
+
+/// The registry entries whose table edits the derived tables reproduce:
+/// `wait` for a service with waiters, the router's alias rule, and the
+/// cross-cutting arguments. They stand in for the table edits only, not
+/// for what the handlers do when an argument is supplied, so admission
+/// does not read them.
+pub const TABLE_EDITS: &[CliCustomization] = &[
+    CliCustomization {
+        id: "tables.wait",
+        replaces: &["awscli.customizations.waiters.register_add_waiters"],
+    },
+    CliCustomization {
+        id: "tables.alias",
+        replaces: &["awscli.alias.register_alias_commands"],
+    },
+    CliCustomization {
+        id: "tables.outfile",
+        replaces: &["awscli.customizations.streamingoutputarg.register_streaming_output_arg"],
+    },
+    CliCustomization {
+        id: "tables.cli-input",
+        replaces: &["awscli.customizations.cliinput.register_cli_input_args"],
+    },
+    CliCustomization {
+        id: "tables.paging",
+        replaces: &["awscli.customizations.paginate.register_pagination"],
+    },
+    CliCustomization {
+        id: "tables.skeleton",
+        replaces: &["awscli.customizations.generatecliskeleton.register_generate_cli_skeleton"],
+    },
+];
+
+/// A loaded service: its model, its command table and its operations'
+/// tables, derived once each.
+#[derive(Debug)]
+pub struct Service {
+    pub command: String,
+    pub name: String,
+    pub model: Model,
+    /// The operations' CLI names, in model order.
+    pub operations: Vec<String>,
+    /// The command table's names: the operations, then `wait` when the
+    /// service has waiters (`add_waiters`).
+    pub choices: Vec<String>,
+    /// A `building-command-table` handler the derivation does not reproduce
+    /// edits the table.
+    pub customized: bool,
+    pages: Option<Json>,
+    tables: Vec<OnceCell<Table>>,
+}
+
+/// An append-only list whose values never move, so a borrow of one lives
+/// as long as the list.
+#[derive(Debug)]
+struct Cache<T> {
+    value: OnceCell<T>,
+    next: OnceCell<Box<Cache<T>>>,
+}
+impl<T> Default for Cache<T> {
+    fn default() -> Self {
+        Self {
+            value: OnceCell::new(),
+            next: OnceCell::new(),
+        }
+    }
+}
+impl<T> Cache<T> {
+    fn find_or_insert(&self, wanted: impl Fn(&T) -> bool, make: impl FnOnce() -> T) -> &T {
+        let mut node = self;
+        loop {
+            match node.value.get() {
+                Some(value) if wanted(value) => return value,
+                Some(_) => node = node.next.get_or_init(Box::default),
+                None => return node.value.get_or_init(make),
+            }
+        }
+    }
+}
+
+/// The commands of the models botocore would load for this invocation.
+#[derive(Debug)]
+pub struct ModelSource<'a> {
+    models: SearchSource<'a>,
+    patterns: Patterns,
+    special: SpecialCases,
+    roots: OnceCell<Result<BTreeMap<String, String>, LoadError>>,
+    services: Cache<(String, Option<Service>)>,
+}
+
+impl<'a> ModelSource<'a> {
+    pub fn new(models: SearchSource<'a>, patterns: Patterns, special: SpecialCases) -> Self {
+        Self {
+            models,
+            patterns,
+            special,
+            roots: OnceCell::new(),
+            services: Cache::default(),
+        }
+    }
+
+    pub const fn patterns(&self) -> &Patterns {
+        &self.patterns
+    }
+
+    /// The model roots by CLI name, each naming its model directory: the
+    /// services the search lists, renamed by the main table's renames, less
+    /// the names it adds as hand-written commands. Nothing is loaded.
+    pub fn roots(&self) -> Result<&BTreeMap<String, String>, &LoadError> {
+        self.roots
+            .get_or_init(|| {
+                let services = self.models.services(Kind::Service)?;
+                let mut roots: BTreeMap<String, String> = services
+                    .into_iter()
+                    .map(|name| (name.clone(), name))
+                    .collect();
+                for op in &self.patterns.table_ops {
+                    match op {
+                        TableOp::Rename { from, to } => {
+                            if let Some(service) = roots.remove(&**from) {
+                                roots.insert(to.to_string(), service);
+                            }
+                        }
+                        TableOp::Add { name, .. } => {
+                            roots.remove(&**name);
+                        }
+                    }
+                }
+                Ok(roots)
+            })
+            .as_ref()
+    }
+
+    /// The loaded service of the root `command`, once.
+    pub fn service(&self, command: &str) -> Option<&Service> {
+        let service = self.roots().ok()?.get(command)?;
+        let (_, loaded) = self.services.find_or_insert(
+            |(name, _)| name == command,
+            || (command.to_owned(), self.load(command, service)),
+        );
+        loaded.as_ref()
+    }
+
+    fn load(&self, command: &str, service: &str) -> Option<Service> {
+        let model = Model::load(&self.models, service).ok()?;
+        let operations: Vec<String> = model
+            .operations()
+            .iter()
+            .map(|operation| xform_name(&operation.name, "-", &self.special))
+            .collect();
+        let mut choices = operations.clone();
+        if self.has_waiters(service) {
+            choices.push("wait".to_owned());
+        }
+        let pages = load_service_model(&self.models, service, Kind::Paginators)
+            .ok()
+            .and_then(|document| document.json.get("pagination").cloned());
+        let tables = operations.iter().map(|_| OnceCell::new()).collect();
+        Some(Service {
+            customized: self.edits(&[format!("building-command-table.{command}")]),
+            command: command.to_owned(),
+            name: service.to_owned(),
+            model,
+            operations,
+            choices,
+            pages,
+            tables,
+        })
+    }
+
+    /// `get_waiter_model_from_service_model` and `waiter_names`: a waiter
+    /// model the search finds, holding a waiter.
+    fn has_waiters(&self, service: &str) -> bool {
+        load_service_model(&self.models, service, Kind::Waiters).is_ok_and(|document| {
+            document
+                .json
+                .get("waiters")
+                .and_then(Json::as_object)
+                .is_some_and(|waiters| !waiters.is_empty())
+        })
+    }
+
+    /// Whether a registry entry outside [`TABLE_EDITS`] matches one of
+    /// `events`.
+    fn edits(&self, events: &[String]) -> bool {
+        let reproduced = TABLE_EDITS
+            .iter()
+            .flat_map(|edit| edit.replaces.iter().copied());
+        let reproduced: Vec<&str> = reproduced.collect();
+        self.patterns
+            .registry_entries(events)
+            .iter()
+            .any(|entry| !reproduced.contains(&entry.as_str()))
+    }
+
+    /// The table of `[command, operation]`, derived once.
+    pub fn table(&self, command: &str, operation: &str) -> Option<&Table> {
+        let service = self.service(command)?;
+        let index = service
+            .operations
+            .iter()
+            .position(|name| name == operation)?;
+        let model_operation = &service.model.operations()[index];
+        Some(service.tables[index].get_or_init(|| {
+            let pages = service
+                .pages
+                .as_ref()
+                .and_then(|pages| pages.get(&*model_operation.name));
+            let mut table = table::derive(&service.model, model_operation, pages, &self.special);
+            let events = [
+                format!("building-command-table.{command}_{operation}"),
+                format!("before-building-argument-table-parser.{command}.{operation}"),
+                format!("building-argument-table.{command}.{operation}"),
+            ];
+            table.customized |= self.edits(&events);
+            table
+        }))
+    }
+
+    /// The subject the pattern matcher judges for `[command, operation]`.
+    pub fn touching(&self, command: &str, operation: &str) -> Option<Vec<String>> {
+        let service = self.service(command)?;
+        let table = self.table(command, operation)?;
+        let index = service
+            .operations
+            .iter()
+            .position(|name| name == operation)?;
+        let metadata = service.model.metadata();
+        let service_id = metadata.hyphenized_service_id().unwrap_or_default();
+        let arguments: Vec<&str> = table
+            .arguments
+            .iter()
+            .map(|argument| &*argument.name)
+            .collect();
+        let subject = Subject {
+            service: &service.name,
+            endpoint_prefix: metadata.endpoint_prefix.as_deref().unwrap_or_default(),
+            service_id: &service_id,
+            command,
+            operation: &service.model.operations()[index].name,
+            cli_operation: operation,
+            arguments: &arguments,
+        };
+        Some(self.patterns.touching(&subject).into_iter().collect())
+    }
+}
+
+/// The argparse form of a derived argument.
+fn argparse(argument: &DerivedArgument) -> Argument<'_> {
+    Argument {
+        name: &argument.name,
+        dest: argument.dest.as_deref(),
+        positional: argument.positional,
+        action: argument.action,
+        nargs: argument.nargs,
+        constant: argument.constant.map(DefaultValue::String),
+        default: if argument.default_null {
+            DefaultValue::Null
+        } else {
+            DefaultValue::None
+        },
+        choices: argument.choices,
+        required: argument.required,
+        hidden: argument.hidden,
+        cli_type: None,
+    }
+}
+
+impl OperationSource for ModelSource<'_> {
+    fn is_root(&self, name: &str) -> bool {
+        self.roots().is_ok_and(|roots| roots.contains_key(name))
+    }
+    fn operations(&self, root: &str) -> Option<Cow<'_, [&str]>> {
+        let service = self.service(root)?;
+        Some(Cow::Owned(
+            service.choices.iter().map(String::as_str).collect(),
+        ))
+    }
+    fn arguments(&self, root: &str, operation: &str) -> Option<Cow<'_, [Argument<'_>]>> {
+        let table = self.table(root, operation)?;
+        Some(Cow::Owned(table.arguments.iter().map(argparse).collect()))
+    }
+    fn overrides(&self, root: &str, operation: &str) -> Cow<'_, [RequiredOverride<'_>]> {
+        let lifts = self
+            .table(root, operation)
+            .map_or(&[][..], |table| &table.overrides);
+        let lifts = lifts.iter().map(|&(option, unless_next)| RequiredOverride {
+            option,
+            unless_next,
+        });
+        Cow::Owned(lifts.collect())
+    }
+    fn reproduces_failures(&self, root: &str, operation: Option<&str>) -> bool {
+        let Some(service) = self.service(root) else {
+            return false;
+        };
+        let Some(operation) = operation else {
+            return !service.customized;
+        };
+        let table = self.table(root, operation);
+        !service.customized && table.is_some_and(|table| !table.customized && !table.typed())
+    }
+    fn needs(&self, root: &str) -> Needs {
+        let service = self.service(root);
+        let metadata = service.map(|service| service.model.metadata());
+        let id = metadata.and_then(model::shapes::Metadata::hyphenized_service_id);
+        Needs::Client {
+            service: id.unwrap_or_else(|| root.to_owned()).into(),
+        }
+    }
+    /// No model operation binds natively yet: every one meets the
+    /// cross-cutting entries (the session's and the argument table's), and
+    /// no native piece replaces what they do when the command runs.
+    fn bind(&self, _parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
+        Err(Admission::Python(PythonReason::UnportedCustomization))
+    }
+}
+
+#[cfg(test)]
+mod tests;

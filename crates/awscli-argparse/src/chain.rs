@@ -383,6 +383,7 @@ fn parse_table<'a>(result: &mut ParseResult<'a>, command: &Node<'a>, args: &[Tok
     }
     let mut options = parser::Options::new(tables::USAGE);
     options.help_sentinel = true;
+    options.ignore_required = command.overrides.iter().any(|lift| lift.applies(args));
     options.command_choices = command.subcommands.as_deref().map(<[&str]>::to_vec);
     let Some(mut parsed) = level(result, &table, args, options) else {
         return;
@@ -676,7 +677,7 @@ fn unknown_option_suggestions(
 ) -> Vec<Suggestion> {
     let candidates: Vec<&str> = arguments
         .iter()
-        .filter(|argument| !argument.positional)
+        .filter(|argument| !argument.positional && !argument.hidden)
         .chain(tables::GLOBALS)
         .map(|argument| argument.name)
         .collect();

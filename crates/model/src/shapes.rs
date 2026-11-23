@@ -97,6 +97,17 @@ pub struct Metadata {
 }
 
 /// One of `ServiceModel.client_context_parameters`.
+impl Metadata {
+    /// `ServiceId.hyphenize()`: `serviceId` lowercased, as Python's
+    /// `str.lower` does, with each space a hyphen. botocore keys its
+    /// per-call events on it.
+    pub fn hyphenized_service_id(&self) -> Option<String> {
+        self.service_id
+            .as_deref()
+            .map(|id| id.to_lowercase().replace(' ', "-"))
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClientContextParam {
     pub name: Box<str>,

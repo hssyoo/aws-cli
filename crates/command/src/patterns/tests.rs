@@ -4,16 +4,40 @@ use super::*;
 fn patterns_match_as_the_prefix_trie_does() {
     for (pattern, event, matched) in [
         ("session-initialized", "session-initialized", true),
-        ("building-argument-table", "building-argument-table.sts.get-caller-identity", true),
-        ("building-argument-table.*", "building-argument-table.sts.get-caller-identity", true),
-        ("building-argument-table.ec2.*", "building-argument-table.ec2.run-instances", true),
-        ("building-argument-table.ec2.*", "building-argument-table.sts.get-caller-identity", false),
+        (
+            "building-argument-table",
+            "building-argument-table.sts.get-caller-identity",
+            true,
+        ),
+        (
+            "building-argument-table.*",
+            "building-argument-table.sts.get-caller-identity",
+            true,
+        ),
+        (
+            "building-argument-table.ec2.*",
+            "building-argument-table.ec2.run-instances",
+            true,
+        ),
+        (
+            "building-argument-table.ec2.*",
+            "building-argument-table.sts.get-caller-identity",
+            false,
+        ),
         ("doc-examples.*.*", "doc-examples.sts", false),
         ("after-call.s3", "after-call.s3.PutObject", true),
         ("after-call.s3", "after-call.s3-control.PutObject", false),
-        ("calling-command.dynamodb.*", "calling-command.dynamodb", false),
+        (
+            "calling-command.dynamodb.*",
+            "calling-command.dynamodb",
+            false,
+        ),
     ] {
-        assert_eq!(pattern_matches(pattern, event), matched, "{pattern} ~ {event}");
+        assert_eq!(
+            pattern_matches(pattern, event),
+            matched,
+            "{pattern} ~ {event}"
+        );
     }
 }
 
@@ -69,7 +93,10 @@ fn a_subject_meets_its_service_s_entries_and_the_session_s() -> Result<(), Patte
         "awscli.paramfile.register_init_uri_param_handler",
         "botocore.handlers.h",
     ];
-    assert_eq!(touched.iter().map(String::as_str).collect::<Vec<_>>(), expected);
+    assert_eq!(
+        touched.iter().map(String::as_str).collect::<Vec<_>>(),
+        expected
+    );
     let other = patterns.touching(&subject("other"));
     assert_eq!(other.len(), 1);
     Ok(())

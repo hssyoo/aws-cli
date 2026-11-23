@@ -242,7 +242,10 @@ fn fallback_payload(
         for (flag, script) in [
             ("pack-tool", "pack.py"),
             ("gen-ac-index", "gen_ac_index.py"),
-            ("gen-customization-patterns", "gen_customization_patterns.py"),
+            (
+                "gen-customization-patterns",
+                "gen_customization_patterns.py",
+            ),
         ] {
             command
                 .arg(format!("--{flag}"))
