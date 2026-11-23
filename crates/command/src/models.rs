@@ -81,6 +81,22 @@ pub struct Service {
     tables: Vec<OnceCell<Table>>,
 }
 
+impl Service {
+    /// The model operation the CLI name `operation` stands for.
+    pub fn operation(&self, operation: &str) -> Option<&model::shapes::Operation> {
+        let index = self.operations.iter().position(|name| name == operation)?;
+        self.model.operations().get(index)
+    }
+    /// Whether the paginators file configures the model operation
+    /// `operation` (`get_paginator_config`, which `client.can_paginate`
+    /// also reads).
+    pub fn paginated(&self, operation: &str) -> bool {
+        self.pages
+            .as_ref()
+            .is_some_and(|pages| pages.get(operation).is_some())
+    }
+}
+
 /// An append-only list whose values never move, so a borrow of one lives
 /// as long as the list.
 #[derive(Debug)]

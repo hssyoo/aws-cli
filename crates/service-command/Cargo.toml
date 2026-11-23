@@ -1,0 +1,20 @@
+[package]
+name = "service-command"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+awscli-argparse = { path = "../awscli-argparse" }
+cli-core = { path = "../cli-core" }
+client = { path = "../client" }
+command = { path = "../command" }
+model = { path = "../model" }
+
+[dev-dependencies]
+pyload = { path = "../pyload" }

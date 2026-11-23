@@ -188,6 +188,9 @@ pub enum PythonReason {
     /// no boolean, or a `cli_binary_format` `BinaryFormatHandler` does not
     /// know.
     ClientSetting,
+    /// A model operation passed admission, but the call loop that runs it
+    /// is not integrated on this branch yet; deleted with the integration.
+    ClientUnavailable,
     /// A formatted response would go to a pager: stdout is a terminal and
     /// the pager chain names one (`OutputStreamFactory.get_output_stream`),
     /// which the native formatter does not start.
@@ -226,6 +229,7 @@ impl PythonReason {
             Self::UnportedCustomization => "unported_customization",
             Self::OutputFormat => "output_format",
             Self::ClientSetting => "client_setting",
+            Self::ClientUnavailable => "client_unavailable",
             Self::Pager => "pager",
         }
     }
