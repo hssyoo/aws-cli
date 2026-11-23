@@ -207,6 +207,20 @@ def _protocol() -> AwsWireProtocol:
     return create_aws_wire_protocol()
 
 
+def fake_model_protocol(models: Path, services: Sequence[str]) -> AwsWireProtocol:
+    """A protocol for the repository's fake `services`, loaded from
+    `models` as the CLI loads them through `AWS_DATA_PATH`."""
+    from botocore import loaders, session as botocore_session
+
+    session = botocore_session.get_session()
+    session.register_component(
+        "data_loader", loaders.Loader(extra_search_paths=[str(models)])
+    )
+    return AwsWireProtocol(
+        {name: session.get_service_model(name) for name in services}, {}
+    )
+
+
 def upstream_env(
     proxy_url: str,
     ca_path: str,
@@ -249,7 +263,9 @@ class ApiSession:
     """One test's service: the scripted server behind the proxy, the
     command environment, and the working directory commands run in.
 
-    `env` and `cwd` are the test's to change between commands.
+    `env` and `cwd` are the test's to change between commands, and
+    `protocol` the models requests and replies go through, botocore's own
+    unless a test supplies others (`fake_model_protocol`).
     """
 
     def __init__(
@@ -263,6 +279,7 @@ class ApiSession:
         self.server = server
         self.env = env
         self.cwd = cwd
+        self.protocol: AwsWireProtocol | None = None
 
     @property
     def config_path(self) -> Path:
@@ -286,7 +303,7 @@ class ApiSession:
         None accepts any status.
         """
         argv = cmd.split() if isinstance(cmd, str) else list(cmd)
-        responder = _Responder(_protocol(), service or argv[0], replies)
+        responder = _Responder(self.protocol or _protocol(), service or argv[0], replies)
         self.server.clear_requests()
         self.server.handler = responder.respond
         stdout, stderr, rc = await run_command(

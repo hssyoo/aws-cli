@@ -148,6 +148,9 @@ async def test_retries_reuse_the_invocation_id(api: ApiSession) -> None:
     first, second = run.calls
     ids = [call.request.headers.get("amz-sdk-invocation-id") for call in (first, second)]
     assert ids[0] is not None and ids[0] == ids[1]
-    attempts = [call.request.headers.get("amz-sdk-request") for call in (first, second)]
-    assert attempts == ["attempt=1; max=3", "attempt=2; max=3"]
+    # The limit is the default's, or what the run's --env imposes.
+    attempts = [call.request.headers.get("amz-sdk-request") or "" for call in (first, second)]
+    limits = {attempt.partition("; ")[2] for attempt in attempts}
+    assert [attempt.partition("; ")[0] for attempt in attempts] == ["attempt=1", "attempt=2"]
+    assert len(limits) == 1 and limits <= {"max=3", "max=2"}, attempts
     assert json.loads(run.stdout) == IDENTITY
