@@ -78,6 +78,9 @@
       "errors": [
         {
           "shape": "Conflict"
+        },
+        {
+          "shape": "Rejected"
         }
       ]
     },
@@ -112,6 +115,16 @@
       "http": {
         "method": "POST",
         "requestUri": "/"
+      }
+    },
+    "Stamp": {
+      "name": "Stamp",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "output": {
+        "shape": "StampOutput"
       }
     }
   },
@@ -625,6 +638,40 @@
         },
         "Record": {
           "shape": "Record"
+        }
+      }
+    },
+    "Rejected": {
+      "type": "structure",
+      "members": {
+        "Message": {
+          "shape": "String"
+        },
+        "Reason": {
+          "shape": "String"
+        },
+        "Codes": {
+          "shape": "StringList"
+        },
+        "Detail": {
+          "shape": "Outer"
+        }
+      },
+      "error": {
+        "code": "RejectedError",
+        "httpStatusCode": 400,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "StampOutput": {
+      "type": "structure",
+      "members": {
+        "WhenIso": {
+          "shape": "IsoTime"
+        },
+        "WhenHttp": {
+          "shape": "HttpTime"
         }
       }
     }

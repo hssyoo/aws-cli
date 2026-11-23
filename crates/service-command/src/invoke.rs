@@ -39,8 +39,8 @@ pub struct ServiceInvocation {
     /// `--output`, when given.
     pub output: Option<String>,
     pub no_cli_pager: bool,
-    /// The output shape reaches a timestamp member.
-    pub output_timestamps: bool,
+    /// The output shape reaches a timestamp the wire sends as an epoch.
+    pub output_epochs: bool,
     /// The payload's CA bundle, trusted when nothing configures another.
     pub embedded_trust: Option<&'static [u8]>,
     pub versions: cli_core::client_config::user_agent::Versions<'static>,
@@ -72,10 +72,10 @@ impl ServiceInvocation {
         embedded_trust: Option<&'static [u8]>,
         versions: cli_core::client_config::user_agent::Versions<'static>,
     ) -> Self {
-        let output_timestamps = model
+        let output_epochs = model
             .operation(&admitted.operation)
             .and_then(|operation| operation.output)
-            .is_some_and(|shape| crate::admit::reaches_timestamp(&model, shape));
+            .is_some_and(|shape| crate::admit::reaches_epoch_timestamp(&model, shape));
         Self {
             admitted,
             model,
@@ -84,7 +84,7 @@ impl ServiceInvocation {
             service_id,
             output,
             no_cli_pager,
-            output_timestamps,
+            output_epochs,
             embedded_trust,
             versions,
             ready: OnceCell::new(),
@@ -121,7 +121,7 @@ impl Invocation for ServiceInvocation {
     fn preflight(&self, cx: &Preflight<'_>) -> Result<(), PythonReason> {
         let format = output_format(cx, self.output.as_deref());
         let parser = timestamp_parser(cx)?;
-        if parser.needs_local_zone() && self.output_timestamps {
+        if parser.needs_local_zone() && self.output_epochs {
             return Err(PythonReason::UnsupportedTrait);
         }
         let destination = destination(cx, self.no_cli_pager)?;

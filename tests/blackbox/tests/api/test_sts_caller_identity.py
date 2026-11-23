@@ -6,6 +6,8 @@ User-Agent's language token proves the request came from.
 """
 
 import json
+import os
+from pathlib import Path
 from typing import Final
 
 import pytest
@@ -228,3 +230,63 @@ async def test_a_refused_connection_names_the_endpoint(api: ApiSession) -> None:
     assert run.stderr == (
         '\naws: [ERROR]: Could not connect to the endpoint URL: "http://127.0.0.1:9/"\n'
     ), run.describe()
+
+
+def signing_key(run) -> str:
+    """The access key id the request's SigV4 credential scope names."""
+    (call,) = run.calls
+    authorization = call.request.headers.get("authorization") or ""
+    return authorization.split("Credential=", 1)[1].split("/", 1)[0]
+
+
+def without_environment_keys(api: ApiSession) -> None:
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        del api.env[name]
+
+
+async def test_environment_keys_sign(api: ApiSession) -> None:
+    run = await api.run(COMMAND, replies=IDENTITY)
+    assert signing_key(run) == "access_key"
+
+
+async def test_the_shared_credentials_file_signs(api: ApiSession) -> None:
+    without_environment_keys(api)
+    Path(api.env["AWS_SHARED_CREDENTIALS_FILE"]).write_text(
+        "[default]\naws_access_key_id = file_key\naws_secret_access_key = file_secret\n",
+        encoding="utf-8",
+    )
+    run = await api.run(COMMAND, replies=IDENTITY)
+    assert signing_key(run) == "file_key", run.describe()
+
+
+async def test_the_config_file_s_keys_sign(api: ApiSession) -> None:
+    without_environment_keys(api)
+    api.config_path.write_text(
+        api.config_path.read_text(encoding="utf-8")
+        + "aws_access_key_id = config_key\naws_secret_access_key = config_secret\n",
+        encoding="utf-8",
+    )
+    run = await api.run(COMMAND, replies=IDENTITY)
+    assert signing_key(run) == "config_key", run.describe()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the process is a POSIX shell command")
+async def test_a_credential_process_signs(api: ApiSession) -> None:
+    without_environment_keys(api)
+    script = api.cwd / "credentials.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        'printf \'{"Version": 1, "AccessKeyId": "process_key", '
+        '"SecretAccessKey": "process_secret", "SessionToken": "process_token"}\'\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    api.config_path.write_text(
+        api.config_path.read_text(encoding="utf-8")
+        + f"credential_process = {script}\n",
+        encoding="utf-8",
+    )
+    run = await api.run(COMMAND, replies=IDENTITY)
+    assert signing_key(run) == "process_key", run.describe()
+    (call,) = run.calls
+    assert call.request.headers.get("x-amz-security-token") == "process_token"

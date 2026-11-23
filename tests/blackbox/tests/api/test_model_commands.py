@@ -131,12 +131,65 @@ CONFLICT: Final = Reply(
     },
     status=409,
 )
-async def test_a_modelled_error_names_its_code(models: ApiSession) -> None:
+async def test_a_code_naming_no_error_shape_has_no_details(models: ApiSession) -> None:
+    # `Conflict` is no error code of the model (its shape's is
+    # ConflictError), so only Code and Message are modelled, and the stub
+    # serializes only those (awswire's json error body).
     run = await models.run("zjson describe", replies=CONFLICT, expected_rc=254)
     retries = retries_clause(models.env, retryable=False)
     assert run.stderr == (
         "\naws: [ERROR]: An error occurred (Conflict) when calling the Describe "
         f"operation{retries}: in use\n"
+    ), run.describe()
+
+
+def json_error(body: dict) -> HTTPResponse:
+    """An error as a json service writes it: the code in `__type`, the
+    modelled members beside the message (`_do_modeled_error_parse`)."""
+    return HTTPResponse(
+        status=400,
+        headers={"Content-Type": "application/x-amz-json-1.0"},
+        body=json.dumps(body).encode(),
+    )
+
+
+async def test_an_error_s_modelled_members_follow_as_details(models: ApiSession) -> None:
+    # The members of the shape the error code names, ConflictError's here:
+    # a simple value as itself.
+    reply = json_error(
+        {"__type": "ConflictError", "message": "in use", "Resource": "thing-1", "Retry": 3}
+    )
+    run = await models.run("zjson describe", replies=reply, expected_rc=254)
+    retries = retries_clause(models.env, retryable=False)
+    assert run.stderr == (
+        "\naws: [ERROR]: An error occurred (ConflictError) when calling the "
+        f"Describe operation{retries}: in use\n\n"
+        "Additional error details:\nResource: thing-1\nRetry: 3\n"
+    ), run.describe()
+
+
+async def test_details_inline_a_small_collection_and_hide_a_complex_one(
+    models: ApiSession,
+) -> None:
+    reply = json_error(
+        {
+            "__type": "RejectedError",
+            "message": "no",
+            "Reason": "quota",
+            "Codes": ["a", "b"],
+            "Detail": {"Label": "x", "Inner": {"Value": "y"}},
+            "Unmodelled": "hidden",
+        }
+    )
+    run = await models.run("zjson describe", replies=reply, expected_rc=254)
+    retries = retries_clause(models.env, retryable=False)
+    assert run.stderr == (
+        "\naws: [ERROR]: An error occurred (RejectedError) when calling the "
+        f"Describe operation{retries}: no\n\n"
+        "Additional error details:\nReason: quota\nCodes: [a, b]\n"
+        "Detail: <complex value>\n"
+        'Use "--cli-error-format json" or another error format to see the full '
+        "details.\n"
     ), run.describe()
 
 
@@ -204,3 +257,115 @@ async def test_the_native_route_sends_each_protocol_s_request(
     tokens = (run.calls[0].request.headers.get("user-agent") or "").split()
     assert any(token.startswith("lang/rust#") for token in tokens), tokens
     assert not any(token.startswith("md/fallback#") for token in tokens), tokens
+
+
+# A zone with daylight-saving time, whose offset dateutil's tzlocal picks
+# per instant: only Python prints an epoch in it.
+DST_ZONE: Final = "America/New_York"
+STAMPS: Final = {
+    "WhenIso": "2020-06-01T12:00:00Z",
+    "WhenHttp": "Mon, 01 Jun 2020 12:00:00 GMT",
+}
+NOON_UTC: Final = "2020-06-01T12:00:00+00:00"
+
+
+@pytest.mark.parametrize("service", ["zjson", "zquery"])
+async def test_text_timestamps_print_in_any_zone(models: ApiSession, service: str) -> None:
+    # ISO 8601 and RFC 822 text carries its own offset, so a zone with
+    # daylight-saving time changes nothing, and the native route runs it.
+    models.env["TZ"] = DST_ZONE
+    run = await models.run(f"{service} stamp", replies=STAMPS)
+    printed = json.loads(run.stdout)
+    assert {key: printed[key] for key in STAMPS} == {
+        "WhenIso": NOON_UTC,
+        "WhenHttp": NOON_UTC,
+    }, run.describe()
+
+
+async def test_an_epoch_prints_in_a_fixed_zone(models: ApiSession) -> None:
+    run = await models.run("zjson describe", replies={"When": 1591012800})
+    assert json.loads(run.stdout) == {"When": NOON_UTC}, run.describe()
+
+
+async def test_an_epoch_prints_in_a_zone_with_daylight_saving(models: ApiSession) -> None:
+    models.env["TZ"] = DST_ZONE
+    run = await models.run("zjson describe", replies={"When": 1591012800})
+    assert json.loads(run.stdout) == {"When": "2020-06-01T08:00:00-04:00"}, run.describe()
+
+
+@pytest.mark.native_only
+async def test_an_epoch_in_a_zone_with_daylight_saving_is_python_s(
+    models: ApiSession,
+) -> None:
+    models.env.update(TZ=DST_ZONE, AWS_CLI_NATIVE_ROUTER="native")
+    run = await models.run("zjson describe", replies=[], expected_rc=255)
+    assert run.calls == ()
+    assert "(unsupported_trait)" in run.stderr, run.describe()
+
+
+@pytest.mark.parametrize(
+    "variables,profile,host",
+    [
+        ({}, "", "zquery.us-east-1.amazonaws.com"),
+        ({"AWS_USE_FIPS_ENDPOINT": "true"}, "", "zquery-fips.us-east-1.amazonaws.com"),
+        ({"AWS_USE_DUALSTACK_ENDPOINT": "true"}, "", "zquery.us-east-1.api.aws"),
+        (
+            {"AWS_USE_FIPS_ENDPOINT": "true", "AWS_USE_DUALSTACK_ENDPOINT": "true"},
+            "",
+            "zquery-fips.us-east-1.api.aws",
+        ),
+        ({}, "use_fips_endpoint = true\n", "zquery-fips.us-east-1.amazonaws.com"),
+        ({}, "use_dualstack_endpoint = true\n", "zquery.us-east-1.api.aws"),
+    ],
+    ids=["regional", "fips", "dual-stack", "fips-dual-stack", "fips-profile", "dual-stack-profile"],
+)
+async def test_the_rule_set_s_variants_name_their_host(
+    models: ApiSession, variables: dict[str, str], profile: str, host: str
+) -> None:
+    models.env.update(variables)
+    models.config_path.write_text(
+        models.config_path.read_text(encoding="utf-8") + profile, encoding="utf-8"
+    )
+    run = await models.run("zquery get-thing --thing-id t", replies={"ThingId": "t"})
+    assert run.calls[0].request.headers.get("host") == host, run.describe()
+
+
+async def test_a_malformed_xml_body_is_a_parser_error(models: ApiSession) -> None:
+    # ResponseParserError, which is not retried.
+    reply = HTTPResponse(
+        status=200,
+        headers={"Content-Type": "text/xml"},
+        body=b"<GetThingResponse><GetThingResult>",
+    )
+    run = await models.run("zquery get-thing --thing-id t", replies=reply, expected_rc=255)
+    assert run.stdout == ""
+    assert run.stderr == (
+        "\naws: [ERROR]: Unable to parse response (no element found: line 1, "
+        "column 34), invalid XML received. Further retries may succeed:\n"
+        "b'<GetThingResponse><GetThingResult>'\n"
+    ), run.describe()
+
+
+async def test_a_malformed_json_body_parses_as_empty(models: ApiSession) -> None:
+    # botocore's json parser reads a success body it cannot decode as no
+    # members, so nothing is printed and the command succeeds.
+    reply = HTTPResponse(
+        status=200,
+        headers={"Content-Type": "application/x-amz-json-1.0"},
+        body=b'{"ThingId": ',
+    )
+    run = await models.run("zjson get-thing --thing-id t", replies=reply)
+    assert (run.stdout, run.stderr) == ("", ""), run.describe()
+
+
+async def test_a_redirect_is_a_client_error(models: ApiSession) -> None:
+    run = await models.run(
+        "zjson ping",
+        replies=HTTPResponse(status=301, headers={}, body=b""),
+        expected_rc=254,
+    )
+    retries = retries_clause(models.env, retryable=False)
+    assert run.stdout == ""
+    assert run.stderr == (
+        f"\naws: [ERROR]: An error occurred (301) when calling the Ping operation{retries}:\n"
+    ), run.describe()

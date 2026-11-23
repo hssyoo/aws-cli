@@ -56,3 +56,31 @@ fn each_stage_names_its_refusal() -> Result<()> {
         );
     })
 }
+
+/// Only an epoch on the wire needs the local zone: json's default and an
+/// explicit unixTimestamp; ISO 8601 and RFC 822 text, the query default,
+/// carry their offset.
+#[test]
+fn only_epoch_timestamps_need_the_local_zone() -> Result<()> {
+    with_models(|models| {
+        for (command, operation, epoch) in [
+            ("zjson", "stamp", false),
+            ("zjson", "describe", true),
+            ("zquery", "stamp", false),
+            ("zquery", "describe", true),
+        ] {
+            let service = models
+                .service(command)
+                .unwrap_or_else(|| panic!("{command}"));
+            let output = service
+                .operation(operation)
+                .and_then(|found| found.output)
+                .unwrap_or_else(|| panic!("{command} {operation}"));
+            assert_eq!(
+                reaches_epoch_timestamp(&service.model, output),
+                epoch,
+                "{command} {operation}"
+            );
+        }
+    })
+}
