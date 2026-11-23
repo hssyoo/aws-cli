@@ -76,16 +76,14 @@ impl std::fmt::Display for ServiceError {
     /// `ClientError.MSG_TEMPLATE`, with `_get_retry_info`'s note when the
     /// attempts ran out.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "An error occurred ({}) when calling the {} operation",
-            self.code().unwrap_or("Unknown"),
-            self.operation
-        )?;
-        if self.max_attempts_reached {
-            write!(f, " (reached max retries: {})", self.retry_attempts)?;
-        }
-        write!(f, ": {}", self.message().unwrap_or("Unknown"))
+        let text = cli_core::botocore_error::client_error(
+            self.code().unwrap_or("Unknown").as_bytes(),
+            self.operation.as_bytes(),
+            self.max_attempts_reached
+                .then_some(u64::from(self.retry_attempts)),
+            self.message().unwrap_or("Unknown").as_bytes(),
+        );
+        f.write_str(&String::from_utf8_lossy(&text))
     }
 }
 
@@ -161,8 +159,8 @@ impl std::fmt::Display for CallError {
         match self {
             Self::Validation(report) => f.write_str(&report.message()),
             Self::Endpoint(text) | Self::Credentials(text) => f.write_str(text),
-            Self::NoRegion => f.write_str("You must specify a region."),
-            Self::NoCredentials => f.write_str("Unable to locate credentials"),
+            Self::NoRegion => f.write_str(cli_core::botocore_error::NO_REGION),
+            Self::NoCredentials => f.write_str(cli_core::botocore_error::NO_CREDENTIALS),
             Self::Serialize(error) => error.fmt(f),
             Self::Hook(error) => error.fmt(f),
             Self::Transport {
@@ -187,22 +185,17 @@ fn transport_text(
     error: &TransportError,
     url: &str,
 ) -> std::fmt::Result {
+    use cli_core::botocore_error as text;
     match error {
-        TransportError::Connect => write!(f, "Could not connect to the endpoint URL: \"{url}\""),
-        TransportError::ConnectTimeout => write!(f, "Connect timeout on endpoint URL: \"{url}\""),
-        TransportError::ReadTimeout => write!(f, "Read timeout on endpoint URL: \"{url}\""),
-        TransportError::ConnectionClosed => write!(
-            f,
-            "Connection was closed before we received a valid response from endpoint URL: \
-             \"{url}\"."
-        ),
-        TransportError::Tls { reason } => write!(f, "SSL validation failed for {url} {reason}"),
-        TransportError::Proxy { url: proxy } => {
-            write!(f, "Failed to connect to proxy URL: \"{proxy}\"")
-        }
-        TransportError::Client { reason } => {
-            write!(f, "An HTTP Client raised an unhandled exception: {reason}")
-        }
+        TransportError::Connect => f.write_str(&text::endpoint_connection(url)),
+        TransportError::ConnectTimeout => f.write_str(&text::connect_timeout(url)),
+        TransportError::ReadTimeout => f.write_str(&text::read_timeout(url)),
+        TransportError::ConnectionClosed => f.write_str(&text::connection_closed(url)),
+        TransportError::Tls { reason } => f.write_str(&text::ssl_validation(url, reason)),
+        TransportError::Proxy { url: proxy } => f.write_str(&String::from_utf8_lossy(
+            &text::proxy_connection(proxy.as_bytes()),
+        )),
+        TransportError::Client { reason } => f.write_str(&text::http_client(reason)),
         TransportError::Interrupted => f.write_str("the request was interrupted"),
     }
 }

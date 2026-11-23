@@ -12,7 +12,9 @@ client = { path = "../client" }
 [dev-dependencies]
 cli-core = { path = "../cli-core" }
 client = { path = "../client", features = ["testing"] }
+format = { path = "../format" }
 model = { path = "../model" }
+serde_json.workspace = true
 timestamp = { path = "../timestamp" }
 
 [lints]

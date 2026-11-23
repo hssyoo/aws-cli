@@ -11,7 +11,6 @@
 pub mod admit;
 pub mod bind;
 pub mod coverage;
-pub mod failure;
 pub mod invoke;
 pub mod source;
 

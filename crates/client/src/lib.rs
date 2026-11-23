@@ -30,7 +30,3 @@ pub mod xml;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
-
-// The parity test renders through `format`; the unit tests do not.
-#[cfg(test)]
-use format as _;

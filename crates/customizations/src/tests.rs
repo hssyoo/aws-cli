@@ -5,8 +5,10 @@ use client::error::ServiceError;
 use client::hooks::{CallContext, Hooks};
 use client::http::{Headers, HttpResponse};
 use client::retry::{Attempt, RetryDecision};
+use format as _;
 use model::shapes::Model;
 use model::value::Value;
+use serde_json as _;
 use std::time::Duration;
 use timestamp as _;
 

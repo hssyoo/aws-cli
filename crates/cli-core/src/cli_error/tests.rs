@@ -1003,3 +1003,49 @@ fn auto_prompt_hands_a_model_operation_to_python() {
     };
     assert_eq!(dispose_native(&environment), Some(PythonReason::AutoPrompt));
 }
+/// `_display_structured_error`: the enhanced format writes
+/// `EnhancedErrorFormatter`'s block after the error line; legacy returns
+/// before it, so the block is never written.
+#[test]
+fn details_follow_the_error_line_in_the_enhanced_format_only() {
+    let failure = CommandFailure {
+        code: "InvalidInputException".into(),
+        operation: "ListAssessmentRuns".into(),
+        message: b"bad input".to_vec(),
+        details: Some(Box::new(Details(
+            b"\nAdditional error details:\ncanRetry: False\n".to_vec(),
+        ))),
+        ..CommandFailure::new(Category::ClientError)
+    };
+    assert_eq!(
+        formatted(&failure, ErrorFormat::Enhanced),
+        "\naws: [ERROR]: An error occurred (InvalidInputException) when calling the \
+         ListAssessmentRuns operation: bad input\n\nAdditional error details:\ncanRetry: False\n"
+    );
+    assert_eq!(
+        formatted(&failure, ErrorFormat::Legacy),
+        "\naws: [ERROR]: An error occurred (InvalidInputException) when calling the \
+         ListAssessmentRuns operation: bad input\n"
+    );
+}
+
+/// NoRegionErrorHandler and PagerErrorHandler frame their own code; the
+/// interrupt handler writes nothing to stderr.
+#[test]
+fn configuration_failures_name_their_handler_s_code() {
+    let failure = CommandFailure {
+        code: "NoRegion".into(),
+        message: b"You must specify a region.".to_vec(),
+        ..CommandFailure::new(Category::Configuration)
+    };
+    assert_eq!(
+        formatted(&failure, ErrorFormat::Enhanced),
+        "\naws: [ERROR]: An error occurred (NoRegion): You must specify a region.\n"
+    );
+    assert_eq!(
+        formatted(&failure, ErrorFormat::Legacy),
+        "\naws: [ERROR]: You must specify a region.\n"
+    );
+    let interrupt = CommandFailure::new(Category::Interrupt);
+    assert_eq!(formatted(&interrupt, ErrorFormat::Enhanced), "");
+}

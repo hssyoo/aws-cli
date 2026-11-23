@@ -88,7 +88,6 @@ dependencies = [
  "cli-core",
  "credentials",
  "crt",
- "format",
  "model",
  "serde_json",
  "sigv4",
@@ -161,7 +160,9 @@ version = "0.1.0"
 dependencies = [
  "cli-core",
  "client",
+ "format",
  "model",
+ "serde_json",
  "timestamp",
 ]
 
@@ -386,6 +387,19 @@ dependencies = [
  "format",
  "model",
  "pyload",
+ "service-errors",
+]
+
+[[package]]
+name = "service-errors"
+version = "0.1.0"
+dependencies = [
+ "cli-core",
+ "client",
+ "credentials",
+ "format",
+ "model",
+ "timestamp",
 ]
 
 [[package]]

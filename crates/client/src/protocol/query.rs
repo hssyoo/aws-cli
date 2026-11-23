@@ -91,12 +91,13 @@ impl Form {
         }
     }
 
-    /// `percent_encode_sequence`.
+    /// The body on the wire: `AWSRequestPreparer._prepare_body`'s
+    /// `urlencode(params, doseq=True)` of the serializer's dict.
     fn encoded(&self) -> String {
         let pairs: Vec<String> = self
             .0
             .iter()
-            .map(|(name, value)| format!("{}={}", percent_encode(name), percent_encode(value)))
+            .map(|(name, value)| format!("{}={}", quote_plus(name), quote_plus(value)))
             .collect();
         pairs.join("&")
     }
@@ -272,13 +273,15 @@ fn truthy(value: &Value) -> bool {
     }
 }
 
-/// `botocore.utils.percent_encode`: UTF-8, every byte but letters, digits
-/// and `-_.~` as `%XX`.
-pub(super) fn percent_encode(text: &str) -> String {
+/// `urllib.parse.quote_plus` with no extra safe characters: UTF-8, a
+/// space as `+`, and every byte but letters, digits and `-_.~` as `%XX`.
+fn quote_plus(text: &str) -> String {
     let mut encoded = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
             encoded.push(char::from(byte));
+        } else if byte == b' ' {
+            encoded.push('+');
         } else {
             encoded.push_str(&format!("%{byte:02X}"));
         }

@@ -307,7 +307,7 @@ pub struct CommandFailure {
     pub crt_code: i32,
     /// The CRT error name for `crt_code`, resolved while the library was
     /// live; empty when none.
-    pub crt_name: String,
+    pub crt_name: Box<str>,
     /// The HTTP status of the final response, or zero when none arrived.
     pub http_status: i32,
     /// The retries botocore made before its attempts ran out, which a
@@ -315,19 +315,28 @@ pub struct CommandFailure {
     /// A `u32` keeps the failure small enough to return, and no listing
     /// makes more retries than it holds.
     pub retries_exhausted: Option<u32>,
+    /// `EnhancedErrorFormatter`'s block, written after the error line in
+    /// the enhanced format only, as `_display_structured_error` writes it;
+    /// `None` for none. Boxed, so the failure stays small to return.
+    pub details: Option<Box<Details>>,
 }
+/// `EnhancedErrorFormatter.format_error`'s output:
+/// `\nAdditional error details:\n` and its lines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Details(pub Vec<u8>);
 impl CommandFailure {
     /// A failure `category` claims, with every other field empty.
-    pub const fn new(category: Category) -> Self {
+    pub fn new(category: Category) -> Self {
         Self {
             category,
             code: String::new(),
             message: Vec::new(),
             operation: String::new(),
             crt_code: 0,
-            crt_name: String::new(),
+            crt_name: Box::default(),
             http_status: 0,
             retries_exhausted: None,
+            details: None,
         }
     }
 }
@@ -404,39 +413,46 @@ pub fn render_command_failure(
     failure: &CommandFailure,
     format: ErrorFormat,
 ) -> io::Result<()> {
-    if failure.category == Category::General {
-        return write_error(writer, trim_bytes(&failure.message));
+    match failure.category {
+        Category::General => return write_error(writer, trim_bytes(&failure.message)),
+        // InterruptExceptionHandler writes only its newline, to stdout.
+        Category::Interrupt => return Ok(()),
+        _ => {}
     }
     let mut text = Vec::new();
     write_command_failure_text(&mut text, failure, format);
     // format_error_message strips the composed text, so a message keeps its
     // leading whitespace behind a code and its trailing whitespace ahead of
     // a handler's suffix.
-    write_error(writer, trim_bytes(&text))
+    write_error(writer, trim_bytes(&text))?;
+    if let (ErrorFormat::Enhanced, Some(details)) = (format, &failure.details) {
+        writer.write_all(&details.0)?;
+    }
+    Ok(())
 }
 #[expect(
     clippy::unreachable,
-    reason = "the general category renders before composing text, and no caller builds an \
-              interrupt failure"
+    reason = "the general and interrupt categories render before composing text"
 )]
 fn write_command_failure_text(text: &mut Vec<u8>, failure: &CommandFailure, format: ErrorFormat) {
     match failure.category {
-        Category::ClientError => {
-            text.extend_from_slice(
-                format!(
-                    "An error occurred ({}) when calling the {} operation",
-                    failure.code, failure.operation
-                )
-                .as_bytes(),
-            );
-            if let Some(retries) = failure.retries_exhausted {
-                text.extend_from_slice(format!(" (reached max retries: {retries})").as_bytes());
-            }
-            text.extend_from_slice(b": ");
-            text.extend_from_slice(&failure.message);
-        }
+        Category::ClientError => text.extend_from_slice(&crate::botocore_error::client_error(
+            failure.code.as_bytes(),
+            failure.operation.as_bytes(),
+            failure.retries_exhausted.map(u64::from),
+            &failure.message,
+        )),
         Category::ParamValidation => write_coded_text(text, format, "ParamValidation", failure, ""),
-        Category::Configuration => write_coded_text(text, format, "Configuration", failure, ""),
+        // NoRegionErrorHandler and PagerErrorHandler share the status and
+        // name their own code.
+        Category::Configuration => {
+            let code = if failure.code.is_empty() {
+                "Configuration"
+            } else {
+                failure.code.as_str()
+            };
+            write_coded_text(text, format, code, failure, "");
+        }
         Category::NoCredentials => write_coded_text(
             text,
             format,
