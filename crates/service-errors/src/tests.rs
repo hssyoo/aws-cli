@@ -1,7 +1,7 @@
 //! `EnhancedErrorFormatter`'s rules where no captured case reaches them;
 //! each expectation is what errorhandler.py 51-103 writes for the value.
 use super::*;
-use timestamp as _;
+use {credentials as _, timestamp as _};
 
 fn info(pairs: Vec<(&str, Value)>) -> Map {
     let mut map = Map::new();

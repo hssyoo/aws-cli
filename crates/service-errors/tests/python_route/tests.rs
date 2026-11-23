@@ -256,12 +256,15 @@ fn native_failure(case: &Value) -> TestResult<CommandFailure> {
     }
     if text(case, "service").is_none() {
         // The process provider's failure as the credentials crate words
-        // it, for the helper's stderr (`credentials::process`).
+        // it, for the helper's stderr (`credentials::process`), reaching
+        // the client's call as the model client's chain hands it over.
         let error = credentials::LoadError::CredentialRetrieval {
             provider: "custom-process",
             error_msg: "boom\n".into(),
         };
-        return Ok(service_errors::credentials_failure(&error));
+        let (model, _) = service_data("sts")?;
+        let error = CallError::Credentials(error.to_string());
+        return Ok(service_errors::call_failure(&error, &model));
     }
     let (error, model) = native_error(case)?;
     Ok(service_errors::call_failure(&error, &model))

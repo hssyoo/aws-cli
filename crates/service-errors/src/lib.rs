@@ -75,16 +75,6 @@ pub fn call_failure(error: &CallError, model: &Model) -> CommandFailure {
     }
 }
 
-/// A credential provider's failure as the chain loads credentials, before
-/// any client: botocore's exception, which the general handler prints
-/// (255), as `credentials` words it.
-pub fn credentials_failure(error: &credentials::LoadError) -> CommandFailure {
-    CommandFailure {
-        message: error.to_string().into_bytes(),
-        ..CommandFailure::new(Category::General)
-    }
-}
-
 /// `LazyPager`'s failure to start the pager: a missing program is
 /// `PagerInitializationException` (`PagerErrorHandler`, 253, code
 /// `Pager`), and an empty command's `IndexError` the general handler's

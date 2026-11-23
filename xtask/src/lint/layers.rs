@@ -97,7 +97,7 @@ const MODEL_TOOLS: &[&str] = &[
     "pyload",
     "service-command",
 ];
-const SERVICE_ERRORS: &[&str] = &["cli-core", "client", "credentials", "format", "model"];
+const SERVICE_ERRORS: &[&str] = &["cli-core", "client", "format", "model"];
 const SERVICE_COMMAND: &[&str] = &[
     "awscli-argparse",
     "awscli-config",
