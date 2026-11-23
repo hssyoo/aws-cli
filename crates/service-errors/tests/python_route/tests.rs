@@ -58,9 +58,10 @@ fn text<'a>(case: &'a Value, name: &str) -> Option<&'a str> {
 }
 
 fn strings(case: &Value, name: &str) -> Vec<String> {
-    case.get(name)
-        .and_then(Value::as_list)
-        .unwrap_or_default()
+    let Some(Value::List(items)) = case.get(name) else {
+        return Vec::new();
+    };
+    items
         .iter()
         .filter_map(Value::as_str)
         .map(str::to_owned)

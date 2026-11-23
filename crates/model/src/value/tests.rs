@@ -91,7 +91,7 @@ fn json_python_rejects_is_rejected() {
 /// properties, error bodies and rule sets need them.
 #[test]
 fn accessors_read_their_kind_and_nothing_else() -> Result<()> {
-    let value = Value::from_json(br#"{"a": {"b": "text"}, "l": ["x"], "n": 1}"#)?;
+    let value = Value::from_json(br#"{"a": {"b": "text"}, "n": 1}"#)?;
     assert_eq!(
         value
             .get("a")
@@ -99,14 +99,9 @@ fn accessors_read_their_kind_and_nothing_else() -> Result<()> {
             .and_then(Value::as_str),
         Some("text")
     );
-    let list = value.get("l").and_then(Value::as_list).ok_or("list")?;
-    assert_eq!(list.first().and_then(Value::as_str), Some("x"));
-    assert!(value.as_map().is_some_and(|map| map.len() == 3));
+    assert!(value.as_map().is_some_and(|map| map.len() == 2));
     let number = value.get("n").ok_or("n")?;
-    assert_eq!(
-        (number.as_str(), number.as_map(), number.as_list()),
-        (None, None, None)
-    );
+    assert_eq!((number.as_str(), number.as_map()), (None, None));
     assert!(number.get("x").is_none() && value.get("missing").is_none());
     Ok(())
 }
