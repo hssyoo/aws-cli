@@ -88,7 +88,7 @@ pub(super) fn parse_error(
         return Err(ParseError::new("'NoneType' object has no attribute 'get'"));
     };
     let code = match parsed.get("Error") {
-        Some(Value::Map(error)) => error.get("Code").and_then(text_value),
+        Some(Value::Map(error)) => error.get("Code").and_then(Value::as_str).map(str::to_owned),
         _ => None,
     };
     if let Some(shape) = code
@@ -105,13 +105,6 @@ pub(super) fn parse_error(
     Ok(service_error(&operation.name, response, parsed))
 }
 
-fn text_value(value: &Value) -> Option<String> {
-    match value {
-        Value::String(text) => Some(text.clone()),
-        _ => None,
-    }
-}
-
 /// The parsed error response as `ClientError` holds it.
 fn service_error(operation: &str, response: &HttpResponse, parsed: Map) -> ServiceError {
     let mut error = ServiceError::new(operation, response.status);
@@ -120,7 +113,10 @@ fn service_error(operation: &str, response: &HttpResponse, parsed: Map) -> Servi
         match (key.as_str(), value) {
             ("Error", Value::Map(map)) => error.error = map,
             ("ResponseMetadata", Value::Map(metadata)) => {
-                error.request_id = metadata.get("RequestId").and_then(text_value);
+                error.request_id = metadata
+                    .get("RequestId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
             }
             (_, value) => {
                 error.members.insert(key, value);

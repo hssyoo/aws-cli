@@ -99,7 +99,7 @@ pub fn classify(model: &Model, operation: &Operation, attempt: &Attempt<'_>) -> 
 fn modeled_retryable(model: &Model, operation: &Operation, code: &str) -> Option<ErrorKind> {
     operation.errors.iter().find_map(|&shape| {
         let retryable = model.shape(shape).traits.retryable.as_ref()?;
-        (error_code(model, shape) == code).then_some(if retryable.throttling {
+        (model.error_code(shape) == Some(code)).then_some(if retryable.throttling {
             ErrorKind::Throttling
         } else {
             ErrorKind::Transient
@@ -112,19 +112,7 @@ fn is_modeled(model: &Model, operation: &Operation, code: &str) -> bool {
     operation
         .errors
         .iter()
-        .any(|&shape| error_code(model, shape) == code)
-}
-
-/// `_matches_error_code`: the shape's `error.code`, else its name.
-fn error_code(model: &Model, shape: model::shapes::ShapeId) -> &str {
-    let shape = model.shape(shape);
-    shape
-        .traits
-        .error
-        .as_ref()
-        .and_then(|error| error.code.as_deref())
-        .filter(|code| !code.is_empty())
-        .unwrap_or(&shape.name)
+        .any(|&shape| model.error_code(shape) == Some(code))
 }
 
 /// `ExponentialBackoff._get_retry_after_delay`: `x-amz-retry-after` in
