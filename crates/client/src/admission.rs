@@ -18,6 +18,8 @@ pub enum Unsupported {
     Validation(Undecided),
     /// An operation trait the client does not implement.
     Trait(&'static str),
+    /// A partition `regionRegex` the native variant check cannot read.
+    RegionPattern,
     /// A protocol not implemented, as botocore resolves it for the model.
     Protocol(String),
 }
@@ -30,6 +32,7 @@ impl std::fmt::Display for Unsupported {
             Self::Auth(name) => write!(f, "the auth type {name}"),
             Self::Validation(undecided) => write!(f, "a validation of {undecided:?}"),
             Self::Trait(name) => write!(f, "the {name} trait"),
+            Self::RegionPattern => f.write_str("a partition region pattern"),
             Self::Protocol(name) => write!(f, "the {name} protocol"),
         }
     }

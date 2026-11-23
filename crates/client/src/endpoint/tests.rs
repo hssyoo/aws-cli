@@ -311,11 +311,25 @@ fn variant_cases() -> Vec<Value> {
             ("mars-1", fips),
             ("mars-1", dual),
         ] {
-            cases.push(case(service, operation, Some(region), use_fips, dualstack, None));
+            cases.push(case(
+                service,
+                operation,
+                Some(region),
+                use_fips,
+                dualstack,
+                None,
+            ));
         }
     }
     cases.extend([
-        case("sts", "GetCallerIdentity", None, Some(true), Some(true), None),
+        case(
+            "sts",
+            "GetCallerIdentity",
+            None,
+            Some(true),
+            Some(true),
+            None,
+        ),
         case(
             "sts",
             "GetCallerIdentity",
@@ -324,7 +338,14 @@ fn variant_cases() -> Vec<Value> {
             Some(true),
             Some("http://localhost:4566"),
         ),
-        case("sts", "GetCallerIdentity", Some("fips-eu-isoe-west-1"), None, None, None),
+        case(
+            "sts",
+            "GetCallerIdentity",
+            Some("fips-eu-isoe-west-1"),
+            None,
+            None,
+            None,
+        ),
     ]);
     cases
 }
@@ -400,20 +421,23 @@ fn native(case: &Value) -> TestResult<Value> {
         signing: true,
     });
     let mut result = Map::new();
-    let outcome = config.check(&data).and_then(|()| config.builtins(&data)).and_then(|builtins| {
-        let operation = model
-            .operation(text(case, "operation").unwrap_or_default())
-            .ok_or_else(|| CallError::Endpoint("no operation".into()))?;
-        let params = provider_params(
-            &data,
-            &model,
-            operation,
-            &Value::Map(Map::new()),
-            &builtins,
-            || None,
-        );
-        resolve(&data, &params)
-    });
+    let outcome = config
+        .check(&data)
+        .and_then(|()| config.builtins(&data))
+        .and_then(|builtins| {
+            let operation = model
+                .operation(text(case, "operation").unwrap_or_default())
+                .ok_or_else(|| CallError::Endpoint("no operation".into()))?;
+            let params = provider_params(
+                &data,
+                &model,
+                operation,
+                &Value::Map(Map::new()),
+                &builtins,
+                || None,
+            );
+            resolve(&data, &params)
+        });
     match outcome {
         Ok(endpoint) => {
             let signing = endpoint.signing_context().map_err(|e| e.to_string())?;
