@@ -1,7 +1,8 @@
 //! The differential test: awscli's `JSONFormatter`, `TextFormatter` and
 //! `iso_format` in the harness venv's Python against this crate, over the
-//! corpus below. Python produces every expected byte at test time
-//! (`oracle.py`); nothing expected is committed.
+//! corpus below, and `TextFormatter` over paginated responses. Python
+//! produces every expected byte at test time (`oracle.py`); nothing
+//! expected is committed.
 use super::*;
 use model::value::Map;
 use std::path::PathBuf;
@@ -33,6 +34,77 @@ const RESPONSES: &str = r#"[
   {"List": [[1, [2, [3]]], {"a": 1}]},
   ["bare", 1, null],
   "scalar"
+]"#;
+
+/// Paginated responses: a `PageIterator`'s pages, its result keys and
+/// non-aggregate keys as the paginators file gives them, its resume token,
+/// and the failure that ends its pages. The dotted keys are athena's
+/// GetQueryResults, devops-guru's GetResourceCollection and ecr's
+/// DescribeImageScanFindings.
+const PAGES: &str = r#"[
+  {"result_keys": ["Things"], "non_aggregate_keys": [], "resume_token": null, "fail": null,
+   "pages": [{"Things": ["a", "b"], "NextToken": "t1"}, {"Things": ["c"]}]},
+  {"result_keys": ["Things"], "non_aggregate_keys": [],
+   "resume_token": "eyJOZXh0VG9rZW4iOiAidDIifQ==", "fail": null,
+   "pages": [{"Things": [{"Name": "a", "Size": 1}, {"Name": "b", "Tags": ["x"]}],
+              "NextToken": "t1"},
+             {"Things": []}]},
+  {"result_keys": ["Things"], "non_aggregate_keys": [], "resume_token": "", "fail": null,
+   "pages": [{"Things": ["a"]}]},
+  {"result_keys": ["ResultSet.Rows"],
+   "non_aggregate_keys": ["ResultSet.ResultSetMetadata", "UpdateCount"],
+   "resume_token": null, "fail": null,
+   "pages": [{"ResultSet": {"Rows": [{"Data": [{"VarCharValue": "x"}]}],
+                            "ResultSetMetadata": {"ColumnInfo": [{"Name": "c", "Type": "t"}]}},
+              "UpdateCount": 0, "NextToken": "n"},
+             {"ResultSet": {"Rows": [{"Data": [{"VarCharValue": "y"}]}],
+                            "ResultSetMetadata": {"ColumnInfo": [{"Name": "c", "Type": "t"}]}},
+              "UpdateCount": 0}]},
+  {"result_keys": ["ResourceCollection.CloudFormation.StackNames", "ResourceCollection.Tags"],
+   "non_aggregate_keys": ["ResourceCollection"], "resume_token": null, "fail": null,
+   "pages": [{"ResourceCollection": {"Tags": [{"AppBoundaryKey": "k", "TagValues": ["v"]}]},
+              "NextToken": "n"},
+             {"ResourceCollection": {"CloudFormation": {"StackNames": ["s1", "s2"]}}}]},
+  {"result_keys": ["ResourceCollection.CloudFormation.StackNames", "ResourceCollection.Tags"],
+   "non_aggregate_keys": ["ResourceCollection"], "resume_token": null, "fail": null,
+   "pages": [{"NextToken": "n"}, {"ResourceCollection": {}}]},
+  {"result_keys": ["imageScanFindings.findings", "imageScanFindings.enhancedFindings"],
+   "non_aggregate_keys": ["registryId", "imageScanFindings"], "resume_token": null, "fail": null,
+   "pages": [{"registryId": "r"}]},
+  {"result_keys": ["imageScanFindings.findings", "imageScanFindings.enhancedFindings"],
+   "non_aggregate_keys": ["registryId", "imageScanFindings"], "resume_token": null, "fail": null,
+   "pages": [{"registryId": "r", "imageScanFindings": {"findings": [{"name": "f"}],
+              "imageScanCompletedAt": {"$datetime": 0}}},
+             {"imageScanFindings": {"enhancedFindings": [{"type": "e"}]}}]},
+  {"result_keys": ["Alarms", "Composite"], "non_aggregate_keys": [], "resume_token": null,
+   "fail": null,
+   "pages": [{"Alarms": [{"N": 1}]}, {"Composite": [{"N": 2}]}, {}]},
+  {"result_keys": ["Output", "Count"], "non_aggregate_keys": [], "resume_token": "tok",
+   "fail": null,
+   "pages": [{"Output": "abc", "Count": 3}, {"Output": "d\u00e9f \u4e2d", "Count": 4}]},
+  {"result_keys": ["Things"], "non_aggregate_keys": [], "resume_token": "tok",
+   "fail": "An error occurred (Boom) when calling the ListThings operation: no",
+   "pages": [{"Things": ["a"]}, {"Things": ["b"]}]},
+  {"result_keys": ["Things"], "non_aggregate_keys": [], "resume_token": null, "fail": "first",
+   "pages": []},
+  {"result_keys": ["Mixed"], "non_aggregate_keys": [], "resume_token": null, "fail": null,
+   "pages": [{"Mixed": ["s"]}, {"Mixed": [{"k": 1}, "s"]}, {"Mixed": ["t"]}]},
+  {"result_keys": ["A.B.C"], "non_aggregate_keys": ["A"], "resume_token": null, "fail": null,
+   "pages": [{"A": "xBy"}]},
+  {"result_keys": ["A.B.C"], "non_aggregate_keys": ["A"], "resume_token": null, "fail": null,
+   "pages": [{"A": "xyz"}]},
+  {"result_keys": ["A.B"], "non_aggregate_keys": ["A"], "resume_token": null, "fail": null,
+   "pages": [{"A": [1]}]},
+  {"result_keys": ["A.B.C"], "non_aggregate_keys": ["A"], "resume_token": null, "fail": null,
+   "pages": [{"A": {"$bytes": "AAE="}}]},
+  {"result_keys": ["A.B"], "non_aggregate_keys": ["A"], "resume_token": null, "fail": null,
+   "pages": [{"A": {"$bytes": "AAE="}}]},
+  {"result_keys": ["A.B.C"], "non_aggregate_keys": ["A"], "resume_token": null, "fail": null,
+   "pages": [{"A": {"$datetime": 0}}]},
+  {"result_keys": ["A.B"], "non_aggregate_keys": ["A"], "resume_token": null, "fail": null,
+   "pages": [{"A": 5}]},
+  {"result_keys": ["A.B.C"], "non_aggregate_keys": ["A"], "resume_token": null, "fail": null,
+   "pages": [{"A": true}]}
 ]"#;
 
 /// Wire timestamps as the query (text) and json (numbers, text) protocols
@@ -79,7 +151,7 @@ fn oracle(corpus: &str, zone: &str) -> Result<serde_json::Value> {
 fn corpus() -> String {
     let long = "x".repeat(100_000) + "é";
     let responses = RESPONSES.replace("\"LONG\"", &format!("\"{long}\""));
-    format!(r#"{{"responses": {responses}, "timestamps": {TIMESTAMPS}}}"#)
+    format!(r#"{{"responses": {responses}, "timestamps": {TIMESTAMPS}, "pages": {PAGES}}}"#)
 }
 
 /// `oracle.py`'s `decode`.
@@ -158,6 +230,74 @@ fn json_and_text_match_awscli_s_formatters() -> Result<()> {
         let actual = rust_row(&decode(response.clone()));
         if &actual != wanted {
             differences.push(format!("response {index}: rust {actual} python {wanted}"));
+        }
+    }
+    assert!(differences.is_empty(), "{}", differences.join("\n"));
+    Ok(())
+}
+
+/// The listed pages of one corpus case.
+fn listed(case: &Value) -> Option<crate::pages::tests::Listed> {
+    let Value::Map(case) = case else {
+        return None;
+    };
+    let strings = |name: &str| match case.get(name) {
+        Some(Value::List(items)) => items
+            .iter()
+            .filter_map(|item| match item {
+                Value::String(text) => Some(text.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
+    let text = |name: &str| match case.get(name) {
+        Some(Value::String(text)) => Some(text.clone()),
+        _ => None,
+    };
+    let Some(Value::List(pages)) = case.get("pages") else {
+        return None;
+    };
+    let mut listed =
+        crate::pages::tests::Listed::new(pages.iter().cloned().map(decode).collect(), &[]);
+    listed.result_keys = strings("result_keys");
+    listed.non_aggregate_keys = strings("non_aggregate_keys");
+    listed.resume_token = text("resume_token");
+    listed.fail = text("fail");
+    Some(listed)
+}
+
+fn rust_pages(mut listed: crate::pages::tests::Listed) -> serde_json::Value {
+    let mut out = String::new();
+    let result = crate::pages::text(&mut listed, &mut |text| {
+        out.push_str(text);
+        Ok(())
+    });
+    let error = match result {
+        Ok(()) => return serde_json::json!({ "ok": out }),
+        Err(crate::pages::Stopped::Page(error)) => error,
+        Err(crate::pages::Stopped::Format(error)) => error.message,
+        Err(crate::pages::Stopped::Write(error)) => error.to_string(),
+    };
+    serde_json::json!({ "error": error, "written": out })
+}
+
+/// `TextFormatter` over each paginated case: the text written page by
+/// page, and on a failure what was written before it and the failure.
+#[test]
+#[ignore = "runs under cargo xtask parity"]
+fn paginated_text_matches_awscli_s_text_formatter() -> Result<()> {
+    let expected = oracle(&corpus(), "UTC")?;
+    let expected = expected["pages"].as_array().ok_or("expected pages")?;
+    let Value::List(cases) = Value::from_json(PAGES.as_bytes())? else {
+        return Err("pages".into());
+    };
+    assert_eq!(cases.len(), expected.len());
+    let mut differences = Vec::new();
+    for (index, (case, wanted)) in cases.iter().zip(expected).enumerate() {
+        let actual = rust_pages(listed(case).ok_or("case")?);
+        if &actual != wanted {
+            differences.push(format!("case {index}: rust {actual} python {wanted}"));
         }
     }
     assert!(differences.is_empty(), "{}", differences.join("\n"));

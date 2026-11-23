@@ -96,11 +96,16 @@ pub static CLI: &[Row] = &[
     Row {
         pattern: "building-argument-table",
         entry: "awscli.customizations.paginate.register_pagination",
-        basis: Basis::Inert {
-            acts_when: "the operation has a paginator: unify_paging_params returns for one \
-                        without (paginate.py:133-145)",
-            refused_as: Some(PythonReason::UnsupportedTrait),
-            by: "admit::traits refuses a paginated operation",
+        basis: Basis::Native {
+            at: "unify_paging_params's table edits are the derived table's page options and \
+                 command::models::Paging; bind runs the handlers it registers \
+                 (check_should_enable_pagination, ensure_paging_params_not_set, \
+                 check_should_enable_pagination_call_parameters) and \
+                 PageArgument.add_to_params, and invoke pages through \
+                 client::paginate::PageIterator as _make_client_call does \
+                 (paginate.py:133-432, clidriver.py:1140); admission refuses a paginator \
+                 entry the native paginator does not run. Its doc-description handler \
+                 writes help, which is Python's",
         },
     },
     Row {

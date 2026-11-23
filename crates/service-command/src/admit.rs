@@ -4,14 +4,16 @@
 //! decide alone comes first (the protocol, the traits, then the
 //! customizations), so an operation's verdict on those is the same whatever
 //! its arguments; the arguments' binding and validation come last.
+use crate::bind::Bound;
 use crate::coverage;
 use awscli_argparse::ParseResult;
-use cli_core::cli_error::PythonReason;
+use cli_core::cli_error::{CommandFailure, PythonReason};
 use client::hooks::Customization;
+use client::paginate::{Config, PaginationConfig, Refused};
 use command::models::{ModelSource, Service};
 use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
 use model::validate::{Validation, validate_input};
-use model::value::Value;
+use model::value::{Map, Value};
 
 /// An admitted invocation: what it calls, with what.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +28,24 @@ pub struct Admitted {
     /// The client's validation of `input`: `Valid`, or the report botocore
     /// would raise, which the invocation renders. Never `Undecided`.
     pub validation: Validation,
+    /// The paginator, when `_make_client_call` pages: the operation has one
+    /// (`client.can_paginate`) and paging stayed on
+    /// (`parsed_globals.paginate`).
+    pub paginated: Option<Paginated>,
+    /// `PageArgument.add_to_params` warns that `--max-items` is not
+    /// positive, before the call.
+    pub warned: bool,
+    /// What an `operation-args-parsed` handler raised before the request
+    /// was built, which the invocation reports in place of any call.
+    pub raised: Option<CommandFailure>,
+}
+
+/// `Paginator.paginate(**input, PaginationConfig=pagination)`'s paginator
+/// configuration and options.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Paginated {
+    pub config: Config,
+    pub pagination: PaginationConfig,
 }
 
 /// Admit the completed parse of `[command, operation]`, or name why Python
@@ -49,18 +69,42 @@ pub fn admit(
     let Some((service, operation, table)) = lookup() else {
         return Err(PythonReason::UnsupportedSubcommand);
     };
-    let input = crate::bind::bind(table, &parsed.values)?;
-    let validation = validate_input(&service.model, operation, &input);
-    if matches!(validation, Validation::Undecided(_)) {
-        return Err(PythonReason::UnsupportedValue);
+    let config = paginator(service, operation).transpose();
+    let Ok(config) = config else {
+        return Err(PythonReason::UnsupportedTrait);
+    };
+    if config.is_some() && table.paging.is_none() {
+        // unify_paging_params raises as it builds the table.
+        return Err(PythonReason::UnsupportedTrait);
     }
-    Ok(Admitted {
+    let mut admitted = Admitted {
         command: command.to_owned(),
         service: service.name.clone(),
         operation: operation.name.to_string(),
-        input,
-        validation,
-    })
+        input: Value::Map(Map::new()),
+        validation: Validation::Valid,
+        paginated: None,
+        warned: false,
+        raised: None,
+    };
+    let call = match crate::bind::bind(table, parsed)? {
+        Bound::Call(call) => call,
+        Bound::Raised(failure) => {
+            admitted.raised = Some(failure);
+            return Ok(admitted);
+        }
+    };
+    let validation = validate_input(&service.model, operation, &call.input);
+    if matches!(validation, Validation::Undecided(_)) {
+        return Err(PythonReason::UnsupportedValue);
+    }
+    admitted.paginated = config
+        .zip(call.pagination)
+        .map(|(config, pagination)| Paginated { config, pagination });
+    admitted.input = call.input;
+    admitted.validation = validation;
+    admitted.warned = call.warned;
+    Ok(admitted)
 }
 
 /// The stages decided by the model and the patterns alone, whatever the
@@ -91,12 +135,22 @@ pub fn operation(
     Ok(())
 }
 
+/// The operation's paginator, as `client.get_paginator` reads its entry in
+/// the paginators file; `None` when it has none (`client.can_paginate`).
+///
+/// # Errors
+/// [`Refused`]: an entry the native paginator does not run.
+pub fn paginator(service: &Service, operation: &Operation) -> Option<Result<Config, Refused>> {
+    let entry = service.paginator(&operation.name)?;
+    Some(Config::from_value(&Value::from_serde(entry)))
+}
+
 /// A trait of the operation the native route does not implement: a
-/// paginator (`CLIOperationCaller._make_client_call` paginates), an event
-/// stream, a streaming member or a blob payload at either end
-/// (`has_event_stream_input`, `has_streaming_output` and their kin read the
-/// top-level members and the payload), or
-/// one the client refuses before any request
+/// paginator whose entry the native paginator refuses (an expression
+/// beyond member names and dotted paths), an event stream, a streaming
+/// member or a blob payload at either end (`has_event_stream_input`,
+/// `has_streaming_output` and their kin read the top-level members and the
+/// payload), or one the client refuses before any request
 /// (`client::admission::unimplemented_trait`: request checksums, required
 /// endpoint discovery, the endpoint operation, request compression). A
 /// document member is no refusal: the json protocols carry it both ways,
@@ -104,7 +158,7 @@ pub fn operation(
 pub fn unimplemented_trait(service: &Service, operation: &Operation) -> bool {
     let model = &service.model;
     client::admission::unimplemented_trait(operation).is_some()
-        || service.paginated(&operation.name)
+        || paginator(service, operation).is_some_and(|config| config.is_err())
         || [operation.input, operation.output]
             .into_iter()
             .flatten()

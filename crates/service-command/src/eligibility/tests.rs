@@ -1,9 +1,10 @@
 use super::*;
 use crate::testing::{Result, with_models};
 
-/// sts's caller identity is admitted with no arguments, an operation whose
-/// paginator reads its token with an expression (`Jobs[-1].JobId`) is
-/// refused, and the census over every service writes its counts to
+/// sts's caller identity and a paginated operation are admitted with no
+/// arguments, an operation whose paginator reads its token with an
+/// expression (`Jobs[-1].JobId`) is refused, and the census over every
+/// service writes its counts to
 /// `target/service-eligibility.txt` for the report.
 #[test]
 fn every_operation_has_a_standing() -> Result<()> {
@@ -11,6 +12,10 @@ fn every_operation_has_a_standing() -> Result<()> {
         let table = &customizations::TABLE[..];
         assert_eq!(
             standing(&models, table, "sts", "get-caller-identity"),
+            Standing::NoArguments
+        );
+        assert_eq!(
+            standing(&models, table, "zjson", "list-things"),
             Standing::NoArguments
         );
         assert_eq!(

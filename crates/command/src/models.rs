@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 pub mod dump;
 mod table;
 #[doc(inline)]
-pub use table::{DerivedArgument, Origin, Table, Unpack, ValueType, kind_name};
+pub use table::{DerivedArgument, Origin, Paging, Table, Unpack, ValueType, kind_name};
 
 type Json = serde_json::Value;
 
@@ -112,9 +112,12 @@ impl Service {
     /// `operation` (`get_paginator_config`, which `client.can_paginate`
     /// also reads).
     pub fn paginated(&self, operation: &str) -> bool {
-        self.pages
-            .as_ref()
-            .is_some_and(|pages| pages.get(operation).is_some())
+        self.paginator(operation).is_some()
+    }
+    /// The paginators file's entry for the model operation `operation`
+    /// (`PaginatorModel.get_paginator`).
+    pub fn paginator(&self, operation: &str) -> Option<&Json> {
+        self.pages.as_ref()?.get(operation)
     }
 }
 

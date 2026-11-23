@@ -6,7 +6,8 @@
 //! runtime nor the network: the output format, the pager, the timestamp
 //! parser, the credential chain, the client, and the client's own refusals
 //! ([`Client::prepare`]), any of which can still hand the invocation to
-//! Python. [`Invocation::run`] then sends the call.
+//! Python. [`Invocation::run`] then sends the call, or pages through the
+//! paginator's calls ([`paged`]).
 use crate::admit::Admitted;
 use cli_core::cli_error::{CommandFailure, PythonReason};
 use cli_core::client_config::{ClientSettings, Trust};
@@ -136,10 +137,15 @@ impl Invocation for ServiceInvocation {
         let failure = |error: CallError| service_errors::call_failure(&error, &self.model);
         let client = match self.client(cx)? {
             Ok(Ok(client)) => {
-                match client.prepare(&self.admitted.operation, self.admitted.input.clone()) {
-                    Err(CallError::Unsupported(_)) => return Err(PythonReason::UnsupportedTrait),
-                    Err(error) => Err(failure(error)),
-                    Ok(_) => Ok(client),
+                let prepared = self
+                    .first_request(&client)
+                    .map(|input| client.prepare(&self.admitted.operation, input).map(drop));
+                match prepared {
+                    Some(Err(CallError::Unsupported(_))) => {
+                        return Err(PythonReason::UnsupportedTrait);
+                    }
+                    Some(Err(error)) => Err(failure(error)),
+                    Some(Ok(())) | None => Ok(client),
                 }
             }
             Ok(Err(CallError::Unsupported(_))) => return Err(PythonReason::UnsupportedProtocol),
@@ -162,25 +168,68 @@ impl Invocation for ServiceInvocation {
 
     fn run(&self, cx: &mut Context<'_>) -> Result<u8, CommandFailure> {
         let Some(ready) = self.ready.get() else {
-            return Err(CommandFailure {
-                message: b"the invocation ran without its preflight".to_vec(),
-                ..CommandFailure::new(cli_core::cli_error::Category::General)
-            });
+            return Err(general(
+                b"the invocation ran without its preflight".to_vec(),
+            ));
         };
+        if let Some(raised) = &self.admitted.raised {
+            return Err(raised.clone());
+        }
+        if self.admitted.warned {
+            // uni_print writes to sys.stderr, which Python writes at once.
+            let warning = crate::bind::MAX_ITEMS_WARNING.as_bytes();
+            let _ = cx
+                .stderr
+                .write_all(warning)
+                .and_then(|()| cx.stderr.flush());
+        }
         let client = ready.client.as_ref().map_err(Clone::clone)?;
-        let output = match client.call(&self.admitted.operation, self.admitted.input.clone()) {
-            Ok(output) => output,
-            Err(CallError::Interrupted) => return Ok(interrupted(cx)),
-            Err(error) => return Err(service_errors::call_failure(&error, &self.model)),
+        if let Some(paginated) = &self.admitted.paginated {
+            return paged::run(self, cx, ready, client, paginated);
+        }
+        match client.call(&self.admitted.operation, self.admitted.input.clone()) {
+            Ok(output) => self.print(cx, ready, &output.value),
+            Err(error) => self.call_failed(cx, error),
+        }
+    }
+}
+
+impl ServiceInvocation {
+    /// The input of the first request: the call's, or the paginator's first
+    /// page's (`_inject_starting_params`). `None` when the paginator fails
+    /// before that request, which the run's first page reports.
+    fn first_request(&self, client: &Client) -> Option<Value> {
+        let Some(paginated) = &self.admitted.paginated else {
+            return Some(self.admitted.input.clone());
         };
-        let text = match format::render(&output.value, ready.format) {
+        client::paginate::PageIterator::new(
+            client,
+            &self.admitted.operation,
+            self.admitted.input.clone(),
+            paginated.config.clone(),
+            paginated.pagination.clone(),
+        )
+        .first_input()
+        .ok()
+    }
+
+    /// What the formatter writes for `response`, delivered where
+    /// `OutputStreamFactory` sends it.
+    fn print(
+        &self,
+        cx: &mut Context<'_>,
+        ready: &Ready,
+        response: &Value,
+    ) -> Result<u8, CommandFailure> {
+        let text = match format::render(response, ready.format) {
             Ok(text) => text,
             Err(partial) => {
-                let _ = cx.stdout.write_all(partial.written.as_bytes());
-                return Err(CommandFailure {
-                    message: partial.error.message.into_bytes(),
-                    ..CommandFailure::new(cli_core::cli_error::Category::General)
-                });
+                // TextFormatter flushes what it wrote before raising.
+                let _ = cx
+                    .stdout
+                    .write_all(partial.written.as_bytes())
+                    .and_then(|()| cx.stdout.flush());
+                return Err(general(partial.error.message.into_bytes()));
             }
         };
         let interrupt = cli_core::interrupt::process_state();
@@ -195,13 +244,27 @@ impl Invocation for ServiceInvocation {
             // JSONFormatter swallows a failed write; the exit-time flush then
             // reports the closed stream as the s3 commands' does.
             Ok(Delivered::Stdout(Err(_))) if ready.format.swallows_write_errors() => Ok(0),
-            Ok(Delivered::Stdout(Err(error))) => Err(CommandFailure {
-                message: error.to_string().into_bytes(),
-                ..CommandFailure::new(cli_core::cli_error::Category::General)
-            }),
+            Ok(Delivered::Stdout(Err(error))) => Err(general(error.to_string().into_bytes())),
             Ok(Delivered::Stdout(Ok(())) | Delivered::Paged(Outcome::Exited)) => Ok(0),
             Err(error) => Err(service_errors::pager_failure(&error)),
         }
+    }
+
+    /// What a failed call ends with: `KeyboardInterrupt`'s status, or the
+    /// failure botocore's exception is.
+    fn call_failed(&self, cx: &mut Context<'_>, error: CallError) -> Result<u8, CommandFailure> {
+        match error {
+            CallError::Interrupted => Ok(interrupted(cx)),
+            error => Err(service_errors::call_failure(&error, &self.model)),
+        }
+    }
+}
+
+/// `GeneralExceptionHandler`'s failure with `str()` of the exception.
+fn general(message: Vec<u8>) -> CommandFailure {
+    CommandFailure {
+        message,
+        ..CommandFailure::new(cli_core::cli_error::Category::General)
     }
 }
 
@@ -430,6 +493,12 @@ impl Transport for LazyTransport {
         request: &HttpRequest,
         timeouts: Timeouts,
     ) -> Result<HttpResponse, TransportError> {
+        // A Ctrl-C recorded while a paginated call fetches its pages: no
+        // further request starts, as KeyboardInterrupt ends Python's
+        // iteration (`paged`).
+        if cli_core::interrupt::process_state().is_requested() {
+            return Err(TransportError::Interrupted);
+        }
         let built = self.built.get_or_init(|| {
             let inputs = self.inputs.lock().ok().and_then(|mut inputs| inputs.take());
             let Some((trust, keep_alive, env, debug)) = inputs else {
@@ -450,6 +519,8 @@ impl Transport for LazyTransport {
         }
     }
 }
+
+mod paged;
 
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,8 @@
 //! A response printed as the Python CLI prints it: `--output json`, `text`
 //! and `off` (`awscli.formatter`, `awscli.text`), through the pager as
-//! `OutputStreamFactory` sends it, with the CLI's timestamp handling.
+//! `OutputStreamFactory` sends it, with the CLI's timestamp handling. A
+//! paginated response's text is written page by page ([`pages`]); its JSON
+//! is the full result's, which the paginator builds.
 //!
 //! `table`, `yaml` and `yaml-stream` stay on the Python route
 //! ([`OutputFormat::from_name`] knows only the three here).
@@ -9,6 +11,7 @@ use model::value::Value;
 
 pub mod json;
 pub mod pager;
+pub mod pages;
 pub mod text;
 pub mod timestamps;
 

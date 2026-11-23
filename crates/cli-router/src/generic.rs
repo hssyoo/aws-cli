@@ -38,6 +38,11 @@ pub(super) fn route<E: EnvMap>(
         if !config.registry.reproduces_failures(&names) {
             return Verdict::Python(PythonReason::UnsupportedSubcommand);
         }
+        if result.stage == awscli_argparse::chain::Stage::Unpack
+            && operation.precedes_unpack_failure(result)
+        {
+            return Verdict::Python(PythonReason::UnsupportedValue);
+        }
         return session_start(result, config).unwrap_or(Verdict::Failure(failure.clone()));
     }
     let verdict = admit(result, config, operation, unpack.directory);
