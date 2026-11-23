@@ -60,11 +60,12 @@ pub type OwnedTimestampHandler =
 pub type OwnedBlobHandler = std::sync::Arc<dyn Fn(&str) -> Result<Value, ParseError> + Send + Sync>;
 
 impl ParseHooks {
-    /// botocore's own handlers ([`ParseOptions::BOTOCORE`]).
+    /// botocore's own handlers ([`ParseOptions::BOTOCORE`], the one place
+    /// they are named).
     pub fn botocore() -> Self {
         Self {
-            timestamp: std::sync::Arc::new(common::parse_timestamp),
-            blob: std::sync::Arc::new(common::decode_blob),
+            timestamp: std::sync::Arc::new(ParseOptions::BOTOCORE.timestamp),
+            blob: std::sync::Arc::new(ParseOptions::BOTOCORE.blob),
         }
     }
     /// The handlers as one call's parse borrows them.
@@ -190,11 +191,6 @@ pub fn epoch_timestamps(model: &Model) -> Option<bool> {
     for_model(model).map(Protocol::epoch_timestamps)
 }
 
-/// Whether the protocol named `name` is implemented.
-pub fn is_implemented(name: &str) -> bool {
-    implemented_in(name, IMPLEMENTED)
-}
-
 /// The implementation of the protocol botocore speaks to `model`'s service;
 /// `None` when that protocol is not implemented, even if another the model
 /// lists is, or when the model has none.
@@ -211,10 +207,6 @@ fn select(
         .iter()
         .copied()
         .find(|protocol| protocol.name() == name)
-}
-
-fn implemented_in(name: &str, implemented: &[&'static dyn Protocol]) -> bool {
-    implemented.iter().any(|protocol| protocol.name() == name)
 }
 
 #[cfg(test)]

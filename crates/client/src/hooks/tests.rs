@@ -138,11 +138,11 @@ fn setting_defaults_apply_only_to_unset_settings() {
     assert_eq!(zquery.defaults().max_attempts(None), Some(4));
     assert_eq!(zquery.defaults().max_attempts(Some(2)), Some(2));
     assert_eq!(zquery.defaults().max_attempts(Some(1)), Some(1));
-    assert_eq!(zquery.defaults().retry_base_delay(None), None);
+    assert_eq!(zquery.defaults().retry_base_delay(), None);
     let zjson = Hooks::for_service(&TABLE, "zjson");
     assert_eq!(zjson.defaults().max_attempts(None), Some(5));
     assert_eq!(
-        zjson.defaults().retry_base_delay(None),
+        zjson.defaults().retry_base_delay(),
         Some(Duration::from_millis(25))
     );
     let none = Hooks::for_service(&TABLE, "unrelated");

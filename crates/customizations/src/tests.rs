@@ -27,14 +27,14 @@ fn dynamodb_s_retry_defaults_and_no_one_else_s() {
         assert_eq!(hooks.defaults().max_attempts(None), Some(4), "{service}");
         assert_eq!(hooks.defaults().max_attempts(Some(2)), Some(2), "{service}");
         assert_eq!(
-            hooks.defaults().retry_base_delay(None),
+            hooks.defaults().retry_base_delay(),
             Some(Duration::from_millis(25)),
             "{service}"
         );
     }
     let sts = Hooks::for_service(&TABLE, "sts");
     assert_eq!(sts.defaults().max_attempts(None), None);
-    assert_eq!(sts.defaults().retry_base_delay(None), None);
+    assert_eq!(sts.defaults().retry_base_delay(), None);
 }
 
 fn context_for<'a>(service: &'a str, model: &'a Model) -> Result<CallContext<'a>, &'static str> {

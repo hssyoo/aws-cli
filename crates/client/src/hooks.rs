@@ -336,10 +336,10 @@ impl Defaults {
     pub fn max_attempts(&self, configured: Option<u32>) -> Option<u32> {
         configured.or(self.max_attempts)
     }
-    /// The non-throttling backoff base: the configured one, else a
-    /// customization's, else unset.
-    pub fn retry_base_delay(&self, configured: Option<Duration>) -> Option<Duration> {
-        configured.or(self.retry_base_delay)
+    /// The non-throttling backoff base a customization supplies, else
+    /// unset; no setting configures it.
+    pub const fn retry_base_delay(&self) -> Option<Duration> {
+        self.retry_base_delay
     }
 }
 

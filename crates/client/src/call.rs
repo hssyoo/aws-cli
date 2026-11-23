@@ -128,7 +128,7 @@ impl Client {
             .defaults()
             .max_attempts(configured)
             .unwrap_or(DEFAULT_MAX_ATTEMPTS);
-        let base = hooks.defaults().retry_base_delay(None);
+        let base = hooks.defaults().retry_base_delay();
         let retry = Standard::new(max_attempts, base.unwrap_or(ErrorKind::Transient.base()));
         let region = parts.endpoint.client_region(&parts.endpoints)?;
         let timeouts = Timeouts {

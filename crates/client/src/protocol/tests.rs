@@ -102,8 +102,6 @@ fn an_implementation_is_chosen_for_the_resolved_protocol_only() {
     let query = metadata(Some("query"), None);
     assert_eq!(name(select(&query, only_query)), Some("query"));
     assert_eq!(name(select(&metadata(None, None), implemented)), None);
-    assert!(implemented_in("json", implemented));
-    assert!(!implemented_in("rest-json", implemented));
 }
 
 /// Every model in the repository's botocore data resolves to a protocol,
@@ -123,11 +121,6 @@ fn query_and_json_models_have_an_implementation() -> TestResult {
         assert!(resolved.is_ok(), "{service}: {resolved:?}");
         let expected = matches!(resolved, Ok("query" | "json"));
         assert_eq!(for_model(&model).is_some(), expected, "{service}");
-        assert_eq!(
-            is_implemented(resolved.unwrap_or_default()),
-            expected,
-            "{service}"
-        );
         implemented += usize::from(expected);
     }
     assert!(implemented > 100, "{implemented} implemented");
