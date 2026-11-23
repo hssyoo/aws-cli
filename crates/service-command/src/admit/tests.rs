@@ -51,7 +51,7 @@ fn each_stage_names_its_refusal() -> Result<()> {
             Some(PythonReason::UnsupportedTrait)
         );
         assert_eq!(
-            refused(&[], &["lambda", "list-functions"]),
+            refused(&[], &["s3api", "list-buckets"]),
             Some(PythonReason::UnsupportedProtocol)
         );
     })

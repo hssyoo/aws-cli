@@ -27,7 +27,7 @@ campaign.
 | `path_containment` | `s3::testing::path_containment` | Destination paths of any listing key stay under the root, or name its parent when the key does; temp names keep the parent and the name limit; absolute paths are absolute and idempotent |
 | `error_body` | `crt::s3::error_body::fuzz_read` | Fields of any body the reader accepts decode to UTF-8 |
 | `client_xml` | `client::testing::fuzz::xml` | `client::xml::parse` of any bytes gives a tree or expat's error, the same twice |
-| `protocol_responses` | `client::testing::fuzz::responses` | Any response (status, headers, body) to any operation of the fake query, json 1.0 and json 1.1 models parses, or fails as `ResponseParserError`, under botocore's and the CLI's parser defaults |
+| `protocol_responses` | `client::testing::fuzz::responses` | Any response (status, headers, body) to any operation of the fake query, json 1.0, json 1.1 and rest-json models parses, or fails as `ResponseParserError`, under botocore's and the CLI's parser defaults |
 | `model_json` | `model::fuzz::model_json` | `Model::from_json` of any bytes; a model it builds validates an empty input for each operation |
 | `model_validate` | `model::fuzz::validate` | `ParamValidator` of any JSON against every operation of the fake query and json models; a report prints |
 | `timestamp_text` | `timestamp::fuzz::parse` | Every timestamp reader over any text; each value read prints in its form and reads back as itself |

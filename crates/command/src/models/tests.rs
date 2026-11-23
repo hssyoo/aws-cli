@@ -297,7 +297,7 @@ fn the_matcher_adds_each_service_s_own_entries() -> Result<()> {
 fn the_fake_models_meet_only_cross_cutting_customizations() -> Result<()> {
     with_source(Some(fake_models()), |source| {
         let mut seen: Option<(String, Vec<String>)> = None;
-        for service in ["zquery", "zjson", "zjson11", "zglobal"] {
+        for service in ["zquery", "zjson", "zjson11", "zglobal", "zrestjson"] {
             let operations = source.operations(service).unwrap_or_default();
             assert!(!operations.is_empty(), "{service} has no operations");
             for operation in operations.iter() {

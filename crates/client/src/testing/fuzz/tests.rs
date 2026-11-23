@@ -9,10 +9,12 @@ const QUERY: &[u8] = include_bytes!("../../../../../tests/models/zquery/2020-01-
 const JSON: &[u8] = include_bytes!("../../../../../tests/models/zjson/2020-01-01/service-2.json");
 const JSON11: &[u8] =
     include_bytes!("../../../../../tests/models/zjson11/2020-01-01/service-2.json");
+const REST_JSON: &[u8] =
+    include_bytes!("../../../../../tests/models/zrestjson/2020-01-01/service-2.json");
 
 /// The fake models the response and validation targets read with.
 fn models() -> Vec<Model> {
-    [QUERY, JSON, JSON11]
+    [QUERY, JSON, JSON11, REST_JSON]
         .into_iter()
         .filter_map(|bytes| Model::from_json(bytes).ok())
         .collect()
@@ -68,7 +70,7 @@ fn the_xml_reader_target_replays() -> std::io::Result<()> {
 #[test]
 fn the_response_target_replays() -> std::io::Result<()> {
     let models = models();
-    assert_eq!(models.len(), 3);
+    assert_eq!(models.len(), 4);
     replay("protocol_responses", |bytes| responses(&models, bytes))
 }
 

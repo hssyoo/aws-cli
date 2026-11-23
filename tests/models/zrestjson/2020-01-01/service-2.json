@@ -1,0 +1,450 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zrestjson",
+    "protocol": "rest-json",
+    "protocols": [
+      "rest-json"
+    ],
+    "serviceFullName": "Fake zrestjson",
+    "serviceId": "Zrestjson",
+    "signatureVersion": "v4",
+    "uid": "zrestjson-2020-01-01"
+  },
+  "operations": {
+    "GetThing": {
+      "name": "GetThing",
+      "http": {
+        "method": "GET",
+        "requestUri": "/things/{ThingId}"
+      },
+      "input": {
+        "shape": "GetThingRequest"
+      },
+      "output": {
+        "shape": "GetThingResult"
+      },
+      "errors": [
+        {
+          "shape": "ThingNotFound"
+        }
+      ]
+    },
+    "GetItem": {
+      "name": "GetItem",
+      "http": {
+        "method": "GET",
+        "requestUri": "/items/{Id}/{Key+}"
+      },
+      "input": {
+        "shape": "GetItemRequest"
+      },
+      "output": {
+        "shape": "GetItemResult"
+      },
+      "errors": [
+        {
+          "shape": "ItemNotFound"
+        },
+        {
+          "shape": "ItemLocked"
+        }
+      ]
+    },
+    "PutItem": {
+      "name": "PutItem",
+      "http": {
+        "method": "POST",
+        "requestUri": "/items/{Id}",
+        "responseCode": 201
+      },
+      "input": {
+        "shape": "PutItemRequest"
+      },
+      "output": {
+        "shape": "PutItemResult"
+      },
+      "errors": [
+        {
+          "shape": "ItemLocked"
+        }
+      ]
+    },
+    "DeleteItem": {
+      "name": "DeleteItem",
+      "http": {
+        "method": "DELETE",
+        "requestUri": "/items/{Id}",
+        "responseCode": 204
+      },
+      "input": {
+        "shape": "DeleteItemRequest"
+      },
+      "errors": [
+        {
+          "shape": "ItemNotFound"
+        }
+      ]
+    },
+    "ListVersions": {
+      "name": "ListVersions",
+      "http": {
+        "method": "GET",
+        "requestUri": "/items/{Id}?versions"
+      },
+      "input": {
+        "shape": "ListVersionsRequest"
+      },
+      "output": {
+        "shape": "ListVersionsResult"
+      }
+    },
+    "Ping": {
+      "name": "Ping",
+      "http": {
+        "method": "GET",
+        "requestUri": "/ping"
+      },
+      "output": {
+        "shape": "PingResult"
+      }
+    }
+  },
+  "shapes": {
+    "String": {
+      "type": "string"
+    },
+    "Integer": {
+      "type": "integer"
+    },
+    "Long": {
+      "type": "long"
+    },
+    "Boolean": {
+      "type": "boolean"
+    },
+    "Timestamp": {
+      "type": "timestamp"
+    },
+    "StringList": {
+      "type": "list",
+      "member": {
+        "shape": "String"
+      }
+    },
+    "StringMap": {
+      "type": "map",
+      "key": {
+        "shape": "String"
+      },
+      "value": {
+        "shape": "String"
+      }
+    },
+    "Config": {
+      "type": "structure",
+      "members": {
+        "Depth": {
+          "shape": "Integer"
+        },
+        "Label": {
+          "shape": "String"
+        }
+      }
+    },
+    "GetThingRequest": {
+      "type": "structure",
+      "required": [
+        "ThingId"
+      ],
+      "members": {
+        "ThingId": {
+          "shape": "String",
+          "location": "uri",
+          "locationName": "ThingId"
+        }
+      }
+    },
+    "GetThingResult": {
+      "type": "structure",
+      "members": {
+        "ThingId": {
+          "shape": "String"
+        },
+        "Count": {
+          "shape": "Integer"
+        }
+      }
+    },
+    "GetItemRequest": {
+      "type": "structure",
+      "required": [
+        "Id",
+        "Key"
+      ],
+      "members": {
+        "Id": {
+          "shape": "String",
+          "location": "uri",
+          "locationName": "Id"
+        },
+        "Key": {
+          "shape": "String",
+          "location": "uri",
+          "locationName": "Key"
+        },
+        "Filter": {
+          "shape": "String",
+          "location": "querystring",
+          "locationName": "filter"
+        },
+        "Tags": {
+          "shape": "StringList",
+          "location": "querystring",
+          "locationName": "tag"
+        },
+        "Limit": {
+          "shape": "Integer",
+          "location": "querystring",
+          "locationName": "limit"
+        },
+        "Verbose": {
+          "shape": "Boolean",
+          "location": "querystring",
+          "locationName": "verbose"
+        },
+        "Trace": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-zrj-trace"
+        },
+        "Depth": {
+          "shape": "Integer",
+          "location": "header",
+          "locationName": "x-zrj-depth"
+        },
+        "Accepts": {
+          "shape": "StringList",
+          "location": "header",
+          "locationName": "x-zrj-accept"
+        },
+        "Meta": {
+          "shape": "StringMap",
+          "location": "headers",
+          "locationName": "x-zrj-meta-"
+        }
+      }
+    },
+    "GetItemResult": {
+      "type": "structure",
+      "members": {
+        "ETag": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "ETag"
+        },
+        "Revision": {
+          "shape": "Integer",
+          "location": "header",
+          "locationName": "x-zrj-revision"
+        },
+        "Fresh": {
+          "shape": "Boolean",
+          "location": "header",
+          "locationName": "x-zrj-fresh"
+        },
+        "LastModified": {
+          "shape": "Timestamp",
+          "location": "header",
+          "locationName": "Last-Modified"
+        },
+        "Status": {
+          "shape": "Integer",
+          "location": "statusCode"
+        },
+        "Meta": {
+          "shape": "StringMap",
+          "location": "headers",
+          "locationName": "x-zrj-meta-"
+        },
+        "Name": {
+          "shape": "String"
+        },
+        "Size": {
+          "shape": "Long"
+        },
+        "Labels": {
+          "shape": "StringList"
+        },
+        "Created": {
+          "shape": "Timestamp"
+        }
+      }
+    },
+    "PutItemRequest": {
+      "type": "structure",
+      "required": [
+        "Id"
+      ],
+      "members": {
+        "Id": {
+          "shape": "String",
+          "location": "uri",
+          "locationName": "Id"
+        },
+        "Mode": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-zrj-mode"
+        },
+        "Name": {
+          "shape": "String",
+          "locationName": "name"
+        },
+        "Count": {
+          "shape": "Integer"
+        },
+        "Enabled": {
+          "shape": "Boolean"
+        },
+        "Labels": {
+          "shape": "StringList"
+        },
+        "Attributes": {
+          "shape": "StringMap"
+        },
+        "Config": {
+          "shape": "Config"
+        }
+      }
+    },
+    "PutItemResult": {
+      "type": "structure",
+      "members": {
+        "Location": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "Location"
+        },
+        "Status": {
+          "shape": "Integer",
+          "location": "statusCode"
+        },
+        "Id": {
+          "shape": "String"
+        }
+      }
+    },
+    "DeleteItemRequest": {
+      "type": "structure",
+      "required": [
+        "Id"
+      ],
+      "members": {
+        "Id": {
+          "shape": "String",
+          "location": "uri",
+          "locationName": "Id"
+        },
+        "Force": {
+          "shape": "Boolean",
+          "location": "querystring",
+          "locationName": "force"
+        }
+      }
+    },
+    "ListVersionsRequest": {
+      "type": "structure",
+      "required": [
+        "Id"
+      ],
+      "members": {
+        "Id": {
+          "shape": "String",
+          "location": "uri",
+          "locationName": "Id"
+        },
+        "Limit": {
+          "shape": "Integer",
+          "location": "querystring",
+          "locationName": "limit"
+        }
+      }
+    },
+    "ListVersionsResult": {
+      "type": "structure",
+      "members": {
+        "Versions": {
+          "shape": "StringList"
+        }
+      }
+    },
+    "PingResult": {
+      "type": "structure",
+      "members": {
+        "Region": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-zrj-region"
+        },
+        "Healthy": {
+          "shape": "Boolean"
+        }
+      }
+    },
+    "ThingNotFound": {
+      "type": "structure",
+      "members": {
+        "Message": {
+          "shape": "String"
+        }
+      },
+      "error": {
+        "code": "ThingNotFound",
+        "httpStatusCode": 404,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "ItemNotFound": {
+      "type": "structure",
+      "members": {
+        "Message": {
+          "shape": "String"
+        },
+        "Id": {
+          "shape": "String"
+        }
+      },
+      "error": {
+        "code": "ItemNotFound",
+        "httpStatusCode": 404,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "ItemLocked": {
+      "type": "structure",
+      "members": {
+        "Message": {
+          "shape": "String"
+        },
+        "Owner": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-zrj-owner"
+        },
+        "Attempts": {
+          "shape": "Integer"
+        }
+      },
+      "error": {
+        "code": "ItemLocked",
+        "httpStatusCode": 409,
+        "senderFault": true
+      },
+      "exception": true
+    }
+  }
+}
