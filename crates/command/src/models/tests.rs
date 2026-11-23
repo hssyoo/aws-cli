@@ -249,10 +249,20 @@ fn a_model_operation_needs_its_service_s_client() -> Result<()> {
     })
 }
 
+/// The awscli entries and botocore handlers that touch `[command,
+/// operation]`, by dotted name, each once and in order.
 fn touching(source: &ModelSource<'_>, command: &str, operation: &str) -> Vec<String> {
-    source
-        .touching(command, operation)
-        .unwrap_or_else(|| panic!("{command} {operation}"))
+    entry_names(
+        source
+            .matches(command, operation)
+            .unwrap_or_else(|| panic!("{command} {operation}")),
+    )
+}
+
+fn entry_names(found: Vec<crate::patterns::Match>) -> Vec<String> {
+    let names: std::collections::BTreeSet<String> =
+        found.into_iter().map(|found| found.name).collect();
+    names.into_iter().collect()
 }
 
 const SHORTHAND: &str = "awscli.argprocess.register_param_shorthand_parser";
@@ -335,7 +345,10 @@ fn the_fake_models_meet_only_cross_cutting_customizations() -> Result<()> {
             let operations = source.operations(service).unwrap_or_default();
             assert!(!operations.is_empty(), "{service} has no operations");
             for operation in operations.iter() {
-                let touched = source.touching(service, operation).unwrap_or_default();
+                let touched = source
+                    .matches(service, operation)
+                    .map(entry_names)
+                    .unwrap_or_default();
                 let at = format!("{service} {operation}");
                 match &seen {
                     None => seen = Some((at, touched)),
