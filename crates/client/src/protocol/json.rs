@@ -151,7 +151,7 @@ fn structure(model: &Model, value: &Value, shape: ShapeId) -> Result<Value, Seri
 
 /// `BaseJSONParser._parse_body_as_json`: nothing is `{}`, and a body that
 /// is not JSON is `{'message': body}`.
-fn body_json(body: &[u8]) -> Result<Value, ParseError> {
+pub(super) fn body_json(body: &[u8]) -> Result<Value, ParseError> {
     if body.is_empty() {
         return Ok(Value::Map(Map::new()));
     }
@@ -164,14 +164,24 @@ fn body_json(body: &[u8]) -> Result<Value, ParseError> {
     }))
 }
 
-struct Reader<'m, 'o> {
-    model: &'m Model,
-    options: &'o ParseOptions<'o>,
+/// A subclass's own `_handle_<type>` for `shape`, ahead of
+/// `BaseJSONParser`'s: the parsed value, or `None` to leave the shape to
+/// the base.
+pub(super) type Handler = fn(&Reader<'_, '_>, ShapeId, &Value) -> Option<Result<Value, ParseError>>;
+
+pub(super) struct Reader<'m, 'o> {
+    pub(super) model: &'m Model,
+    pub(super) options: &'o ParseOptions<'o>,
+    /// `None` for `JSONParser`, which overrides no handler.
+    pub(super) handler: Option<Handler>,
 }
 
 impl Reader<'_, '_> {
     /// `_parse_shape`.
-    fn shape(&self, shape: ShapeId, value: &Value) -> Result<Value, ParseError> {
+    pub(super) fn shape(&self, shape: ShapeId, value: &Value) -> Result<Value, ParseError> {
+        if let Some(parsed) = self.handler.and_then(|handler| handler(self, shape, value)) {
+            return parsed;
+        }
         let resolved = self.model.shape(shape);
         match &resolved.kind {
             ShapeKind::Structure { .. } if resolved.traits.is(Flag::Document) => Ok(value.clone()),
@@ -259,7 +269,7 @@ impl Reader<'_, '_> {
     }
 
     /// `ResponseParser._handle_list`: `null` items kept.
-    fn list(&self, member: ShapeId, value: &Value) -> Result<Value, ParseError> {
+    pub(super) fn list(&self, member: ShapeId, value: &Value) -> Result<Value, ParseError> {
         let Value::List(items) = value else {
             return Err(ParseError::new(format!(
                 "'{}' object is not iterable",
@@ -327,7 +337,12 @@ impl Family for Json {
             {
                 return Err(ParseError::new("event stream responses are not supported"));
             }
-            Some(shape) => Reader { model, options }.body(shape, &response.body)?,
+            Some(shape) => Reader {
+                model,
+                options,
+                handler: None,
+            }
+            .body(shape, &response.body)?,
             None => Value::Map(Map::new()),
         };
         match parsed {
@@ -382,7 +397,12 @@ impl Family for Json {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Map, ParseError> {
-        match (Reader { model, options }).body(shape, &response.body)? {
+        let reader = Reader {
+            model,
+            options,
+            handler: None,
+        };
+        match reader.body(shape, &response.body)? {
             Value::Map(map) => Ok(map),
             _ => Err(ParseError::new("'NoneType' object is not iterable")),
         }
@@ -390,7 +410,7 @@ impl Family for Json {
 }
 
 /// A code without what follows a `:` and what precedes the last `#`.
-fn error_code(code: &str) -> String {
+pub(super) fn error_code(code: &str) -> String {
     let code = code.split_once(':').map_or(code, |(head, _)| head);
     code.rsplit_once('#')
         .map_or(code, |(_, tail)| tail)
