@@ -1,4 +1,5 @@
 use super::*;
+use cli_core as _;
 use client::endpoint::{EndpointParams, ParamValue};
 use client::error::ServiceError;
 use client::hooks::{CallContext, Hooks};
@@ -7,6 +8,7 @@ use client::retry::{Attempt, RetryDecision};
 use model::shapes::Model;
 use model::value::Value;
 use std::time::Duration;
+use timestamp as _;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -140,22 +142,43 @@ fn crc32_is_binascii_s() {
     assert_eq!(crc32(b""), 0);
 }
 
-/// Every handler a customization says it replaces is a function botocore
-/// defines where its dotted name says.
+/// Every handler a customization says it replaces is one botocore defines
+/// where its dotted name says: a module file, then any classes, then the
+/// function, as the pattern entry names handlers (`module.qualname`).
 #[test]
 fn replaced_handlers_exist_in_botocore() -> TestResult {
     for customization in TABLE {
         for name in customization.replaces {
-            let (module, function) = name.rsplit_once('.').ok_or(*name)?;
-            let path = module
-                .strip_prefix("botocore.")
-                .ok_or(*name)?
-                .replace('.', "/");
-            let source = std::fs::read_to_string(data().join(format!("{path}.py")))?;
-            assert!(source.contains(&format!("def {function}(")), "{name}");
+            assert!(defined(name)?, "{name}");
         }
     }
     Ok(())
+}
+
+/// Whether botocore's source defines `name`: the longest dotted prefix
+/// that is a module file, `class` lines for the parts between, and a
+/// `def` for the last.
+fn defined(name: &str) -> TestResult<bool> {
+    let relative = name.strip_prefix("botocore.").ok_or(name)?;
+    let parts: Vec<&str> = relative.split('.').collect();
+    for split in (1..parts.len()).rev() {
+        let file = data().join(format!("{}.py", parts[..split].join("/")));
+        let Ok(source) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let (function, classes) = parts[split..].split_last().ok_or(name)?;
+        let lines: Vec<&str> = source.lines().map(str::trim_start).collect();
+        let classes_found = classes.iter().all(|class| {
+            lines.iter().any(|line| {
+                line.starts_with(&format!("class {class}(")) || **line == format!("class {class}:")
+            })
+        });
+        let function_found = lines
+            .iter()
+            .any(|line| line.starts_with(&format!("def {function}(")));
+        return Ok(classes_found && function_found);
+    }
+    Ok(false)
 }
 
 /// The string literals of Rust source, skipping comments and character

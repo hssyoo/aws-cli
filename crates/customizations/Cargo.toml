@@ -10,7 +10,10 @@ publish.workspace = true
 client = { path = "../client" }
 
 [dev-dependencies]
+cli-core = { path = "../cli-core" }
+client = { path = "../client", features = ["testing"] }
 model = { path = "../model" }
+timestamp = { path = "../timestamp" }
 
 [lints]
 workspace = true

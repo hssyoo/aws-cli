@@ -156,8 +156,10 @@ dependencies = [
 name = "customizations"
 version = "0.1.0"
 dependencies = [
+ "cli-core",
  "client",
  "model",
+ "timestamp",
 ]
 
 [[package]]
