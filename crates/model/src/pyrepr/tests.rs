@@ -134,3 +134,30 @@ fn type_names_are_python_class_strings() {
         assert_eq!(py_type(&value), name);
     }
 }
+
+/// `float(text)` in CPython: whitespace, signs, underscores between digits,
+/// the names it knows, and what it refuses.
+#[test]
+fn float_from_text_reads_what_python_float_reads() {
+    let cases = [
+        (" 1_000.5 ", Some(1000.5)),
+        ("-12e3", Some(-12_000.0)),
+        ("+.5", Some(0.5)),
+        ("5.", Some(5.0)),
+        ("\u{1c}7\t", Some(7.0)),
+        ("Infinity", Some(f64::INFINITY)),
+        ("-inf", Some(f64::NEG_INFINITY)),
+        ("1__0", None),
+        ("_1", None),
+        ("1_", None),
+        ("1e", None),
+        (".", None),
+        ("", None),
+        ("0x10", None),
+        ("1 2", None),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(float_from_text(text), expected, "{text:?}");
+    }
+    assert!(float_from_text("NaN").is_some_and(f64::is_nan));
+}

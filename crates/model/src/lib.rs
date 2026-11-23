@@ -3,6 +3,7 @@
 //! of them shares.
 #![forbid(unsafe_code)]
 
+pub mod base64;
 pub mod payload;
 pub mod pyjson;
 pub mod pyrepr;
