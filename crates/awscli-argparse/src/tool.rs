@@ -153,7 +153,11 @@ fn result_chain_fields(
     unsupported: bool,
     color: bool,
 ) -> [(&'static str, Value); 4] {
-    let values = if result.stage == Stage::Leftover {
+    // An operation checks its leftovers before the unpack loop, so its
+    // completed parse ends there; a deferred one stopped short of it.
+    let completed_operation =
+        result.stage == Stage::Unpack && result.outcome == Outcome::Parsed && !unsupported;
+    let values = if result.stage == Stage::Leftover || completed_operation {
         result.values.json()
     } else {
         Value::Null

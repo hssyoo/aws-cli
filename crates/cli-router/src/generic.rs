@@ -49,9 +49,10 @@ pub(super) fn route<E: EnvMap>(
         return Verdict::Python(reason);
     }
     // Which of a model operation's options bind natively is the source's
-    // to say, so a value deferred to Python is named as a value.
+    // to say: a supplied option it defers is named as an option, any other
+    // deferred value as a value.
     if awscli_argparse::complete(result, unpack) {
-        return Verdict::Python(PythonReason::UnsupportedValue);
+        return Verdict::Python(deferred_reason(result));
     }
     if let Outcome::Failure(failure) = &result.outcome {
         return session_start(result, config).unwrap_or(Verdict::Failure(failure.clone()));
@@ -63,6 +64,25 @@ pub(super) fn route<E: EnvMap>(
         return started;
     }
     verdict
+}
+
+/// Why the unpack loop stopped: at an option whose every value only Python
+/// binds ([`awscli_argparse::CliType::Deferred`]), or at a value native
+/// cannot read.
+fn deferred_reason(result: &ParseResult<'_>) -> PythonReason {
+    let deferred = result.stopped_dest.as_deref().is_some_and(|dest| {
+        result.lineage.last().is_some_and(|command| {
+            command.arguments.iter().any(|argument| {
+                argument.cli_type == Some(awscli_argparse::CliType::Deferred)
+                    && argument.matches_dest(dest)
+            })
+        })
+    });
+    if deferred {
+        PythonReason::UnsupportedOption
+    } else {
+        PythonReason::UnsupportedValue
+    }
 }
 
 /// Bind the completed parse, then judge what the bound command needs.

@@ -74,7 +74,7 @@ def jsonable(value: Any) -> Any:
         return [jsonable(item) for item in value]
     if isinstance(value, str) and not is_utf8(value):
         return {"$unicode_escape": unicode_escape(value)}
-    if value is None or isinstance(value, (str, int, bool)):
+    if value is None or isinstance(value, (str, int, bool, float)):
         return value
     raise NotImplementedError(f"corpus shape does not cover {value!r}")
 
@@ -400,8 +400,10 @@ def capture_parse_requests(request_path: str, data_path: str) -> None:
         def capture_operation(service: Any, parsed: Any, remaining: list[str]) -> dict[str, Any]:
             """ServiceCommand.__call__, then ServiceOperation.__call__ up to its
             leftover check: the service parser, the operation's table with the
-            required-argument overrides applied and `_add_help`'s positional.
-            Values are not unpacked; a model operation's binding does that."""
+            required-argument overrides applied and `_add_help`'s positional;
+            then `_build_call_parameters`, one argument at a time in table
+            order, each value as `add_to_params` stores it, by destination."""
+            nonlocal current_dest
             output["stage"] = "probe"
             service_args, remaining = level(
                 service.create_parser(help_mode=help_requested(parsed)), remaining
@@ -446,6 +448,24 @@ def capture_parse_requests(request_path: str, data_path: str) -> None:
                     )
                 )
             output["stage"] = "unpack"
+            # The session-initialized handler the CLI registers for
+            # parameter files (`register_uri_param_handler`).
+            service.session.register(
+                "load-cli-arg", URIArgumentHandler(copy.deepcopy(LOCAL_PREFIX_MAP))
+            )
+            namespace = vars(parsed_args)
+            values = {}
+            for argument in operation.arg_table.values():
+                if argument.py_name not in namespace:
+                    continue
+                current_dest = argument.py_name
+                value = operation._unpack_arg(argument, namespace[argument.py_name])
+                params = {}
+                argument.add_to_params(params, value)
+                for unpacked in params.values():
+                    values[argument.py_name] = unpacked
+            current_dest = None
+            output["values"] = jsonable(values)
             return output
 
         try:

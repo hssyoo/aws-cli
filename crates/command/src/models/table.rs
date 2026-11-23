@@ -10,6 +10,24 @@ use model::shapes::{Flag, Member, Operation, ShapeId, ShapeKind};
 /// options `int`; the parse applies it (`awscli_argparse::convert`).
 pub use awscli_argparse::ValueType;
 
+/// What the unpack loop does with a supplied value (`_build_call_parameters`
+/// → `unpack_argument`, then `CLIArgument._unpack_argument` →
+/// `unpack_cli_arg`), as far as native binds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unpack {
+    /// `unpack_scalar_cli_arg` returns it as it stands: a string member
+    /// that is no JSON-value header, a long (which argparse's `int` already
+    /// converted, and `int()` leaves), or a boolean.
+    AsIs,
+    /// An integer member, which argparse stores as text:
+    /// `unpack_scalar_cli_arg`'s `int()`.
+    Integer,
+    /// Only Python unpacks or binds it: a list, map, structure, blob,
+    /// timestamp, float or double member, a JSON-value header or document,
+    /// or a customization's option.
+    Deferred,
+}
+
 /// What a derived argument stands for, which says how it binds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
@@ -58,6 +76,7 @@ pub struct DerivedArgument {
     /// `cli_type_name`: the member's shape type, or the customization's.
     pub cli_type_name: Box<str>,
     pub origin: Origin,
+    pub unpack: Unpack,
 }
 
 /// A derived table and what decides whether native may judge its parse.
@@ -113,6 +132,7 @@ fn plain(name: &str, cli_type_name: &str, origin: Origin) -> DerivedArgument {
         hidden: false,
         cli_type_name: cli_type_name.into(),
         origin,
+        unpack: Unpack::Deferred,
     }
 }
 
@@ -133,6 +153,7 @@ fn member_arguments(
         shape: member.shape,
     };
     let mut argument = plain(&name, type_name, origin);
+    argument.unpack = unpack(shape);
     match shape.kind {
         ShapeKind::Boolean => {
             argument.action = Action::StoreTrue;
@@ -150,6 +171,20 @@ fn member_arguments(
     }
     argument.required = required;
     vec![argument]
+}
+
+/// How `_unpack_cli_arg` treats a member of `shape`: a JSON-value header
+/// (`is_json_value_header`) goes through `json.loads`, the scalars through
+/// `unpack_scalar_cli_arg`.
+fn unpack(shape: &model::shapes::Shape) -> Unpack {
+    let json_header =
+        shape.traits.is(Flag::JsonValue) && shape.traits.location.as_deref() == Some("header");
+    match shape.kind {
+        ShapeKind::String if !json_header => Unpack::AsIs,
+        ShapeKind::Long | ShapeKind::Boolean => Unpack::AsIs,
+        ShapeKind::Integer => Unpack::Integer,
+        _ => Unpack::Deferred,
+    }
 }
 
 /// botocore's `type_name` for a shape kind.

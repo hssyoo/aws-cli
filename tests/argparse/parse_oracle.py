@@ -255,6 +255,15 @@ DERIVED_CASES = [
     "zjson measure --unit u --total x --bogus",
     "zjson measure --unit u --total=99999999999999999999999",
     "zjson measure --unit u --ratio inf --total -0",
+    "zquery get-thing --thing-id a --count ' 0_7 '",
+    "zquery get-thing --thing-id a --count 99999999999999999999999",
+    "zquery get-thing --thing-id a --count x",
+    "zquery get-thing --thing-id file://paramfile/text.txt --count file://paramfile/page_size.txt",
+    "zquery get-thing --thing-id a --count x --tags t",
+    "zquery get-thing --thing-id a --tags t --count x",
+    "zquery get-thing --thing-id file://missing --tags t",
+    "zquery get-thing --thing-id a --enabled --no-enabled",
+    "zquery delete-thing --thing-id a --force",
     "zjson measure --total x",
     "zjson measure --ratio 1.5",
     "zjson measure --total 5 --unit",
@@ -280,10 +289,14 @@ def derived_cases() -> list[dict[str, Any]]:
 
 
 def derived_comparable(record: dict[str, Any], *, oracle: bool) -> dict[str, Any]:
-    """A derived case as both sides report it: values are a model
-    operation's binding, not the parse, and the operation parser's own
-    `help` positional (`_add_help`) is no argument of the table."""
-    record = dict(record, values=None)
+    """A derived case as both sides report it: the values of a completed
+    parse, each supplied argument's by destination (native's namespace
+    also holds the unset ones), and none otherwise; the operation parser's
+    own `help` positional (`_add_help`) is no argument of the table."""
+    values = record["values"] if record["outcome"] == "parsed" else None
+    if values is not None and not oracle:
+        values = {key: value for key, value in values.items() if value is not None}
+    record = dict(record, values=values)
     if oracle and record["args"]:
         record["args"] = {k: v for k, v in record["args"].items() if k != "help"}
         record["args_seen"] = [name for name in record["args_seen"] if name != "help"]
@@ -828,15 +841,18 @@ def compare(native: dict[str, Any], oracle: dict[str, Any]) -> bool:
 
 
 def run_capture(binary: Path, request: Path, env: dict[str, str]) -> str:
-    return subprocess.run(
+    completed = subprocess.run(
         [str(binary), str(request)],
         cwd=FIXTURES,
         env=env,
         capture_output=True,
         encoding="utf-8",
-        check=True,
+        check=False,
         timeout=120,
-    ).stdout
+    )
+    if completed.returncode != 0:
+        raise SystemExit(f"capture failed ({completed.returncode}):\n{completed.stderr}")
+    return completed.stdout
 
 
 def capture_environment(request: Path) -> dict[str, str]:
@@ -987,6 +1003,11 @@ def check_derived(args: argparse.Namespace) -> list[dict[str, Any]]:
         if expected["outcome"] == "unresolved":
             # A case that reaches no model root on Python's side checks nothing.
             divergences.append(dict(record, classification="derived_case_unresolved"))
+        elif actual["outcome"] == "unsupported":
+            # Native stopped at an argument only Python binds; Python must
+            # not have failed before it.
+            if not compare_unsupported(actual, expected):
+                divergences.append(dict(record, classification="derived_parity_failure"))
         elif comparable(actual) != comparable(expected, oracle=True):
             divergences.append(dict(record, classification="derived_parity_failure"))
     args.ledger.parent.mkdir(parents=True, exist_ok=True)

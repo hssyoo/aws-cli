@@ -10,7 +10,7 @@ use crate::patterns::{CliCustomization, Patterns, Subject, TableOp};
 use crate::registry::OperationSource;
 use crate::spec::{Admission, Invocation, Needs};
 use awscli_argparse::tables::RequiredOverride;
-use awscli_argparse::{Argument, DefaultValue, ParseResult};
+use awscli_argparse::{Argument, CliType, DefaultValue, ParseResult};
 use cli_core::cli_error::PythonReason;
 use model::search::SearchSource;
 use model::shapes::Model;
@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 pub mod dump;
 mod table;
 #[doc(inline)]
-pub use table::{DerivedArgument, Origin, Table, ValueType, kind_name};
+pub use table::{DerivedArgument, Origin, Table, Unpack, ValueType, kind_name};
 
 type Json = serde_json::Value;
 
@@ -363,7 +363,11 @@ fn argparse(argument: &DerivedArgument) -> Argument<'_> {
         required: argument.required,
         hidden: argument.hidden,
         value_type: argument.value_type,
-        cli_type: None,
+        cli_type: match argument.unpack {
+            Unpack::AsIs => None,
+            Unpack::Integer => Some(CliType::UnboundedInteger),
+            Unpack::Deferred => Some(CliType::Deferred),
+        },
     }
 }
 
