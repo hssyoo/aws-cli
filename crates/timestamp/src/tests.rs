@@ -1,5 +1,11 @@
 use super::*;
 
+/// An ISO 8601 text's instant: its zoned reading with the zone taken away,
+/// `None` for a naive one.
+fn iso8601_instant(text: &str) -> Option<Timestamp> {
+    Timestamp::parse_iso8601_zoned(text)?.instant()
+}
+
 /// 2015-08-30T12:36:00Z, the AWS SigV4 test suite's date: a Sunday.
 const SUITE: i64 = 1_440_938_160;
 /// 2024-02-29T12:34:56Z, a leap day: a Thursday.
@@ -187,7 +193,7 @@ fn the_extended_form_parses_with_a_zone_and_a_fraction() -> TestResult {
         ("2015-08-30T12:36:00.1234567Z", micros(123_456)?),
         ("2015-08-30T12:36:00.000001+00:00", micros(1)?),
     ] {
-        assert_eq!(Timestamp::parse_iso8601(text), expected, "{text}");
+        assert_eq!(iso8601_instant(text), expected, "{text}");
     }
     for text in [
         "2015-08-30T12:36:00",
@@ -201,7 +207,7 @@ fn the_extended_form_parses_with_a_zone_and_a_fraction() -> TestResult {
         "0001-01-01T00:00:00+00:01",
         "9999-12-31T23:59:59-00:01",
     ] {
-        assert_eq!(Timestamp::parse_iso8601(text), None, "{text}");
+        assert_eq!(iso8601_instant(text), None, "{text}");
     }
     Ok(())
 }
@@ -296,7 +302,7 @@ fn every_form_reads_back_what_it_writes() -> TestResult {
     ] {
         let instant = at_micros(micros)?;
         let whole = at(instant.unix_seconds())?;
-        assert_eq!(Timestamp::parse_iso8601(&instant.iso8601()), Some(instant));
+        assert_eq!(iso8601_instant(&instant.iso8601()), Some(instant));
         assert_eq!(
             Timestamp::parse_iso8601_basic(&instant.iso8601_basic()),
             Some(whole)
@@ -402,8 +408,8 @@ fn zoned_parses_keep_the_wall_time_and_the_written_zone() -> TestResult {
         let zoned = Timestamp::parse_iso8601_zoned(text).ok_or(text)?;
         assert_eq!(zoned.isoformat(), iso, "{text}");
     }
-    assert_eq!(Timestamp::parse_iso8601("2015-08-30 12:36:00"), None);
-    assert_eq!(Timestamp::parse_iso8601("2015-08-30"), None);
+    assert_eq!(iso8601_instant("2015-08-30 12:36:00"), None);
+    assert_eq!(iso8601_instant("2015-08-30"), None);
     let rfc = Timestamp::parse_rfc822_zoned("Sun, 30 Aug 2015 13:36:00 +0100").ok_or("rfc")?;
     assert_eq!(rfc.isoformat(), "2015-08-30T13:36:00+01:00");
     let gmt = Timestamp::parse_rfc822_zoned("30 Aug 2015 12:36:00 GMT").ok_or("gmt")?;

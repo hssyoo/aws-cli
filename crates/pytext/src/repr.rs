@@ -133,3 +133,6 @@ pub fn bytes_repr(bytes: &[u8]) -> String {
     out.push(quote);
     out
 }
+
+#[cfg(test)]
+mod tests;
