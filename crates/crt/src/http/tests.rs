@@ -144,9 +144,78 @@ fn request<'a>(port: u16, headers: &'a [(&'a str, &'a str)]) -> Request<'a> {
         body: &[],
         tunnel: None,
         signing: None,
+        keep_alive: false,
         connect_timeout: TIMEOUT,
         read_timeout: TIMEOUT,
     }
+}
+
+/// botocore's `tcp_keepalive` (`_compute_socket_options`): SO_KEEPALIVE
+/// on the connection's socket, at the system's timings, when asked, and
+/// not otherwise. The server reads the option off the client's socket,
+/// which is in this process, while the request is in flight.
+#[cfg(unix)]
+#[test]
+fn keep_alive_sets_so_keepalive_on_the_connection() -> TestResult {
+    let runtime = http_runtime(crate::runtime::Trust::Platform)?;
+    for keep_alive in [true, false] {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        let server = std::thread::spawn(move || -> std::io::Result<Option<bool>> {
+            let (mut stream, peer) = listener.accept()?;
+            stream.set_read_timeout(Some(PATIENCE))?;
+            read_head(&mut stream)?;
+            let found = socket_keep_alive(peer);
+            stream.write_all(OK)?;
+            Ok(found)
+        });
+        let headers = [("Host", "127.0.0.1")];
+        let sent = Request {
+            keep_alive,
+            ..request(port, &headers)
+        };
+        runtime.http_client().send(&sent)?;
+        let found = server.join().map_err(|_| "the server panicked")??;
+        assert_eq!(found, Some(keep_alive), "keep_alive {keep_alive}");
+    }
+    Ok(())
+}
+
+/// SO_KEEPALIVE of the socket of this process bound to `address`, found
+/// among its descriptors; `None` when no socket is.
+#[cfg(unix)]
+fn socket_keep_alive(address: std::net::SocketAddr) -> Option<bool> {
+    let std::net::SocketAddr::V4(address) = address else {
+        return None;
+    };
+    (0..4096).find_map(|fd| {
+        // SAFETY: all-zero bytes are a valid sockaddr_in.
+        let mut bound: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+        let mut length = libc::socklen_t::try_from(size_of::<libc::sockaddr_in>()).ok()?;
+        // SAFETY: `bound` holds `length` bytes; a descriptor that is no
+        // socket, or none, fails the call.
+        let named = unsafe { libc::getsockname(fd, (&raw mut bound).cast(), &raw mut length) };
+        let matches = named == 0
+            && i32::from(bound.sin_family) == libc::AF_INET
+            && u16::from_be(bound.sin_port) == address.port()
+            && u32::from_be(bound.sin_addr.s_addr) == u32::from(*address.ip());
+        if !matches {
+            return None;
+        }
+        let mut value: libc::c_int = 0;
+        let mut size = libc::socklen_t::try_from(size_of::<libc::c_int>()).ok()?;
+        // SAFETY: `value` holds `size` bytes, and `fd` is a socket.
+        let read = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_KEEPALIVE,
+                (&raw mut value).cast(),
+                &raw mut size,
+            )
+        };
+        (read == 0).then_some(value != 0)
+    })
 }
 
 #[test]

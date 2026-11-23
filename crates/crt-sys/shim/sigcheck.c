@@ -26,7 +26,7 @@ LAYOUT(zaws_runtime_options,200); OFFSET(zaws_runtime_options,pool_factory,96);
 OFFSET(zaws_runtime_options,verify_peer,176); OFFSET(zaws_runtime_options,credentials_delegate,184);
 LAYOUT(zaws_credentials_view,72); OFFSET(zaws_credentials_view,expiration_timepoint_seconds,64);
 LAYOUT(zaws_http_options,144); OFFSET(zaws_http_options,body,80); OFFSET(zaws_http_options,tunnel_host,96); OFFSET(zaws_http_options,headers,112); OFFSET(zaws_http_options,port,128);
-OFFSET(zaws_http_options,connect_timeout_ms,132); OFFSET(zaws_http_options,tunnel_port,136); OFFSET(zaws_http_options,tls,140);
+OFFSET(zaws_http_options,connect_timeout_ms,132); OFFSET(zaws_http_options,tunnel_port,136); OFFSET(zaws_http_options,tls,140); OFFSET(zaws_http_options,keep_alive,141);
 LAYOUT(zaws_runtime_snapshot,72); OFFSET(zaws_runtime_snapshot,anonymous,60);
 LAYOUT(zaws_signing_snapshot,56);
 LAYOUT(zaws_credentials_snapshot,1);

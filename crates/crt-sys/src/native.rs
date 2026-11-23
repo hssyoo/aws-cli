@@ -139,6 +139,9 @@ pub struct HttpOptions {
     /// Connects with TLS, on the runtime's trust, to the server named
     /// `host`.
     pub tls: bool,
+    /// Sets SO_KEEPALIVE on the connection's socket, at the system's
+    /// timings.
+    pub keep_alive: bool,
 }
 /// `ZAWS_HTTP_CONNECTED`: the connection is up and aws-c-http has taken
 /// the request to send.
@@ -456,6 +459,7 @@ const _: () = {
     assert!(std::mem::offset_of!(CredentialsView, expiration_timepoint_seconds) == 64);
     assert!(std::mem::size_of::<HttpOptions>() == 144);
     assert!(std::mem::offset_of!(HttpOptions, tls) == 140);
+    assert!(std::mem::offset_of!(HttpOptions, keep_alive) == 141);
     assert!(std::mem::offset_of!(HttpOptions, tunnel_host) == 96);
     assert!(std::mem::offset_of!(HttpOptions, headers) == 112);
     assert!(std::mem::offset_of!(HttpOptions, port) == 128);

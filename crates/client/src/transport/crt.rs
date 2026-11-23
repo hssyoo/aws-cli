@@ -14,8 +14,9 @@
 //!   `Accept-Encoding: identity` first (`putrequest`), then the request's
 //!   headers in order. The Host is the one the request was signed with:
 //!   both come from [`credentials::Location`] (M069).
-//! - Each request connects anew; botocore's keep-alive socket option is
-//!   not applied, as `crt::http` sets none.
+//! - **Keep-alive**: `tcp_keepalive` sets SO_KEEPALIVE at the system's
+//!   timings, as botocore adds it to urllib3's socket options
+//!   (`_compute_socket_options`). Each request connects anew.
 use super::{Timeouts, Transport, TransportError};
 use crate::http::{Headers, HttpRequest, HttpResponse};
 use cli_core::proxy::{Environment, Forward, ForwardProxy};
@@ -29,17 +30,20 @@ pub struct CrtTransport {
     runtime: ::crt::HttpRuntime,
     client: ::crt::http::Client,
     env: cli_core::SnapshotEnv,
+    keep_alive: bool,
 }
 
 impl CrtTransport {
-    /// A transport whose TLS trusts `trust` and whose requests take the
-    /// proxies `env` names.
+    /// A transport whose TLS trusts `trust`, whose connections set
+    /// SO_KEEPALIVE when `keep_alive` (`tcp_keepalive`), and whose requests
+    /// take the proxies `env` names.
     ///
     /// # Errors
     /// [`TransportError::Client`] for a runtime the CRT could not build, a
     /// CA bundle it cannot load among the causes.
     pub fn new(
         trust: ::crt::runtime::Trust,
+        keep_alive: bool,
         env: cli_core::SnapshotEnv,
         logger: Arc<::crt::debug::Logger>,
     ) -> Result<Self, TransportError> {
@@ -59,6 +63,7 @@ impl CrtTransport {
             runtime,
             client,
             env,
+            keep_alive,
         })
     }
     /// The runtime the transport sends on.
@@ -136,6 +141,7 @@ impl Transport for CrtTransport {
                 port: proxy.port,
             }),
             signing: None,
+            keep_alive: self.keep_alive,
             connect_timeout: timeouts.connect,
             read_timeout: timeouts.read,
         };

@@ -442,6 +442,9 @@ impl Transport for Service {
             body: &[],
             tunnel: None,
             signing: None,
+            // botocore's metadata fetchers build their session with
+            // urllib3's default socket options, whatever `tcp_keepalive` says.
+            keep_alive: false,
             connect_timeout: timeout,
             read_timeout: timeout,
         };
