@@ -12,6 +12,10 @@ cargo-fuzz = true
 s3 = { path = "../crates/s3", features = ["testing", "download-writer-debug"] }
 libfuzzer-sys = "=0.4.13"
 crt = { path = "../crates/crt", features = ["testing"] }
+client = { path = "../crates/client", features = ["testing"] }
+model = { path = "../crates/model", features = ["testing"] }
+timestamp = { path = "../crates/timestamp", features = ["testing"] }
+awscli-argparse = { path = "../crates/awscli-argparse", features = ["testing"] }
 
 [[bin]]
 name = "pool_reservations"
@@ -86,6 +90,48 @@ bench = false
 [[bin]]
 name = "error_body"
 path = "fuzz_targets/error_body.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "client_xml"
+path = "fuzz_targets/client_xml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocol_responses"
+path = "fuzz_targets/protocol_responses.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "model_json"
+path = "fuzz_targets/model_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "model_validate"
+path = "fuzz_targets/model_validate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "timestamp_text"
+path = "fuzz_targets/timestamp_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "argparse_convert"
+path = "fuzz_targets/argparse_convert.rs"
 test = false
 doc = false
 bench = false
