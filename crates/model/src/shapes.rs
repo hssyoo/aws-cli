@@ -10,6 +10,7 @@ use crate::source::{Kind, LoadError, Source, load_service_model};
 use crate::value::Value;
 
 mod build;
+mod keys;
 mod traits;
 
 pub use traits::{Bound, ErrorTrait, Flag, Retryable, Traits, XmlNamespace};
@@ -142,6 +143,39 @@ pub type StaticContextParams = Box<[(Box<str>, Value)]>;
 /// `operationContextParams`: each name with its `path`.
 pub type OperationContextParams = Box<[(Box<str>, Box<str>)]>;
 
+/// Where an [`Uninterpreted`] key sits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Site {
+    /// The document's top level, its `metadata` or `clientContextParams`.
+    Service,
+    /// An operation, by name, with its input, output and error references.
+    Operation(Box<str>),
+    /// A named shape, with its member, list member, map key and value
+    /// references.
+    Shape(Box<str>),
+}
+
+/// A key of the service description the arena does not interpret and no
+/// ignore list excuses: botocore may act on it, so a client that reaches it
+/// cannot claim botocore's behaviour.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Uninterpreted {
+    pub site: Site,
+    /// The key's path from its site, such as `http.timeout`,
+    /// `metadata.newSetting` or `members.Name.newTrait`.
+    pub key: Box<str>,
+}
+
+impl std::fmt::Display for Uninterpreted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.site {
+            Site::Service => write!(f, "{}", self.key),
+            Site::Operation(name) => write!(f, "operation {name}: {}", self.key),
+            Site::Shape(name) => write!(f, "shape {name}: {}", self.key),
+        }
+    }
+}
+
 /// An operation, as `OperationModel` reads it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Operation {
@@ -226,6 +260,8 @@ pub struct Model {
     named: usize,
     /// Named shape ids sorted by name.
     by_name: Box<[ShapeId]>,
+    /// The keys the arena did not interpret, in document order.
+    uninterpreted: Box<[Uninterpreted]>,
 }
 
 impl Model {
@@ -316,6 +352,58 @@ impl Model {
             .as_ref()
             .and_then(|error| error.code.as_deref());
         Some(code.filter(|code| !code.is_empty()).unwrap_or(&shape.name))
+    }
+
+    /// Every key the arena did not interpret, in document order.
+    pub fn uninterpreted(&self) -> &[Uninterpreted] {
+        &self.uninterpreted
+    }
+
+    /// The uninterpreted keys a call of `operation` reaches: the service's,
+    /// the operation's own, and those of every shape its input, output and
+    /// errors reach. The shapes are walked only when some shape has one.
+    pub fn uninterpreted_reached(&self, operation: &Operation) -> Vec<&Uninterpreted> {
+        let shaped = self
+            .uninterpreted
+            .iter()
+            .any(|key| matches!(key.site, Site::Shape(_)));
+        let reached = if shaped {
+            self.reached_shape_names(operation)
+        } else {
+            std::collections::HashSet::new()
+        };
+        self.uninterpreted
+            .iter()
+            .filter(|key| match &key.site {
+                Site::Service => true,
+                Site::Operation(name) => *name == operation.name,
+                Site::Shape(name) => reached.contains(&**name),
+            })
+            .collect()
+    }
+
+    /// The names of the shapes `operation`'s input, output and errors reach.
+    fn reached_shape_names(&self, operation: &Operation) -> std::collections::HashSet<&str> {
+        let mut seen = vec![false; self.shapes.len()];
+        let mut names = std::collections::HashSet::new();
+        let roots = operation.input.iter().chain(&operation.output);
+        let mut stack: Vec<ShapeId> = roots.chain(operation.errors.iter()).copied().collect();
+        while let Some(id) = stack.pop() {
+            if std::mem::replace(&mut seen[id.index()], true) {
+                continue;
+            }
+            let shape = self.shape(id);
+            names.insert(&*shape.name);
+            match &shape.kind {
+                ShapeKind::Structure { .. } => {
+                    stack.extend(self.members(id).iter().map(|member| member.shape));
+                }
+                ShapeKind::List { member } => stack.push(*member),
+                ShapeKind::Map { key, value } => stack.extend([*key, *value]),
+                _ => {}
+            }
+        }
+        names
     }
 
     /// `ServiceModel.shape_for_error_code`: the last error shape with the code.

@@ -1,7 +1,8 @@
 //! Builds a [`Model`] from a service description in three passes: named
 //! shapes and their own traits, then their children, then the kinds of the
 //! shapes references derive.
-use super::traits::{has_trait_keys, strings, truthy};
+use super::keys::{self, record, record_traits};
+use super::traits::{strings, truthy};
 use super::*;
 use serde_json::{Map as JsonMap, Value as Json};
 
@@ -22,6 +23,8 @@ struct Builder<'a> {
     members: Vec<Member>,
     /// Shapes derived from a reference, with the named shape they copy.
     derived: Vec<(ShapeId, ShapeId)>,
+    /// The keys no reader interprets and no ignore list excuses.
+    uninterpreted: Vec<Uninterpreted>,
 }
 
 pub(super) fn build(json: &Json) -> Result<Model, ModelError> {
@@ -37,7 +40,18 @@ pub(super) fn build(json: &Json) -> Result<Model, ModelError> {
         shapes: Vec::with_capacity(definitions.len()),
         members: Vec::new(),
         derived: Vec::new(),
+        uninterpreted: Vec::new(),
     };
+    let (known, ignored) = (keys::DOCUMENT, keys::DOCUMENT_IGNORED);
+    record(
+        document,
+        known,
+        ignored,
+        &service(""),
+        &mut builder.uninterpreted,
+    );
+    let metadata = metadata(document.get("metadata"), &mut builder.uninterpreted)?;
+    let client_context_params = client_context_params(document, &mut builder.uninterpreted)?;
     builder.named_shapes()?;
     builder.children()?;
     let operations = section(document, "operations")?
@@ -53,14 +67,20 @@ pub(super) fn build(json: &Json) -> Result<Model, ModelError> {
             .cmp(&builder.shapes[b.index()].name)
     });
     Ok(Model {
-        metadata: metadata(document.get("metadata"))?,
-        client_context_params: client_context_params(document)?,
+        metadata,
+        client_context_params,
         operations,
         shapes: builder.shapes.into(),
         members: builder.members.into(),
         named,
         by_name: by_name.into(),
+        uninterpreted: builder.uninterpreted.into(),
     })
+}
+
+/// The place of a service-level key, under `prefix`.
+fn service(prefix: &'static str) -> impl Fn() -> (Site, String) {
+    move || (Site::Service, prefix.to_owned())
 }
 
 /// A top-level object; absent reads as empty, as `ServiceModel` reads it.
@@ -90,6 +110,9 @@ impl Builder<'_> {
                 .ok_or_else(|| ModelError::InvalidShape(name.as_str().into()))?;
             let mut traits = Traits::default();
             traits.apply(object, name)?;
+            let at = || (Site::Shape(name.as_str().into()), String::new());
+            let (known, ignored) = (keys::SHAPE, keys::SHAPE_IGNORED);
+            record_traits(object, known, ignored, &at, &mut self.uninterpreted);
             self.shapes.push(Shape {
                 name: name.as_str().into(),
                 kind: placeholder(type_name),
@@ -129,9 +152,10 @@ impl Builder<'_> {
         };
         let mut resolved = Vec::with_capacity(definitions.len());
         for (member, reference) in definitions {
+            let at = || (Site::Shape(name.into()), format!("members.{member}."));
             resolved.push(Member {
                 name: member.as_str().into(),
-                shape: self.reference(name, reference)?,
+                shape: self.reference(name, reference, &at)?,
             });
         }
         let start = u32::try_from(self.members.len()).map_err(|_| ModelError::TooLarge)?;
@@ -146,11 +170,49 @@ impl Builder<'_> {
         let reference = object
             .get(key)
             .ok_or_else(|| ModelError::InvalidShape(name.into()))?;
-        self.reference(name, reference)
+        self.reference(name, reference, &|| {
+            (Site::Shape(name.into()), format!("{key}."))
+        })
     }
 
-    /// `ShapeResolver.resolve_shape_ref`, in the shape or operation `owner`.
-    fn reference(&mut self, owner: &str, reference: &Json) -> Result<ShapeId, ModelError> {
+    /// Records an operation's keys and its nested objects' that no reader
+    /// interprets; its references record theirs as they resolve.
+    fn note_operation(&mut self, name: &str, object: &Object) {
+        let at = |prefix: String| move || (Site::Operation(name.into()), prefix.clone());
+        let out = &mut self.uninterpreted;
+        let (known, ignored) = (keys::OPERATION, keys::OPERATION_IGNORED);
+        record(object, known, ignored, &at(String::new()), out);
+        for (key, known) in keys::OPERATION_NESTED {
+            if let Some(nested) = object.get(*key).and_then(Json::as_object) {
+                record(nested, known, &[], &at(format!("{key}.")), out);
+            }
+        }
+        let params = [
+            ("staticContextParams", "value"),
+            ("operationContextParams", "path"),
+        ];
+        for (key, known) in params {
+            let entries = object
+                .get(key)
+                .and_then(Json::as_object)
+                .into_iter()
+                .flatten();
+            for (param, props) in entries {
+                if let Some(props) = props.as_object() {
+                    record(props, &[known], &[], &at(format!("{key}.{param}.")), out);
+                }
+            }
+        }
+    }
+
+    /// `ShapeResolver.resolve_shape_ref`, in the shape or operation `owner`,
+    /// recording at `at` the reference's keys no reader interprets.
+    fn reference(
+        &mut self,
+        owner: &str,
+        reference: &Json,
+        at: keys::At<'_>,
+    ) -> Result<ShapeId, ModelError> {
         let invalid = || ModelError::InvalidShapeReference(owner.into());
         let object = reference.as_object().ok_or_else(invalid)?;
         let target_name = object
@@ -162,7 +224,7 @@ impl Builder<'_> {
             .get(target_name)
             .map(|index| id(*index))
             .ok_or_else(|| ModelError::NoShapeFound(target_name.into()))?;
-        if !has_trait_keys(object) {
+        if !keys::scan_reference(object, at, &mut self.uninterpreted) {
             return Ok(target);
         }
         let shape = &self.shapes[target.index()];
@@ -184,13 +246,17 @@ impl Builder<'_> {
         Ok(derived)
     }
 
+    /// An operation's `input` or `output`, at `key`, if present.
     fn optional_reference(
         &mut self,
         owner: &str,
-        reference: Option<&Json>,
+        object: &Object,
+        key: &str,
     ) -> Result<Option<ShapeId>, ModelError> {
-        reference
-            .map(|reference| self.reference(owner, reference))
+        let at = || (Site::Operation(owner.into()), format!("{key}."));
+        object
+            .get(key)
+            .map(|reference| self.reference(owner, reference, &at))
             .transpose()
     }
 
@@ -203,19 +269,23 @@ impl Builder<'_> {
 
     fn operation(&mut self, name: &str, operation: &Json) -> Result<Operation, ModelError> {
         let object = operation.as_object().unwrap_or(&EMPTY);
+        self.note_operation(name, object);
         let read = Fields {
             object,
             owner: name,
         };
-        let input = self.optional_reference(name, object.get("input"))?;
-        let output = self.optional_reference(name, object.get("output"))?;
+        let input = self.optional_reference(name, object, "input")?;
+        let output = self.optional_reference(name, object, "output")?;
         let errors = match object.get("errors") {
             None => Box::default(),
             Some(errors) => errors
                 .as_array()
                 .ok_or_else(|| read.invalid("errors"))?
                 .iter()
-                .map(|error| self.reference(name, error))
+                .map(|error| {
+                    let at = || (Site::Operation(name.into()), "errors.".to_owned());
+                    self.reference(name, error, &at)
+                })
                 .collect::<Result<_, _>>()?,
         };
         Ok(Operation {
@@ -386,7 +456,7 @@ impl Fields<'_> {
     }
 }
 
-fn metadata(metadata: Option<&Json>) -> Result<Metadata, ModelError> {
+fn metadata(metadata: Option<&Json>, out: &mut Vec<Uninterpreted>) -> Result<Metadata, ModelError> {
     let object = match metadata {
         None => &*EMPTY,
         Some(value) => value.as_object().ok_or(ModelError::InvalidTrait {
@@ -394,6 +464,8 @@ fn metadata(metadata: Option<&Json>) -> Result<Metadata, ModelError> {
             name: "metadata",
         })?,
     };
+    let (known, ignored) = (keys::METADATA, keys::METADATA_IGNORED);
+    record(object, known, ignored, &service("metadata."), out);
     let read = Fields {
         object,
         owner: "metadata",
@@ -420,11 +492,28 @@ fn metadata(metadata: Option<&Json>) -> Result<Metadata, ModelError> {
 }
 
 /// `ServiceModel.client_context_parameters`.
-fn client_context_params(document: &Object) -> Result<Box<[ClientContextParam]>, ModelError> {
+fn client_context_params(
+    document: &Object,
+    out: &mut Vec<Uninterpreted>,
+) -> Result<Box<[ClientContextParam]>, ModelError> {
     let params = section(document, "clientContextParams")?;
     params
         .iter()
         .map(|(name, param)| {
+            if let Some(object) = param.as_object() {
+                let (known, ignored) = (
+                    keys::CLIENT_CONTEXT_PARAM,
+                    keys::CLIENT_CONTEXT_PARAM_IGNORED,
+                );
+                let prefix = format!("clientContextParams.{name}.");
+                record(
+                    object,
+                    known,
+                    ignored,
+                    &|| (Site::Service, prefix.clone()),
+                    out,
+                );
+            }
             let type_name = param.get("type").and_then(Json::as_str);
             let type_name = type_name.ok_or(ModelError::InvalidTrait {
                 shape: name.as_str().into(),

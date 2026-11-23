@@ -173,13 +173,68 @@ impl Traits {
     }
 }
 
-/// Whether a reference holds any key [`Traits::apply`] reads.
-pub(super) fn has_trait_keys(object: &serde_json::Map<String, Json>) -> bool {
-    object.keys().any(|key| {
-        FLAG_KEYS.iter().any(|(name, _)| name == key) || TEXT_KEYS.contains(&key.as_str())
-    })
+/// Whether [`Traits::apply`] reads `key`: one of [`FLAG_KEYS`] or
+/// [`TEXT_KEYS`], as a `match` the arena can run for every key of every
+/// reference at no measurable cost (the tests keep the three in step).
+pub(super) fn is_trait_key(key: &str) -> bool {
+    matches!(
+        key,
+        "flattened"
+            | "streaming"
+            | "xmlAttribute"
+            | "eventstream"
+            | "event"
+            | "eventheader"
+            | "eventpayload"
+            | "jsonvalue"
+            | "hostLabel"
+            | "sensitive"
+            | "idempotencyToken"
+            | "exception"
+            | "endpointdiscoveryid"
+            | "document"
+            | "union"
+            | "requiresLength"
+            | "deprecated"
+            | "locationName"
+            | "queryName"
+            | "location"
+            | "payload"
+            | "timestampFormat"
+            | "resultWrapper"
+            | "pattern"
+            | "required"
+            | "enum"
+            | "min"
+            | "max"
+            | "xmlNamespace"
+            | "error"
+            | "retryable"
+            | "contextParam"
+    )
 }
 
+/// Every key [`Traits::apply`] reads.
+#[cfg(test)]
+pub(super) fn trait_keys() -> impl Iterator<Item = &'static str> {
+    FLAG_KEYS.iter().map(|(name, _)| *name).chain(TEXT_KEYS)
+}
+
+/// The keys [`Traits::apply`] reads inside a trait whose value is an
+/// object; `None` for the others.
+pub(super) fn trait_subkeys(key: &str) -> Option<&'static [&'static str]> {
+    match key {
+        "error" => Some(&["code", "httpStatusCode", "senderFault"]),
+        "retryable" => Some(&["throttling"]),
+        "xmlNamespace" => Some(&["uri", "prefix"]),
+        "contextParam" => Some(&["name"]),
+        _ => None,
+    }
+}
+
+/// The keys `apply_key` matches besides the flags, which the tests check
+/// [`is_trait_key`] against.
+#[cfg(test)]
 const TEXT_KEYS: [&str; 15] = [
     "locationName",
     "queryName",
