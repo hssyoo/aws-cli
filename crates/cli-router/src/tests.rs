@@ -8,8 +8,8 @@ use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
 };
-/// The registry the pinned tables parse with: the `s3` tree, no
-/// hand-written commands and no model source.
+/// The registry the pinned tables parse with: the `s3` tree and no model
+/// source.
 const PINNED_REGISTRY: ::command::Registry<'static> =
     ::command::Registry::new(&[&tables::S3], None);
 /// The assertions compare verdicts whole. A `Run` holds a boxed
@@ -47,6 +47,14 @@ fn files(text: &str) -> ParsedFiles {
     })
 }
 fn evaluate(args: &[&str], env: &impl EnvMap, files: &ParsedFiles) -> Verdict {
+    evaluate_with_registry(args, env, files, &PINNED_REGISTRY)
+}
+fn evaluate_with_registry(
+    args: &[&str],
+    env: &impl EnvMap,
+    files: &ParsedFiles,
+    registry: &::command::Registry<'_>,
+) -> Verdict {
     let argv = args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
     let mut result = awscli_argparse::parse(&argv, &Options::default(), &tables::TABLES_DEFAULT);
     let vars = env
@@ -67,9 +75,32 @@ fn evaluate(args: &[&str], env: &impl EnvMap, files: &ParsedFiles) -> Verdict {
             shared_files: files,
             boto_config_credentials: false,
             embedded_trust: true,
-            registry: &PINNED_REGISTRY,
+            registry,
         },
     )
+}
+/// A registry whose model source could not be built names that, not an
+/// unknown command, for any word but a pinned root, as a main parse that
+/// fails after one does.
+#[test]
+fn an_unavailable_model_source_is_named() {
+    const UNAVAILABLE: ::command::Registry<'static> =
+        ::command::Registry::new(&[&tables::S3], None).without_models();
+    let reason = |args: &[&str]| match evaluate_with_registry(
+        args,
+        &BTreeMap::new(),
+        &files(""),
+        &UNAVAILABLE,
+    ) {
+        Verdict::Python(reason) => Some(reason),
+        _ => None,
+    };
+    let unavailable = Some(PythonReason::ModelSourceUnavailable);
+    assert_eq!(reason(&["sts", "get-caller-identity"]), unavailable);
+    assert_eq!(
+        reason(&["s3", "website", "-h"]),
+        Some(PythonReason::UnsupportedSubcommand)
+    );
 }
 fn expect(args: &[&str], expected: Expected) {
     let result = evaluate(args, &BTreeMap::new(), &files(""));

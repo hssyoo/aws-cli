@@ -31,7 +31,9 @@ pub fn source(env: &SnapshotEnv) -> Option<ServiceSource<'static>> {
     }
     let expand =
         |path: &[u8]| unpack::expand_user(&unpack::expand_vars(path, &variables)?, &variables);
-    let models = ModelSource::from_payload(view, env.var_os("AWS_DATA_PATH"), &expand).ok()?;
+    let edits = service_command::coverage::table_edits();
+    let models =
+        ModelSource::from_payload(view, env.var_os("AWS_DATA_PATH"), &expand, &edits).ok()?;
     Some(ServiceSource::new(
         models,
         &customizations::TABLE,
@@ -41,10 +43,10 @@ pub fn source(env: &SnapshotEnv) -> Option<ServiceSource<'static>> {
 }
 
 /// The pinned `s3` grammar, which the router's enum path binds, and the
-/// model source, when there is one.
+/// model source's tables and binder, when there is one.
 pub fn registry<'s>(source: Option<&'s ServiceSource<'static>>) -> Registry<'s> {
-    Registry::new(
-        &[&tables::S3],
-        source.map(|source| source as &dyn command::OperationSource),
-    )
+    match source {
+        Some(source) => Registry::new(&[&tables::S3], Some(source.models())).with_binder(source),
+        None => Registry::new(&[&tables::S3], None).without_models(),
+    }
 }

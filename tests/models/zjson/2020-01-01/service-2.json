@@ -126,6 +126,26 @@
       "output": {
         "shape": "StampOutput"
       }
+    },
+    "PingSigv4a": {
+      "name": "PingSigv4a",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "auth": [
+        "aws.auth#sigv4a"
+      ]
+    },
+    "FetchBlob": {
+      "name": "FetchBlob",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "output": {
+        "shape": "FetchBlobOutput"
+      }
     }
   },
   "shapes": {
@@ -674,6 +694,19 @@
           "shape": "HttpTime"
         }
       }
+    },
+    "FetchBlobOutput": {
+      "type": "structure",
+      "members": {
+        "Body": {
+          "shape": "BlobStream"
+        }
+      },
+      "payload": "Body"
+    },
+    "BlobStream": {
+      "type": "blob",
+      "streaming": true
     }
   },
   "documentation": "A fake json service for tests."

@@ -33,7 +33,7 @@ fn json_encoder(value: &Value) -> Result<Value, DumpError> {
                 .map(|zoned| zoned.isoformat())
                 .unwrap_or_default(),
         )),
-        Value::Blob(bytes) => Ok(Value::String(model::base64::encode(bytes))),
+        Value::Blob(bytes) => Ok(Value::String(pytext::base64::encode(bytes))),
         other => Err(DumpError::unserializable(other)),
     }
 }

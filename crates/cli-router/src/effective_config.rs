@@ -85,8 +85,10 @@ pub enum Scope {
     /// and `s3 sync`: `s3 ls` builds a client and no transfer manager
     /// (`ListCommand` against `S3TransferCommand`).
     Transfer,
-    /// A model operation, whose client is never S3's: S3's protocol is one
-    /// the model client does not implement (`UnsupportedProtocol`).
+    /// A model operation whose client reads none of the `s3` block's
+    /// settings (`command::Needs::reads_s3_settings`, from its rule set's
+    /// built-ins); the generic route refuses one that does before this
+    /// stage, so the S3 rows here can be Ignored.
     Service,
 }
 impl Scope {
@@ -123,7 +125,7 @@ pub enum Consumer {
     Credentials,
     /// The model source, which reads botocore's search path (`Loader`).
     Models,
-    /// The router's output-format stage (`generic::output_format_refusal`).
+    /// The router's output stage (`command::OutputSettings::resolve`).
     Output,
     /// The invocation's preflight, which starts the pager as
     /// `OutputStreamFactory` does (`format::pager`).
@@ -716,13 +718,13 @@ pub const SETTINGS: &[Setting] = &[
         scope: Scope::S3,
     },
     // A model operation's response prints its timestamps as `iso8601`
-    // formats them or, for `wire`, as the response's text, through the
-    // invocation's timestamp parser (`format::TimestampParser`); any other
-    // value fails the session (`add_timestamp_parser`).
+    // formats them or, for `wire`, as the response's text; the output
+    // stage parses the value once (`command::OutputSettings`) and hands a
+    // value `add_timestamp_parser` rejects to Python.
     Setting {
         source: Source::Profile("cli_timestamp_format"),
-        support: Support::Unsupported(PythonReason::OutputFormat),
-        matching: Match::NoneOf(&["iso8601", "wire"]),
+        support: Support::Honored(Consumer::Output),
+        matching: Match::Present,
         scope: Scope::Service,
     },
     Setting {

@@ -31,7 +31,8 @@ pub fn interrupted(stdout: &mut dyn std::io::Write) -> std::io::Result<u8> {
 /// chain claims it (`construct_cli_error_handlers_chain`), for a call to
 /// `model`'s service.
 ///
-/// - `ParamValidationError`: `ParamValidationErrorsHandler`, 252.
+/// - `ParamValidationError`, a customization's among them:
+///   `ParamValidationErrorsHandler`, 252.
 /// - `NoRegionError`: `NoRegionErrorHandler`, 253, code `NoRegion`.
 /// - `NoCredentialsError`: `NoCredentialsErrorHandler`, 253.
 /// - `ClientError`: `ClientErrorHandler`, 254, with
@@ -44,6 +45,12 @@ pub fn call_failure(error: &CallError, model: &Model) -> CommandFailure {
     match error {
         CallError::Validation(report) => CommandFailure {
             message: report.message().into_bytes(),
+            ..CommandFailure::new(Category::ParamValidation)
+        },
+        // A customization's own parameter validation (`HookError::Validation`)
+        // raises botocore's `ParamValidationError` with its text.
+        CallError::Hook(client::hooks::HookError::Validation(text)) => CommandFailure {
+            message: text.clone().into_bytes(),
             ..CommandFailure::new(Category::ParamValidation)
         },
         CallError::NoRegion => CommandFailure {

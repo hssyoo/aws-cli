@@ -33,8 +33,9 @@ pub enum PythonReason {
     /// or a main-parse failure came after such a word was consumed.
     UnsupportedCommand,
     /// A command of a registered root without a native handler, whatever
-    /// its outcome: an `s3` subcommand the enum path does not bind, or a
-    /// hand-written command whose spec has no `bind`.
+    /// its outcome: an `s3` subcommand the enum path does not bind, a model
+    /// operation in a registry without a binder, or a parse failure of a
+    /// table a customization edits.
     UnsupportedSubcommand,
     /// A global option the native handlers do not implement
     /// (`--no-verify-ssl`, `--cli-read-timeout` outside a formatting
@@ -163,6 +164,40 @@ pub enum PythonReason {
     /// auth scheme other than SigV4 or none, `httpChecksum`, request
     /// compression, or a paginator.
     UnsupportedTrait,
+    /// The operation's auth is one the native client cannot sign with:
+    /// anything but SigV4 and none, by the name botocore resolves.
+    UnsupportedAuth,
+    /// The operation's payload goes unsigned under SigV4 (`unsignedPayload`).
+    UnsignedPayload,
+    /// The endpoint the rule set resolves carries headers to send.
+    EndpointHeaders,
+    /// A partition's `regionRegex` the native variant check cannot read.
+    RegionPattern,
+    /// The service's endpoint data (`endpoints.json` or the rule set) is
+    /// not what its kind is, or cannot be loaded.
+    EndpointData,
+    /// The rule set requires a built-in, with no default, that neither the
+    /// client nor a customization supplies.
+    EndpointBuiltin,
+    /// The rule set requires a client context parameter, with no default,
+    /// that no customization supplies.
+    ClientContextParam,
+    /// The operation has `operationContextParams`, which botocore evaluates
+    /// with JMESPath.
+    OperationContextParams,
+    /// A customization's interceptor declined the call, for the reason it
+    /// names.
+    CustomizationHook,
+    /// The output reaches a timestamp the wire sends as an epoch, which
+    /// `iso8601` output prints in the local zone, and that zone has
+    /// daylight-saving time: dateutil's `tzlocal` picks an offset per
+    /// instant, which only Python reproduces.
+    LocalZone,
+    /// The model source could not be built: the payload has no customization
+    /// patterns (a system build), or the model search path is one native
+    /// cannot expand as Python does; any command but the pinned ones is
+    /// Python's.
+    ModelSourceUnavailable,
     /// A Python customization whose event pattern matches the service or
     /// the operation (`handlers_registry.PLUGIN_REGISTRY`, botocore's
     /// `BUILTIN_HANDLERS`) is named in no native customization's
@@ -222,6 +257,17 @@ impl PythonReason {
             Self::UnsupportedProtocol => "unsupported_protocol",
             Self::UnsupportedTrait => "unsupported_trait",
             Self::UnportedCustomization => "unported_customization",
+            Self::UnsupportedAuth => "unsupported_auth",
+            Self::UnsignedPayload => "unsigned_payload",
+            Self::EndpointHeaders => "endpoint_headers",
+            Self::RegionPattern => "region_pattern",
+            Self::EndpointData => "endpoint_data",
+            Self::EndpointBuiltin => "endpoint_builtin",
+            Self::ClientContextParam => "client_context_param",
+            Self::OperationContextParams => "operation_context_params",
+            Self::CustomizationHook => "customization_hook",
+            Self::LocalZone => "local_zone",
+            Self::ModelSourceUnavailable => "model_source_unavailable",
             Self::OutputFormat => "output_format",
             Self::ClientSetting => "client_setting",
             Self::Pager => "pager",

@@ -22,7 +22,7 @@ pub fn check(root: &Path, commands: &[String]) -> Result<(), TaskError> {
         commands.to_vec()
     };
     let environment = deps::native_environment(root, false)?;
-    let tool = build_tool(root)?;
+    let tool = build_tool(root, &environment)?;
     let directory = root.join("target/argtables/derived");
     let home = directory.join("home");
     fs::create_dir_all(&home)?;
@@ -50,7 +50,7 @@ pub fn check(root: &Path, commands: &[String]) -> Result<(), TaskError> {
 pub fn run_tool(root: &Path, args: &[String]) -> Result<(), TaskError> {
     let args = args.strip_prefix(&["--".to_owned()]).unwrap_or(args);
     let environment = deps::native_environment(root, false)?;
-    let tool = build_tool(root)?;
+    let tool = build_tool(root, &environment)?;
     let home = root.join("target/argtables/derived/home");
     fs::create_dir_all(&home)?;
     let mut derive = Command::new(tool);
@@ -60,16 +60,23 @@ pub fn run_tool(root: &Path, args: &[String]) -> Result<(), TaskError> {
     process::run(&mut derive)
 }
 
-/// Build `derive-tables`, which derives the tables and parses over them.
-pub fn build_tool(root: &Path) -> Result<PathBuf, TaskError> {
-    process::run(Command::new("cargo").current_dir(root).args([
+/// Build `derive-tables`, which derives the tables and parses over them,
+/// with the native dependencies its crate's client links.
+pub fn build_tool(
+    root: &Path,
+    environment: &deps::NativeEnvironment,
+) -> Result<PathBuf, TaskError> {
+    let mut build = Command::new("cargo");
+    build.current_dir(root).args([
         "build",
         "--locked",
         "--package",
-        "command",
+        "service-command",
         "--bin",
         "derive-tables",
-    ]))?;
+    ]);
+    environment.apply(&mut build);
+    process::run(&mut build)?;
     Ok(root
         .join("target/debug/derive-tables")
         .with_extension(std::env::consts::EXE_EXTENSION))
@@ -82,7 +89,7 @@ pub fn oracle_arguments(root: &Path, oracle: &mut Command) -> Result<(), TaskErr
     let environment = deps::native_environment(root, false)?;
     oracle
         .arg("--derived-parser")
-        .arg(build_tool(root)?)
+        .arg(build_tool(root, &environment)?)
         .arg("--models")
         .arg(root.join("tests/models"))
         .arg("--fallback-prefix")

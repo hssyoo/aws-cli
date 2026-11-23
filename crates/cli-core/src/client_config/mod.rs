@@ -498,8 +498,8 @@ impl ClientConfig {
             retry_mode: settings.retry_mode().value,
             app_id: settings.app_id.as_ref().map(|v| v.value.as_slice()),
             extras: user_agent::Extras {
-                installer: "other",
-                prompt: "off",
+                installer: user_agent::INSTALLER,
+                prompt: user_agent::PROMPT,
                 command: &settings.command,
             },
         }

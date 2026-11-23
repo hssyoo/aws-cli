@@ -150,6 +150,7 @@ fn dispatch(
                 globals: &run.globals,
                 directory,
                 settings: &run.settings,
+                output: &run.output,
                 stdout_is_tty: environment.stdout_is_tty,
             };
             if let Err(reason) = run.invocation.preflight(&preflight) {

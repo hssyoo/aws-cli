@@ -6,12 +6,11 @@
 //! its operations through `xform_name` (`ServiceCommand._create_command_table`),
 //! and an operation's argument table is its input members and the
 //! cross-cutting arguments (`table`).
-use crate::patterns::{CliCustomization, Match, Patterns, Subject, TableOp};
+use crate::patterns::{Match, Patterns, Subject, TableOp};
 use crate::registry::OperationSource;
-use crate::spec::{Admission, Invocation, Needs};
+use crate::spec::Needs;
 use awscli_argparse::tables::RequiredOverride;
-use awscli_argparse::{Argument, CliType, DefaultValue, ParseResult};
-use cli_core::cli_error::PythonReason;
+use awscli_argparse::{Argument, CliType, DefaultValue};
 use model::search::SearchSource;
 use model::shapes::Model;
 use model::source::{Kind, LoadError, Source, load_service_model};
@@ -26,38 +25,6 @@ mod table;
 pub use table::{DerivedArgument, Origin, Table, Unpack, ValueType, kind_name};
 
 type Json = serde_json::Value;
-
-/// The registry entries whose table edits the derived tables reproduce:
-/// `wait` for a service with waiters, the router's alias rule, and the
-/// cross-cutting arguments. They stand in for the table edits only, not
-/// for what the handlers do when an argument is supplied, so admission
-/// does not read them.
-pub const TABLE_EDITS: &[CliCustomization] = &[
-    CliCustomization {
-        id: "tables.wait",
-        replaces: &["awscli.customizations.waiters.register_add_waiters"],
-    },
-    CliCustomization {
-        id: "tables.alias",
-        replaces: &["awscli.alias.register_alias_commands"],
-    },
-    CliCustomization {
-        id: "tables.outfile",
-        replaces: &["awscli.customizations.streamingoutputarg.register_streaming_output_arg"],
-    },
-    CliCustomization {
-        id: "tables.cli-input",
-        replaces: &["awscli.customizations.cliinput.register_cli_input_args"],
-    },
-    CliCustomization {
-        id: "tables.paging",
-        replaces: &["awscli.customizations.paginate.register_pagination"],
-    },
-    CliCustomization {
-        id: "tables.skeleton",
-        replaces: &["awscli.customizations.generatecliskeleton.register_generate_cli_skeleton"],
-    },
-];
 
 /// A loaded service: its model, its command table and its operations'
 /// tables, derived once each.
@@ -131,6 +98,9 @@ pub struct ModelSource<'a> {
     models: SearchSource<'a>,
     patterns: Patterns,
     special: SpecialCases,
+    /// The registry initializers whose edits to a table the derivation
+    /// reproduces; any other that a table's events meet customizes it.
+    reproduced: Vec<&'static str>,
     roots: OnceCell<Result<BTreeMap<String, String>, LoadError>>,
     services: Cache<(String, Option<Service>)>,
 }
@@ -161,10 +131,13 @@ impl<'a> ModelSource<'a> {
     /// The source of the payload `view`'s models and patterns, over the
     /// search path the CLI builds from `aws_data_path`; `expand` is
     /// `os.path.expanduser(os.path.expandvars(path))` (`SearchSource::for_cli`).
+    /// `reproduced` names the registry initializers whose table edits the
+    /// derivation reproduces (the CLI's coverage table says which).
     pub fn from_payload(
         view: pyload::View<'a>,
         aws_data_path: Option<&std::ffi::OsStr>,
         expand: &dyn Fn(&[u8]) -> Option<Vec<u8>>,
+        reproduced: &[&'static str],
     ) -> Result<Self, SourceError> {
         let entry = model::payload::load_resource(view, crate::patterns::ENTRY)
             .map_err(|error| SourceError::Patterns(error.to_string()))?;
@@ -173,14 +146,20 @@ impl<'a> ModelSource<'a> {
         let models =
             SearchSource::for_cli(view, aws_data_path, expand).map_err(SourceError::Search)?;
         let special = SpecialCases::botocore().map_err(SourceError::Xform)?;
-        Ok(Self::new(models, patterns, special))
+        Ok(Self::new(models, patterns, special, reproduced))
     }
 
-    pub fn new(models: SearchSource<'a>, patterns: Patterns, special: SpecialCases) -> Self {
+    pub fn new(
+        models: SearchSource<'a>,
+        patterns: Patterns,
+        special: SpecialCases,
+        reproduced: &[&'static str],
+    ) -> Self {
         Self {
             models,
             patterns,
             special,
+            reproduced: reproduced.to_vec(),
             roots: OnceCell::new(),
             services: Cache::default(),
         }
@@ -274,17 +253,13 @@ impl<'a> ModelSource<'a> {
         })
     }
 
-    /// Whether a registry entry outside [`TABLE_EDITS`] matches one of
-    /// `events`.
+    /// Whether a registry entry the derivation does not reproduce matches
+    /// one of `events`.
     fn edits(&self, events: &[String]) -> bool {
-        let reproduced = TABLE_EDITS
-            .iter()
-            .flat_map(|edit| edit.replaces.iter().copied());
-        let reproduced: Vec<&str> = reproduced.collect();
         self.patterns
             .registry_entries(events)
             .iter()
-            .any(|entry| !reproduced.contains(&entry.as_str()))
+            .any(|entry| !self.reproduced.contains(&entry.as_str()))
     }
 
     /// The table of `[command, operation]`, derived once.
@@ -432,19 +407,37 @@ impl OperationSource for ModelSource<'_> {
         let table = self.table(root, operation);
         !service.customized && table.is_some_and(|table| !table.customized)
     }
+    fn paginated(&self, root: &str, operation: &str) -> bool {
+        self.service(root).is_some_and(|service| {
+            service
+                .operation(operation)
+                .is_some_and(|found| service.paginated(&found.name))
+        })
+    }
     fn needs(&self, root: &str) -> Needs {
         let service = self.service(root);
         let metadata = service.map(|service| service.model.metadata());
         let id = metadata.and_then(model::shapes::Metadata::hyphenized_service_id);
-        Needs::Client {
+        let builtins = service
+            .and_then(|service| {
+                load_service_model(&self.models, &service.name, Kind::EndpointRuleSet).ok()
+            })
+            .map(|document| document.json);
+        let reads_s3_settings = builtins
+            .as_ref()
+            .and_then(|rules| rules.get("parameters")?.as_object())
+            .is_some_and(|parameters| {
+                parameters.values().any(|parameter| {
+                    parameter
+                        .get("builtIn")
+                        .and_then(Json::as_str)
+                        .is_some_and(|builtin| builtin.starts_with("AWS::S3"))
+                })
+            });
+        Needs {
             service: id.unwrap_or_else(|| root.to_owned()).into(),
+            reads_s3_settings,
         }
-    }
-    /// No model operation binds natively yet: every one meets the
-    /// cross-cutting entries (the session's and the argument table's), and
-    /// no native piece replaces what they do when the command runs.
-    fn bind(&self, _parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
-        Err(Admission::Python(PythonReason::UnportedCustomization))
     }
 }
 

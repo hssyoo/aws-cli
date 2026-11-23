@@ -57,11 +57,17 @@ impl OperationSource for Fake {
     fn reproduces_failures(&self, _root: &str, _operation: Option<&str>) -> bool {
         true
     }
+    fn paginated(&self, _root: &str, _operation: &str) -> bool {
+        false
+    }
     fn needs(&self, root: &str) -> Needs {
-        Needs::Client {
+        Needs {
             service: root.to_owned().into(),
+            reads_s3_settings: false,
         }
     }
+}
+impl Binder for Fake {
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
         match parsed.values.string("thing_id") {
             Some("refused") => Err(Admission::Python(PythonReason::UnsupportedValue)),
@@ -74,7 +80,7 @@ impl OperationSource for Fake {
 static PINNED: [&awscli_argparse::tables::Command<'static>; 1] = [&awscli_argparse::tables::S3];
 
 fn registry(source: &Fake) -> Registry<'_> {
-    Registry::new(&PINNED, Some(source))
+    Registry::new(&PINNED, Some(source)).with_binder(source)
 }
 
 #[test]
@@ -87,8 +93,9 @@ fn a_source_operation_resolves_to_its_operation() {
     assert_eq!((operation.root, operation.name), ("zsvc", "get-thing"));
     assert_eq!(
         operation.needs(),
-        Needs::Client {
-            service: "zsvc".into()
+        Needs {
+            service: "zsvc".into(),
+            reads_s3_settings: false,
         }
     );
 }

@@ -373,6 +373,14 @@ pub fn agentic_caller_features<E: EnvMap>(env: &E) -> Features {
         .collect()
 }
 
+/// `md/installer#<source>`: `get_distribution_source()`, which is `other`
+/// when no install metadata file exists, as none does beside this binary.
+pub const INSTALLER: &str = "other";
+/// `md/prompt#<mode>`: native runs only when the resolved auto-prompt mode
+/// is `off` or `on-partial`, and upstream's first `on-partial` pass reports
+/// `off` too, so native always sends `off`.
+pub const PROMPT: &str = "off";
+
 /// The session-level components the AWS CLI appends to `user_agent_extra`.
 /// Native sends no `sid/` telemetry session id: upstream inserts one right
 /// after the installer, from a session database native does not keep, and omits

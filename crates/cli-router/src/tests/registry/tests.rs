@@ -2,7 +2,9 @@
 //! `OperationSource` knows, through the same ordered stages as the pinned
 //! `s3` commands, to `Verdict::Run`.
 use super::*;
-use ::command::{Admission, Context, Invocation, Needs, OperationSource, Registry, StreamPolicy};
+use ::command::{
+    Admission, Binder, Context, Invocation, Needs, OperationSource, Registry, StreamPolicy,
+};
 use awscli_argparse::Argument;
 use cli_core::cli_error::{Category, CommandFailure, Rendering};
 use std::borrow::Cow;
@@ -82,11 +84,17 @@ impl OperationSource for Fake {
     fn reproduces_failures(&self, _root: &str, operation: Option<&str>) -> bool {
         operation != Some("get-session-token")
     }
+    fn paginated(&self, _root: &str, operation: &str) -> bool {
+        operation == "decode-authorization-message"
+    }
     fn needs(&self, root: &str) -> Needs {
-        Needs::Client {
+        Needs {
             service: root.to_owned().into(),
+            reads_s3_settings: false,
         }
     }
+}
+impl Binder for Fake {
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
         match parsed.values.string("role_session_name") {
             Some("refused") => Err(Admission::Python(PythonReason::UnsupportedOption)),
@@ -103,7 +111,7 @@ fn evaluate_in(
     env: &BTreeMap<String, String>,
     files: &ParsedFiles,
 ) -> (Verdict, ParseResult<'static>) {
-    const REGISTRY: Registry<'static> = Registry::new(&PINNED, Some(&Fake));
+    const REGISTRY: Registry<'static> = Registry::new(&PINNED, Some(&Fake)).with_binder(&Fake);
     let argv = args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
     let mut result = awscli_argparse::parse(&argv, &Options::default(), &REGISTRY.tables());
     let vars = env
@@ -160,8 +168,9 @@ fn a_root_only_the_registry_knows_parses_binds_and_runs() {
     ));
     assert_eq!(
         run.needs,
-        Needs::Client {
-            service: "sts".into()
+        Needs {
+            service: "sts".into(),
+            reads_s3_settings: false,
         }
     );
     assert_eq!(run.streams, StreamPolicy::Formatted);
@@ -328,8 +337,10 @@ fn the_prologue_and_the_command_line_refuse_before_run() {
             "",
             PythonReason::PythonOnlyGlobal,
         ),
+        // A paginated operation pages unless --no-paginate says not to,
+        // which only Python does.
         (
-            &["--no-paginate", "sts", "get-caller-identity"],
+            &["--no-paginate", "sts", "decode-authorization-message"],
             &[],
             "",
             PythonReason::PythonOnlyGlobal,
@@ -464,6 +475,8 @@ fn globals_are_classified_for_a_formatted_command() {
         &["--no-sign-request"],
         &["--cli-connect-timeout", "5"],
         &["--cli-error-format", "legacy"],
+        // Python ignores it for an operation that does not paginate.
+        &["--no-paginate"],
     ] {
         let args = [globals, &["sts", "get-caller-identity"]].concat();
         let verdict = evaluate_with(&args, &BTreeMap::new(), &files(""));

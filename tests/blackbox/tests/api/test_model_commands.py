@@ -5,6 +5,7 @@ A run forcing the Python route checks every expectation against Python.
 """
 
 import json
+import os
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -22,6 +23,7 @@ from apihelpers import (
     fake_model_protocol,
     retries_clause,
 )
+from harness_plugin import COMMAND_ENVIRONMENT
 from localstub import HTTPResponse
 
 pytestmark = pytest.mark.asyncio
@@ -33,6 +35,9 @@ USAGE: Final = (
     "[parameters]\nTo see help text, you can run:\n\n  aws help\n  "
     "aws <command> help\n  aws <command> <subcommand> help\n"
 )
+
+# The run forces the native route, which refuses what it cannot run.
+FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get("AWS_CLI_NATIVE_ROUTER") == "native"
 
 
 @pytest_asyncio.fixture
@@ -287,6 +292,7 @@ async def test_an_epoch_prints_in_a_fixed_zone(models: ApiSession) -> None:
     assert json.loads(run.stdout) == {"When": NOON_UTC}, run.describe()
 
 
+@pytest.mark.skipif(FORCED_NATIVE, reason="forced native refuses it (local_zone), as checked below")
 async def test_an_epoch_prints_in_a_zone_with_daylight_saving(models: ApiSession) -> None:
     models.env["TZ"] = DST_ZONE
     run = await models.run("zjson describe", replies={"When": 1591012800})
@@ -300,7 +306,7 @@ async def test_an_epoch_in_a_zone_with_daylight_saving_is_python_s(
     models.env.update(TZ=DST_ZONE, AWS_CLI_NATIVE_ROUTER="native")
     run = await models.run("zjson describe", replies=[], expected_rc=255)
     assert run.calls == ()
-    assert "(unsupported_trait)" in run.stderr, run.describe()
+    assert "(local_zone)" in run.stderr, run.describe()
 
 
 @pytest.mark.parametrize(
@@ -369,3 +375,56 @@ async def test_a_redirect_is_a_client_error(models: ApiSession) -> None:
     assert run.stderr == (
         f"\naws: [ERROR]: An error occurred (301) when calling the Ping operation{retries}:\n"
     ), run.describe()
+
+
+def counting_process(models: ApiSession) -> Path:
+    """A credential_process that appends a line to a counter file per run,
+    configured as the session's only credentials."""
+    for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"):
+        models.env.pop(name, None)
+    runs = models.cwd / "runs"
+    script = models.cwd / "credentials.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        f"echo run >> '{runs}'\n"
+        'printf \'{"Version": 1, "AccessKeyId": "process_key", '
+        '"SecretAccessKey": "process_secret"}\'\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    models.config_path.write_text(
+        models.config_path.read_text(encoding="utf-8")
+        + f"credential_process = {script}\n",
+        encoding="utf-8",
+    )
+    return runs
+
+
+def runs_of(runs: Path) -> int:
+    return len(runs.read_text(encoding="utf-8").splitlines()) if runs.exists() else 0
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the process is a POSIX shell command")
+async def test_a_refused_operation_runs_the_credential_process_once(
+    models: ApiSession,
+) -> None:
+    # Every refusal comes before any credential provider runs, so the
+    # Python route that takes the call over is the only one to run it; a
+    # forced-native run refuses it and runs nothing.
+    runs = counting_process(models)
+    expected_rc = 255 if FORCED_NATIVE else 0
+    run = await models.run("zjson ping-sigv4a", replies={}, expected_rc=expected_rc)
+    if FORCED_NATIVE:
+        assert "(unsupported_auth)" in run.stderr, run.describe()
+        assert runs_of(runs) == 0
+    else:
+        assert runs_of(runs) == 1, run.describe()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the process is a POSIX shell command")
+async def test_a_native_operation_runs_the_credential_process_once(
+    models: ApiSession,
+) -> None:
+    runs = counting_process(models)
+    run = await models.run("zjson ping", replies={})
+    assert runs_of(runs) == 1, run.describe()

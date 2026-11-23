@@ -57,7 +57,7 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("client", CLIENT),
     (
         "format",
-        &["awscli-config", "cli-core", "model", "timestamp"],
+        &["awscli-config", "cli-core", "model", "pytext", "timestamp"],
     ),
     // L3: the command API, over format and the model, never the client.
     ("command", COMMAND),
@@ -125,12 +125,14 @@ const SERVICE_ERRORS: &[&str] = &[
 ];
 const SERVICE_COMMAND: &[&str] = &[
     "awscli-argparse",
+    "awscli-config",
     "cli-core",
     "client",
     "command",
     "credentials",
     "format",
     "model",
+    "pyload",
     "service-errors",
 ];
 const S3: &[&str] = &[

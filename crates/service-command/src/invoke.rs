@@ -3,24 +3,26 @@
 //! printed by the formatter `--output` selects, to stdout or the pager.
 //!
 //! [`Invocation::preflight`] does everything that needs neither a native
-//! runtime nor the network: the output format, the pager, the timestamp
-//! parser, the credential chain, the client, and the client's own refusals
-//! ([`Client::prepare`]), any of which can still hand the invocation to
-//! Python. [`Invocation::run`] then sends the call.
+//! runtime, the network nor a credential provider: the output format, the
+//! pager, the timestamp parser, whether the credential chain would reach a
+//! service the model client does not fetch from, the client, and the
+//! client's own refusals ([`Client::prepare`]), any of which can still hand
+//! the invocation to Python. [`Invocation::run`] then sends the prepared
+//! call; the credential chain is walked then, once (`crate::credentials`).
 use crate::admit::Admitted;
 use cli_core::cli_error::{CommandFailure, PythonReason};
 use cli_core::client_config::{ClientSettings, Trust};
-use cli_core::{EnvMap, aws_profile, shared_config};
+use cli_core::{EnvMap, aws_profile};
+use client::call::Prepared;
 use client::call::{Client, ClientParts, UserAgentContext};
-use client::credentials::ChainCredentials;
-use client::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
+use client::credentials::{ChainCredentials, CredentialSource};
+use client::endpoint::{EndpointConfig, EndpointInputs};
 use client::error::{CallError, ParseError};
 use client::hooks::Customization;
 use client::http::{HttpRequest, HttpResponse};
-use client::protocol::ParseOptions;
 use client::transport::{Timeouts, Transport, TransportError};
 use command::{Context, Invocation, Preflight};
-use format::{Delivered, Destination, Outcome, OutputFormat, TimestampFormat, TimestampParser};
+use format::{Delivered, Destination, Outcome, OutputFormat, TimestampParser};
 use model::shapes::Model;
 use model::value::Value;
 use std::cell::OnceCell;
@@ -32,13 +34,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub struct ServiceInvocation {
     pub admitted: Admitted,
     pub model: Arc<Model>,
-    pub endpoints: EndpointData,
     pub customizations: &'static [&'static Customization],
     /// The hyphenized service id the configured-endpoint lookup keys on.
     pub service_id: String,
-    /// `--output`, when given.
-    pub output: Option<String>,
-    pub no_cli_pager: bool,
     /// The output shape reaches a timestamp the wire sends as an epoch.
     pub output_epochs: bool,
     /// The payload's CA bundle, trusted when nothing configures another.
@@ -50,25 +48,22 @@ pub struct ServiceInvocation {
 /// What the preflight settled.
 #[derive(Debug)]
 struct Ready {
-    /// The client, or the failure botocore raises as its session loads
-    /// credentials, creates the client or prepares the call, which the run
-    /// reports.
+    /// The client and the prepared call, or the failure botocore raises as
+    /// it creates the client or prepares the call, which the run reports.
     client: Result<Client, CommandFailure>,
+    /// The call, prepared once in the preflight and sent by the run.
+    prepared: std::cell::RefCell<Option<Prepared>>,
     format: OutputFormat,
     destination: Destination,
     pager_env: Vec<(OsString, OsString)>,
 }
 
 impl ServiceInvocation {
-    #[expect(clippy::too_many_arguments, reason = "one field each, from binding")]
     pub fn new(
         admitted: Admitted,
         model: Arc<Model>,
-        endpoints: EndpointData,
         customizations: &'static [&'static Customization],
         service_id: String,
-        output: Option<String>,
-        no_cli_pager: bool,
         embedded_trust: Option<&'static [u8]>,
         versions: cli_core::client_config::user_agent::Versions<'static>,
     ) -> Self {
@@ -79,11 +74,8 @@ impl ServiceInvocation {
         Self {
             admitted,
             model,
-            endpoints,
             customizations,
             service_id,
-            output,
-            no_cli_pager,
             output_epochs,
             embedded_trust,
             versions,
@@ -92,39 +84,15 @@ impl ServiceInvocation {
     }
 }
 
-/// The session's `timestamp_parser`, set once by the preflight; the
-/// client's parse options are `'static` functions that read it.
-static TIMESTAMPS: OnceLock<TimestampParser> = OnceLock::new();
-
-fn parse_timestamp(wire: &Value) -> Result<Value, ParseError> {
-    let parser = TIMESTAMPS
-        .get()
-        .copied()
-        .unwrap_or_else(|| TimestampParser::new(TimestampFormat::Iso8601, Some(0)));
-    parser
-        .parse(wire)
-        .map_err(|error| ParseError::new(format!("{error:?}")))
-}
-
-/// The CLI's identity blob parser (`register_identity_blob_parser`): a blob
-/// prints as the base64 text it arrived as.
-fn identity_blob(text: &str) -> Result<Value, ParseError> {
-    Ok(Value::String(text.to_owned()))
-}
-
-const CLI_PARSE: ParseOptions<'static> = ParseOptions {
-    timestamp: &parse_timestamp,
-    blob: &identity_blob,
-};
-
 impl Invocation for ServiceInvocation {
     fn preflight(&self, cx: &Preflight<'_>) -> Result<(), PythonReason> {
-        let format = output_format(cx, self.output.as_deref());
-        let parser = timestamp_parser(cx)?;
+        let format = cx.output.format;
+        let parser = cx.output.timestamps;
         if parser.needs_local_zone() && self.output_epochs {
-            return Err(PythonReason::UnsupportedTrait);
+            return Err(PythonReason::LocalZone);
         }
-        let destination = destination(cx, self.no_cli_pager)?;
+        let destination = format::pager::destination(&cx.output.pager.chain(), cx.stdout_is_tty)
+            .map_err(|_| PythonReason::Pager)?;
         if !awscli_argparse::unpack::text_encoding_is_utf8(cx.variables)
             || (utf8_mode(cx.env)
                 && format == OutputFormat::Json
@@ -132,19 +100,22 @@ impl Invocation for ServiceInvocation {
         {
             return Err(PythonReason::OutputEncoding);
         }
-        let _ = TIMESTAMPS.set(parser);
-        let failure = |error: CallError| service_errors::call_failure(&error, &self.model);
+        let failure = |error: CallError| match error {
+            CallError::Unsupported(unsupported) => Err(crate::admit::reason(&unsupported)),
+            other => Ok(service_errors::call_failure(&other, &self.model)),
+        };
+        let mut prepared = None;
         let client = match self.client(cx)? {
-            Ok(Ok(client)) => {
+            Ok(client) => {
                 match client.prepare(&self.admitted.operation, self.admitted.input.clone()) {
-                    Err(CallError::Unsupported(_)) => return Err(PythonReason::UnsupportedTrait),
-                    Err(error) => Err(failure(error)),
-                    Ok(_) => Ok(client),
+                    Ok(call) => {
+                        prepared = Some(call);
+                        Ok(client)
+                    }
+                    Err(error) => Err(failure(error)?),
                 }
             }
-            Ok(Err(CallError::Unsupported(_))) => return Err(PythonReason::UnsupportedProtocol),
-            Ok(Err(error)) => Err(failure(error)),
-            Err(credentials) => Err(credentials),
+            Err(error) => Err(failure(error)?),
         };
         let pager_env = format::pager::environment(
             cx.variables
@@ -153,6 +124,7 @@ impl Invocation for ServiceInvocation {
         );
         let _ = self.ready.set(Ready {
             client,
+            prepared: std::cell::RefCell::new(prepared),
             format,
             destination,
             pager_env,
@@ -168,7 +140,13 @@ impl Invocation for ServiceInvocation {
             });
         };
         let client = ready.client.as_ref().map_err(Clone::clone)?;
-        let output = match client.call(&self.admitted.operation, self.admitted.input.clone()) {
+        let Some(prepared) = ready.prepared.borrow_mut().take() else {
+            return Err(CommandFailure {
+                message: b"the prepared call was already sent".to_vec(),
+                ..CommandFailure::new(cli_core::cli_error::Category::General)
+            });
+        };
+        let output = match client.send(prepared) {
             Ok(output) => output,
             Err(CallError::Interrupted) => return Ok(interrupted(cx)),
             Err(error) => return Err(service_errors::call_failure(&error, &self.model)),
@@ -213,12 +191,10 @@ fn interrupted(cx: &mut Context<'_>) -> u8 {
 
 impl ServiceInvocation {
     /// The client the session would create for this invocation, or the
-    /// failure its credentials (outside) or its creation (inside) raise; a
-    /// credential source the native chain does not fetch from is Python's.
-    fn client(
-        &self,
-        cx: &Preflight<'_>,
-    ) -> Result<Result<Result<Client, CallError>, CommandFailure>, PythonReason> {
+    /// failure its creation raises; a credential chain that would reach a
+    /// service the model client does not fetch from is Python's. No
+    /// credential provider runs here.
+    fn client(&self, cx: &Preflight<'_>) -> Result<Result<Client, CallError>, PythonReason> {
         let globals = cx.globals;
         let profile = globals.profile.as_deref();
         let region = cli_core::region::configured_region(
@@ -236,10 +212,7 @@ impl ServiceInvocation {
             profile,
         )
         .map_err(|_| PythonReason::EndpointSetting)?;
-        let credentials = match credentials(cx)? {
-            Ok(credentials) => credentials,
-            Err(failure) => return Ok(Err(failure)),
-        };
+        let credentials = credentials(cx)?;
         let settings = cx.settings;
         let endpoint = EndpointConfig::new(&EndpointInputs {
             region,
@@ -257,139 +230,84 @@ impl ServiceInvocation {
         let transport = Arc::new(LazyTransport::new(
             trust(settings, self.embedded_trust),
             settings.keep_alive.value,
-            cli_core::SnapshotEnv::capture(),
+            cx.env.clone(),
             globals.debug,
         ));
-        Ok(Ok(Client::new(ClientParts {
+        Ok(Client::new(ClientParts {
             service: self.admitted.service.clone(),
             model: Arc::clone(&self.model),
-            endpoints: self.endpoints.clone(),
+            endpoints: self.admitted.endpoints.clone(),
             endpoint,
             settings: settings.clone(),
-            credentials: Arc::new(credentials),
+            credentials,
             transport,
             runtime: Arc::new(client::runtime::SystemRuntime::new(
                 cli_core::interrupt::process_state(),
             )),
             customizations: self.customizations,
-            parse: cli_parse_hooks(),
+            parse: cli_parse_hooks(cx.output.timestamps),
             user_agent: UserAgentContext {
                 host: cli_core::client_config::user_agent::host(),
                 distribution: cli_core::client_config::user_agent::distribution(),
                 versions: self.versions,
                 extras: session_extras(settings),
             },
-        })))
+        }))
     }
 }
 
-/// The CLI's response parse handlers, owned by the client.
-fn cli_parse_hooks() -> client::protocol::ParseHooks {
+/// The CLI's response parse handlers, which the client owns: the session's
+/// timestamp parser (`add_timestamp_parser`), and the identity blob parser
+/// (`register_identity_blob_parser`), which leaves a blob as the base64 text
+/// it arrived as.
+fn cli_parse_hooks(timestamps: TimestampParser) -> client::protocol::ParseHooks {
     client::protocol::ParseHooks {
-        timestamp: Arc::new(CLI_PARSE.timestamp),
-        blob: Arc::new(CLI_PARSE.blob),
+        timestamp: Arc::new(move |wire: &Value| {
+            timestamps
+                .parse(wire)
+                .map_err(|error| ParseError::new(format!("{error:?}")))
+        }),
+        blob: Arc::new(|text: &str| Ok(Value::String(text.to_owned()))),
     }
 }
 
-/// The CLI session's `User-Agent` extras: the install source, the prompt
-/// mode, and the command.
+/// The CLI session's `User-Agent` extras, as the s3 commands send them:
+/// the install source, the prompt mode, and the command's lineage.
 fn session_extras(
     settings: &cli_core::client_config::ClientSettings,
 ) -> client::useragent::SessionExtras {
+    use cli_core::client_config::user_agent::{INSTALLER, PROMPT};
     client::useragent::SessionExtras {
-        installer: "other",
-        prompt: "off",
+        installer: INSTALLER,
+        prompt: PROMPT,
         command: settings.command.clone(),
     }
 }
 
-/// botocore's chain for the selected profile, walked before the client
-/// exists, as `Session.create_client` walks it. A chain that would ask the
-/// container's endpoint or the instance metadata service is Python's: the
-/// model client does not fetch from them. A provider's failure is
-/// botocore's, which the run reports.
-fn credentials(
-    cx: &Preflight<'_>,
-) -> Result<Result<ChainCredentials, CommandFailure>, PythonReason> {
+/// The client's credential source: botocore's chain for the selected
+/// profile, walked when the client first signs (`crate::credentials`), or
+/// none for an unsigned call. A chain that would ask the container's
+/// endpoint or the instance metadata service is Python's.
+fn credentials(cx: &Preflight<'_>) -> Result<Arc<dyn CredentialSource>, PythonReason> {
     if !cx.settings.signing.value {
-        return Ok(Ok(ChainCredentials::new(None)));
+        return Ok(Arc::new(ChainCredentials::new(None)));
     }
     let selected = cx.globals.profile.as_deref();
-    let name = aws_profile::select_or_default(cx.env, selected)
-        .to_str()
-        .unwrap_or("default");
-    let profile = if aws_profile::is_explicit(selected) {
-        ::credentials::Profile::Explicit(name)
-    } else {
-        ::credentials::Profile::Ambient(name)
+    let profile = crate::credentials::Selected {
+        name: aws_profile::select_or_default(cx.env, selected)
+            .to_str()
+            .unwrap_or("default")
+            .to_owned(),
+        explicit: aws_profile::is_explicit(selected),
     };
-    let env = ::credentials::environment(cx.env);
-    let asked = std::cell::Cell::new(false);
-    let container = ::credentials::ContainerFetch::new(|_| {
-        asked.set(true);
-        Ok(None)
-    });
-    let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let noted = Arc::clone(&reached);
-    let instance = ::credentials::RoleFetcher::new(move || {
-        noted.store(true, std::sync::atomic::Ordering::Relaxed);
-        Ok(None)
-    });
-    let found =
-        ::credentials::default_resolver(&env, cx.shared_files, profile, container, instance)
-            .load_credentials();
-    let found = match found {
-        Ok(found) => found,
-        Err(error) => return Ok(Err(service_errors::credentials_failure(&error))),
-    };
-    if found.is_none() && (asked.get() || reached.load(std::sync::atomic::Ordering::Relaxed)) {
+    if crate::credentials::reaches_metadata(cx.env, cx.shared_files, &profile) {
         return Err(PythonReason::CredentialForm);
     }
-    Ok(Ok(ChainCredentials::new(found)))
-}
-
-/// The `--output` format: `--output`, else `AWS_DEFAULT_OUTPUT`, else the
-/// profile's `output`, else `json` (`_construct_cli_output_chain`). The
-/// router refused any other.
-fn output_format(cx: &Preflight<'_>, output: Option<&str>) -> OutputFormat {
-    let profile = aws_profile::select_or_default(cx.env, cx.globals.profile.as_deref());
-    let variable = cx.env.var_os("AWS_DEFAULT_OUTPUT");
-    let name = output
-        .or_else(|| variable.and_then(std::ffi::OsStr::to_str))
-        .or_else(|| shared_config::profile_property(cx.shared_files, profile, "output"))
-        .unwrap_or("json");
-    OutputFormat::from_name(name).unwrap_or(OutputFormat::Json)
-}
-
-/// `add_timestamp_parser`: the profile's `cli_timestamp_format` and this
-/// process's local zone.
-fn timestamp_parser(cx: &Preflight<'_>) -> Result<TimestampParser, PythonReason> {
-    let profile = aws_profile::select_or_default(cx.env, cx.globals.profile.as_deref());
-    let setting = shared_config::profile_property(cx.shared_files, profile, "cli_timestamp_format");
-    let format = TimestampFormat::from_setting(setting).map_err(|_| PythonReason::OutputFormat)?;
-    let offset = cli_core::local_zone::LocalZone::system().and_then(|zone| zone.fixed_offset());
-    Ok(TimestampParser::new(format, offset))
-}
-
-/// `OutputStreamFactory`'s choice of stdout or the pager.
-fn destination(cx: &Preflight<'_>, no_cli_pager: bool) -> Result<Destination, PythonReason> {
-    let profile = aws_profile::select_or_default(cx.env, cx.globals.profile.as_deref());
-    let cli_pager =
-        if shared_config::profile_property_is_block(cx.shared_files, profile, "cli_pager") {
-            format::Profile::Block
-        } else {
-            shared_config::profile_property(cx.shared_files, profile, "cli_pager")
-                .map_or(format::Profile::Absent, format::Profile::Text)
-        };
-    let aws_pager = cx.env.var_os("AWS_PAGER");
-    let pager = cx.env.var_os("PAGER");
-    let chain = format::Chain {
-        no_cli_pager,
-        aws_pager,
-        cli_pager,
-        pager,
-    };
-    format::pager::destination(&chain, cx.stdout_is_tty).map_err(|_| PythonReason::Pager)
+    Ok(Arc::new(crate::credentials::LazyChain::new(
+        cx.env,
+        cx.shared_files,
+        profile,
+    )))
 }
 
 /// Python's UTF-8 mode, which `PYTHONUTF8=1` turns on.

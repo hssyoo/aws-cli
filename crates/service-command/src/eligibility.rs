@@ -28,7 +28,7 @@ pub struct PythonReasonName(pub &'static str);
 /// The standing of `[command, operation]`.
 pub fn standing(
     source: &ModelSource<'_>,
-    customizations: &[&Customization],
+    customizations: &[&'static Customization],
     command: &str,
     operation: &str,
 ) -> Standing {
@@ -56,7 +56,7 @@ pub fn standing(
 /// Every root's operations, counted by standing.
 pub fn census(
     source: &ModelSource<'_>,
-    customizations: &[&Customization],
+    customizations: &[&'static Customization],
 ) -> BTreeMap<Standing, usize> {
     let mut counts = BTreeMap::new();
     let roots: Vec<String> = source

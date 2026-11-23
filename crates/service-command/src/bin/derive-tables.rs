@@ -19,7 +19,13 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use {awscli_config as _, cli_core as _, model as _};
+use {
+    awscli_config as _, cli_core as _, client as _, credentials as _, format as _, model as _,
+    service_errors as _,
+};
+// The library's test dependencies.
+#[cfg(test)]
+use {cli_router as _, customizations as _};
 
 type Error = Box<dyn std::error::Error>;
 
@@ -42,7 +48,8 @@ fn main() -> Result<(), Error> {
     env.insert("HOME".to_owned(), home);
     let expand = |path: &[u8]| expand_user(&expand_vars(path, &env)?, &env);
     let data_path = env.get("AWS_DATA_PATH").map(OsString::as_os_str);
-    let source = ModelSource::from_payload(view, data_path, &expand)?;
+    let edits = service_command::coverage::table_edits();
+    let source = ModelSource::from_payload(view, data_path, &expand, &edits)?;
     let mut stdout = std::io::BufWriter::new(std::io::stdout().lock());
     match rest.as_slice() {
         [mode, requests] if mode == "parse" => parse(&source, Path::new(requests), &mut stdout)?,

@@ -1,5 +1,5 @@
 //! Which Python customizations the native route stands in for, and on
-//! what basis.
+//! what basis: the one CLI-side table.
 //!
 //! The matcher (`command::patterns`) lists every registry pattern, builtin
 //! row and client-creation row that an invocation's events meet. Each must
@@ -9,61 +9,66 @@
 //!   client [`Customization`] in scope, which the `client` and
 //!   `customizations` crates own;
 //! - an awscli registry initializer, reached by one pattern, by a [`Row`] of
-//!   [`CLI`], which this crate owns. Its [`Basis`] says why: the native
-//!   route implements what the handlers it registers do, or they do
-//!   nothing for an invocation that the native route admits, because the
-//!   case where they act is refused before any request.
+//!   [`CLI`], which this crate owns.
+//!
+//! A row says two things. [`TableEdit`]: whether the derived tables
+//! reproduce what the initializer does to them, which the derivation reads
+//! ([`table_edits`], handed to `command::models::ModelSource`); an edit
+//! they do not reproduce marks the table customized, so its parse failures
+//! are Python's. [`Basis`]: why the invocation needs no Python for it when
+//! it runs, which tests check: an `Implemented` path names an item that
+//! exists, and an `Inert` row's refusal is the verdict of a case that would
+//! make the initializer act (`coverage::tests`, and cli-router's
+//! `coverage_refusals_are_the_router_s`).
 //!
 //! An initializer is keyed by the pattern it was reached through because
 //! the lazy emitter imports it the first time any of its patterns matches
 //! (`LazyInitEmitter._ensure_initialized`), and what it then registers acts
 //! on its own events: `cloudfront`'s, reached through `top-level-args-parsed`
 //! alone, registers handlers for that service's operations and one
-//! `context.update` on the shared event. The derived table's shape
-//! (`command::models::TABLE_EDITS`) is no basis: it is what parses, not what
-//! runs.
+//! `context.update` on the shared event.
 use cli_core::cli_error::PythonReason;
-use client::hooks::Customization;
+use client::hooks::{Basis, Customization, Refusal};
 use command::patterns::{Match, MatchKind};
 
-/// Why a registry initializer, reached by one pattern, needs no Python.
+/// Whether the derived tables reproduce what an initializer does to them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Basis {
-    /// The native route does what its handlers do, at `at`.
-    Native { at: &'static str },
-    /// Its handlers do nothing unless `acts_when`; the native route refuses
-    /// that case as `refused_as`, at `by`, before any request. `None`: the
-    /// case never reaches a model operation's native route at all.
-    Inert {
-        acts_when: &'static str,
-        refused_as: Option<PythonReason>,
-        by: &'static str,
-    },
+pub enum TableEdit {
+    /// It edits no table an operation's parse reads.
+    None,
+    /// It edits one, as the derivation reproduces: `how`.
+    Reproduced { how: &'static str },
 }
 
-/// One awscli initializer reached by one registry pattern, and its basis.
+/// One awscli initializer reached by one registry pattern: what it does to
+/// the tables, and the basis for running without it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Row {
     pub pattern: &'static str,
     pub entry: &'static str,
+    pub table: TableEdit,
     pub basis: Basis,
 }
 
-const MAIN_TABLE: Basis = Basis::Native {
-    at: "command::models::ModelSource::roots applies MAIN_COMMAND_TABLE_OPS, which the lazy \
-         emitter applies in place of every building-command-table.main initializer and then \
-         marks them initialized, so none is imported (lazy_emitter.py:73-113)",
-};
-
+/// The lazy emitter applies `MAIN_COMMAND_TABLE_OPS` in place of every
+/// `building-command-table.main` initializer and marks them initialized, so
+/// none is imported (lazy_emitter.py:73-113); the root table applies the
+/// same list.
 const fn main_table(entry: &'static str) -> Row {
     Row {
         pattern: "building-command-table.main",
         entry,
-        basis: MAIN_TABLE,
+        table: TableEdit::None,
+        basis: Basis::Implemented {
+            at: "command::models::ModelSource::roots",
+        },
     }
 }
 
 const SESSION: &str = "session-initialized";
+const ARGUMENT_TABLE: &str = "building-argument-table";
+const COMMAND_TABLE: &str = "building-command-table";
+const OPTION: Refusal = Refusal::Router(PythonReason::UnsupportedOption);
 
 /// The awscli initializers every model operation reaches, with their
 /// bases. One reached by any other pattern is uncovered.
@@ -78,173 +83,203 @@ pub static CLI: &[Row] = &[
     main_table("awscli.customizations.login.register_login_cmds"),
     main_table("awscli.customizations.update.register_update_command"),
     Row {
-        pattern: "building-argument-table",
+        pattern: ARGUMENT_TABLE,
         entry: "awscli.customizations.cliinput.register_cli_input_args",
+        table: TableEdit::Reproduced {
+            how: "the cross-cutting --cli-input-json and --cli-input-yaml",
+        },
+        // CliInputArgument merges a value into the call only when one is
+        // given (cliinput.py:59); both options unpack as Unpack::Deferred.
         basis: Basis::Inert {
-            acts_when: "--cli-input-json or --cli-input-yaml is supplied: CliInputArgument \
-                        merges a value into the call's parameters only when one is given \
-                        (cliinput.py:59)",
-            refused_as: Some(PythonReason::UnsupportedOption),
-            by: "both options unpack as Unpack::Deferred (command::models::table), which the \
-                 unpack loop stops at and the router names (cli-router generic::deferred_reason)",
+            acts_when: "--cli-input-json or --cli-input-yaml is supplied",
+            refused_as: OPTION,
         },
     },
     Row {
-        pattern: "building-argument-table",
+        pattern: ARGUMENT_TABLE,
         entry: "awscli.customizations.paginate.register_pagination",
+        table: TableEdit::Reproduced {
+            how: "the paging options of a paginated operation",
+        },
+        // unify_paging_params returns for an operation without a paginator
+        // (paginate.py:133-145); admission refuses one with.
         basis: Basis::Inert {
-            acts_when: "the operation has a paginator: unify_paging_params returns for one \
-                        without (paginate.py:133-145)",
-            refused_as: Some(PythonReason::UnsupportedTrait),
-            by: "admit::traits refuses a paginated operation",
+            acts_when: "the operation has a paginator",
+            refused_as: Refusal::Router(PythonReason::UnsupportedTrait),
         },
     },
     Row {
-        pattern: "building-argument-table",
+        pattern: ARGUMENT_TABLE,
         entry: "awscli.customizations.generatecliskeleton.register_generate_cli_skeleton",
+        table: TableEdit::Reproduced {
+            how: "--generate-cli-skeleton and its required-argument override",
+        },
+        // generate_skeleton returns without a value
+        // (generatecliskeleton.py:94-97); the option unpacks as Deferred.
         basis: Basis::Inert {
-            acts_when: "--generate-cli-skeleton is supplied: generate_skeleton returns without \
-                        a value (generatecliskeleton.py:94-97), and its required-argument \
-                        override only lifts what the parse then checks, as the derived \
-                        table's overrides do",
-            refused_as: Some(PythonReason::UnsupportedOption),
-            by: "the option unpacks as Unpack::Deferred (command::models::table)",
+            acts_when: "--generate-cli-skeleton is supplied",
+            refused_as: OPTION,
         },
     },
     Row {
         pattern: "building-argument-table.*",
         entry: "awscli.customizations.streamingoutputarg.register_streaming_output_arg",
+        table: TableEdit::Reproduced {
+            how: "outfile for a streaming output",
+        },
+        // add_streaming_output_arg adds `outfile` only for a streaming
+        // output (streamingoutputarg.py:25-36).
         basis: Basis::Inert {
-            acts_when: "the output is streaming: add_streaming_output_arg adds `outfile` only \
-                        then (streamingoutputarg.py:25-36)",
-            refused_as: Some(PythonReason::UnsupportedTrait),
-            by: "admit::traits refuses a streaming output",
+            acts_when: "the output is streaming",
+            refused_as: Refusal::Trait("streaming"),
         },
     },
     Row {
-        pattern: "building-command-table",
+        pattern: COMMAND_TABLE,
         entry: "awscli.customizations.waiters.register_add_waiters",
-        basis: Basis::Inert {
-            acts_when: "the service's command table is built: add_waiters adds `wait` there, \
-                        and returns for an operation's own table, whose command object has no \
-                        service_model (waiters.py:28-45); an operation's invocation never runs \
-                        the `wait` command it adds",
-            refused_as: None,
-            by: "the `wait` command is no operation of the source (command::models::Service)",
+        table: TableEdit::Reproduced {
+            how: "`wait` for a service with waiters",
+        },
+        // add_waiters adds `wait` to the service's table and returns for an
+        // operation's own, whose command object has no service_model
+        // (waiters.py:28-45); the derived table adds the same `wait`.
+        basis: Basis::Implemented {
+            at: "command::models::ModelSource::has_waiters",
         },
     },
     Row {
-        pattern: "building-command-table",
+        pattern: COMMAND_TABLE,
         entry: "awscli.alias.register_alias_commands",
+        table: TableEdit::Reproduced {
+            how: "nothing without an alias under the command",
+        },
+        // AliasSubCommandInjector.on_building_command_table (alias.py:166).
         basis: Basis::Inert {
-            acts_when: "the alias file defines aliases under the command's tree \
-                        (AliasSubCommandInjector.on_building_command_table, alias.py:166)",
-            refused_as: Some(PythonReason::CommandAlias),
-            by: "cli-router defines_alias, before binding",
+            acts_when: "the alias file defines aliases under the command's tree",
+            refused_as: Refusal::Router(PythonReason::CommandAlias),
         },
     },
     Row {
         pattern: SESSION,
         entry: "awscli.paramfile.register_init_uri_param_handler",
-        basis: Basis::Native {
-            at: "awscli_argparse::unpack reads file:// and fileb:// values as get_paramfile \
-                 does (LOCAL_PREFIX_MAP, paramfile.py:34,103) and defers the reads it cannot \
-                 match (UnsupportedValue)",
+        table: TableEdit::None,
+        // file:// and fileb:// read as get_paramfile reads them
+        // (LOCAL_PREFIX_MAP, paramfile.py:34,103); a read native cannot
+        // match is deferred (UnsupportedValue).
+        basis: Basis::Implemented {
+            at: "awscli_argparse::unpack::unpack",
         },
     },
     Row {
         pattern: SESSION,
         entry: "awscli.customizations.binaryformat.register_init_binary_formatter",
+        table: TableEdit::None,
+        // Its input decoder acts on a supplied blob member
+        // (base64_decode_input_blobs, binaryformat.py:38), which unpacks as
+        // Deferred; its output parser is the client's identity blob hook
+        // (invoke::cli_parse_hooks); an unknown cli_binary_format is a
+        // ClientSetting refusal.
         basis: Basis::Inert {
-            acts_when: "a blob member is supplied (base64_decode_input_blobs on \
-                        provide-client-params, binaryformat.py:38), or a response holds a blob, \
-                        which the identity blob parser leaves as its base64 text, as the \
-                        client's ParseOptions does (client::protocol::ParseOptions); an \
-                        unknown cli_binary_format is a ClientSetting refusal",
-            refused_as: Some(PythonReason::UnsupportedOption),
-            by: "a blob member unpacks as Unpack::Deferred (command::models::table)",
+            acts_when: "a blob member is supplied",
+            refused_as: OPTION,
         },
     },
     Row {
         pattern: SESSION,
         entry: "awscli.clidriver.register_no_pager_handler",
-        basis: Basis::Native {
-            at: "format::pager::Chain reads --no-cli-pager as no_pager_handler clears the \
-                 pager setting (clidriver.py:233)",
+        table: TableEdit::None,
+        // no_pager_handler clears the pager setting (clidriver.py:233).
+        basis: Basis::Implemented {
+            at: "format::pager::destination",
         },
     },
     Row {
         pattern: SESSION,
         entry: "awscli.customizations.assumerole.register_assume_role_provider",
+        table: TableEdit::None,
+        // It sets the assume-role provider's cache (assumerole.py:19).
         basis: Basis::Inert {
-            acts_when: "the credential chain reaches the assume-role provider, whose cache it \
-                        sets; building the chain refuses instance-metadata settings, which the \
-                        router renders natively (cli-router session_start) \
-                        (assumerole.py:19)",
-            refused_as: Some(PythonReason::CredentialForm),
-            by: "the router's credential stage refuses assume-role and web-identity profiles",
+            acts_when: "the credential chain reaches the assume-role provider",
+            refused_as: Refusal::Router(PythonReason::CredentialForm),
         },
     },
     Row {
         pattern: SESSION,
         entry: "awscli.customizations.timestampformat.register_timestamp_format",
-        basis: Basis::Native {
-            at: "format::TimestampParser parses response timestamps as add_timestamp_parser \
-                 selects (timestampformat.py:49)",
+        table: TableEdit::None,
+        // add_timestamp_parser (timestampformat.py:49).
+        basis: Basis::Implemented {
+            at: "format::timestamps::TimestampParser",
         },
     },
     Row {
         pattern: SESSION,
         entry: "awscli.customizations.history.register_history_mode",
+        table: TableEdit::None,
+        // attach_history_handler (history/__init__.py:49).
         basis: Basis::Inert {
-            acts_when: "cli_history is enabled (attach_history_handler, history/__init__.py:49)",
-            refused_as: Some(PythonReason::HistoryEnabled),
-            by: "the SETTINGS row for cli_history (cli-router effective_config)",
+            acts_when: "cli_history is enabled",
+            refused_as: Refusal::Router(PythonReason::HistoryEnabled),
         },
     },
     Row {
         pattern: SESSION,
         entry: "awscli.customizations.sso.register_sso_commands",
+        table: TableEdit::None,
+        // inject_json_file_cache sets the SSO provider's cache
+        // (sso/__init__.py:38); its other handler builds `sso`'s table.
         basis: Basis::Inert {
-            acts_when: "the credential chain reaches the SSO provider, whose cache it sets \
-                        (inject_json_file_cache, sso/__init__.py:38); its other handler builds \
-                        the `sso` command's table only",
-            refused_as: Some(PythonReason::CredentialForm),
-            by: "the router's credential stage refuses SSO profiles",
+            acts_when: "the credential chain reaches the SSO provider",
+            refused_as: Refusal::Router(PythonReason::CredentialForm),
         },
     },
     Row {
         pattern: "top-level-args-parsed",
         entry: "awscli.customizations.globalargs.register_parse_global_args",
-        basis: Basis::Native {
-            at: "cli-router's globals and client_config resolve the query, signing, SSL \
-                 verification and timeouts as resolve_types, no_sign_request, \
-                 resolve_verify_ssl and the timeout handlers do (globalargs.py:25)",
+        table: TableEdit::None,
+        // resolve_types, no_sign_request, resolve_verify_ssl and the timeout
+        // handlers (globalargs.py:25).
+        basis: Basis::Implemented {
+            at: "cli_core::client_config::resolve_settings",
         },
     },
     Row {
         pattern: "top-level-args-parsed",
         entry: "awscli.customizations.cloudfront.register",
+        table: TableEdit::None,
+        // Its only handler on this event is `context.update`, recording the
+        // parsed globals for one of that service's arguments
+        // (cloudfront/__init__.py:63); the service's operations, which its
+        // other handlers act on, speak rest-xml. Once native speaks it,
+        // they reach the initializer through their own patterns, which no
+        // row covers, and this row's refusal becomes UnportedCustomization.
         basis: Basis::Inert {
-            acts_when: "the operation is one of that service's three it customizes: its only \
-                        handler on this event is `context.update`, recording the parsed \
-                        globals for a later argument (cloudfront/__init__.py:63); its \
-                        operations reach it through their own patterns, which no row covers",
-            refused_as: None,
-            by: "this row covers the shared event alone",
+            acts_when: "the operation is one of that service's",
+            refused_as: Refusal::Router(PythonReason::UnsupportedProtocol),
         },
     },
     Row {
         pattern: "process-cli-arg",
         entry: "awscli.argprocess.register_param_shorthand_parser",
+        table: TableEdit::None,
+        // ParamShorthandParser returns None for any member that is not a
+        // structure, map or list of those (_is_complex_shape,
+        // argprocess.py:265), which unpacks as Deferred.
         basis: Basis::Inert {
-            acts_when: "the member is a structure, map or list of those: ParamShorthandParser \
-                        returns None for any other (_is_complex_shape, argprocess.py:265)",
-            refused_as: Some(PythonReason::UnsupportedOption),
-            by: "such a member unpacks as Unpack::Deferred (command::models::table)",
+            acts_when: "a structure, map or list of them is supplied",
+            refused_as: OPTION,
         },
     },
 ];
+
+/// The initializers whose table edits the derived tables reproduce, which
+/// the derivation does not count as customizing a table.
+pub fn table_edits() -> Vec<&'static str> {
+    CLI.iter()
+        .filter(|row| matches!(row.table, TableEdit::Reproduced { .. }))
+        .map(|row| row.entry)
+        .collect()
+}
 
 /// The first match nothing covers: no [`CLI`] row for a registry
 /// initializer and its pattern, and no `replaces` of a customization in

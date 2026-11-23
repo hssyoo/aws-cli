@@ -7,19 +7,24 @@ use std::borrow::Cow;
 use std::io::Write;
 use std::path::Path;
 
-/// What the router must resolve before the command may run.
+/// What the router must resolve before a model operation may run: a
+/// client for its service.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Needs {
-    /// A client for a service. `service` is the identity botocore's
-    /// configured-endpoint lookup keys on (`ConfiguredEndpointProvider`):
-    /// the model's `serviceId`, hyphenated and lowercased, which names the
-    /// `AWS_ENDPOINT_URL_<SERVICE>` variable and the `services` section's
-    /// entry.
-    Client { service: Cow<'static, str> },
+pub struct Needs {
+    /// The identity botocore's configured-endpoint lookup keys on
+    /// (`ConfiguredEndpointProvider`): the model's `serviceId`, hyphenated
+    /// and lowercased, which names the `AWS_ENDPOINT_URL_<SERVICE>`
+    /// variable and the `services` section's entry.
+    pub service: Cow<'static, str>,
+    /// The client reads the `s3` block's settings: its endpoint rule set
+    /// declares an `AWS::S3::` or `AWS::S3Control::` built-in, which
+    /// botocore fills from them (`compute_endpoint_resolver_builtin_defaults`).
+    pub reads_s3_settings: bool,
 }
 
-/// How the command's standard streams are buffered, and so which output
-/// globals it honors.
+/// How the command's standard streams are buffered: the only thing this
+/// says. Which globals a command honors is the router's to judge from what
+/// the command is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamPolicy {
     /// The response goes through the `--output` formatter
@@ -65,6 +70,8 @@ pub struct Preflight<'a> {
     pub directory: &'a Path,
     /// The settings the router resolved for the command's client.
     pub settings: &'a cli_core::client_config::ClientSettings,
+    /// How the response prints, which the router resolved.
+    pub output: &'a crate::OutputSettings,
     pub stdout_is_tty: bool,
 }
 impl std::fmt::Debug for Preflight<'_> {

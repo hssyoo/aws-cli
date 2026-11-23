@@ -63,8 +63,8 @@ pub struct Native {
     /// The client settings the handler runs with, resolved once.
     pub client: client_config::ClientConfig,
 }
-/// The dispatch payload of a registry command's verdict: a command a
-/// hand-written spec or a model source bound, admitted by every stage.
+/// The dispatch payload of a registry command's verdict: a model operation
+/// the registry's binder bound, admitted by every stage.
 #[derive(Debug)]
 pub struct Run {
     /// Global overrides shared by every native command.
@@ -77,6 +77,8 @@ pub struct Run {
     pub streams: ::command::StreamPolicy,
     /// The settings the command's client runs with, resolved once.
     pub settings: client_config::ClientSettings,
+    /// How the command's response prints, resolved once.
+    pub output: ::command::OutputSettings,
 }
 /// The router's decision. A failure is an owned copy of the parse result's.
 /// `Native` is a pinned `s3` command of the router's own enum path; `Run`
@@ -227,7 +229,7 @@ pub fn route_with_process_lock<E: EnvMap>(
         Outcome::Version => Verdict::Python(PythonReason::VersionRequested),
         Outcome::UnsupportedOsValue => Verdict::Python(PythonReason::UnsupportedValue),
         Outcome::Help => Verdict::Python(PythonReason::HelpRequested),
-        Outcome::Unresolved { .. } => Verdict::Python(PythonReason::UnsupportedCommand),
+        Outcome::Unresolved { .. } => Verdict::Python(config.registry.unknown_command_reason()),
         Outcome::Failure(failure) => route_failure(result, failure.clone(), config),
         Outcome::Parsed => route_parsed(result, unpack, config, probe, acquire_process_lock),
     }
@@ -256,7 +258,7 @@ fn route_failure<E: EnvMap>(
             .as_ref()
             .and_then(|n| n.string("command"))
             .filter(|c| !config.registry.is_root(c))
-            .map(|_| PythonReason::UnsupportedCommand),
+            .map(|_| config.registry.unknown_command_reason()),
         _ if names.first().is_some_and(|root| defines_alias(files, root)) => {
             Some(PythonReason::CommandAlias)
         }

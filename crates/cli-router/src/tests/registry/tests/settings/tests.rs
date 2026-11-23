@@ -285,12 +285,19 @@ fn pager_settings_leave_the_verdict_to_dispatch() {
     }
 }
 
+/// The output settings are resolved once, here, and carried on the run;
+/// the invocation reads them and judges nothing again.
 #[test]
 fn output_is_honoured() {
-    assert_runs(
-        identity_verdict(&[("AWS_DEFAULT_OUTPUT", "text")], ""),
-        "text",
+    let run = identity_run(
+        &[("AWS_DEFAULT_OUTPUT", "text"), ("AWS_PAGER", "more")],
+        "[default]\ncli_timestamp_format = wire\n",
     );
+    assert_eq!(run.output.format, ::command::OutputFormat::Text);
+    let aws_pager = run.output.pager.aws_pager.as_deref();
+    assert_eq!(aws_pager, Some(std::ffi::OsStr::new("more")));
+    // wire timestamps print as the response's text, whatever the zone.
+    assert!(!run.output.timestamps.needs_local_zone());
     let verdict = identity_verdict(&[], "[default]\noutput = table\n");
     assert_python(verdict, PythonReason::OutputFormat, "table");
 }

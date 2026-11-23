@@ -1,5 +1,4 @@
 use super::*;
-use ::command::StreamPolicy;
 use awscli_argparse::chain::Level;
 /// How a global is honored, which for the output globals depends on what
 /// the command does with its output ([`Target`]).
@@ -8,10 +7,10 @@ enum GlobalSupport {
     Native,
     /// `--output`: a listing ignores it, and a formatting command honors
     /// it, whose format the settings stage judges with the environment's
-    /// and the profile's (`generic::output_format_refusal`).
+    /// and the profile's (`command::OutputSettings::resolve`).
     Output,
-    /// `--no-paginate`: a listing ignores it. A model operation that
-    /// paginates is Python's, and whether one does is not known here.
+    /// `--no-paginate`: a listing ignores it, and so does Python for a model
+    /// operation that does not paginate; one that does is Python's.
     Pagination,
     /// `--color` and `--no-cli-pager`: a command below a root writes no
     /// colored text and starts no pager it would change, or starts one it
@@ -26,13 +25,19 @@ enum GlobalSupport {
     ReadTimeout,
     PythonOnly,
 }
-/// What the command a parse reached does with its output.
+/// What the command a parse reached is, as far as the globals it honors
+/// go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Target {
     /// A root with subcommands and no handler of its own.
     Group,
-    /// A command, buffered and formatted as its policy says.
-    Streams(StreamPolicy),
+    /// A listing writing its own lines, as `s3 ls` does.
+    Listing,
+    /// A transfer writing its own progress, as `s3 cp` does.
+    Transfer,
+    /// A model operation, whose response the `--output` formatter prints;
+    /// whether it paginates decides `--no-paginate`.
+    Operation { paginated: bool },
 }
 impl Target {
     /// The target of a pinned `s3` lineage: `s3 ls` is a listing and the
@@ -40,11 +45,11 @@ impl Target {
     pub(super) fn of_lineage(lineage: NativeLineage) -> Self {
         match lineage {
             NativeLineage::S3 => Self::Group,
-            NativeLineage::S3Ls => Self::Streams(StreamPolicy::Listing),
+            NativeLineage::S3Ls => Self::Listing,
             NativeLineage::S3Cp
             | NativeLineage::S3Mv
             | NativeLineage::S3Rm
-            | NativeLineage::S3Sync => Self::Streams(StreamPolicy::Transfer),
+            | NativeLineage::S3Sync => Self::Transfer,
         }
     }
 }
@@ -146,18 +151,15 @@ pub(super) fn route_parsed_unsupported_global(
         .then_some(PythonReason::PythonOnlyGlobal)
 }
 fn is_native_global(support: GlobalSupport, target: Target, level: &Level<'_>) -> bool {
-    let streams = match target {
-        Target::Group => None,
-        Target::Streams(policy) => Some(policy),
-    };
+    let operation = matches!(target, Target::Operation { .. });
     match support {
         GlobalSupport::Native => true,
-        GlobalSupport::Output => matches!(
-            streams,
-            Some(StreamPolicy::Listing | StreamPolicy::Formatted)
+        GlobalSupport::Output => target == Target::Listing || operation,
+        GlobalSupport::Pagination => matches!(
+            target,
+            Target::Listing | Target::Operation { paginated: false }
         ),
-        GlobalSupport::Pagination => streams == Some(StreamPolicy::Listing),
-        GlobalSupport::Presentation => streams.is_some(),
+        GlobalSupport::Presentation => target != Target::Group,
         GlobalSupport::ErrorFormat => level
             .namespace
             .string("cli_error_format")
@@ -169,8 +171,7 @@ fn is_native_global(support: GlobalSupport, target: Target, level: &Level<'_>) -
         }
         GlobalSupport::ReadTimeout => {
             let timeout = bind_timeout(&level.namespace, "read_timeout");
-            streams == Some(StreamPolicy::Formatted)
-                && client_config::timeout_milliseconds(timeout).is_some()
+            operation && client_config::timeout_milliseconds(timeout).is_some()
         }
         GlobalSupport::PythonOnly => false,
     }

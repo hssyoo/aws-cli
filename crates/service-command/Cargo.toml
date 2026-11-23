@@ -11,14 +11,18 @@ workspace = true
 
 [dependencies]
 awscli-argparse = { path = "../awscli-argparse" }
+awscli-config = { path = "../awscli-config" }
 cli-core = { path = "../cli-core" }
 client = { path = "../client" }
 command = { path = "../command" }
 credentials = { path = "../credentials" }
 format = { path = "../format" }
 model = { path = "../model" }
+pyload = { path = "../pyload" }
+serde_json.workspace = true
 service-errors = { path = "../service-errors" }
 
 [dev-dependencies]
+cli-router = { path = "../cli-router" }
+client = { path = "../client", features = ["testing"] }
 customizations = { path = "../customizations" }
-pyload = { path = "../pyload" }

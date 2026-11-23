@@ -38,14 +38,17 @@ pub fn with_models<T>(check: impl FnOnce(ModelSource<'_>) -> T) -> Result<T> {
     let bytes = payload()?;
     let view = pyload::View::new(&bytes)?;
     let data_path = fake_models();
-    let source = ModelSource::from_payload(view, Some(&data_path), &expand)?;
+    let edits = crate::coverage::table_edits();
+    let source = ModelSource::from_payload(view, Some(&data_path), &expand, &edits)?;
     Ok(check(source))
 }
 
 /// `argv` parsed and unpacked over a registry holding `models`, as the
 /// router completes a model operation's parse.
 pub fn parsed<'s>(source: &'s crate::ServiceSource<'s>, argv: &[&str]) -> ParseResult<'s> {
-    let registry: &'s Registry<'s> = Box::leak(Box::new(Registry::new(&[], Some(source))));
+    let registry: &'s Registry<'s> = Box::leak(Box::new(
+        Registry::new(&[], Some(source.models())).with_binder(source),
+    ));
     let argv: Vec<String> = argv.iter().map(|arg| (*arg).to_owned()).collect();
     let mut result = awscli_argparse::parse(&argv, &Options::default(), &registry.tables());
     let variables = HashMap::new();
@@ -107,4 +110,54 @@ pub fn source<'a>(
         rust: "1.96.0",
     };
     crate::ServiceSource::new(models, customizations, None, versions)
+}
+
+/// The shared files of `config` and `alias` text; an empty text is no file.
+pub fn files(config: &str, alias: &str) -> awscli_config::ParsedFiles {
+    fn contents<'a>(source: &'a str, text: &'a str) -> Option<awscli_config::Contents<'a>> {
+        (!text.is_empty()).then_some(awscli_config::Contents {
+            source,
+            bytes: text.as_bytes(),
+        })
+    }
+    awscli_config::ParsedFiles::parse(awscli_config::Inputs {
+        config: contents("config", config),
+        aliases: contents("alias", alias),
+        credentials: None,
+    })
+}
+
+/// The router's verdict for `argv` over the fake models and the client's
+/// real customizations, with `env` (and a region, and a refused loopback
+/// endpoint) and `files`. Nothing is sent.
+pub fn route(
+    argv: &[&str],
+    env: &[(&str, &str)],
+    files: &awscli_config::ParsedFiles,
+) -> Result<cli_router::Verdict> {
+    with_models(|models| {
+        let service = source(models, &customizations::TABLE);
+        let registry = Registry::new(&[], Some(service.models())).with_binder(&service);
+        let argv: Vec<String> = argv.iter().map(|arg| (*arg).to_owned()).collect();
+        let mut parsed = awscli_argparse::parse(&argv, &Options::default(), &registry.tables());
+        let env = cli_core::SnapshotEnv::from_pairs(env.iter().copied().chain([
+            ("AWS_DEFAULT_REGION", "us-east-1"),
+            ("AWS_ENDPOINT_URL", "http://127.0.0.1:9"),
+        ]));
+        let variables = HashMap::new();
+        let unpack = unpack::Environment {
+            directory: std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
+            variables: &variables,
+            files: &unpack::FsParamfiles,
+            preferred_encoding: unpack::PreferredEncoding::Locale,
+        };
+        let configuration = cli_router::Configuration {
+            env: &env,
+            shared_files: files,
+            boto_config_credentials: false,
+            embedded_trust: true,
+            registry: &registry,
+        };
+        cli_router::route(&mut parsed, &unpack, &configuration)
+    })
 }

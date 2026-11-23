@@ -16,10 +16,10 @@ fn input(source: &ServiceSource<'_>, argv: &[&str]) -> Value {
 }
 
 fn keys(value: &Value) -> Vec<&str> {
-    match value {
-        Value::Map(map) => map.keys().collect(),
-        other => panic!("{other:?}"),
-    }
+    value
+        .as_map()
+        .map(|map| map.keys().collect())
+        .unwrap_or_else(|| panic!("{value:?}"))
 }
 
 /// The request holds the supplied members in the table's (model) order,
@@ -41,11 +41,8 @@ fn members_bind_in_model_order_as_add_to_params_stores_them() -> Result<()> {
             ],
         );
         assert_eq!(keys(&value), ["ThingId", "Count"]);
-        let Value::Map(map) = &value else {
-            panic!("{value:?}");
-        };
         assert_eq!(
-            map.get("Count"),
+            value.get("Count"),
             Some(&Value::BigInteger("99999999999999999999999".into()))
         );
         let value = input(
@@ -61,11 +58,8 @@ fn members_bind_in_model_order_as_add_to_params_stores_them() -> Result<()> {
                 "--no-enabled",
             ],
         );
-        let Value::Map(map) = &value else {
-            panic!("{value:?}");
-        };
-        assert_eq!(map.get("Count"), Some(&Value::Integer(7)));
-        assert_eq!(map.get("Enabled"), Some(&Value::Bool(false)));
+        assert_eq!(value.get("Count"), Some(&Value::Integer(7)));
+        assert_eq!(value.get("Enabled"), Some(&Value::Bool(false)));
         assert_eq!(keys(&value), ["ThingId", "Count", "Enabled"]);
         let value = input(
             &source,

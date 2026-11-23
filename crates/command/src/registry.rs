@@ -3,6 +3,7 @@
 use crate::spec::{Admission, Invocation, Needs, StreamPolicy};
 use awscli_argparse::tables::{self, CommandKind, Node, RequiredOverride, Roots, Tables};
 use awscli_argparse::{Argument, ParseResult};
+use cli_core::cli_error::PythonReason;
 use std::borrow::Cow;
 
 /// The commands a model supplies: `aws <service> <operation>`, derived for
@@ -25,9 +26,16 @@ pub trait OperationSource: std::fmt::Debug {
     /// `[root, operation]` are ones the derived tables reproduce byte for
     /// byte, so they render natively.
     fn reproduces_failures(&self, root: &str, operation: Option<&str>) -> bool;
+    /// Whether `[root, operation]` paginates, as `client.can_paginate`
+    /// answers for it.
+    fn paginated(&self, root: &str, operation: &str) -> bool;
     /// What every operation of `root` needs before it runs.
     fn needs(&self, root: &str) -> Needs;
-    /// Bind the completed parse of one of this source's operations.
+}
+
+/// What binds the completed parse of a source's operation to an
+/// invocation, or names why Python runs it.
+pub trait Binder: std::fmt::Debug {
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission>;
 }
 
@@ -37,6 +45,8 @@ pub trait OperationSource: std::fmt::Debug {
 pub struct Registry<'s> {
     pinned: tables::Pinned<'static>,
     source: Option<&'s dyn OperationSource>,
+    binder: Option<&'s dyn Binder>,
+    models_unavailable: bool,
 }
 
 /// What a parsed lineage resolves to.
@@ -53,6 +63,7 @@ pub enum Resolution<'r> {
 #[derive(Debug, Clone, Copy)]
 pub struct Operation<'r> {
     source: &'r dyn OperationSource,
+    binder: Option<&'r dyn Binder>,
     pub root: &'r str,
     pub name: &'r str,
 }
@@ -61,13 +72,22 @@ impl Operation<'_> {
     pub fn needs(&self) -> Needs {
         self.source.needs(self.root)
     }
+    /// Whether the operation paginates.
+    pub fn paginated(&self) -> bool {
+        self.source.paginated(self.root, self.name)
+    }
     /// A model operation's response is formatted.
     pub const fn streams(&self) -> StreamPolicy {
         StreamPolicy::Formatted
     }
-    /// Bind the completed parse through the source.
+    /// Bind the completed parse through the registry's binder. A registry
+    /// without one (the derivation tool's) parses its source's commands and
+    /// binds none.
     pub fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
-        self.source.bind(parsed)
+        match self.binder {
+            Some(binder) => binder.bind(parsed),
+            None => Err(Admission::Python(PythonReason::UnsupportedSubcommand)),
+        }
     }
 }
 
@@ -81,6 +101,32 @@ impl<'s> Registry<'s> {
         Self {
             pinned: tables::Pinned(pinned),
             source,
+            binder: None,
+            models_unavailable: false,
+        }
+    }
+    /// This registry, recording that its model source could not be built:
+    /// a word no pinned grammar claims may then be a model command.
+    pub const fn without_models(self) -> Self {
+        Self {
+            models_unavailable: true,
+            ..self
+        }
+    }
+    /// Why Python runs a command word no root claims: an unknown command,
+    /// or one the unavailable model source might have derived.
+    pub const fn unknown_command_reason(&self) -> PythonReason {
+        if self.models_unavailable {
+            PythonReason::ModelSourceUnavailable
+        } else {
+            PythonReason::UnsupportedCommand
+        }
+    }
+    /// This registry, binding its source's operations through `binder`.
+    pub const fn with_binder(self, binder: &'s dyn Binder) -> Self {
+        Self {
+            binder: Some(binder),
+            ..self
         }
     }
     /// The parse's tables: the pinned globals and this registry's roots.
@@ -105,7 +151,12 @@ impl<'s> Registry<'s> {
         }
         match (self.source, rest) {
             (Some(source), [name]) if source.arguments(root, name).is_some() => {
-                Resolution::Operation(Operation { source, root, name })
+                Resolution::Operation(Operation {
+                    source,
+                    binder: self.binder,
+                    root,
+                    name,
+                })
             }
             _ => Resolution::Unknown,
         }

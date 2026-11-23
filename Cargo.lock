@@ -106,6 +106,7 @@ dependencies = [
  "awscli-argparse",
  "awscli-config",
  "cli-core",
+ "format",
  "model",
  "pyload",
  "serde_json",
@@ -201,6 +202,7 @@ version = "0.1.0"
 dependencies = [
  "cli-core",
  "model",
+ "pytext",
  "serde_json",
  "timestamp",
 ]
@@ -391,7 +393,9 @@ name = "service-command"
 version = "0.1.0"
 dependencies = [
  "awscli-argparse",
+ "awscli-config",
  "cli-core",
+ "cli-router",
  "client",
  "command",
  "credentials",
@@ -399,6 +403,7 @@ dependencies = [
  "format",
  "model",
  "pyload",
+ "serde_json",
  "service-errors",
 ]
 

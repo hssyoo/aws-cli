@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 cli-core = { path = "../cli-core" }
 model = { path = "../model" }
+pytext = { path = "../pytext" }
 timestamp = { path = "../timestamp" }
 
 [dev-dependencies]
