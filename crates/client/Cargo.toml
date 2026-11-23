@@ -18,5 +18,9 @@ model = { path = "../model" }
 sigv4 = { path = "../sigv4" }
 timestamp = { path = "../timestamp" }
 
+[dev-dependencies]
+crt = { path = "../crt", features = ["loopback"] }
+sigv4 = { path = "../sigv4", features = ["testing"] }
+
 [lints]
 workspace = true
