@@ -1,0 +1,281 @@
+[
+ {
+  "name": "zquery-describe-every-member",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {
+   "Text": "a b&c=é/~+%",
+   "Count": 3,
+   "Total": 12345678901234,
+   "On": true,
+   "Fraction": 1.5,
+   "Precise": 0.1,
+   "Data": {
+    "$blob": "AAFiaW7/"
+   },
+   "When": {
+    "$datetime": "2015-08-30T12:36:00Z"
+   },
+   "WhenEpoch": {
+    "$datetime": "2015-08-30T12:36:00.5Z"
+   },
+   "WhenHttp": "2015-08-30T12:36:00Z",
+   "WhenIso": 1440938160,
+   "Nested": {
+    "Label": "l",
+    "Inner": {
+     "Value": "v",
+     "Depth": 2
+    }
+   },
+   "Items": [
+    "x",
+    "y"
+   ],
+   "Flat": [
+    "f1",
+    "f2"
+   ],
+   "FlatPlain": [
+    "p1"
+   ],
+   "Records": [
+    {
+     "Key": "k",
+     "Weight": 2.5
+    },
+    {
+     "Weight": 1e-07
+    }
+   ],
+   "Times": [
+    "2015-08-30T12:36:00Z"
+   ],
+   "Pairs": {
+    "b": "2",
+    "a": "1"
+   },
+   "Named": {
+    "n": 7
+   },
+   "FlatPairs": {
+    "fk": "fv"
+   },
+   "RecordsByName": {
+    "r": {
+     "Key": "rk"
+    }
+   },
+   "Renamed": "alt",
+   "Token": "token-1"
+  },
+  "response": {
+   "status": 200,
+   "headers": {
+    "x-amzn-RequestId": "rq-h"
+   },
+   "body": "<DescribeResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><DescribeResult xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"Fancy\"><Text>t &amp; &lt;x&gt; é</Text><Count>3</Count><Total>12345678901234567890</Total><On>true</On><Fraction>1.50</Fraction><Precise>1e+16</Precise><Data>aGVsbG8=</Data><When>2015-08-30T12:36:00.123Z</When><WhenEpoch>1440938160</WhenEpoch><WhenHttp>Sun, 30 Aug 2015 12:36:00 GMT</WhenHttp><WhenIso>2015-08-30T13:36:00+01:00</WhenIso><Nested><Label>l</Label><Inner><Value><![CDATA[c<d>]]></Value><Depth>2</Depth></Inner></Nested><Items><item>x</item><item>y</item></Items><Entry>f1</Entry><Entry>f2</Entry><FlatPlain>p1</FlatPlain><Records><member><Key>k</Key><Weight>2.5</Weight></member><member><Weight>1e-07</Weight></member></Records><Times><member>2015-08-30T12:36:00Z</member></Times><Pairs><entry><key>a</key><value>1</value></entry><entry><key>b</key><value>2</value></entry></Pairs><Named><entry><Name>n</Name><Content>7</Content></entry></Named><FlatPairs><key>fk</key><value>fv</value></FlatPairs><RecordsByName><entry><key>r</key><value><Key>rk</Key></value></entry></RecordsByName><AltName>alt</AltName><Unknown>ignored</Unknown></DescribeResult><ResponseMetadata><RequestId>rq-1</RequestId></ResponseMetadata></DescribeResponse>"
+  }
+ },
+ {
+  "name": "zquery-empty-lists-and-maps",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {
+   "Items": [],
+   "Records": [],
+   "Flat": [],
+   "Pairs": {}
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<DescribeResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><DescribeResult><Items/><Records></Records><Pairs/><Text/><Nested/></DescribeResult><ResponseMetadata><RequestId>rq-1</RequestId></ResponseMetadata></DescribeResponse>"
+  }
+ },
+ {
+  "name": "zquery-host-prefix",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Locate",
+  "input": {
+   "Zone": "z-1",
+   "Hint": "h"
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<LocateResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><LocateResult><Where>here</Where></LocateResult><ResponseMetadata><RequestId>rq-1</RequestId></ResponseMetadata></LocateResponse>"
+  }
+ },
+ {
+  "name": "zquery-no-input-or-output",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<PingResponse><ResponseMetadata><RequestId>p</RequestId></ResponseMetadata></PingResponse>"
+  }
+ },
+ {
+  "name": "zquery-get-thing",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "GetThing",
+  "input": {
+   "ThingId": "t-1",
+   "Count": 2,
+   "Enabled": false,
+   "Since": "2020-01-01"
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<GetThingResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><GetThingResult><ThingId>t-1</ThingId><Count>2</Count></GetThingResult><ResponseMetadata><RequestId>rq-1</RequestId></ResponseMetadata></GetThingResponse>"
+  }
+ },
+ {
+  "name": "zquery-modelled-error",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {},
+  "response": {
+   "status": 409,
+   "headers": {},
+   "body": "<ErrorResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><Error><Type>Sender</Type><Code>ConflictError</Code><Message>it failed</Message><Resource>r-1</Resource><Retry>3</Retry></Error><RequestId>rq-err</RequestId></ErrorResponse>"
+  }
+ },
+ {
+  "name": "zquery-unmodelled-error",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {},
+  "response": {
+   "status": 400,
+   "headers": {},
+   "body": "<ErrorResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><Error><Type>Sender</Type><Code>NoSuchThing</Code><Message>it failed</Message></Error><RequestId>rq-err</RequestId></ErrorResponse>"
+  }
+ },
+ {
+  "name": "zquery-error-in-errors",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "GetThing",
+  "input": {
+   "ThingId": "t"
+  },
+  "response": {
+   "status": 404,
+   "headers": {},
+   "body": "<Response><Errors><Error><Code>ThingNotFound</Code><Message>gone</Message></Error></Errors><RequestID>x</RequestID></Response>"
+  }
+ },
+ {
+  "name": "zquery-html-503",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 503,
+   "headers": {},
+   "body": "<html><body>busy</body></html>"
+  }
+ },
+ {
+  "name": "zquery-empty-500",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 500,
+   "headers": {},
+   "body": ""
+  }
+ },
+ {
+  "name": "zquery-301",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 301,
+   "headers": {
+    "x-amz-bucket-region": "eu-west-1"
+   },
+   "body": "<ErrorResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><Error><Type>Sender</Type><Code>PermanentRedirect</Code><Message>it failed</Message></Error><RequestId>rq-err</RequestId></ErrorResponse>"
+  }
+ },
+ {
+  "name": "zquery-malformed-xml",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<PingResponse><unclosed></PingResponse>"
+  }
+ },
+ {
+  "name": "zquery-missing-result-wrapper",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Locate",
+  "input": {
+   "Zone": "z"
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<LocateResponse></LocateResponse>"
+  }
+ },
+ {
+  "name": "zquery-validation-each-kind",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Strict",
+  "input": {
+   "Name": "",
+   "Size": 0,
+   "Ratio": 0.25,
+   "Tags": [],
+   "Labels": {
+    "k": 1
+   },
+   "Nested": {
+    "Inner": {
+     "Depth": "deep"
+    }
+   },
+   "Bogus": true
+  }
+ },
+ {
+  "name": "zquery-validation-missing-required",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "Strict",
+  "input": {}
+ },
+ {
+  "name": "zquery-validation-get-thing",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "GetThing",
+  "input": {
+   "Count": "two"
+  }
+ }
+]

@@ -1,0 +1,55 @@
+[
+ {
+  "name": "zjson11-query-compatible-request",
+  "service": "zjson11",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {
+   "Text": "x",
+   "When": 0
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{\"Text\": \"x\"}"
+  }
+ },
+ {
+  "name": "zjson11-query-error-header",
+  "service": "zjson11",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {},
+  "response": {
+   "status": 400,
+   "headers": {
+    "x-amzn-query-error": "AWS.Conflict;Sender",
+    "x-amzn-requestid": "q"
+   },
+   "body": "{\"__type\": \"zjson11#ConflictError\", \"message\": \"m\", \"Resource\": \"r\"}"
+  }
+ },
+ {
+  "name": "zjson11-query-error-header-unmodelled",
+  "service": "zjson11",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 500,
+   "headers": {
+    "x-amzn-query-error": "AWS.Other;Receiver"
+   },
+   "body": "{\"__type\": \"X\"}"
+  }
+ },
+ {
+  "name": "zjson11-validation",
+  "service": "zjson11",
+  "models": "fake",
+  "operation": "Strict",
+  "input": {
+   "Size": 1
+  }
+ }
+]

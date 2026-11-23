@@ -143,7 +143,20 @@ fn a_paginated_operation_hides_its_tokens_and_adds_the_page_options() -> Result<
         }
         assert_eq!(argument(table, "starting-token").value_type, None);
         assert!(table.typed());
-        assert!(!source.reproduces_failures("dynamodb", Some("list-tables")));
+    })
+}
+
+/// argparse's value types are parsed natively, so a typed table renders
+/// its own failures where nothing customizes it.
+#[test]
+fn a_typed_table_renders_its_failures_natively() -> Result<()> {
+    with_source(Some(fake_models()), |source| {
+        let table = source
+            .table("zjson", "list-things")
+            .unwrap_or_else(|| panic!("table"));
+        assert!(table.typed());
+        assert!(source.reproduces_failures("zjson", Some("list-things")));
+        assert!(source.reproduces_failures("zjson", Some("measure")));
     })
 }
 
@@ -275,5 +288,89 @@ fn the_matcher_adds_each_service_s_own_entries() -> Result<()> {
         }
         let other = touching(source, "iam", "list-users");
         assert!(!other.iter().any(|entry| entry.contains("iamvirtmfa")));
+    })
+}
+
+/// The fake models' names match no Python customization: every operation
+/// of every fake service is touched by the same, cross-cutting entries.
+#[test]
+fn the_fake_models_meet_only_cross_cutting_customizations() -> Result<()> {
+    with_source(Some(fake_models()), |source| {
+        let mut seen: Option<(String, Vec<String>)> = None;
+        for service in ["zquery", "zjson", "zjson11", "zglobal"] {
+            let operations = source.operations(service).unwrap_or_default();
+            assert!(!operations.is_empty(), "{service} has no operations");
+            for operation in operations.iter() {
+                let touched = source.touching(service, operation).unwrap_or_default();
+                let at = format!("{service} {operation}");
+                match &seen {
+                    None => seen = Some((at, touched)),
+                    Some((first, expected)) => assert_eq!(&touched, expected, "{at} vs {first}"),
+                }
+            }
+        }
+    })
+}
+
+fn client_handlers(source: &ModelSource<'_>, command: &str, operation: &str) -> Vec<String> {
+    source
+        .client_handlers(command, operation)
+        .unwrap_or_else(|| panic!("{command} {operation}"))
+}
+
+fn generic(source: &ModelSource<'_>) -> Vec<String> {
+    let mut rows: Vec<String> = source
+        .patterns()
+        .client
+        .generic
+        .iter()
+        .map(|row| row.handler.to_string())
+        .collect();
+    rows.sort();
+    rows.dedup();
+    rows
+}
+
+/// The pack observed every client's creation: a service with an
+/// endpoint-discovery operation registers the discovery block, s3control
+/// its ARN handler, and a service botocore does nothing special for only
+/// the rows every client registers.
+#[test]
+fn client_creation_rows_are_the_service_s_and_the_generic_ones() -> Result<()> {
+    with_source(None, |source| {
+        let generic = generic(source);
+        assert!(!generic.is_empty());
+        for (command, operation, wanted) in [
+            (
+                "dynamodb",
+                "list-tables",
+                "botocore.discovery.block_endpoint_discovery_required_operations",
+            ),
+            (
+                "s3control",
+                "list-access-points",
+                "botocore.utils.S3ControlArnParamHandlerv2.handle_arn",
+            ),
+        ] {
+            let rows = client_handlers(source, command, operation);
+            assert!(rows.iter().any(|row| row == wanted), "{command}: {rows:?}");
+            assert!(generic.iter().all(|row| rows.contains(row)), "{command}");
+        }
+        assert_eq!(
+            client_handlers(source, "sts", "get-caller-identity"),
+            generic
+        );
+        assert_eq!(client_handlers(source, "sns", "list-topics"), generic);
+        let touched = touching(source, "sts", "get-caller-identity");
+        assert!(generic.iter().all(|row| touched.contains(row)));
+    })
+}
+
+/// A user model's client meets the generic rows alone: what the pack saw
+/// for a service is its packed model's.
+#[test]
+fn a_user_model_s_client_meets_the_generic_rows() -> Result<()> {
+    with_source(Some(fake_models()), |source| {
+        assert_eq!(client_handlers(source, "zjson", "measure"), generic(source));
     })
 }

@@ -101,6 +101,8 @@ fn parses_as_elementtree_does() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("AWS_NATIVE_CPYTHON_PREFIX must name the toolchain CPython")?;
     let mut child =
         std::process::Command::new(std::path::PathBuf::from(prefix).join("bin/python3"))
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
             .args(["-I", "-c", ORACLE])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

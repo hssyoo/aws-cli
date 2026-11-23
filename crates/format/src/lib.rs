@@ -53,6 +53,18 @@ pub struct Partial {
 /// What the formatter for `format` writes for a non-paginated `response`,
 /// after `Formatter._remove_request_id` drops its `ResponseMetadata`.
 pub fn render(response: &Value, format: OutputFormat) -> Result<String, Partial> {
+    if format != OutputFormat::Off
+        && let Some(class) = not_iterable(response)
+    {
+        // `'ResponseMetadata' in response_data` raises for these, with
+        // CPython 3.14's text.
+        return Err(Partial {
+            written: String::new(),
+            error: PythonError {
+                message: format!("argument of type '{class}' is not a container or iterable"),
+            },
+        });
+    }
     let trimmed;
     let response = match response {
         Value::Map(map) if map.contains_key("ResponseMetadata") => {
@@ -73,6 +85,18 @@ pub fn render(response: &Value, format: OutputFormat) -> Result<String, Partial>
                 Err(error) => Err(Partial { written, error }),
             }
         }
+    }
+}
+
+/// `type(value).__name__` of a value `in` cannot search.
+fn not_iterable(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Null => Some("NoneType"),
+        Value::Bool(_) => Some("bool"),
+        Value::Integer(_) | Value::BigInteger(_) => Some("int"),
+        Value::Float(_) => Some("float"),
+        Value::Timestamp(_) => Some("datetime"),
+        Value::String(_) | Value::Blob(_) | Value::List(_) | Value::Map(_) => None,
     }
 }
 

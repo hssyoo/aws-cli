@@ -74,6 +74,9 @@ pub struct Service {
     /// A `building-command-table` handler the derivation does not reproduce
     /// edits the table.
     pub customized: bool,
+    /// The model is the payload's alone (`SearchSource::packed`), the one
+    /// whose client the pack observed.
+    pub packed: bool,
     pages: Option<Json>,
     tables: Vec<OnceCell<Table>>,
 }
@@ -211,6 +214,7 @@ impl<'a> ModelSource<'a> {
 
     fn load(&self, command: &str, service: &str) -> Option<Service> {
         let model = Model::load(&self.models, service).ok()?;
+        let packed = self.models.packed(service).ok()?;
         let operations: Vec<String> = model
             .operations()
             .iter()
@@ -226,6 +230,7 @@ impl<'a> ModelSource<'a> {
         let tables = operations.iter().map(|_| OnceCell::new()).collect();
         Some(Service {
             customized: self.edits(&[format!("building-command-table.{command}")]),
+            packed,
             command: command.to_owned(),
             name: service.to_owned(),
             model,
@@ -285,8 +290,34 @@ impl<'a> ModelSource<'a> {
         }))
     }
 
-    /// The subject the pattern matcher judges for `[command, operation]`.
+    /// The awscli entries and botocore handlers that touch `[command,
+    /// operation]`, by dotted name.
     pub fn touching(&self, command: &str, operation: &str) -> Option<Vec<String>> {
+        self.with_subject(command, operation, |subject| {
+            self.patterns.touching(subject).into_iter().collect()
+        })
+    }
+
+    /// The rows `[command, operation]`'s client registers as it is created
+    /// that its events meet ([`Patterns::client_handlers`]), by handler.
+    pub fn client_handlers(&self, command: &str, operation: &str) -> Option<Vec<String>> {
+        self.with_subject(command, operation, |subject| {
+            let events = subject.client_events();
+            self.patterns
+                .client_handlers(subject, &events)
+                .into_iter()
+                .collect()
+        })
+    }
+
+    /// `judge` of the subject the pattern matcher reads for `[command,
+    /// operation]`.
+    fn with_subject<T>(
+        &self,
+        command: &str,
+        operation: &str,
+        judge: impl FnOnce(&Subject<'_>) -> T,
+    ) -> Option<T> {
         let service = self.service(command)?;
         let table = self.table(command, operation)?;
         let index = service
@@ -308,8 +339,9 @@ impl<'a> ModelSource<'a> {
             operation: &service.model.operations()[index].name,
             cli_operation: operation,
             arguments: &arguments,
+            packed: service.packed,
         };
-        Some(self.patterns.touching(&subject).into_iter().collect())
+        Some(judge(&subject))
     }
 }
 
@@ -330,6 +362,7 @@ fn argparse(argument: &DerivedArgument) -> Argument<'_> {
         choices: argument.choices,
         required: argument.required,
         hidden: argument.hidden,
+        value_type: argument.value_type,
         cli_type: None,
     }
 }
@@ -366,7 +399,7 @@ impl OperationSource for ModelSource<'_> {
             return !service.customized;
         };
         let table = self.table(root, operation);
-        !service.customized && table.is_some_and(|table| !table.customized && !table.typed())
+        !service.customized && table.is_some_and(|table| !table.customized)
     }
     fn needs(&self, root: &str) -> Needs {
         let service = self.service(root);

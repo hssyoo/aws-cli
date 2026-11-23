@@ -59,6 +59,7 @@ pub fn run(root: &Path, command: &str, args: &[String]) -> Result<(), TaskError>
     if command != "check-argparse" {
         return process::run(&mut oracle);
     }
+    derived::oracle_arguments(root, &mut oracle)?;
     // The drift check and the corpus replay both run, and both report, so a
     // drifted table does not hide replay divergences.
     combine([

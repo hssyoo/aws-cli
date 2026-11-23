@@ -95,15 +95,35 @@ impl<'a> SearchSource<'a> {
         &self.locations
     }
 
-    fn each<T>(
-        &self,
-        mut visit: impl FnMut(&dyn Source) -> Result<Option<T>, LoadError>,
+    /// Whether `service`'s model is the payload's alone: no directory
+    /// (`AWS_DATA_PATH`'s, `~/.aws/models`) supplies the file of its latest
+    /// version or that file's `sdk-extras`, the two `load_service_model`
+    /// merges. What the pack observed of a service is its packed model's.
+    pub fn packed(&self, service: &str) -> Result<bool, LoadError> {
+        let version = crate::source::latest_version(self, service, Kind::Service)?;
+        let name = format!("{service}/{version}/{}", Kind::Service.type_name());
+        for file in [name.clone(), format!("{name}.sdk-extras")] {
+            if let Some(Location::Directory(_)) = self.origin(&file)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The first location that has `name`, as [`Source::read`] finds it.
+    fn origin(&self, name: &str) -> Result<Option<&Location>, LoadError> {
+        self.each(|location, source| Ok(source.read(name)?.map(|_| location)))
+    }
+
+    fn each<'s, T>(
+        &'s self,
+        mut visit: impl FnMut(&'s Location, &dyn Source) -> Result<Option<T>, LoadError>,
     ) -> Result<Option<T>, LoadError> {
         for location in &self.locations {
             let found = match location {
-                Location::Directory(root) => visit(&DirSource::new(root.clone()))?,
-                Location::AwscliData => visit(&PayloadSource::awscli(self.view))?,
-                Location::BotocoreData => visit(&PayloadSource::botocore(self.view))?,
+                Location::Directory(root) => visit(location, &DirSource::new(root.clone()))?,
+                Location::AwscliData => visit(location, &PayloadSource::awscli(self.view))?,
+                Location::BotocoreData => visit(location, &PayloadSource::botocore(self.view))?,
             };
             if found.is_some() {
                 return Ok(found);
@@ -117,7 +137,7 @@ impl<'a> SearchSource<'a> {
         list: impl Fn(&dyn Source) -> Result<Vec<String>, LoadError>,
     ) -> Result<Vec<String>, LoadError> {
         let mut all = BTreeSet::new();
-        self.each(|source| {
+        self.each(|_, source| {
             all.extend(list(source)?);
             Ok(None::<()>)
         })?;
@@ -159,7 +179,7 @@ impl Source for SearchSource<'_> {
     }
 
     fn read(&self, name: &str) -> Result<Option<Vec<u8>>, LoadError> {
-        self.each(|source| source.read(name))
+        self.each(|_, source| source.read(name))
     }
 }
 

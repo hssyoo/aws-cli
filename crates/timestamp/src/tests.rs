@@ -440,12 +440,14 @@ fn zoned_parses_keep_the_wall_time_and_the_written_zone() -> TestResult {
         ("2015-08-30T11:06:00-0130", "2015-08-30T11:06:00-01:30"),
         ("2015-08-30 12:36:00", "2015-08-30T12:36:00"),
         ("2015-08-30T12:36:00.000001", "2015-08-30T12:36:00.000001"),
+        ("2015-08-30", "2015-08-30T00:00:00"),
     ];
     for (text, iso) in cases {
         let zoned = Timestamp::parse_iso8601_zoned(text).ok_or(text)?;
         assert_eq!(zoned.isoformat(), iso, "{text}");
     }
     assert_eq!(Timestamp::parse_iso8601("2015-08-30 12:36:00"), None);
+    assert_eq!(Timestamp::parse_iso8601("2015-08-30"), None);
     let rfc = Timestamp::parse_rfc822_zoned("Sun, 30 Aug 2015 13:36:00 +0100").ok_or("rfc")?;
     assert_eq!(rfc.isoformat(), "2015-08-30T13:36:00+01:00");
     let gmt = Timestamp::parse_rfc822_zoned("30 Aug 2015 12:36:00 GMT").ok_or("gmt")?;

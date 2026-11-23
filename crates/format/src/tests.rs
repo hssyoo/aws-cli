@@ -1,5 +1,5 @@
 //! The differential test: awscli's `JSONFormatter`, `TextFormatter` and
-//! `iso_format` in the blackbox venv's Python against this crate, over the
+//! `iso_format` in the harness venv's Python against this crate, over the
 //! corpus below. Python produces every expected byte at test time
 //! (`oracle.py`); nothing expected is committed.
 use super::*;
@@ -48,20 +48,20 @@ fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Runs `oracle.py` in the blackbox venv with `zone` as `TZ`.
+/// Runs `oracle.py` with `zone` as `TZ` in the harness venv `cargo xtask
+/// parity` provisions and names in `PARITY_PYTHON`.
 fn oracle(corpus: &str, zone: &str) -> Result<serde_json::Value> {
-    let python = repository().join("target/blackbox/repo/venv/bin/python");
-    if !python.exists() {
-        return Err(format!(
-            "{} is missing: provision the blackbox venv with \
-             `cargo xtask blackbox --suite repo -- -k test_ls` once, then rerun",
-            python.display()
-        )
-        .into());
-    }
+    let python = std::env::var_os("PARITY_PYTHON")
+        .ok_or("PARITY_PYTHON is unset: these tests run under `cargo xtask parity`")?;
     let mut child = std::process::Command::new(python)
         .arg("crates/format/src/oracle.py")
         .current_dir(repository())
+        .env_clear()
+        .envs([
+            ("PATH", "/usr/bin:/bin"),
+            ("LC_ALL", "C.UTF-8"),
+            ("PYTHONHASHSEED", "0"),
+        ])
         .env("TZ", zone)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -139,6 +139,7 @@ fn rust_row(response: &Value) -> serde_json::Value {
 }
 
 #[test]
+#[ignore = "runs under cargo xtask parity"]
 fn json_and_text_match_awscli_s_formatters() -> Result<()> {
     let corpus = corpus();
     let expected = oracle(&corpus, "UTC")?;
@@ -166,6 +167,7 @@ fn json_and_text_match_awscli_s_formatters() -> Result<()> {
 /// `iso_format` under a zone without daylight-saving time, at UTC and at
 /// +05:30, and each result printed through both formatters.
 #[test]
+#[ignore = "runs under cargo xtask parity"]
 fn iso8601_timestamps_match_iso_format() -> Result<()> {
     for (zone, offset) in [("UTC", 0), ("IST-05:30", 19_800)] {
         let expected = oracle(&corpus(), zone)?;

@@ -30,6 +30,16 @@ pub enum ParseFailureKind {
         matches: Vec<String>,
     },
     RequiredMissing(Vec<String>),
+    /// `_get_value`: the argument's `type` raised ValueError for the value.
+    InvalidType {
+        /// The type's `__name__`.
+        type_name: &'static str,
+        value: OsString,
+    },
+    /// The argument's `type` reads the value through Unicode tables native
+    /// does not model (`convert::Converted::Undecided`); the chain hands
+    /// the invocation to Python rather than render a failure.
+    UndecidedValue,
     /// CLIArgParser._check_value: the rejected value and difflib's close
     /// matches among the choices, best first.
     InvalidChoice {
@@ -63,6 +73,10 @@ impl ParseFailure {
             ParseFailureKind::IgnoredExplicitArgument(v) => {
                 format!("ignored explicit argument {}", pyrepr::argv(v))
             }
+            ParseFailureKind::InvalidType { type_name, value } => {
+                format!("invalid {type_name} value: {}", pyrepr::argv(value))
+            }
+            ParseFailureKind::UndecidedValue => "a value Python's type reads".into(),
             ParseFailureKind::AmbiguousOption { token, matches } => format!(
                 "ambiguous option: {} could match {}",
                 stderr_text(token),

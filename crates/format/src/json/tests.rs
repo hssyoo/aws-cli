@@ -30,3 +30,18 @@ fn the_cli_encoder_handles_datetimes_and_bytes() {
     let expected = "{\n    \"t\": \"2015-08-30T12:36:00.500000+00:00\",\n    \"b\": \"Zm9v\"\n}\n";
     assert_eq!(json(&Value::Map(map)), expected);
 }
+
+/// `_remove_request_id` on a response that is not a container raises.
+#[test]
+fn a_response_python_cannot_search_fails_as_the_formatter_does() {
+    let error = crate::render(&Value::Null, crate::OutputFormat::Json).err();
+    let message = error.map(|partial| partial.error.message);
+    assert_eq!(
+        message.as_deref(),
+        Some("argument of type 'NoneType' is not a container or iterable")
+    );
+    assert_eq!(
+        crate::render(&Value::Null, crate::OutputFormat::Off),
+        Ok(String::new())
+    );
+}

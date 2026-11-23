@@ -54,9 +54,13 @@ fn the_system_zone_is_python_s() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("AWS_NATIVE_CPYTHON_PREFIX must name the toolchain CPython")?;
     let python = std::path::PathBuf::from(prefix).join("bin/python3");
     let script = "import time; print(time.timezone, time.altzone, int(time.daylight))";
-    let output = std::process::Command::new(python)
-        .args(["-I", "-c", script])
-        .output()?;
+    // Only TZ, which names the zone both sides read, comes from this process.
+    let mut command = std::process::Command::new(python);
+    command.env_clear().env("PATH", "/usr/bin:/bin");
+    if let Some(zone) = std::env::var_os("TZ") {
+        command.env("TZ", zone);
+    }
+    let output = command.args(["-I", "-c", script]).output()?;
     let text = String::from_utf8(output.stdout)?;
     let fields: Vec<i64> = text
         .split_whitespace()

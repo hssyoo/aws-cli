@@ -183,6 +183,8 @@ fn timestamps_python_accepts_are_valid() -> Result<()> {
     for value in [
         utc_day(),
         Value::String("2020-01-02T03:04:05Z".into()),
+        Value::String("2020-01-02".into()),
+        Value::String("2020-01-02 03:04:05".into()),
         Value::String("Thu, 02 Jan 2020 03:04:05 GMT".into()),
         Value::String(" 1_000.5 ".into()),
         Value::String("-12e3".into()),

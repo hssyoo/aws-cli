@@ -20,6 +20,7 @@ timestamp = { path = "../timestamp" }
 
 [dev-dependencies]
 crt = { path = "../crt", features = ["loopback"] }
+format = { path = "../format" }
 sigv4 = { path = "../sigv4", features = ["testing"] }
 serde_json.workspace = true
 

@@ -86,6 +86,7 @@ dependencies = [
  "cli-core",
  "credentials",
  "crt",
+ "format",
  "model",
  "serde_json",
  "sigv4",

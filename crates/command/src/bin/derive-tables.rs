@@ -1,27 +1,33 @@
-//! `derive-tables --home <dir> <command>...`: the derived root table, and the
-//! command and argument tables of each named root, as JSON on stdout, from
-//! the payload under `AWS_NATIVE_FALLBACK_PREFIX` and the search path
-//! `AWS_DATA_PATH` and the home directory `<dir>` give (`cargo xtask
-//! check-argparse --derived`).
+//! The model-derived tables, from the payload under
+//! `AWS_NATIVE_FALLBACK_PREFIX` and the search path `AWS_DATA_PATH` and the
+//! home directory `<dir>` give:
+//!
+//! - `derive-tables --home <dir> <command>...`: the root table, and the
+//!   command and argument tables of each named root, as JSON on stdout
+//!   (`cargo xtask check-argparse --derived`);
+//! - `derive-tables --home <dir> parse <jsonl>`: each request's parse over
+//!   the registry the binary assembles (the pinned `s3` tree and this
+//!   source), one result per line as `argparse-tool parse` writes them (the
+//!   parse oracle's derived cases).
 #![forbid(unsafe_code)]
-use awscli_argparse::unpack::{expand_user, expand_vars};
+use awscli_argparse::unpack::{self, expand_user, expand_vars};
+use command::models::ModelSource;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use {awscli_config as _, cli_core as _, model as _};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+type Error = Box<dyn std::error::Error>;
+
+fn main() -> Result<(), Error> {
     let mut args = std::env::args_os().skip(1);
     if args.next().as_deref() != Some("--home".as_ref()) {
-        return Err("expected --home <dir> <command>...".into());
+        return Err("expected --home <dir> (parse <jsonl> | <command>...)".into());
     }
     let home = args.next().ok_or("--home requires a directory")?;
-    let commands = args
-        .map(|arg| {
-            arg.into_string()
-                .map_err(|_| "a command name is not Unicode")
-        })
+    let rest = args
+        .map(|arg| arg.into_string().map_err(|_| "an argument is not Unicode"))
         .collect::<Result<Vec<String>, _>>()?;
     let prefix = std::env::var_os("AWS_NATIVE_FALLBACK_PREFIX")
         .ok_or("AWS_NATIVE_FALLBACK_PREFIX must name the fallback payload prefix")?;
@@ -33,10 +39,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     env.insert("HOME".to_owned(), home);
     let expand = |path: &[u8]| expand_user(&expand_vars(path, &env)?, &env);
     let data_path = env.get("AWS_DATA_PATH").map(OsString::as_os_str);
-    let source = command::models::ModelSource::from_payload(view, data_path, &expand)?;
-    let tables = command::models::dump::tables(&source, &commands);
-    let mut stdout = std::io::stdout().lock();
-    serde_json::to_writer(&mut stdout, &tables)?;
-    writeln!(stdout)?;
+    let source = ModelSource::from_payload(view, data_path, &expand)?;
+    let mut stdout = std::io::BufWriter::new(std::io::stdout().lock());
+    match rest.as_slice() {
+        [mode, requests] if mode == "parse" => parse(&source, Path::new(requests), &mut stdout)?,
+        commands => {
+            let tables = command::models::dump::tables(&source, commands);
+            serde_json::to_writer(&mut stdout, &tables)?;
+            writeln!(stdout)?;
+        }
+    }
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Parse every request of the JSON-lines file: `{"argv": [...], "color":
+/// bool}`, with the chain's value processing for a parse that completes.
+fn parse(source: &ModelSource<'_>, requests: &Path, output: &mut dyn Write) -> Result<(), Error> {
+    let registry = command::Registry::new(&[&awscli_argparse::tables::S3], &[], Some(source));
+    let tables = registry.tables();
+    let variables = unpack::process_variables();
+    let directory = unpack::current_directory()?;
+    let environment = unpack::Environment {
+        directory: &directory,
+        variables: &variables,
+        files: &unpack::FsParamfiles,
+        preferred_encoding: unpack::host_preferred_encoding(),
+    };
+    for line in std::fs::read_to_string(requests)?
+        .lines()
+        .filter(|line| !line.is_empty())
+    {
+        let request: serde_json::Value = serde_json::from_str(line)?;
+        let argv = request["argv"]
+            .as_array()
+            .ok_or("argv must be a list")?
+            .iter()
+            .map(|arg| {
+                arg.as_str()
+                    .map(str::to_owned)
+                    .ok_or("arguments must be strings")
+            })
+            .collect::<Result<Vec<String>, _>>()?;
+        let color = request
+            .get("color")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let mut parsed =
+            awscli_argparse::parse(&argv, &awscli_argparse::Options::default(), &tables);
+        let unsupported = parsed.outcome == awscli_argparse::chain::Outcome::Parsed
+            && awscli_argparse::complete(&mut parsed, &environment);
+        awscli_argparse::tool::write_result(&parsed, unsupported, color, output)?;
+    }
     Ok(())
 }

@@ -30,9 +30,10 @@ impl Timestamp {
     pub fn parse_iso8601(text: &str) -> Option<Self> {
         Self::parse_iso8601_zoned(text)?.instant()
     }
-    /// [`Timestamp::parse_iso8601`]'s form with the zone optional, as the
-    /// wall time and the zone written: what `dateutil.parser.parse` returns
-    /// for it, naive without a zone and `+00:00` for `Z`.
+    /// [`Timestamp::parse_iso8601`]'s form with the zone optional, or a date
+    /// alone, as the wall time and the zone written: what
+    /// `dateutil.parser.parse` returns for it, naive without a zone and
+    /// `+00:00` for `Z`.
     pub fn parse_iso8601_zoned(text: &str) -> Option<Zoned> {
         let mut scan = Scan::new(text);
         let year = scan.digits(4)?;
@@ -40,6 +41,10 @@ impl Timestamp {
         let month = scan.digits(2)?;
         scan.byte(b'-')?;
         let day = scan.digits(2)?;
+        if scan.end().is_some() {
+            // A date alone, which dateutil reads as a naive midnight.
+            return zoned(civil(year, month, day, 0, 0, 0, 0)?, None);
+        }
         scan.one_of(b"Tt ")?;
         let (hour, minute, second) = scan.clock()?;
         let microsecond = match scan.byte(b'.') {

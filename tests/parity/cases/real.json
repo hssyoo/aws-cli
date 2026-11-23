@@ -1,0 +1,390 @@
+[
+ {
+  "name": "sts-get-caller-identity",
+  "service": "sts",
+  "models": "builtin",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "response": {
+   "status": 200,
+   "headers": {
+    "x-amzn-requestid": "r1"
+   },
+   "body": "<GetCallerIdentityResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\">\n  <GetCallerIdentityResult>\n    <Arn>arn:aws:iam::123456789012:user/x</Arn>\n    <UserId>AIDAEXAMPLE</UserId>\n    <Account>123456789012</Account>\n  </GetCallerIdentityResult>\n  <ResponseMetadata><RequestId>r1</RequestId></ResponseMetadata>\n</GetCallerIdentityResponse>"
+  }
+ },
+ {
+  "name": "sts-assume-role",
+  "service": "sts",
+  "models": "builtin",
+  "operation": "AssumeRole",
+  "input": {
+   "RoleArn": "arn:aws:iam::123456789012:role/r",
+   "RoleSessionName": "s p&c=é",
+   "DurationSeconds": 900,
+   "PolicyArns": [
+    {
+     "arn": "arn:aws:iam::aws:policy/ReadOnlyAccess"
+    }
+   ],
+   "Tags": [
+    {
+     "Key": "team",
+     "Value": "a b"
+    },
+    {
+     "Key": "k2",
+     "Value": "x/y+z"
+    }
+   ],
+   "TransitiveTagKeys": [
+    "team",
+    "k2"
+   ]
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<AssumeRoleResponse><AssumeRoleResult><AssumedRoleUser><Arn>arn:aws:sts::1:assumed-role/r/s</Arn><AssumedRoleId>AROA:s</AssumedRoleId></AssumedRoleUser><Credentials><AccessKeyId>ASIAEXAMPLE</AccessKeyId><SecretAccessKey>s3cr3t</SecretAccessKey><SessionToken>tok&amp;en</SessionToken><Expiration>2026-11-22T22:24:03Z</Expiration></Credentials><PackedPolicySize>6</PackedPolicySize></AssumeRoleResult><ResponseMetadata><RequestId>r2</RequestId></ResponseMetadata></AssumeRoleResponse>"
+  }
+ },
+ {
+  "name": "sts-get-session-token-with-session-credentials",
+  "service": "sts",
+  "models": "builtin",
+  "operation": "GetSessionToken",
+  "input": {
+   "DurationSeconds": 900
+  },
+  "settings": {
+   "session_token": "FQoGZXIvYXdzEXAMPLE//token=="
+  }
+ },
+ {
+  "name": "sts-query-error",
+  "service": "sts",
+  "models": "builtin",
+  "operation": "DecodeAuthorizationMessage",
+  "input": {
+   "EncodedMessage": "abc"
+  },
+  "response": {
+   "status": 400,
+   "headers": {},
+   "body": "<ErrorResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\"><Error><Type>Sender</Type><Code>InvalidAuthorizationMessageException</Code><Message>Message is not valid</Message></Error><RequestId>r3</RequestId></ErrorResponse>"
+  }
+ },
+ {
+  "name": "dynamodb-list-tables",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "ListTables",
+  "input": {
+   "Limit": 5
+  },
+  "response": {
+   "status": 200,
+   "headers": {
+    "x-amzn-requestid": "r4"
+   },
+   "body": "{\"LastEvaluatedTableName\":\"b\",\"TableNames\":[\"a\",\"b\"]}"
+  }
+ },
+ {
+  "name": "dynamodb-put-item-nested",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "PutItem",
+  "input": {
+   "TableName": "t",
+   "Item": {
+    "id": {
+     "S": "1"
+    },
+    "n": {
+     "N": "1.50"
+    },
+    "b": {
+     "B": {
+      "$blob": "AAFiaW7/"
+     }
+    },
+    "flag": {
+     "BOOL": true
+    },
+    "l": {
+     "L": [
+      {
+       "S": "x ☃"
+      },
+      {
+       "NULL": true
+      }
+     ]
+    },
+    "m": {
+     "M": {
+      "k": {
+       "SS": [
+        "a",
+        "b"
+       ]
+      }
+     }
+    }
+   },
+   "ReturnValues": "ALL_OLD"
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{}"
+  }
+ },
+ {
+  "name": "dynamodb-get-item-output",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "GetItem",
+  "input": {
+   "Key": {
+    "id": {
+     "S": "1"
+    }
+   },
+   "TableName": "t",
+   "ConsistentRead": true
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{\"ConsumedCapacity\":{\"CapacityUnits\":1.50,\"TableName\":\"t\",\"Table\":{\"CapacityUnits\":1}},\"Item\":{\"z\":{\"S\":\"café 😀\"},\"id\":{\"S\":\"1\"},\"b\":{\"B\":\"aGVsbG8=\"},\"n\":{\"N\":\"1.50\"}}}"
+  }
+ },
+ {
+  "name": "dynamodb-idempotency-token",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "TransactWriteItems",
+  "input": {
+   "TransactItems": [
+    {
+     "Delete": {
+      "TableName": "t",
+      "Key": {
+       "id": {
+        "S": "1"
+       }
+      }
+     }
+    }
+   ]
+  }
+ },
+ {
+  "name": "dynamodb-timestamp-input",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "RestoreTableToPointInTime",
+  "input": {
+   "SourceTableName": "table-a",
+   "TargetTableName": "table-b",
+   "RestoreDateTime": "2026-01-02T03:04:05Z"
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{\"TableDescription\":{\"TableName\":\"b\",\"CreationDateTime\":1767323045.25,\"ItemCount\":12345678901234567890,\"TableSizeBytes\":0}}"
+  }
+ },
+ {
+  "name": "dynamodb-timestamp-micros",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "RestoreTableToPointInTime",
+  "input": {
+   "SourceTableName": "table-a",
+   "TargetTableName": "table-b",
+   "RestoreDateTime": "2026-01-02T03:04:05.003691+00:00"
+  }
+ },
+ {
+  "name": "dynamodb-json-error",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "DescribeTable",
+  "input": {
+   "TableName": "nope"
+  },
+  "response": {
+   "status": 400,
+   "headers": {
+    "x-amzn-requestid": "r5"
+   },
+   "body": "{\"__type\":\"com.amazonaws.dynamodb.v20120810#ResourceNotFoundException\",\"message\":\"Requested resource not found: Table: nope not found\"}"
+  }
+ },
+ {
+  "name": "dynamodb-validation",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "ListTables",
+  "input": {
+   "Limit": 0,
+   "Bogus": "x"
+  }
+ },
+ {
+  "name": "dynamodb-validation-type",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "ListTables",
+  "input": {
+   "Limit": "five",
+   "ExclusiveStartTableName": 7
+  }
+ },
+ {
+  "name": "sqs-list-queues",
+  "service": "sqs",
+  "models": "builtin",
+  "operation": "ListQueues",
+  "input": {
+   "QueueNamePrefix": "q",
+   "MaxResults": 3
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{\"QueueUrls\":[\"https://sqs.us-west-2.amazonaws.com/1/q1\"]}"
+  }
+ },
+ {
+  "name": "sqs-send-message-unicode",
+  "service": "sqs",
+  "models": "builtin",
+  "operation": "SendMessage",
+  "input": {
+   "QueueUrl": "https://sqs.us-west-2.amazonaws.com/123456789012/q",
+   "MessageBody": "héllo ☃ 😀 \"quoted\" \\ back\ttab",
+   "DelaySeconds": 3,
+   "MessageAttributes": {
+    "a": {
+     "DataType": "String",
+     "StringValue": "v"
+    },
+    "b": {
+     "DataType": "Binary",
+     "BinaryValue": {
+      "$blob": "AQI="
+     }
+    }
+   }
+  }
+ },
+ {
+  "name": "sqs-query-compatible-error",
+  "service": "sqs",
+  "models": "builtin",
+  "operation": "GetQueueUrl",
+  "input": {
+   "QueueName": "nope"
+  },
+  "response": {
+   "status": 400,
+   "headers": {
+    "x-amzn-query-error": "AWS.SimpleQueueService.NonExistentQueue;Sender",
+    "x-amzn-requestid": "r6"
+   },
+   "body": "{\"__type\":\"com.amazonaws.sqs#QueueDoesNotExist\",\"message\":\"The specified queue does not exist.\"}"
+  }
+ },
+ {
+  "name": "iam-list-users",
+  "service": "iam",
+  "models": "builtin",
+  "operation": "ListUsers",
+  "input": {
+   "PathPrefix": "/a b/",
+   "MaxItems": 3
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<ListUsersResponse xmlns=\"https://iam.amazonaws.com/doc/2010-05-08/\"><ListUsersResult><IsTruncated>true</IsTruncated><Marker>m1</Marker><Users><member><UserId>AID1</UserId><Path>/a b/</Path><UserName>u1</UserName><Arn>arn:aws:iam::1:user/u1</Arn><CreateDate>2026-01-02T03:04:05Z</CreateDate><Tags><member><Key>k</Key><Value>v</Value></member></Tags></member><member><UserId>AID2</UserId><Path>/</Path><UserName>u2</UserName><Arn>arn:aws:iam::1:user/u2</Arn><CreateDate>2026-01-02T03:04:05.250Z</CreateDate></member></Users></ListUsersResult><ResponseMetadata><RequestId>r7</RequestId></ResponseMetadata></ListUsersResponse>"
+  }
+ },
+ {
+  "name": "iam-create-user-tags",
+  "service": "iam",
+  "models": "builtin",
+  "operation": "CreateUser",
+  "input": {
+   "UserName": "u",
+   "Path": "/p/",
+   "Tags": [
+    {
+     "Key": "k",
+     "Value": "v 1"
+    },
+    {
+     "Value": "é~*'()!",
+     "Key": "k2"
+    }
+   ]
+  }
+ },
+ {
+  "name": "iam-policy-document",
+  "service": "iam",
+  "models": "builtin",
+  "operation": "UpdateAssumeRolePolicy",
+  "input": {
+   "RoleName": "r",
+   "PolicyDocument": "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"ec2.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
+  }
+ },
+ {
+  "name": "iam-empty-list",
+  "service": "iam",
+  "models": "builtin",
+  "operation": "TagUser",
+  "input": {
+   "UserName": "u",
+   "Tags": []
+  }
+ },
+ {
+  "name": "sts-regional-endpoint",
+  "service": "sts",
+  "models": "builtin",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "settings": {
+   "region": "eu-west-1"
+  },
+  "response": {
+   "status": 200,
+   "headers": {
+    "x-amzn-requestid": "r1"
+   },
+   "body": "<GetCallerIdentityResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\">\n  <GetCallerIdentityResult>\n    <Arn>arn:aws:iam::123456789012:user/x</Arn>\n    <UserId>AIDAEXAMPLE</UserId>\n    <Account>123456789012</Account>\n  </GetCallerIdentityResult>\n  <ResponseMetadata><RequestId>r1</RequestId></ResponseMetadata>\n</GetCallerIdentityResponse>"
+  }
+ },
+ {
+  "name": "dynamodb-fips",
+  "service": "dynamodb",
+  "models": "builtin",
+  "operation": "ListTables",
+  "input": {},
+  "settings": {
+   "region": "us-east-1",
+   "fips": true
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{\"TableNames\":[]}"
+  }
+ }
+]
