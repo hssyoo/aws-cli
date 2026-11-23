@@ -82,7 +82,7 @@ pub fn digit_count(text: &str) -> usize {
 }
 
 /// `digit (_? digit)*`.
-pub fn digit_part(text: &str) -> bool {
+fn digit_part(text: &str) -> bool {
     !text.is_empty()
         && !text.starts_with('_')
         && !text.ends_with('_')

@@ -1,6 +1,8 @@
-//! The API's own cases. CPython oracles for these primitives run in the
-//! crates that re-export them (`model::pyrepr`, `model::base64`,
-//! `awscli_argparse::convert`), which predate this crate.
+//! The API's own cases. `repr::tests` checks `str.isprintable` against
+//! the toolchain's CPython for every scalar value, and `base64::tests`
+//! checks `b64encode` and `b64decode`; the readers built over `number`
+//! keep their CPython cases where they strip (`model::pyrepr`,
+//! `awscli_argparse::convert`).
 use super::number::{self, C_SPACE};
 use super::repr;
 

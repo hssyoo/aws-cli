@@ -1,7 +1,6 @@
 //! Fixtures the unit tests share: scratch directories, the in-tree data
 //! directory, the built payload and the toolchain's CPython as an oracle.
 use std::error::Error;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -110,23 +109,4 @@ pub fn payload() -> Result<Vec<u8>> {
     Ok(std::fs::read(PathBuf::from(prefix).join("awscli-v2.blob"))?)
 }
 
-/// Runs `script` in the toolchain's CPython (the interpreter the payload
-/// embeds) in isolated mode, feeding `input` on stdin.
-pub fn python(script: &str, input: &[u8]) -> Result<Vec<u8>> {
-    let prefix = std::env::var_os("AWS_NATIVE_CPYTHON_PREFIX")
-        .ok_or("AWS_NATIVE_CPYTHON_PREFIX must name the toolchain CPython")?;
-    let mut child = std::process::Command::new(PathBuf::from(prefix).join("bin/python3"))
-        .env_clear()
-        .env("PATH", "/usr/bin:/bin")
-        .args(["-I", "-c", script])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    child.stdin.take().ok_or("python stdin")?.write_all(input)?;
-    let output = child.wait_with_output()?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).into_owned().into());
-    }
-    Ok(output.stdout)
-}
+pub use pytext::testing::python;

@@ -28,6 +28,14 @@ fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// A zoned ISO 8601 case value's instant: its wall time less its offset.
+fn instant(text: &str) -> Result<Timestamp> {
+    let zoned = Timestamp::parse_iso8601_zoned(text).ok_or("datetime")?;
+    let offset = i64::from(zoned.offset_seconds.ok_or("a naive datetime")?);
+    let wall = Timestamp::from_civil(zoned.civil).ok_or("datetime range")?;
+    Ok(Timestamp::from_unix_micros(wall.unix_micros() - offset * 1_000_000).ok_or("range")?)
+}
+
 /// The case encoding `oracle.py` decodes: `{"$blob": base64}` and
 /// `{"$datetime": ISO 8601}`.
 fn decode(value: Value) -> Result<Value> {
@@ -37,9 +45,7 @@ fn decode(value: Value) -> Result<Value> {
         {
             match map.iter().next() {
                 Some(("$blob", Value::String(text))) => Value::Blob(model::base64::decode(text)?),
-                Some(("$datetime", Value::String(text))) => {
-                    Value::Timestamp(Timestamp::parse_iso8601(text).ok_or("datetime")?)
-                }
+                Some(("$datetime", Value::String(text))) => Value::Timestamp(instant(text)?),
                 _ => return Err("tag".into()),
             }
         }

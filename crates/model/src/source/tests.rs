@@ -49,7 +49,7 @@ fn dir_source_contains_a_file_without_reading_it() -> Result<()> {
     {
         use std::os::unix::fs::PermissionsExt;
         let path = root.path().join("a/2020-01-01/service-2.json");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0))?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))?;
         let unreadable = source.read("a/2020-01-01/service-2");
         let contained = source.contains("a/2020-01-01/service-2");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))?;

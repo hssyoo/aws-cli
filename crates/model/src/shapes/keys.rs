@@ -40,20 +40,27 @@ pub(super) const METADATA: &[&str] = &[
     "jsonVersion",
     "targetPrefix",
     "serviceId",
-    "serviceFullName",
-    "serviceAbbreviation",
     "signatureVersion",
     "signingName",
     "uid",
     "xmlNamespace",
-    "globalEndpoint",
-    "checksumFormat",
     "auth",
     "awsQueryCompatible",
 ];
-/// `metadata` keys the vendored botocore never reads: `protocolSettings`
-/// (an HTTP/2 hint for event streams) and `ripServiceName`.
-pub(super) const METADATA_IGNORED: &[&str] = &["protocolSettings", "ripServiceName"];
+/// `metadata` keys no call reads: `serviceFullName` and
+/// `serviceAbbreviation`, which botocore reads only to name a client's
+/// Python class (`utils.get_service_module_name`), and `protocolSettings`
+/// (an HTTP/2 hint for event streams), `ripServiceName`, `globalEndpoint`
+/// and `checksumFormat`, which the vendored botocore never reads (a global
+/// endpoint comes from the rule set).
+pub(super) const METADATA_IGNORED: &[&str] = &[
+    "serviceFullName",
+    "serviceAbbreviation",
+    "protocolSettings",
+    "ripServiceName",
+    "globalEndpoint",
+    "checksumFormat",
+];
 
 /// Operation keys the arena reads (`OperationModel`).
 pub(super) const OPERATION: &[&str] = &[
@@ -62,7 +69,6 @@ pub(super) const OPERATION: &[&str] = &[
     "input",
     "output",
     "errors",
-    "deprecated",
     "endpointdiscovery",
     "endpointoperation",
     "auth",
@@ -76,22 +82,27 @@ pub(super) const OPERATION: &[&str] = &[
     "endpoint",
 ];
 /// Operation keys no call reads: `documentation` (`OperationModel.
-/// documentation`, for docs), and `deprecatedMessage`, `deprecatedSince`,
-/// `idempotent` and `readonly`, which botocore never reads (`deprecated`
-/// itself is read).
+/// documentation`, for docs), `deprecated` (`OperationModel.deprecated`,
+/// which only awscli reads, to leave the command out of help:
+/// `ServiceOperation._UNDOCUMENTED`), and `deprecatedMessage`,
+/// `deprecatedSince`, `idempotent` and `readonly`, which botocore never
+/// reads.
 pub(super) const OPERATION_IGNORED: &[&str] = &[
     "documentation",
+    "deprecated",
     "deprecatedMessage",
     "deprecatedSince",
     "idempotent",
     "readonly",
 ];
 
-/// The keys of an operation's nested objects the arena reads.
-pub(super) const OPERATION_NESTED: &[(&str, &[&str])] = &[
-    ("http", &["method", "requestUri", "responseCode"]),
-    ("endpoint", &["hostPrefix"]),
-    ("endpointdiscovery", &["required"]),
+/// The keys of an operation's nested objects the arena reads, and those
+/// no call reads: `http.responseCode`, which botocore's parsers never
+/// read (they take the response's status).
+pub(super) const OPERATION_NESTED: &[(&str, &[&str], &[&str])] = &[
+    ("http", &["method", "requestUri"], HTTP_IGNORED),
+    ("endpoint", &["hostPrefix"], &[]),
+    ("endpointdiscovery", &["required"], &[]),
     (
         "httpChecksum",
         &[
@@ -100,9 +111,11 @@ pub(super) const OPERATION_NESTED: &[(&str, &[&str])] = &[
             "requestValidationModeMember",
             "responseAlgorithms",
         ],
+        &[],
     ),
-    ("requestcompression", &["encodings"]),
+    ("requestcompression", &["encodings"], &[]),
 ];
+pub(super) const HTTP_IGNORED: &[&str] = &["responseCode"];
 
 /// Shape keys the arena reads besides its traits: the type and children.
 pub(super) const SHAPE: &[&str] = &["type", "members", "member", "key", "value"];
