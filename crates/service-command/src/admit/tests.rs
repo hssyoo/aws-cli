@@ -94,6 +94,7 @@ fn each_client_refusal_names_its_own_reason() {
         Unsupported::Trait("httpChecksum".into()),
         Unsupported::OperationContextParams,
         Unsupported::Builtin("AWS::Example".into()),
+        Unsupported::ClientContextParam("Example".into()),
         Unsupported::Auth("aws.auth#sigv4a".into()),
         Unsupported::UnsignedPayload,
         Unsupported::EndpointHeaders,

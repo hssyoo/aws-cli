@@ -120,6 +120,7 @@ pub fn reason(unsupported: &Unsupported) -> PythonReason {
         Unsupported::Trait(_) => PythonReason::UnsupportedTrait,
         Unsupported::OperationContextParams => PythonReason::OperationContextParams,
         Unsupported::Builtin(_) => PythonReason::EndpointBuiltin,
+        Unsupported::ClientContextParam(_) => PythonReason::ClientContextParam,
         Unsupported::Auth(_) => PythonReason::UnsupportedAuth,
         Unsupported::UnsignedPayload => PythonReason::UnsignedPayload,
         Unsupported::EndpointHeaders => PythonReason::EndpointHeaders,

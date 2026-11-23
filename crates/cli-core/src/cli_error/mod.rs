@@ -179,6 +179,9 @@ pub enum PythonReason {
     /// The rule set requires a built-in, with no default, that neither the
     /// client nor a customization supplies.
     EndpointBuiltin,
+    /// The rule set requires a client context parameter, with no default,
+    /// that no customization supplies.
+    ClientContextParam,
     /// The operation has `operationContextParams`, which botocore evaluates
     /// with JMESPath.
     OperationContextParams,
@@ -260,6 +263,7 @@ impl PythonReason {
             Self::RegionPattern => "region_pattern",
             Self::EndpointData => "endpoint_data",
             Self::EndpointBuiltin => "endpoint_builtin",
+            Self::ClientContextParam => "client_context_param",
             Self::OperationContextParams => "operation_context_params",
             Self::CustomizationHook => "customization_hook",
             Self::LocalZone => "local_zone",
