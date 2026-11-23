@@ -32,6 +32,12 @@ pub(super) fn route<E: EnvMap>(
         return Verdict::Python(deferred_reason(result));
     }
     if let Outcome::Failure(failure) = &result.outcome {
+        // The leftover check and the unpack loop are the parse's last
+        // stages; a table the derivation does not reproduce leaves their
+        // failures to Python too.
+        if !config.registry.reproduces_failures(&names) {
+            return Verdict::Python(PythonReason::UnsupportedSubcommand);
+        }
         return session_start(result, config).unwrap_or(Verdict::Failure(failure.clone()));
     }
     let verdict = admit(result, config, operation, unpack.directory);
