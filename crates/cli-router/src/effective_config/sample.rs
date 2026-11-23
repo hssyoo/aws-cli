@@ -17,6 +17,9 @@ pub(crate) fn sample_value(setting: &Setting) -> &'static str {
         Match::HistoryEnabled => "enabled",
         Match::StructuredErrorFormat => "json",
         Match::VariableReference => "$HOME/config",
+        Match::IntegerOutside { .. } | Match::NoneOf(_) | Match::NotBoolean => "value",
+        Match::True => "true",
+        Match::NotTrue => "false",
     }
 }
 fn sample_consumer_value(consumer: Consumer, source: Source) -> Option<&'static str> {
@@ -24,7 +27,11 @@ fn sample_consumer_value(consumer: Consumer, source: Source) -> Option<&'static 
         Consumer::Record(field) => sample_record_value(field, source),
         Consumer::Endpoint => names_endpoint_url(source).then_some("http://localhost:4566"),
         Consumer::Credentials => sample_credentials_value(source),
-        Consumer::Region | Consumer::SharedFiles => None,
+        Consumer::Region
+        | Consumer::SharedFiles
+        | Consumer::Models
+        | Consumer::Output
+        | Consumer::Pager => None,
     }
 }
 /// An expiry in the form the native chain reads, and instance metadata

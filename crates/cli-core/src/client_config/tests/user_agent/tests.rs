@@ -66,14 +66,17 @@ fn bytes_that_are_not_utf8_sanitize_one_dash_each() {
         "-----"
     );
     let bytes = ClientConfig {
-        app_id: Some(Resolved::new(
-            b"\xff".to_vec(),
-            Source::Env("AWS_SDK_UA_APP_ID"),
-        )),
-        execution_env: Some(Resolved::new(
-            b"ci\xff".to_vec(),
-            Source::Env("AWS_EXECUTION_ENV"),
-        )),
+        settings: ClientSettings {
+            app_id: Some(Resolved::new(
+                b"\xff".to_vec(),
+                Source::Env("AWS_SDK_UA_APP_ID"),
+            )),
+            execution_env: Some(Resolved::new(
+                b"ci\xff".to_vec(),
+                Source::Env("AWS_EXECUTION_ENV"),
+            )),
+            ..ClientConfig::default().settings
+        },
         ..ClientConfig::default()
     };
     let actual = header(&bytes, false);
@@ -123,23 +126,26 @@ fn sanitization_and_optional_components_follow_upstream() {
 #[test]
 fn maximum_inputs_and_all_available_features_stay_bounded() {
     let config = ClientConfig {
-        app_id: Some(Resolved::new(b"s".repeat(1024), Source::Default)),
-        execution_env: Some(Resolved::new(b"e".repeat(1024), Source::Default)),
-        agentic_callers: [
-            Feature::AgenticCallerClaudeCode,
-            Feature::AgenticCallerGeminiCli,
-            Feature::AgenticCallerCodex,
-            Feature::AgenticCallerKiro,
-            Feature::AgenticCallerOpencode,
-            Feature::AgenticCallerAntigravity,
-            Feature::AgenticCallerAmp,
-            Feature::AgenticCallerPi,
-            Feature::AgenticCallerCopilotCli,
-            Feature::AgenticCallerCursor,
-        ]
-        .into_iter()
-        .collect(),
-        endpoint_override: true,
+        settings: ClientSettings {
+            app_id: Some(Resolved::new(b"s".repeat(1024), Source::Default)),
+            execution_env: Some(Resolved::new(b"e".repeat(1024), Source::Default)),
+            agentic_callers: [
+                Feature::AgenticCallerClaudeCode,
+                Feature::AgenticCallerGeminiCli,
+                Feature::AgenticCallerCodex,
+                Feature::AgenticCallerKiro,
+                Feature::AgenticCallerOpencode,
+                Feature::AgenticCallerAntigravity,
+                Feature::AgenticCallerAmp,
+                Feature::AgenticCallerPi,
+                Feature::AgenticCallerCopilotCli,
+                Feature::AgenticCallerCursor,
+            ]
+            .into_iter()
+            .collect(),
+            endpoint_override: true,
+            ..ClientConfig::new(Command::Cp).settings
+        },
         ..ClientConfig::new(Command::Cp)
     };
     let actual = user_agent::assemble(
@@ -210,7 +216,13 @@ fn caller_features_use_exact_values_and_target_order() -> Result<(), PythonReaso
         ],
         Command::Ls,
     )?;
-    assert!(config.agentic_callers.codes().eq(["AN", "AP", "AU", "AW"]));
+    assert!(
+        config
+            .settings
+            .agentic_callers
+            .codes()
+            .eq(["AN", "AP", "AU", "AW"])
+    );
     assert!(header(&config, false).contains("m/C,E,Z,b,AN,AP,AU,AW "));
     Ok(())
 }
@@ -320,13 +332,14 @@ fn os_release_shlex_rejects_or_lowercases_reaches_the_header_as_written() {
 #[test]
 fn endpoint_feature_tracks_resolved_override_even_with_deferred_services_error()
 -> Result<(), PythonReason> {
-    assert!(!resolved("", &[], Command::Ls)?.endpoint_override);
+    assert!(!resolved("", &[], Command::Ls)?.settings.endpoint_override);
     assert!(
         resolved(
             "",
             &[("AWS_ENDPOINT_URL_S3", "http://localhost")],
             Command::Ls
         )?
+        .settings
         .endpoint_override
     );
     assert!(
@@ -338,6 +351,7 @@ fn endpoint_feature_tracks_resolved_override_even_with_deferred_services_error()
             ],
             Command::Ls
         )?
+        .settings
         .endpoint_override
     );
     assert!(
@@ -346,6 +360,7 @@ fn endpoint_feature_tracks_resolved_override_even_with_deferred_services_error()
             &[],
             Command::Ls
         )?
+        .settings
         .endpoint_override
     );
     Ok(())
@@ -383,9 +398,9 @@ fn feature_matrix() -> Vec<(ClientConfig, bool)> {
             (ChecksumMode::WhenRequired, ChecksumMode::WhenSupported),
         ] {
             let mut config = ClientConfig::new(Command::Ls);
-            config.credential_source = source;
-            config.request_checksum = Resolved::new(request, Source::Default);
-            config.response_checksum = Resolved::new(response, Source::Default);
+            config.settings.credential_source = source;
+            config.settings.request_checksum = Resolved::new(request, Source::Default);
+            config.settings.response_checksum = Resolved::new(response, Source::Default);
             configs.push((config.clone(), false));
             config.command = Command::Cp;
             for persona in [
@@ -472,16 +487,17 @@ fn listing_features_name_the_credential_provider() -> Result<(), PythonReason> {
         ),
     ] {
         let config = resolved(text, entries, Command::Ls)?;
-        assert_eq!(config.credential_source, source);
+        assert_eq!(config.settings.credential_source, source);
         assert!(header(&config, false).contains(features), "{source:?}");
     }
-    let unsigned = ClientConfig {
-        signing: Resolved::new(false, Source::Flag("--no-sign-request")),
-        ..resolved("", &keys, Command::Ls)?
-    };
+    let mut unsigned = resolved("", &keys, Command::Ls)?;
+    unsigned.settings.signing = Resolved::new(false, Source::Flag("--no-sign-request"));
     assert!(header(&unsigned, false).contains(" m/C,E,Z,b cfg/"));
     let transfer = resolved("", &keys, Command::Cp)?;
-    assert_eq!(transfer.credential_source, CredentialSource::Environment);
+    assert_eq!(
+        transfer.settings.credential_source,
+        CredentialSource::Environment
+    );
     assert!(header(&transfer, true).contains(" m/E,G,W,Z,b,Ag cfg/"));
     Ok(())
 }
@@ -595,7 +611,7 @@ fn provider_cases() -> [(ProviderCase, CredentialSource, &'static str); 8] {
 fn a_signed_listing_s_user_agent_names_its_credential_provider() -> Result<(), PythonReason> {
     for (case, source, features) in provider_cases() {
         let listing = provider_config(&case, Command::Ls, false)?;
-        assert_eq!(listing.credential_source, source);
+        assert_eq!(listing.settings.credential_source, source);
         assert!(header(&listing, false).contains(features), "{source:?}");
         let unsigned = provider_config(&case, Command::Ls, true)?;
         assert!(
@@ -603,7 +619,7 @@ fn a_signed_listing_s_user_agent_names_its_credential_provider() -> Result<(), P
             "{source:?}"
         );
         let copy = provider_config(&case, Command::Cp, false)?;
-        assert_eq!(copy.credential_source, source);
+        assert_eq!(copy.settings.credential_source, source);
         assert!(
             header(&copy, false).contains(" m/E,G,Z,b,Ag "),
             "{source:?}"
@@ -689,8 +705,11 @@ fn os_family_mapping_and_machine_lowercasing() {
 #[test]
 fn empty_values_omit_exec_env_app_and_distrib() {
     let empty = ClientConfig {
-        app_id: Some(Resolved::new(Vec::new(), Source::Env("AWS_SDK_UA_APP_ID"))),
-        execution_env: Some(Resolved::new(Vec::new(), Source::Env("AWS_EXECUTION_ENV"))),
+        settings: ClientSettings {
+            app_id: Some(Resolved::new(Vec::new(), Source::Env("AWS_SDK_UA_APP_ID"))),
+            execution_env: Some(Resolved::new(Vec::new(), Source::Env("AWS_EXECUTION_ENV"))),
+            ..ClientConfig::default().settings
+        },
         ..ClientConfig::default()
     };
     let distribution = Distribution::default();
@@ -738,10 +757,17 @@ fn every_agentic_caller_variable_registers_only_its_own_code() -> Result<(), Pyt
     ];
     for (variable, value, code) in rows {
         let accepted = resolved("", &[(variable, value.unwrap_or("abc"))], Command::Ls)?;
-        assert!(accepted.agentic_callers.codes().eq([code]), "{variable}");
+        assert!(
+            accepted.settings.agentic_callers.codes().eq([code]),
+            "{variable}"
+        );
         let ignored = value.map_or("", |_| "other");
         let rejected = resolved("", &[(variable, ignored)], Command::Ls)?;
-        assert_eq!(rejected.agentic_callers.codes().count(), 0, "{variable}");
+        assert_eq!(
+            rejected.settings.agentic_callers.codes().count(),
+            0,
+            "{variable}"
+        );
     }
     let agentic = Feature::ALL
         .into_iter()

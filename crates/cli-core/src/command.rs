@@ -139,6 +139,11 @@ pub struct Globals {
     /// `Some(0)` for an explicit 0, which disables the timeout; and any other
     /// count of seconds as given, negative values included.
     pub connect_timeout: Option<i64>,
+    /// `--cli-read-timeout`, as global resolution leaves it: `None` when the
+    /// command line did not set it (botocore's 60 s), `Some(0)` for an
+    /// explicit 0, which disables the timeout, and any other count of seconds
+    /// as given.
+    pub read_timeout: Option<i64>,
 }
 
 /// Inputs captured once by the executable and borrowed by native commands.

@@ -31,8 +31,14 @@ impl ClientConfig {
         if self.persona.is_some() {
             self.log_transfer(&mut record);
             for (name, mode) in [
-                ("Request checksum calculation", &self.request_checksum),
-                ("Response checksum validation", &self.response_checksum),
+                (
+                    "Request checksum calculation",
+                    &self.settings.request_checksum,
+                ),
+                (
+                    "Response checksum validation",
+                    &self.settings.response_checksum,
+                ),
             ] {
                 let value = match mode.value {
                     ChecksumMode::WhenRequired => "when_required",
@@ -56,8 +62,11 @@ impl ClientConfig {
             record.text("Proxy bypass list: none");
         }
         for (name, value) in [
-            ("User agent app id", &self.app_id),
-            ("User agent execution environment", &self.execution_env),
+            ("User agent app id", &self.settings.app_id),
+            (
+                "User agent execution environment",
+                &self.settings.execution_env,
+            ),
         ] {
             if let Some(value) = value {
                 let mut line = format!("{name}: ").into_bytes();
@@ -136,45 +145,43 @@ impl ClientConfig {
 
     fn log_network(&self, record: &mut impl Record) {
         let mut line = b"TLS trust: ".to_vec();
-        match &self.trust.value {
+        match &self.settings.trust.value {
             Trust::Platform => line.extend_from_slice(b"platform store"),
             Trust::Embedded => {
                 line.extend_from_slice(format!("embedded {CACERT_ENTRY_NAME}").as_bytes());
             }
             Trust::File(path) => line.extend_from_slice(path.as_os_str().as_encoded_bytes()),
         }
-        line.extend_from_slice(format!(" (from {})", self.trust.source).as_bytes());
+        line.extend_from_slice(format!(" (from {})", self.settings.trust.source).as_bytes());
         record(&line);
-        let keep_alive = if self.keep_alive.value {
+        let keep_alive = if self.settings.keep_alive.value {
             "enabled"
         } else {
             "disabled"
         };
         record.text(&format!(
             "TCP keepalive: {keep_alive} (from {})",
-            self.keep_alive.source
+            self.settings.keep_alive.source
         ));
         record.text(&format!(
             "Connect timeout: {} ms (from {})",
-            self.connect_timeout_ms.value, self.connect_timeout_ms.source
+            self.settings.connect_timeout_ms.value, self.settings.connect_timeout_ms.source
         ));
-        let signing = if self.signing.value {
+        let signing = if self.settings.signing.value {
             "signed"
         } else {
             "anonymous"
         };
         record.text(&format!(
             "Request signing: {signing} (from {})",
-            self.signing.source
+            self.settings.signing.source
         ));
-        let retry = match self.retry_mode.value {
+        let retry_mode = self.settings.retry_mode();
+        let retry = match retry_mode.value {
             RetryMode::Standard => "standard",
             RetryMode::Adaptive => "adaptive",
         };
-        record.text(&format!(
-            "Retry mode: {retry} (from {})",
-            self.retry_mode.source
-        ));
+        record.text(&format!("Retry mode: {retry} (from {})", retry_mode.source));
         let attempts = self
             .retry_attempts
             .value

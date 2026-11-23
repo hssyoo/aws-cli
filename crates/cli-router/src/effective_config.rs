@@ -8,7 +8,7 @@
 //! runs under Python instead of silently dropping the setting.
 use crate::PythonReason;
 use awscli_config::ParsedFiles;
-use cli_core::client_config::Field;
+use cli_core::client_config::{self, Field};
 use cli_core::{EnvMap, aws_profile, cli_error, proxy, shared_config};
 use std::borrow::Cow;
 use std::ffi::OsStr;
@@ -44,16 +44,63 @@ pub enum Match {
     StructuredErrorFormat,
     /// A value holding `$`, which `os.path.expandvars` may expand.
     VariableReference,
+    /// A value botocore's `int()` does not read as a number from `min` to
+    /// `max`, or a nested block, which `int()` refuses.
+    IntegerOutside { min: i64, max: i64 },
+    /// A value other than these, exactly, or a nested block.
+    NoneOf(&'static [&'static str]),
+    /// A value that is neither `true` nor `false` in any case, or a nested
+    /// block (`_validate_s3_disable_express_session_auth`).
+    NotBoolean,
+    /// `true` in any case, as `ensure_boolean` reads a string; it reads a
+    /// nested block as false.
+    True,
+    /// Anything but `true` in any case, which `ensure_boolean` reads as
+    /// false, as it does a nested block.
+    NotTrue,
 }
-/// The native commands a setting reaches upstream.
+impl Match {
+    /// Whether a nested block of the profile engages the row: botocore's
+    /// conversion of the setting fails on a dictionary, or reads it as the
+    /// value the row refuses.
+    pub const fn refuses_block(self) -> bool {
+        matches!(
+            self,
+            Self::IntegerOutside { .. } | Self::NoneOf(_) | Self::NotBoolean | Self::NotTrue
+        )
+    }
+}
+/// The native commands a setting reaches upstream, by the client they build.
+/// A command's own scope is the most specific one: `S3` for `s3 ls`,
+/// `Transfer` for the s3 transfer commands, `Service` for a model
+/// operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     /// Every native command.
     All,
+    /// The `s3` commands, whose clients are S3 clients
+    /// (`ClientArgsCreator._is_s3_service`).
+    S3,
     /// The commands that build a transfer manager, `s3 cp`, `s3 mv`, `s3 rm`,
     /// and `s3 sync`: `s3 ls` builds a client and no transfer manager
     /// (`ListCommand` against `S3TransferCommand`).
     Transfer,
+    /// A model operation, whose client is never S3's: S3's protocol is one
+    /// the model client does not implement (`UnsupportedProtocol`).
+    Service,
+}
+impl Scope {
+    /// Whether a row of this scope reaches a command whose own scope is
+    /// `command`.
+    pub const fn covers(self, command: Self) -> bool {
+        matches!(
+            (self, command),
+            (Self::All, _)
+                | (Self::S3, Self::S3 | Self::Transfer)
+                | (Self::Transfer, Self::Transfer)
+                | (Self::Service, Self::Service)
+        )
+    }
 }
 /// The native module that reads an honored setting and applies it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,13 +111,23 @@ pub enum Consumer {
     Record(Field),
     /// `cli_core::region`.
     Region,
-    /// `cli_core::endpoint_config`, through `s3::endpoint`.
+    /// `cli_core::endpoint_config`: through `s3::endpoint` for the s3
+    /// commands, and for a model operation's client its endpoint variants
+    /// on `ClientSettings` and the configured endpoint its endpoint stage
+    /// resolves.
     Endpoint,
     /// `cli_core::shared_config`.
     SharedFiles,
     /// The CLI's credential chain, the `credentials` crate, which
     /// `s3::credentials` walks for a command that signs.
     Credentials,
+    /// The model source, which reads botocore's search path (`Loader`).
+    Models,
+    /// The router's output-format stage (`generic::output_format_refusal`).
+    Output,
+    /// `cli_error::dispose_formatted`, which hands a response the pager
+    /// would show to Python.
+    Pager,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Support {
@@ -98,9 +155,9 @@ pub struct Inputs<'a, E: EnvMap> {
     pub cli_profile: Option<&'a str>,
     /// The `--cli-error-format` value the main parser bound, if any.
     pub cli_error_format: Option<&'a str>,
-    /// Whether the command builds a transfer manager, as `s3 cp`, `s3 mv`,
-    /// `s3 rm`, and `s3 sync` do and `s3 ls` does not.
-    pub transfers: bool,
+    /// The command's own scope ([`Scope`]), which selects the rows that
+    /// reach it.
+    pub scope: Scope,
     /// Whether a boto config file supplies credentials botocore would read.
     pub boto_config_credentials: bool,
 }
@@ -147,7 +204,16 @@ pub const SETTINGS: &[Setting] = &[
         source: Source::Env("AWS_ENDPOINT_URL_S3"),
         support: ENDPOINT_ROW,
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    // A model operation's client reads the variable its own service names
+    // (`ConfiguredEndpointProvider`), which `endpoint_config::resolve`
+    // derives from the service, so it has no row; S3's names another.
+    Setting {
+        source: Source::Env("AWS_ENDPOINT_URL_S3"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::Service,
     },
     Setting {
         source: Source::Chain("AWS_ENDPOINT_URL", "endpoint_url"),
@@ -560,7 +626,16 @@ pub const SETTINGS: &[Setting] = &[
         source: Source::Chain("AWS_DEFAULT_OUTPUT", "output"),
         support: Support::Ignored,
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    // The s3 commands print their own text; a model operation's response
+    // goes through the format this chain selects
+    // (`CLIDriver._construct_cli_output_chain`).
+    Setting {
+        source: Source::Chain("AWS_DEFAULT_OUTPUT", "output"),
+        support: Support::Honored(Consumer::Output),
+        matching: Match::Present,
+        scope: Scope::Service,
     },
     Setting {
         source: Source::ErrorFormat,
@@ -588,19 +663,40 @@ pub const SETTINGS: &[Setting] = &[
         source: Source::Env("AWS_PAGER"),
         support: Support::Ignored,
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
     },
     Setting {
         source: Source::Profile("cli_pager"),
         support: Support::Ignored,
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
     },
     Setting {
         source: Source::Env("PAGER"),
         support: Support::Ignored,
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    // The s3 commands write their own output and start no pager; a model
+    // operation's response is paged on a terminal
+    // (`OutputStreamFactory.get_output_stream`), which dispatch judges.
+    Setting {
+        source: Source::Env("AWS_PAGER"),
+        support: Support::Honored(Consumer::Pager),
+        matching: Match::Present,
+        scope: Scope::Service,
+    },
+    Setting {
+        source: Source::Profile("cli_pager"),
+        support: Support::Honored(Consumer::Pager),
+        matching: Match::Present,
+        scope: Scope::Service,
+    },
+    Setting {
+        source: Source::Env("PAGER"),
+        support: Support::Honored(Consumer::Pager),
+        matching: Match::Present,
+        scope: Scope::Service,
     },
     // History: the recorder attaches when cli_history is exactly `enabled`
     // (`_should_enable_cli_history`); native records nothing.
@@ -617,13 +713,31 @@ pub const SETTINGS: &[Setting] = &[
         source: Source::Profile("cli_timestamp_format"),
         support: Support::Ignored,
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    // A model operation's response prints its timestamps as `iso8601`
+    // formats them; `wire` keeps the response's text, and any other value
+    // fails the session (`add_timestamp_parser`).
+    Setting {
+        source: Source::Profile("cli_timestamp_format"),
+        support: Support::Unsupported(PythonReason::OutputFormat),
+        matching: Match::NoneOf(&["iso8601"]),
+        scope: Scope::Service,
     },
     Setting {
         source: Source::Profile("cli_binary_format"),
         support: Support::Ignored,
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    // Both formats change only blob inputs, which a model operation binds
+    // natively never, and parse blob outputs alike; any other value fails
+    // the session (`BinaryFormatHandler`).
+    Setting {
+        source: Source::Profile("cli_binary_format"),
+        support: Support::Unsupported(PythonReason::ClientSetting),
+        matching: Match::NoneOf(&["base64", "raw-in-base64-out"]),
+        scope: Scope::Service,
     },
     Setting {
         source: Source::Chain("AWS_S3_USE_ARN_REGION", "s3_use_arn_region"),
@@ -656,7 +770,18 @@ pub const SETTINGS: &[Setting] = &[
         ),
         support: Support::Ignored,
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    // Every client validates the switch
+    // (`_compute_s3_disable_express_session_auth`); only S3's uses it.
+    Setting {
+        source: Source::Chain(
+            "AWS_S3_DISABLE_EXPRESS_SESSION_AUTH",
+            "s3_disable_express_session_auth",
+        ),
+        support: Support::Unsupported(PythonReason::ClientSetting),
+        matching: Match::NotBoolean,
+        scope: Scope::Service,
     },
     Setting {
         source: Source::S3("addressing_style"),
@@ -664,17 +789,32 @@ pub const SETTINGS: &[Setting] = &[
         matching: Match::Present,
         scope: Scope::All,
     },
+    // Every client's `Config` validates the addressing style
+    // (`Config._validate_s3_configuration`); the other two keys feed only an
+    // S3 client's endpoint rules (`compute_endpoint_resolver_builtin_defaults`).
     Setting {
         source: Source::S3("use_accelerate_endpoint"),
         support: S3_ENDPOINT_ROW,
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    Setting {
+        source: Source::S3("use_accelerate_endpoint"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::Service,
     },
     Setting {
         source: Source::S3("use_dualstack_endpoint"),
         support: S3_ENDPOINT_ROW,
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    Setting {
+        source: Source::S3("use_dualstack_endpoint"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::Service,
     },
     // Client context parameters: botocore hands the whole `s3` block to the
     // S3 endpoint rules as client context (`ClientArgsCreator._build_endpoint_resolver`),
@@ -683,30 +823,57 @@ pub const SETTINGS: &[Setting] = &[
     // rule input with its raw string, which the rules reject as
     // the wrong type. `use_arn_region` arrives converted to a boolean, and
     // `disable_s3_express_session_auth` is always replaced by the resolved
-    // top-level switch, so neither fails.
+    // top-level switch, so neither fails. Only an S3 client hands the block
+    // to its rules (`_is_s3_service` in `_build_endpoint_resolver`), and only
+    // its signer reads `payload_signing_enabled`, so another client ignores
+    // all four.
     Setting {
         source: Source::S3("force_path_style"),
         support: Support::Unsupported(PythonReason::EndpointSetting),
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    Setting {
+        source: Source::S3("force_path_style"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::Service,
     },
     Setting {
         source: Source::S3("accelerate"),
         support: Support::Unsupported(PythonReason::EndpointSetting),
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    Setting {
+        source: Source::S3("accelerate"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::Service,
     },
     Setting {
         source: Source::S3("disable_multi_region_access_points"),
         support: Support::Unsupported(PythonReason::EndpointSetting),
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    Setting {
+        source: Source::S3("disable_multi_region_access_points"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::Service,
     },
     Setting {
         source: Source::S3("payload_signing_enabled"),
         support: Support::Unsupported(PythonReason::TransferSetting),
         matching: Match::Present,
-        scope: Scope::All,
+        scope: Scope::S3,
+    },
+    Setting {
+        source: Source::S3("payload_signing_enabled"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::Service,
     },
     Setting {
         source: Source::S3("target_bandwidth"),
@@ -804,6 +971,125 @@ pub const SETTINGS: &[Setting] = &[
         matching: Match::Present,
         scope: Scope::All,
     },
+    // Settings botocore reads for every client, as a model operation's
+    // meets them. No client reads `sts_regional_endpoints`: the endpoint
+    // rules' global-endpoint input is always false
+    // (`compute_endpoint_resolver_builtin_defaults`), and `api_versions` and
+    // the profile's `data_path` reach no loader (the T2 finding).
+    Setting {
+        source: Source::Chain("AWS_STS_REGIONAL_ENDPOINTS", "sts_regional_endpoints"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::All,
+    },
+    Setting {
+        source: Source::Profile("api_versions"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::All,
+    },
+    Setting {
+        source: Source::Profile("data_path"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::All,
+    },
+    Setting {
+        source: Source::Env("AWS_DATA_PATH"),
+        support: Support::Honored(Consumer::Models),
+        matching: Match::Present,
+        scope: Scope::Service,
+    },
+    // botocore reads it only for a service with an endpoint-discovery
+    // operation (`_register_endpoint_discovery`), whose operations the model
+    // admission sends to Python (`UnsupportedTrait`).
+    Setting {
+        source: Source::Chain(
+            "AWS_ENDPOINT_DISCOVERY_ENABLED",
+            "endpoint_discovery_enabled",
+        ),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::Service,
+    },
+    // Compression applies to operations with the `requestcompression` trait,
+    // which the model admission sends to Python; the minimum size is
+    // validated for every client (`_validate_min_compression_size`).
+    Setting {
+        source: Source::Chain(
+            "AWS_DISABLE_REQUEST_COMPRESSION",
+            "disable_request_compression",
+        ),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::Service,
+    },
+    Setting {
+        source: Source::Chain(
+            "AWS_REQUEST_MIN_COMPRESSION_SIZE_BYTES",
+            "request_min_compression_size_bytes",
+        ),
+        support: Support::Unsupported(PythonReason::ClientSetting),
+        matching: Match::IntegerOutside {
+            min: 1,
+            max: 1_048_576,
+        },
+        scope: Scope::Service,
+    },
+    // Only the SigV4A signer reads the region set, and an operation that
+    // signs with SigV4A is Python's (`UnsupportedTrait`).
+    Setting {
+        source: Source::Chain("AWS_SIGV4A_SIGNING_REGION_SET", "sigv4a_signing_region_set"),
+        support: Support::Ignored,
+        matching: Match::Present,
+        scope: Scope::Service,
+    },
+    // A preference reorders an operation's auth schemes
+    // (`_compute_auth_scheme_preference_config`), which the model client
+    // does not do.
+    Setting {
+        source: Source::Chain("AWS_AUTH_SCHEME_PREFERENCE", "auth_scheme_preference"),
+        support: Support::Unsupported(PythonReason::ClientSetting),
+        matching: Match::Present,
+        scope: Scope::Service,
+    },
+    // The mode is an endpoint rules input
+    // (`_compute_account_id_endpoint_mode_config`) the native endpoint stage
+    // does not supply.
+    Setting {
+        source: Source::Chain("AWS_ACCOUNT_ID_ENDPOINT_MODE", "account_id_endpoint_mode"),
+        support: Support::Unsupported(PythonReason::EndpointSetting),
+        matching: Match::Present,
+        scope: Scope::Service,
+    },
+    // Turning injection off drops an operation's host prefix
+    // (`_compute_inject_host_prefix`), which the model client always adds.
+    Setting {
+        source: Source::Chain(
+            "AWS_DISABLE_HOST_PREFIX_INJECTION",
+            "disable_host_prefix_injection",
+        ),
+        support: Support::Unsupported(PythonReason::ClientSetting),
+        matching: Match::True,
+        scope: Scope::Service,
+    },
+    // Client-side monitoring sends every call's metrics over UDP
+    // (`Session._create_csm_monitor`).
+    Setting {
+        source: Source::Chain("AWS_CSM_ENABLED", "csm_enabled"),
+        support: Support::Unsupported(PythonReason::ClientSetting),
+        matching: Match::True,
+        scope: Scope::Service,
+    },
+    // Anything but `true` turns botocore's parameter validation off
+    // (`ClientArgsCreator.compute_client_args`); the model client always
+    // validates.
+    Setting {
+        source: Source::Profile("parameter_validation"),
+        support: Support::Unsupported(PythonReason::ClientSetting),
+        matching: Match::NotTrue,
+        scope: Scope::Service,
+    },
     Setting {
         source: Source::Chain("AWS_SDK_UA_APP_ID", "sdk_ua_app_id"),
         support: APP_ID_ROW,
@@ -837,8 +1123,11 @@ pub fn admit<E: EnvMap>(inputs: &Inputs<'_, E>) -> Option<PythonReason> {
         let Support::Unsupported(reason) = setting.support else {
             return None;
         };
-        if setting.scope == Scope::Transfer && !inputs.transfers {
+        if !setting.scope.covers(inputs.scope) {
             return None;
+        }
+        if setting.matching.refuses_block() && profile_block(inputs, profile, setting.source) {
+            return Some(reason);
         }
         if let (Match::VariableReference, Source::Env(name)) = (setting.matching, setting.source) {
             let value = inputs.env.var_os(name)?;
@@ -905,7 +1194,25 @@ pub fn matches(matching: Match, value: &str) -> bool {
         Match::HistoryEnabled => value == "enabled",
         Match::StructuredErrorFormat => cli_error::is_structured_format(value),
         Match::VariableReference => value.contains('$'),
+        Match::IntegerOutside { min, max } => client_config::coerce::integer(value)
+            .is_none_or(|number| !(min..=max).contains(&number)),
+        Match::NoneOf(values) => !values.contains(&value),
+        Match::NotBoolean => !["true", "false"]
+            .iter()
+            .any(|word| value.eq_ignore_ascii_case(word)),
+        Match::True => value.eq_ignore_ascii_case("true"),
+        Match::NotTrue => !value.eq_ignore_ascii_case("true"),
     }
+}
+/// Whether the profile key `source` reads is a nested block, and no
+/// variable of the chain outranks it.
+fn profile_block<E: EnvMap>(inputs: &Inputs<'_, E>, profile: &str, source: Source) -> bool {
+    let key = match source {
+        Source::Profile(key) => key,
+        Source::Chain(name, key) if inputs.env.var_os(name).is_none() => key,
+        Source::Chain(..) | Source::Env(_) | Source::S3(_) | Source::ErrorFormat => return false,
+    };
+    shared_config::profile_property_is_block(inputs.shared_files, profile, key)
 }
 #[cfg(test)]
 pub(crate) mod sample;

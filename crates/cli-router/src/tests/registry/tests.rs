@@ -568,3 +568,5 @@ fn the_pinned_s3_commands_keep_their_native_verdicts_beside_a_source() {
         Verdict::Python(PythonReason::UnsupportedSubcommand)
     ));
 }
+
+mod settings;

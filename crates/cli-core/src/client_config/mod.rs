@@ -9,8 +9,15 @@ use std::path::{Path, PathBuf};
 mod ca_bundle;
 pub mod coerce;
 mod diagnostics;
+mod settings;
 mod transfer;
 pub mod user_agent;
+#[doc(inline)]
+pub use settings::{ClientSettings, SettingsInputs, resolve_settings};
+use settings::{
+    holds_only_certificates, is_blank_path, reject_blank, resolve_client_arguments,
+    resolve_globals, s3_addressing_style, trust_reason,
+};
 
 const TARGET_GBPS_LIST: f64 = 10.0;
 /// The floor upstream applies when `crt` is preferred
@@ -22,10 +29,11 @@ const TARGET_GBPS_UNTUNED: f64 = 4.0;
 /// The target s3transfer falls back to when the CRT has no recommendation
 /// (`_get_crt_throughput_target_gbps`).
 const TARGET_GBPS_UNRECOMMENDED: f64 = 10.0;
-const CONNECT_TIMEOUT_SECONDS_MAX: i64 = i64::MAX / 1_000_000_000;
-/// The connect timeout when `--cli-connect-timeout` is unset: botocore's
-/// `DEFAULT_TIMEOUT` of 60 s, which globalargs.py `_resolve_timeout` applies.
-const CONNECT_TIMEOUT_MS_DEFAULT: u32 = 60_000;
+const TIMEOUT_SECONDS_MAX: i64 = i64::MAX / 1_000_000_000;
+/// The connect and read timeouts when `--cli-connect-timeout` and
+/// `--cli-read-timeout` are unset: botocore's `DEFAULT_TIMEOUT` of 60 s,
+/// which globalargs.py `_resolve_timeout` applies.
+const TIMEOUT_MS_DEFAULT: u32 = 60_000;
 const ATTEMPTS_DEFAULT: u32 = 3;
 const PART_SIZE_DEFAULT: u64 = 8 << 20;
 const MULTIPART_THRESHOLD_DEFAULT: u64 = 8 << 20;
@@ -63,8 +71,8 @@ const _: () = {
     assert!(ATTEMPTS_DEFAULT <= RETRY_ATTEMPTS_MAX);
     assert!(PART_SIZE_DEFAULT <= part_size_max(MEMORY_LIMIT_BYTES_MIN));
     assert!(MULTIPART_THRESHOLD_DEFAULT >= PART_SIZE_DEFAULT);
-    assert!(CONNECT_TIMEOUT_SECONDS_MAX <= i64::MAX / 1000);
-    assert!(CONNECT_TIMEOUT_SECONDS_MAX * 1000 > u32::MAX as i64);
+    assert!(TIMEOUT_SECONDS_MAX <= i64::MAX / 1000);
+    assert!(TIMEOUT_SECONDS_MAX * 1000 > u32::MAX as i64);
 };
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -84,6 +92,16 @@ impl Command {
     /// configuration.
     pub const fn transfers(self) -> bool {
         matches!(self, Self::Cp | Self::Mv | Self::Rm | Self::Sync)
+    }
+    /// The command's lineage as the User-Agent names it.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Ls => "s3.ls",
+            Self::Cp => "s3.cp",
+            Self::Mv => "s3.mv",
+            Self::Rm => "s3.rm",
+            Self::Sync => "s3.sync",
+        }
     }
 }
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -373,18 +391,15 @@ impl std::fmt::Display for IgnoredSettings {
         )
     }
 }
+/// The `s3` commands' record: the settings every client resolves, and the
+/// S3 client's and the transfer manager's own.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClientConfig {
     pub command: Command,
-    pub trust: Resolved<Trust>,
-    pub signing: Resolved<bool>,
-    pub retry_mode: Resolved<RetryMode>,
-    pub max_attempts: Option<Resolved<u64>>,
+    pub settings: ClientSettings,
+    /// The attempts the CRT's standard strategy makes, which a configured
+    /// `max_attempts` sets within its range.
     pub retry_attempts: Resolved<Option<u32>>,
-    pub request_checksum: Resolved<ChecksumMode>,
-    pub response_checksum: Resolved<ChecksumMode>,
-    pub keep_alive: Resolved<bool>,
-    pub connect_timeout_ms: Resolved<u32>,
     pub addressing_style: Resolved<AddressingStyle>,
     pub use_accelerate_endpoint: Resolved<bool>,
     pub use_dualstack_endpoint: Resolved<bool>,
@@ -398,15 +413,6 @@ pub struct ClientConfig {
     pub direct_io: Option<Resolved<bool>>,
     pub memory_limit: Resolved<MemoryLimit>,
     pub ignored: IgnoredSettings,
-    /// The values the user agent reports as given, kept as bytes: one from
-    /// the environment need not be Unicode.
-    pub app_id: Option<Resolved<Vec<u8>>>,
-    pub execution_env: Option<Resolved<Vec<u8>>>,
-    pub endpoint_override: bool,
-    pub agentic_callers: user_agent::Features,
-    /// The provider the credential chain answers from, which `s3 ls`'s user
-    /// agent names.
-    pub credential_source: CredentialSource,
 }
 impl Default for ClientConfig {
     fn default() -> Self {
@@ -418,18 +424,11 @@ impl ClientConfig {
         let cp = command.transfers();
         Self {
             command,
-            trust: Resolved::default(),
-            signing: Resolved::new(true, Source::Default),
-            retry_mode: Resolved::default(),
-            max_attempts: None,
+            settings: ClientSettings::new(command.label()),
             retry_attempts: Resolved::new(
                 Some(ATTEMPTS_DEFAULT),
                 if cp { Source::Persona } else { Source::Default },
             ),
-            request_checksum: Resolved::default(),
-            response_checksum: Resolved::default(),
-            keep_alive: Resolved::default(),
-            connect_timeout_ms: Resolved::new(CONNECT_TIMEOUT_MS_DEFAULT, Source::Default),
             addressing_style: Resolved::default(),
             use_accelerate_endpoint: Resolved::default(),
             use_dualstack_endpoint: Resolved::default(),
@@ -454,11 +453,6 @@ impl ClientConfig {
             direct_io: None,
             memory_limit: Resolved::default(),
             ignored: IgnoredSettings::default(),
-            app_id: None,
-            execution_env: None,
-            endpoint_override: false,
-            agentic_callers: user_agent::Features::default(),
-            credential_source: CredentialSource::DefaultChain,
         }
     }
     /// The `s3` block's endpoint rule inputs, which the S3 endpoint resolver
@@ -488,7 +482,8 @@ impl ClientConfig {
     /// whatever client runs its transfers, so its CRT persona makes those with
     /// the count it ignores for the transfers.
     pub fn botocore_attempts(&self) -> u64 {
-        self.max_attempts
+        self.settings
+            .max_attempts
             .as_ref()
             .map_or(u64::from(ATTEMPTS_DEFAULT), |configured| configured.value)
     }
@@ -496,21 +491,16 @@ impl ClientConfig {
     /// uploads, besides the host facts and versions [`user_agent::render`]
     /// takes.
     pub fn user_agent_inputs(&self, uploads: bool) -> user_agent::Inputs<'_> {
+        let settings = &self.settings;
         user_agent::Inputs {
-            execution_env: self.execution_env.as_ref().map(|v| v.value.as_slice()),
+            execution_env: settings.execution_env.as_ref().map(|v| v.value.as_slice()),
             features: self.user_agent_features(uploads),
-            retry_mode: self.retry_mode.value,
-            app_id: self.app_id.as_ref().map(|v| v.value.as_slice()),
+            retry_mode: settings.retry_mode().value,
+            app_id: settings.app_id.as_ref().map(|v| v.value.as_slice()),
             extras: user_agent::Extras {
                 installer: "other",
                 prompt: "off",
-                command: match self.command {
-                    Command::Ls => "s3.ls",
-                    Command::Cp => "s3.cp",
-                    Command::Mv => "s3.mv",
-                    Command::Rm => "s3.rm",
-                    Command::Sync => "s3.sync",
-                },
+                command: &settings.command,
             },
         }
     }
@@ -523,18 +513,7 @@ impl ClientConfig {
     /// know.
     pub fn user_agent_features(&self, uploads: bool) -> user_agent::Features {
         use user_agent::Feature;
-        let mut features = self.agentic_callers;
-        if self.endpoint_override {
-            features.insert(Feature::EndpointOverride);
-        }
-        features.insert(match self.request_checksum.value {
-            ChecksumMode::WhenSupported => Feature::FlexibleChecksumsReqWhenSupported,
-            ChecksumMode::WhenRequired => Feature::FlexibleChecksumsReqWhenRequired,
-        });
-        features.insert(match self.response_checksum.value {
-            ChecksumMode::WhenSupported => Feature::FlexibleChecksumsResWhenSupported,
-            ChecksumMode::WhenRequired => Feature::FlexibleChecksumsResWhenRequired,
-        });
+        let mut features = self.settings.user_agent_features();
         match self.command {
             Command::Ls => {
                 debug_assert!(!uploads, "a listing uploads nothing");
@@ -549,10 +528,10 @@ impl ClientConfig {
     }
     fn credential_features(&self) -> &'static [user_agent::Feature] {
         use user_agent::Feature;
-        if !self.signing.value {
+        if !self.settings.signing.value {
             return &[];
         }
-        match self.credential_source {
+        match self.settings.credential_source {
             CredentialSource::Environment => &[Feature::CredentialsEnvVars],
             CredentialSource::SharedProfile => &[Feature::CredentialsProfile],
             CredentialSource::Process => &[
@@ -573,7 +552,7 @@ impl ClientConfig {
                 Persona::Tuned | Persona::NewlyEligible => Feature::S3TransferCrtAuto,
             });
         }
-        if uploads && self.request_checksum.value == ChecksumMode::WhenSupported {
+        if uploads && self.settings.request_checksum.value == ChecksumMode::WhenSupported {
             features.insert(Feature::FlexibleChecksumsReqCrc64);
         }
         features
@@ -594,43 +573,22 @@ pub struct Inputs<'a, E: EnvMap> {
     /// payload answers, so this crate never reads the payload.
     pub embedded_trust: bool,
 }
-impl<E: EnvMap> Inputs<'_, E> {
-    fn profile(&self) -> &OsStr {
-        aws_profile::select_or_default(self.env, self.globals.profile.as_deref())
-    }
-    fn property(&self, key: &str) -> Option<&str> {
-        shared_config::profile_property(self.files, self.profile(), key)
-    }
-    fn nested(&self, key: &str) -> Option<&str> {
-        shared_config::profile_nested_property(self.files, self.profile(), "s3", key)
-    }
-    fn first_os(&self, field: Field) -> Result<Option<Resolved<&OsStr>>, PythonReason> {
-        for &source in field.settings() {
-            let value = match source {
-                Source::Env(name) => self.env.var_os(name),
-                Source::Profile(key) => {
-                    if shared_config::profile_property_is_block(self.files, self.profile(), key) {
-                        return Err(field.reason());
-                    }
-                    self.property(key).map(OsStr::new)
-                }
-                Source::S3(key) => self.nested(key).map(OsStr::new),
-                Source::Default | Source::Persona | Source::Flag(_) => None,
-            };
-            if let Some(value) = value {
-                return Ok(Some(Resolved::new(value, source)));
-            }
+impl<'a, E: EnvMap> Inputs<'a, E> {
+    /// The inputs of the settings every client resolves, for the S3 client.
+    pub fn settings(&self) -> SettingsInputs<'a, E> {
+        SettingsInputs {
+            env: self.env,
+            files: self.files,
+            globals: self.globals,
+            directory: self.directory,
+            embedded_trust: self.embedded_trust,
+            service: S3_SERVICE,
+            command: self.command.label(),
         }
-        Ok(None)
-    }
-    fn first(&self, field: Field) -> Result<Option<Resolved<&str>>, PythonReason> {
-        let Some(v) = self.first_os(field)? else {
-            return Ok(None);
-        };
-        let value = v.value.to_str().ok_or(field.reason())?;
-        Ok(Some(Resolved::new(value, v.source)))
     }
 }
+/// The S3 client's service, as the configured-endpoint lookup names it.
+const S3_SERVICE: &str = "s3";
 /// Resolve supported values before any native request or filesystem mutation.
 pub fn resolve<E: EnvMap>(inputs: &Inputs<'_, E>) -> Result<ClientConfig, PythonReason> {
     resolve_with_probe(inputs, || inputs.platform)
@@ -649,69 +607,32 @@ pub fn resolve_with_probe<E: EnvMap>(
     inputs: &Inputs<'_, E>,
     probe: impl FnOnce() -> Platform,
 ) -> Result<ClientConfig, PythonReason> {
+    let settings = inputs.settings();
     let mut config = ClientConfig::new(inputs.command);
-    config.credential_source =
-        CredentialSource::select(inputs.env, inputs.files, inputs.globals.profile.as_deref());
-    resolve_globals(&mut config, inputs.globals)?;
-    resolve_endpoint(inputs, &mut config)?;
-    resolve_max_attempts(inputs, &mut config)?;
-    resolve_checksum(
-        inputs,
-        Field::RequestChecksumCalculation,
-        &mut config.request_checksum,
-    )?;
-    resolve_checksum(
-        inputs,
-        Field::ResponseChecksumValidation,
-        &mut config.response_checksum,
-    )?;
-    resolve_retry_mode(inputs, &mut config)?;
-    resolve_keep_alive(inputs, &mut config)?;
-    resolve_trust(inputs, &mut config)?;
-    resolve_proxy(inputs)?;
+    config.settings = settings::start(&settings);
+    resolve_globals(&mut config.settings, inputs.globals)?;
+    resolve_endpoint(&settings, &mut config)?;
+    resolve_client_arguments(&settings, &mut config.settings)?;
     transfer::resolve(inputs, &mut config, probe)?;
     transfer::memory(inputs, &mut config)?;
-    user_agent::resolve(inputs, &mut config)?;
+    user_agent::resolve(&settings, &mut config.settings)?;
     resolve_retry_attempts(&mut config)?;
     if inputs.command.transfers() {
-        resolve_serializer_trust(inputs)?;
+        resolve_serializer_trust(&settings)?;
     }
-    resolve_trust_contents(inputs, &config)?;
+    resolve_trust_contents(&settings, &config)?;
     Ok(config)
 }
-fn resolve_globals(config: &mut ClientConfig, globals: &Globals) -> Result<(), PythonReason> {
-    if globals.no_sign_request {
-        config.signing = Resolved::new(false, Source::Flag("--no-sign-request"));
-    }
-    let timeout_ms = connect_timeout_milliseconds(globals.connect_timeout)
-        .ok_or(PythonReason::PythonOnlyGlobal)?;
-    config.connect_timeout_ms = Resolved::new(
-        timeout_ms,
-        if globals.connect_timeout.is_some() {
-            Source::Flag("--cli-connect-timeout")
-        } else {
-            Source::Default
-        },
-    );
-    Ok(())
-}
 fn resolve_endpoint<E: EnvMap>(
-    inputs: &Inputs<'_, E>,
+    inputs: &SettingsInputs<'_, E>,
     config: &mut ClientConfig,
 ) -> Result<(), PythonReason> {
-    let reason = Field::S3Endpoint.reason();
     if inputs.property("s3").is_some() {
-        return Err(reason);
+        return Err(Field::S3Endpoint.reason());
     }
-    let [style_key, accelerate_key, dualstack_key] = S3_ENDPOINT_KEYS;
-    if let Some(value) = inputs.nested(style_key) {
-        let style = match value {
-            "auto" => AddressingStyle::Auto,
-            "virtual" => AddressingStyle::Virtual,
-            "path" => AddressingStyle::Path,
-            _ => return Err(reason),
-        };
-        config.addressing_style = Resolved::new(style, Source::S3(style_key));
+    let [_, accelerate_key, dualstack_key] = S3_ENDPOINT_KEYS;
+    if let Some(style) = s3_addressing_style(inputs)? {
+        config.addressing_style = style;
     }
     for (key, output) in [
         (accelerate_key, &mut config.use_accelerate_endpoint),
@@ -723,127 +644,7 @@ fn resolve_endpoint<E: EnvMap>(
     }
     Ok(())
 }
-fn resolve_max_attempts<E: EnvMap>(
-    inputs: &Inputs<'_, E>,
-    config: &mut ClientConfig,
-) -> Result<(), PythonReason> {
-    let Some(v) = inputs.first(Field::MaxAttempts)? else {
-        return Ok(());
-    };
-    let attempts = coerce::integer(v.value)
-        .and_then(|v| u64::try_from(v).ok())
-        .filter(|v| *v > 0)
-        .ok_or(PythonReason::RetrySetting)?;
-    config.max_attempts = Some(Resolved::new(attempts, v.source));
-    Ok(())
-}
-/// A checksum setting as botocore's client validates it for every command: the
-/// value lowercased must be `when_supported` or `when_required`
-/// (`_handle_checksum_config`), so any other value, an empty one, and a nested
-/// block are Python's InvalidChecksumConfigError. An ASCII case fold is exact
-/// here: the one non-ASCII character Python lowercases to an ASCII letter, the
-/// Kelvin sign, folds to a `k`, which neither value holds.
-fn resolve_checksum<E: EnvMap>(
-    inputs: &Inputs<'_, E>,
-    field: Field,
-    output: &mut Resolved<ChecksumMode>,
-) -> Result<(), PythonReason> {
-    if let Some(v) = inputs.first(field)? {
-        let mode = checksum_mode(v.value).ok_or(field.reason())?;
-        *output = Resolved::new(mode, v.source);
-    }
-    Ok(())
-}
-fn checksum_mode(value: &str) -> Option<ChecksumMode> {
-    [
-        ("when_supported", ChecksumMode::WhenSupported),
-        ("when_required", ChecksumMode::WhenRequired),
-    ]
-    .into_iter()
-    .find_map(|(name, mode)| value.eq_ignore_ascii_case(name).then_some(mode))
-}
-fn resolve_retry_mode<E: EnvMap>(
-    inputs: &Inputs<'_, E>,
-    config: &mut ClientConfig,
-) -> Result<(), PythonReason> {
-    let Some(v) = inputs.first(Field::RetryMode)? else {
-        return Ok(());
-    };
-    let mode = match v.value {
-        "standard" => RetryMode::Standard,
-        "adaptive" => RetryMode::Adaptive,
-        _ => return Err(PythonReason::RetrySetting),
-    };
-    config.retry_mode = Resolved::new(mode, v.source);
-    Ok(())
-}
-/// TCP keepalive when the selected profile's `tcp_keepalive` is `true` in any
-/// case (botocore's `_compute_socket_options`); no value is an error, and a
-/// nested block, which botocore lowercases as a string, is Python's.
-fn resolve_keep_alive<E: EnvMap>(
-    inputs: &Inputs<'_, E>,
-    config: &mut ClientConfig,
-) -> Result<(), PythonReason> {
-    if let Some(v) = inputs.first(Field::TcpKeepalive)? {
-        config.keep_alive = Resolved::new(coerce::boolean(v.value), v.source);
-    }
-    Ok(())
-}
-fn resolve_trust<E: EnvMap>(
-    inputs: &Inputs<'_, E>,
-    config: &mut ClientConfig,
-) -> Result<(), PythonReason> {
-    config.trust = Resolved::new(default_trust(inputs.embedded_trust), Source::Default);
-    let selected = if let Some(flag) = &inputs.globals.ca_bundle {
-        Some(Resolved::new(OsStr::new(flag), Source::Flag("--ca-bundle")))
-    } else {
-        inputs.first_os(Field::CaBundle)?
-    };
-    let Some(value) = selected else {
-        return Ok(());
-    };
-    if is_blank_path(value.value) {
-        return Err(reject_blank(&value));
-    }
-    resolve_trust_file(inputs, config, &value)
-}
-const fn default_trust(embedded_trust: bool) -> Trust {
-    if embedded_trust {
-        Trust::Embedded
-    } else {
-        Trust::Platform
-    }
-}
-fn resolve_trust_file<E: EnvMap>(
-    inputs: &Inputs<'_, E>,
-    config: &mut ClientConfig,
-    value: &Resolved<&OsStr>,
-) -> Result<(), PythonReason> {
-    let reason = if matches!(value.source, Source::Flag(_)) {
-        PythonReason::PythonOnlyGlobal
-    } else {
-        PythonReason::NetworkSetting
-    };
-    let bytes = value.value.as_encoded_bytes();
-    if bytes.len() >= TRUST_PATH_BYTES_MAX || bytes.contains(&0) {
-        return Err(reason);
-    }
-    if open_regular_file(inputs.directory, Path::new(value.value)).is_none() {
-        return Err(reason);
-    }
-    config.trust = Resolved::new(Trust::File(PathBuf::from(value.value)), value.source);
-    Ok(())
-}
-fn reject_blank(value: &Resolved<&OsStr>) -> PythonReason {
-    debug_assert!(is_blank_path(value.value));
-    if matches!(value.source, Source::Flag(_)) {
-        PythonReason::PythonOnlyGlobal
-    } else {
-        PythonReason::NetworkSetting
-    }
-}
-fn resolve_serializer_trust<E: EnvMap>(inputs: &Inputs<'_, E>) -> Result<(), PythonReason> {
-    debug_assert!(inputs.command.transfers());
+fn resolve_serializer_trust<E: EnvMap>(inputs: &SettingsInputs<'_, E>) -> Result<(), PythonReason> {
     if inputs.globals.ca_bundle.is_none() {
         return Ok(());
     }
@@ -856,13 +657,14 @@ fn resolve_serializer_trust<E: EnvMap>(inputs: &Inputs<'_, E>) -> Result<(), Pyt
     Err(reject_blank(&value))
 }
 fn resolve_trust_contents<E: EnvMap>(
-    inputs: &Inputs<'_, E>,
+    inputs: &SettingsInputs<'_, E>,
     config: &ClientConfig,
 ) -> Result<(), PythonReason> {
-    let Trust::File(path) = &config.trust.value else {
+    let trust = &config.settings.trust;
+    let Trust::File(path) = &trust.value else {
         return Ok(());
     };
-    let source = config.trust.source;
+    let source = trust.source;
     debug_assert!(
         !matches!(source, Source::Default | Source::Persona),
         "a trust file always has a supplier"
@@ -879,11 +681,7 @@ fn resolve_trust_contents<E: EnvMap>(
     if holds_only_certificates(inputs.directory, path) {
         return Ok(());
     }
-    Err(if matches!(source, Source::Flag(_)) {
-        PythonReason::PythonOnlyGlobal
-    } else {
-        PythonReason::NetworkSetting
-    })
+    Err(trust_reason(source))
 }
 fn crt_loads_trust(source: Source) -> bool {
     match source {
@@ -891,63 +689,6 @@ fn crt_loads_trust(source: Source) -> bool {
         Source::Env(name) => name == "AWS_CA_BUNDLE",
         Source::S3(_) | Source::Default | Source::Persona => false,
     }
-}
-fn holds_only_certificates(directory: &Path, path: &Path) -> bool {
-    open_regular_file(directory, path).is_some_and(|file| {
-        let reader = std::io::BufReader::with_capacity(ca_bundle::LINE_BUFFER_BYTES, file);
-        ca_bundle::holds_only_certificates(reader)
-    })
-}
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn open_regular_file(directory: &Path, path: &Path) -> Option<std::fs::File> {
-    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-    use std::os::unix::ffi::OsStrExt;
-    use std::os::unix::fs::OpenOptionsExt;
-    let base = if path.is_absolute() {
-        None
-    } else {
-        let mut options = std::fs::OpenOptions::new();
-        options
-            .read(true)
-            .custom_flags(libc::O_PATH | libc::O_DIRECTORY);
-        Some(options.open(directory).ok()?)
-    };
-    let at = base.as_ref().map_or(libc::AT_FDCWD, AsRawFd::as_raw_fd);
-    let name = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-    let open = |flags: libc::c_int| {
-        // SAFETY: `name` is a NUL-terminated string that outlives the call,
-        // and `at` is `AT_FDCWD` or a descriptor `base` keeps open.
-        let fd = unsafe { libc::openat(at, name.as_ptr(), flags | libc::O_CLOEXEC) };
-        // SAFETY: a nonnegative `fd` is a new descriptor nothing else owns.
-        (fd >= 0).then(|| std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
-    };
-    let probe = open(libc::O_PATH)?;
-    if !probe.metadata().ok()?.is_file() {
-        return None;
-    }
-    drop(probe);
-    let file = open(libc::O_RDONLY | libc::O_NOCTTY | libc::O_NONBLOCK)?;
-    file.metadata().ok()?.is_file().then_some(file)
-}
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-fn open_regular_file(directory: &Path, path: &Path) -> Option<std::fs::File> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NONBLOCK);
-    }
-    let file = options.open(directory.join(path)).ok()?;
-    file.metadata().ok()?.is_file().then_some(file)
-}
-fn is_blank_path(path: &OsStr) -> bool {
-    path.to_str().is_some_and(is_blank)
-}
-/// Whether `text.strip()` leaves nothing in Python, whose `str.isspace()`
-/// counts the separators U+001C to U+001F as spaces.
-fn is_blank(text: &str) -> bool {
-    text.chars().all(awscli_config::is_space)
 }
 fn resolve_retry_attempts(config: &mut ClientConfig) -> Result<(), PythonReason> {
     match config.persona.as_ref().map(|persona| persona.value) {
@@ -963,10 +704,10 @@ fn resolve_botocore_attempts(
     config: &mut ClientConfig,
     default_source: Source,
 ) -> Result<(), PythonReason> {
-    if config.retry_mode.value == RetryMode::Adaptive {
+    if config.settings.retry_mode().value == RetryMode::Adaptive {
         return Err(PythonReason::RetrySetting);
     }
-    let Some(configured) = &config.max_attempts else {
+    let Some(configured) = &config.settings.max_attempts else {
         config.retry_attempts = Resolved::new(Some(ATTEMPTS_DEFAULT), default_source);
         return Ok(());
     };
@@ -975,8 +716,8 @@ fn resolve_botocore_attempts(
     Ok(())
 }
 fn resolve_crt_persona_attempts(config: &mut ClientConfig) {
-    config.ignored.retry_mode_adaptive = config.retry_mode.value == RetryMode::Adaptive;
-    let Some(configured) = &config.max_attempts else {
+    config.ignored.retry_mode_adaptive = config.settings.retry_mode().value == RetryMode::Adaptive;
+    let Some(configured) = &config.settings.max_attempts else {
         config.retry_attempts = Resolved::new(None, Source::Default);
         return;
     };
@@ -992,36 +733,19 @@ fn crt_attempts(attempts: u64) -> Option<u32> {
         .ok()
         .filter(|attempts| (RETRY_ATTEMPTS_MIN..=RETRY_ATTEMPTS_MAX).contains(attempts))
 }
-fn resolve_proxy<E: EnvMap>(inputs: &Inputs<'_, E>) -> Result<(), PythonReason> {
-    let proxy = crate::proxy::Environment::from_map(inputs.env);
-    if proxy.requires_python() {
-        return Err(PythonReason::NetworkSetting);
-    }
-    if proxy.has_bypass_list()
-        && !crate::endpoint_config::configured_endpoints_ascii(
-            inputs.env,
-            inputs.files,
-            "s3",
-            inputs.globals.endpoint_url.as_deref(),
-            inputs.globals.profile.as_deref(),
-        )
-    {
-        return Err(PythonReason::NetworkSetting);
-    }
-    Ok(())
-}
-/// `--cli-connect-timeout` as the CRT's `connect_timeout_ms`, or `None` for a
-/// value botocore rejects: negative seconds (urllib3's "Attempted to set
-/// connect timeout to ...") and seconds past `CONNECT_TIMEOUT_SECONDS_MAX`.
-/// Unset is botocore's 60 s, which upstream gives its CRT client as well
-/// (factory.py `_to_crt_connect_timeout_ms`); an explicit 0, botocore's "no
-/// timeout", is the longest wait the CRT can express, which longer timeouts
-/// saturate at.
-pub fn connect_timeout_milliseconds(seconds: Option<i64>) -> Option<u32> {
+/// `--cli-connect-timeout` or `--cli-read-timeout` in milliseconds, or
+/// `None` for a value botocore rejects: negative seconds (urllib3's
+/// "Attempted to set connect timeout to ...", and its read counterpart)
+/// and seconds past `TIMEOUT_SECONDS_MAX`. Unset is botocore's 60 s, which
+/// upstream gives its CRT client as well (factory.py
+/// `_to_crt_connect_timeout_ms`); an explicit 0, botocore's "no timeout"
+/// (globalargs.py `_resolve_timeout`), is the longest wait the CRT can
+/// express, which longer timeouts saturate at.
+pub fn timeout_milliseconds(seconds: Option<i64>) -> Option<u32> {
     match seconds {
-        None => Some(CONNECT_TIMEOUT_MS_DEFAULT),
+        None => Some(TIMEOUT_MS_DEFAULT),
         Some(0) => Some(u32::MAX),
-        Some(seconds) if (1..=CONNECT_TIMEOUT_SECONDS_MAX).contains(&seconds) => {
+        Some(seconds) if (1..=TIMEOUT_SECONDS_MAX).contains(&seconds) => {
             Some(u32::try_from(seconds * 1000).unwrap_or(u32::MAX))
         }
         _ => None,
