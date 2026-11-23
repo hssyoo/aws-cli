@@ -12,6 +12,7 @@ testing = []
 
 [dependencies]
 cli-core = { path = "../cli-core" }
+crt = { path = "../crt" }
 model = { path = "../model" }
 timestamp = { path = "../timestamp" }
 

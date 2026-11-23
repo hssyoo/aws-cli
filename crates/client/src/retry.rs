@@ -72,7 +72,7 @@ pub fn classify(model: &Model, operation: &Operation, attempt: &Attempt<'_>) -> 
         Attempt::Failed(error) => return error.is_retryable().then_some(ErrorKind::Transient),
         Attempt::Response { response, error } => (*response, *error),
     };
-    let code = error.and_then(|error| error.code.as_deref());
+    let code = error.and_then(error_code_of);
     let modeled = code.and_then(|code| modeled_retryable(model, operation, code));
     let unmodeled_429 = response.status == THROTTLING_STATUS
         && !code.is_some_and(|code| is_modeled(model, operation, code));
@@ -92,6 +92,11 @@ pub fn classify(model: &Model, operation: &Operation, attempt: &Attempt<'_>) -> 
     } else {
         ErrorKind::Transient
     })
+}
+
+/// The error's `Error.Code` (`RetryContext.get_error_code`).
+fn error_code_of(error: &ServiceError) -> Option<&str> {
+    error.code.as_deref()
 }
 
 /// `ModeledRetryErrorDetector.detect_error_type`: the kind of the

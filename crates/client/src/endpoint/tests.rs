@@ -107,9 +107,14 @@ fn parameters_come_from_each_source_in_rule_set_order() -> TestResult {
         ..EndpointInputs::default()
     });
     let builtins = config.builtins(&data)?;
-    let params = provider_params(&data, &model, operation, &Value::Map(input), &builtins, || {
-        Some("123456789012".into())
-    });
+    let params = provider_params(
+        &data,
+        &model,
+        operation,
+        &Value::Map(input),
+        &builtins,
+        || Some("123456789012".into()),
+    );
     let named: Vec<(&str, &ParamValue)> = params.iter().collect();
     let string = |text: &str| ParamValue::String(text.into());
     assert_eq!(
@@ -156,7 +161,8 @@ fn admission_refuses_what_core_cannot_supply() -> TestResult {
 }
 
 /// With no region, botocore's legacy resolver raises `NoRegionError` unless
-/// the service has a partition endpoint, and the rules then see no region.
+/// the service has a partition endpoint, which is then the client's region,
+/// unless an endpoint is given.
 #[test]
 fn no_region_needs_a_partition_endpoint() -> TestResult {
     let endpoints = |service: &str| {
@@ -171,13 +177,24 @@ fn no_region_needs_a_partition_endpoint() -> TestResult {
         b"{}".to_vec(),
         Some((endpoints("zjson").as_bytes(), "zjson")),
     )?;
-    assert_eq!(config.builtins(&global)?.region, None);
+    assert_eq!(
+        config.builtins(&global)?.region.as_deref(),
+        Some("aws-global")
+    );
+    let with_endpoint = EndpointConfig::new(&EndpointInputs {
+        endpoint_url: Some("http://localhost:4566"),
+        ..EndpointInputs::default()
+    });
+    assert_eq!(with_endpoint.builtins(&global)?.region, None);
     let regional = EndpointData::from_documents(
         RULES.as_bytes().to_vec(),
         b"{}".to_vec(),
         Some((endpoints("other").as_bytes(), "zjson")),
     )?;
-    assert!(matches!(config.builtins(&regional), Err(CallError::NoRegion)));
+    assert!(matches!(
+        config.builtins(&regional),
+        Err(CallError::NoRegion)
+    ));
     Ok(())
 }
 
@@ -204,13 +221,24 @@ fn case(
 }
 
 fn cases() -> Vec<Value> {
-    let sts = |region, fips, dualstack, url| case("sts", "GetCallerIdentity", region, fips, dualstack, url);
+    let sts = |region, fips, dualstack, url| {
+        case("sts", "GetCallerIdentity", region, fips, dualstack, url)
+    };
     let ddb = |region, fips, url| case("dynamodb", "ListTables", region, fips, None, url);
     let iam = |region, fips| case("iam", "ListUsers", region, fips, None, None);
     let mut cases = Vec::new();
     for region in [
-        "us-east-1", "us-west-2", "eu-west-1", "cn-north-1", "us-gov-west-1", "aws-global",
-        "fips-us-east-1", "us-east-1-fips", "us-east-9", "mars-1", "us-iso-east-1",
+        "us-east-1",
+        "us-west-2",
+        "eu-west-1",
+        "cn-north-1",
+        "us-gov-west-1",
+        "aws-global",
+        "fips-us-east-1",
+        "us-east-1-fips",
+        "us-east-9",
+        "mars-1",
+        "us-iso-east-1",
         "eu-isoe-west-1",
     ] {
         cases.push(sts(Some(region), None, None, None));
@@ -221,8 +249,18 @@ fn cases() -> Vec<Value> {
         sts(Some("us-west-2"), None, Some(true), None),
         sts(Some("us-west-2"), Some(true), Some(true), None),
         sts(Some("cn-north-1"), None, Some(true), None),
-        sts(Some("us-west-2"), None, None, Some("https://sts.example.com/base")),
-        sts(Some("us-west-2"), Some(true), None, Some("http://localhost:4566")),
+        sts(
+            Some("us-west-2"),
+            None,
+            None,
+            Some("https://sts.example.com/base"),
+        ),
+        sts(
+            Some("us-west-2"),
+            Some(true),
+            None,
+            Some("http://localhost:4566"),
+        ),
         sts(None, None, None, Some("http://localhost:4566")),
         ddb(Some("us-east-1"), None, None),
         ddb(None, None, None),
@@ -250,15 +288,16 @@ fn botocore(cases: &[Value]) -> TestResult<Vec<Value>> {
     let prefix = std::env::var_os("AWS_NATIVE_CPYTHON_PREFIX")
         .ok_or("AWS_NATIVE_CPYTHON_PREFIX must name the toolchain CPython")?;
     let oracle = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/endpoint/oracle.py");
-    let mut child = std::process::Command::new(std::path::PathBuf::from(prefix).join("bin/python3"))
-        .arg("-I")
-        .arg(oracle)
-        .arg(repository().join("awscli").parent().ok_or("parent")?)
-        .env_clear()
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
+    let mut child =
+        std::process::Command::new(std::path::PathBuf::from(prefix).join("bin/python3"))
+            .arg("-I")
+            .arg(oracle)
+            .arg(repository().join("awscli").parent().ok_or("parent")?)
+            .env_clear()
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
     let input = model::pyjson::dumps(
         &Value::List(cases.to_vec()),
         &model::pyjson::Options::compact(),
@@ -314,7 +353,14 @@ fn native(case: &Value) -> TestResult<Value> {
         let operation = model
             .operation(text(case, "operation").unwrap_or_default())
             .ok_or_else(|| CallError::Endpoint("no operation".into()))?;
-        let params = provider_params(&data, &model, operation, &Value::Map(Map::new()), &builtins, || None);
+        let params = provider_params(
+            &data,
+            &model,
+            operation,
+            &Value::Map(Map::new()),
+            &builtins,
+            || None,
+        );
         resolve(&data, &params)
     });
     match outcome {
@@ -322,7 +368,10 @@ fn native(case: &Value) -> TestResult<Value> {
             let signing = endpoint.signing_context().map_err(|e| e.to_string())?;
             let opt = |value: Option<String>| value.map_or(Value::Null, Value::String);
             result.insert("url".into(), Value::String(endpoint.url));
-            result.insert("signing_region".into(), opt(signing.as_ref().and_then(|s| s.region.clone())));
+            result.insert(
+                "signing_region".into(),
+                opt(signing.as_ref().and_then(|s| s.region.clone())),
+            );
             result.insert("signing_name".into(), opt(signing.and_then(|s| s.name)));
         }
         Err(error) => {
