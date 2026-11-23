@@ -87,8 +87,9 @@ fn ascii_text_converts_as_int_and_float_read_it() {
     );
     for (text, expected) in [
         ("1.5", "1.5"),
-        ("-inf", "-inf"),
-        ("1e999", "inf"),
+        ("-inf", "-Infinity"),
+        ("1e999", "Infinity"),
+        (" nan", "NaN"),
         (".5", "0.5"),
     ] {
         let converted = convert(ValueType::Float, OsStr::new(text));

@@ -34,10 +34,12 @@ impl ValueType {
 /// What converting one value gives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Converted {
-    /// The converted value's text: an `int` in canonical decimal, any
-    /// magnitude; a `float` as `{:?}` prints the double Python's
-    /// correctly rounded conversion gives, which `str::parse::<f64>` reads
-    /// back exactly (`inf`, `NaN` included).
+    /// The converted value as a JSON number's text: an `int` in canonical
+    /// decimal, any magnitude; a `float`, the double Python's correctly
+    /// rounded conversion gives, in the shortest digits that read back
+    /// exactly, or as `json.dumps` spells a value that is not finite
+    /// (`Infinity`, `-Infinity`, `NaN`). `str::parse::<f64>` reads every
+    /// one back. Digits are not `float.__repr__`'s (`1e16`, not `1e+16`).
     Value(String),
     /// `int()` or `float()` raises ValueError: argparse's
     /// `invalid <type> value: <repr>`.
@@ -99,8 +101,7 @@ fn float(text: &str) -> Option<String> {
         _ => None,
     };
     if let Some(value) = special {
-        let value = if negative { -value } else { value };
-        return Some(format!("{value:?}"));
+        return Some(json_float(if negative { -value } else { value }));
     }
     if !underscores_between_digits(text) {
         return None;
@@ -124,8 +125,18 @@ fn float(text: &str) -> Option<String> {
     };
     let sign = if negative { "-" } else { "" };
     let normalized = format!("{sign}0{whole}.{fraction}0e{exponent}");
-    let value: f64 = normalized.parse().ok()?;
-    Some(format!("{value:?}"))
+    normalized.parse().ok().map(json_float)
+}
+
+/// A double as JSON number text, the non-finite ones as `json.dumps`
+/// writes them.
+fn json_float(value: f64) -> String {
+    match value {
+        value if value.is_nan() => "NaN".to_owned(),
+        f64::INFINITY => "Infinity".to_owned(),
+        f64::NEG_INFINITY => "-Infinity".to_owned(),
+        value => format!("{value:?}"),
+    }
 }
 
 fn underscores_between_digits(text: &str) -> bool {

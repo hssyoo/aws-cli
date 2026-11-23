@@ -237,6 +237,59 @@ def catalog() -> list[dict[str, Any]]:
     return result
 
 
+# Model operations of the repository's fake models (tests/models): typed
+# values (argparse's `type=int` and `type=float`) in each accepted and
+# refused form, their order against the other parse failures, the required
+# arguments the input options lift, and the service and operation parsers'
+# own failures. Native parses them with `derive-tables`; they stay out of
+# the corpus, whose engine tests rebuild the pinned grammar.
+DERIVED_CASES = [
+    "zjson measure --unit u --total 5 --ratio 1.5",
+    "zjson measure --unit u --total ' 7 ' --ratio 1e3",
+    "zjson measure --unit u --total 1_000 --ratio -.5E-2",
+    "zjson measure --unit u --total x",
+    "zjson measure --unit u --total 5.0",
+    "zjson measure --unit u --total 1__0",
+    "zjson measure --unit u --ratio 1._5",
+    "zjson measure --unit u --ratio abc --total x",
+    "zjson measure --unit u --total x --bogus",
+    "zjson measure --unit u --total=99999999999999999999999",
+    "zjson measure --unit u --ratio inf --total -0",
+    "zjson measure --total x",
+    "zjson measure --ratio 1.5",
+    "zjson measure --total 5 --unit",
+    "zjson list-things --max-items abc",
+    "zjson list-things --max-items 5 --page-size 10",
+    "zjson list-things --max-items 5 --starting-token t",
+    "zjson list-things --page-size",
+    "zquery get-thing",
+    "zquery get-thing --thing-id a --count x --enabled",
+    "zquery get-thing --cli-input-json {}",
+    "zquery get-thing --generate-cli-skeleton",
+    "zquery get-thing --generate-cli-skeleton output",
+    "zquery get-thing --thing-id a extra --bogus",
+    "zquery delete-thing --thing-id a --no-force",
+    "zquery nosuch",
+    "zquery",
+    "zjson measure help",
+]
+
+
+def derived_cases() -> list[dict[str, Any]]:
+    return [{"argv": shlex.split(text), "scope": "derived"} for text in DERIVED_CASES]
+
+
+def derived_comparable(record: dict[str, Any], *, oracle: bool) -> dict[str, Any]:
+    """A derived case as both sides report it: values are a model
+    operation's binding, not the parse, and the operation parser's own
+    `help` positional (`_add_help`) is no argument of the table."""
+    record = dict(record, values=None)
+    if oracle and record["args"]:
+        record["args"] = {k: v for k, v in record["args"].items() if k != "help"}
+        record["args_seen"] = [name for name in record["args_seen"] if name != "help"]
+    return record
+
+
 def upstream_cases(source: Path) -> list[dict[str, Any]]:
     """Collect literal S3 command strings without executing upstream tests."""
     result = []
@@ -817,7 +870,10 @@ def capture_environment(request: Path) -> dict[str, str]:
 
 
 def run_cases(
-    args: argparse.Namespace, cases: list[dict[str, Any]]
+    args: argparse.Namespace,
+    cases: list[dict[str, Any]],
+    native_parser: Path | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     with tempfile.TemporaryDirectory(prefix="argparse-") as directory:
         temp = Path(directory)
@@ -836,9 +892,16 @@ def run_cases(
                 "AWS_EC2_METADATA_DISABLED": "true",
             }
         )
+        if native_parser is not None:
+            # The derived cases read the fake models and no caller's
+            # aliases or plugins: both sides get the empty home.
+            env.update(extra_env or {}, HOME=str(temp))
         oracle_text = run_capture(args.capture_binary.resolve(), request, env)
+        parser = [str(args.native_parser.resolve()), "parse", str(request)]
+        if native_parser is not None:
+            parser = [str(native_parser.resolve()), "--home", str(temp), "parse", str(request)]
         native_text = subprocess.run(
-            [str(args.native_parser.resolve()), "parse", str(request)],
+            parser,
             cwd=FIXTURES,
             env=env,
             capture_output=True,
@@ -900,12 +963,49 @@ def compact_records(records: list[dict[str, Any]]) -> str:
     )
 
 
+def check_derived(args: argparse.Namespace) -> list[dict[str, Any]]:
+    """The derived cases on both sides, as divergences when they differ."""
+    cases = derived_cases()
+    native, oracle = run_cases(
+        args,
+        cases,
+        native_parser=args.derived_parser,
+        extra_env={
+            "AWS_DATA_PATH": str(args.models.resolve()),
+            "AWS_NATIVE_FALLBACK_PREFIX": str(args.fallback_prefix.resolve()),
+        },
+    )
+    if len(native) != len(cases) or len(oracle) != len(cases):
+        raise SystemExit("derived capture did not produce one record per argv")
+    divergences = []
+    records = []
+    for request, actual, expected in zip(cases, native, oracle):
+        actual = derived_comparable(actual, oracle=False)
+        expected = derived_comparable(expected, oracle=True)
+        record = {"argv": request["argv"], "native": actual, "python": expected}
+        records.append(record)
+        if expected["outcome"] == "unresolved":
+            # A case that reaches no model root on Python's side checks nothing.
+            divergences.append(dict(record, classification="derived_case_unresolved"))
+        elif comparable(actual) != comparable(expected, oracle=True):
+            divergences.append(dict(record, classification="derived_parity_failure"))
+    args.ledger.parent.mkdir(parents=True, exist_ok=True)
+    args.ledger.with_name("derived.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+    print(f"{len(cases)} derived cases; parity failures: {len(divergences)}")
+    return divergences
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--capture-binary", type=Path, required=True)
     parser.add_argument("--native-parser", type=Path, required=True)
     parser.add_argument("--aws-cli-source", type=Path)
     parser.add_argument("--native-tables", type=Path, required=True)
+    parser.add_argument("--derived-parser", type=Path)
+    parser.add_argument("--models", type=Path)
+    parser.add_argument("--fallback-prefix", type=Path)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--fuzz", type=int)
@@ -954,6 +1054,8 @@ def main() -> None:
                     "python": expected,
                 }
             )
+    if args.derived_parser is not None and args.fuzz is None:
+        divergences.extend(check_derived(args))
     args.ledger.parent.mkdir(parents=True, exist_ok=True)
     args.ledger.write_text(
         "".join(json.dumps(row) + "\n" for row in [*ledger, *divergences]),
