@@ -1,0 +1,5 @@
+
+aws: [ERROR]: An error occurred (ParamValidation): Parameter validation failed:
+Invalid length for parameter RoleArn, value: 1, valid min length: 20
+Invalid length for parameter RoleSessionName, value: 1, valid min length: 2
+Invalid value for parameter DurationSeconds, value: 1, valid min value: 900

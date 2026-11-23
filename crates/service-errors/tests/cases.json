@@ -1,0 +1,378 @@
+[
+ {
+  "name": "client_error_query",
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 403,
+   "headers": [
+    [
+     "Content-Type",
+     "text/xml"
+    ]
+   ],
+   "body": "<ErrorResponse><Error><Type>Sender</Type><Code>AccessDenied</Code><Message>User is not authorized</Message></Error><RequestId>req-1</RequestId></ErrorResponse>"
+  }
+ },
+ {
+  "name": "client_error_simple_details",
+  "service": "inspector",
+  "operation": "ListAssessmentRuns",
+  "input": {},
+  "argv": [
+   "inspector",
+   "list-assessment-runs",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.1"
+    ],
+    [
+     "x-amzn-RequestId",
+     "req-1"
+    ]
+   ],
+   "body": "{\"__type\": \"InvalidInputException\", \"message\": \"bad input\", \"errorCode\": \"INVALID_ASSESSMENT_RUN_ARN\", \"canRetry\": false}"
+  }
+ },
+ {
+  "name": "client_error_simple_details_legacy",
+  "service": "inspector",
+  "operation": "ListAssessmentRuns",
+  "input": {},
+  "argv": [
+   "inspector",
+   "list-assessment-runs",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}",
+   "--cli-error-format",
+   "legacy"
+  ],
+  "stub": {
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.1"
+    ],
+    [
+     "x-amzn-RequestId",
+     "req-1"
+    ]
+   ],
+   "body": "{\"__type\": \"InvalidInputException\", \"message\": \"bad input\", \"errorCode\": \"INVALID_ASSESSMENT_RUN_ARN\", \"canRetry\": false}"
+  }
+ },
+ {
+  "name": "client_error_inline_collection",
+  "service": "ssm",
+  "operation": "DescribeOpsItems",
+  "input": {},
+  "argv": [
+   "ssm",
+   "describe-ops-items",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.1"
+    ],
+    [
+     "x-amzn-RequestId",
+     "req-1"
+    ]
+   ],
+   "body": "{\"__type\": \"OpsItemLimitExceededException\", \"Message\": \"too many\", \"ResourceTypes\": [\"AWS::EC2::Instance\", \"AWS::S3::Bucket\"], \"Limit\": 5, \"LimitType\": \"OpsItem\"}"
+  }
+ },
+ {
+  "name": "client_error_float",
+  "service": "sdb",
+  "operation": "ListDomains",
+  "input": {},
+  "argv": [
+   "sdb",
+   "list-domains",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "text/xml"
+    ]
+   ],
+   "body": "<Response><Errors><Error><Code>InvalidNextToken</Code><Message>The specified next token is not valid.</Message><BoxUsage>0.0000219907</BoxUsage></Error></Errors><RequestID>req-1</RequestID></Response>"
+  }
+ },
+ {
+  "name": "client_error_code_member",
+  "service": "machinelearning",
+  "operation": "DescribeDataSources",
+  "input": {},
+  "argv": [
+   "machinelearning",
+   "describe-data-sources",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 404,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.1"
+    ],
+    [
+     "x-amzn-RequestId",
+     "req-1"
+    ]
+   ],
+   "body": "{\"__type\": \"ResourceNotFoundException\", \"message\": \"no such source\", \"code\": 404}"
+  }
+ },
+ {
+  "name": "client_error_complex",
+  "service": "dynamodb",
+  "operation": "ListTables",
+  "input": {},
+  "argv": [
+   "dynamodb",
+   "list-tables",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.0"
+    ],
+    [
+     "x-amzn-RequestId",
+     "req-1"
+    ]
+   ],
+   "body": "{\"__type\": \"com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException\", \"message\": \"The conditional request failed\", \"Item\": {\"pk\": {\"S\": \"a\"}}}"
+  }
+ },
+ {
+  "name": "client_error_complex_legacy",
+  "service": "dynamodb",
+  "operation": "ListTables",
+  "input": {},
+  "argv": [
+   "dynamodb",
+   "list-tables",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}",
+   "--cli-error-format",
+   "legacy"
+  ],
+  "stub": {
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.0"
+    ],
+    [
+     "x-amzn-RequestId",
+     "req-1"
+    ]
+   ],
+   "body": "{\"__type\": \"com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException\", \"message\": \"The conditional request failed\", \"Item\": {\"pk\": {\"S\": \"a\"}}}"
+  }
+ },
+ {
+  "name": "client_error_unknown",
+  "service": "dynamodb",
+  "operation": "ListTables",
+  "input": {},
+  "argv": [
+   "dynamodb",
+   "list-tables",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "stub": {
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.0"
+    ]
+   ],
+   "body": "{}"
+  }
+ },
+ {
+  "name": "client_error_retries",
+  "service": "dynamodb",
+  "operation": "ListTables",
+  "input": {},
+  "argv": [
+   "dynamodb",
+   "list-tables",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "env": {
+   "AWS_MAX_ATTEMPTS": "2"
+  },
+  "stub": {
+   "status": 500,
+   "headers": [
+    [
+     "Content-Type",
+     "application/x-amz-json-1.0"
+    ]
+   ],
+   "body": "{\"__type\": \"com.amazonaws.dynamodb.v20120810#InternalServerError\", \"message\": \"Internal server error\"}"
+  }
+ },
+ {
+  "name": "no_region",
+  "argv": [
+   "dynamodb",
+   "list-tables"
+  ],
+  "config": "[default]\n",
+  "service": "dynamodb",
+  "operation": "ListTables",
+  "input": {},
+  "region": null
+ },
+ {
+  "name": "no_region_legacy",
+  "argv": [
+   "dynamodb",
+   "list-tables",
+   "--cli-error-format",
+   "legacy"
+  ],
+  "config": "[default]\n",
+  "service": "dynamodb",
+  "operation": "ListTables",
+  "input": {},
+  "region": null
+ },
+ {
+  "name": "no_credentials",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "credentials": "",
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "no_credentials": true
+ },
+ {
+  "name": "no_credentials_legacy",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}",
+   "--cli-error-format",
+   "legacy"
+  ],
+  "credentials": "",
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "no_credentials": true
+ },
+ {
+  "name": "param_validation",
+  "argv": [
+   "sts",
+   "get-session-token",
+   "--duration-seconds",
+   "1",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "service": "sts",
+  "operation": "GetSessionToken",
+  "input": {
+   "DurationSeconds": 1
+  }
+ },
+ {
+  "name": "param_validation_multi",
+  "argv": [
+   "sts",
+   "assume-role",
+   "--role-arn",
+   "a",
+   "--role-session-name",
+   "b",
+   "--duration-seconds",
+   "1",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "service": "sts",
+  "operation": "AssumeRole",
+  "input": {
+   "RoleArn": "a",
+   "RoleSessionName": "b",
+   "DurationSeconds": 1
+  }
+ },
+ {
+  "name": "param_validation_legacy",
+  "argv": [
+   "sts",
+   "get-session-token",
+   "--duration-seconds",
+   "1",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}",
+   "--cli-error-format",
+   "legacy"
+  ],
+  "service": "sts",
+  "operation": "GetSessionToken",
+  "input": {
+   "DurationSeconds": 1
+  }
+ },
+ {
+  "name": "endpoint_connection",
+  "argv": [
+   "sts",
+   "get-caller-identity",
+   "--endpoint-url",
+   "http://127.0.0.1:{port}"
+  ],
+  "service": "sts",
+  "operation": "GetCallerIdentity",
+  "input": {},
+  "transport": "connect"
+ }
+]

@@ -1,0 +1,7 @@
+
+aws: [ERROR]: An error occurred (OpsItemLimitExceededException) when calling the DescribeOpsItems operation (reached max retries: 0): too many
+
+Additional error details:
+ResourceTypes: [AWS::EC2::Instance, AWS::S3::Bucket]
+Limit: 5
+LimitType: OpsItem

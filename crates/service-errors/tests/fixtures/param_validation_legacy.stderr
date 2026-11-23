@@ -1,0 +1,3 @@
+
+aws: [ERROR]: Parameter validation failed:
+Invalid value for parameter DurationSeconds, value: 1, valid min value: 900

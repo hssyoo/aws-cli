@@ -1,0 +1,20 @@
+[package]
+name = "service-errors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+cli-core = { path = "../cli-core" }
+client = { path = "../client" }
+format = { path = "../format" }
+model = { path = "../model" }
+
+[dev-dependencies]
+client = { path = "../client", features = ["testing"] }
+timestamp = { path = "../timestamp" }
+
+[lints]
+workspace = true

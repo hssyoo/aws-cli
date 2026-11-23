@@ -1,0 +1,6 @@
+
+aws: [ERROR]: An error occurred (ConditionalCheckFailedException) when calling the ListTables operation (reached max retries: 0): The conditional request failed
+
+Additional error details:
+Item: <complex value>
+Use "--cli-error-format json" or another error format to see the full details.
