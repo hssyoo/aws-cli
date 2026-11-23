@@ -3,6 +3,9 @@
 //! (`client::testing::fuzz`'s tests) also runs.
 use crate::Timestamp;
 
+/// A reader and the printer of the form it reads.
+type Form = (fn(&str) -> Option<Timestamp>, fn(&Timestamp) -> String);
+
 /// Every reader over any text. None panics, and each value read prints in
 /// its form and reads back as itself.
 pub fn parse(bytes: &[u8]) {
@@ -18,7 +21,7 @@ pub fn parse(bytes: &[u8]) {
     if let Some(zoned) = Timestamp::parse_rfc822_zoned(text) {
         assert!(zoned.offset_seconds.is_some());
     }
-    let readers: [(fn(&str) -> Option<Timestamp>, fn(&Timestamp) -> String); 3] = [
+    let readers: [Form; 3] = [
         (Timestamp::parse_iso8601, Timestamp::iso8601),
         (Timestamp::parse_iso8601_basic, Timestamp::iso8601_basic),
         (Timestamp::parse_rfc822, Timestamp::rfc822),

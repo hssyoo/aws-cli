@@ -96,6 +96,11 @@ fn the_table_keeps_the_plan_s_dependency_rules() {
         assert!(!row(name).contains(&"client"), "{name}");
     }
     assert!(!row("customizations").contains(&"s3"));
+}
+
+/// Every crate a row allows has a row of its own.
+#[test]
+fn every_allowed_crate_has_a_row() {
     for (name, allowed) in ALLOWED {
         for on in *allowed {
             assert!(

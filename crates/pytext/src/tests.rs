@@ -5,7 +5,7 @@ use super::number::{self, C_SPACE};
 use super::repr::{self, NonAscii};
 
 #[test]
-fn literals_read_as_float_and_int_read_them() {
+fn floats_read_as_float_reads_them() {
     assert_eq!(number::float("-1_0.5e-1"), Some(-1.05));
     assert_eq!(number::float(".5"), Some(0.5));
     assert!(number::float("+nAn").is_some_and(f64::is_nan));
@@ -13,6 +13,10 @@ fn literals_read_as_float_and_int_read_them() {
     for invalid in ["", ".", "1_", "_1", "1__0", "1e", "e1", "0x10", " 1"] {
         assert_eq!(number::float(invalid), None, "{invalid:?}");
     }
+}
+
+#[test]
+fn ints_read_as_int_reads_them() {
     assert_eq!(number::int("-00_12").as_deref(), Some("-12"));
     assert_eq!(number::int("-0").as_deref(), Some("0"));
     assert_eq!(number::int("1.0"), None);
