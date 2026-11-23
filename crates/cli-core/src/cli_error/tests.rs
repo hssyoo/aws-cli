@@ -1042,3 +1042,27 @@ fn a_formatted_response_is_python_s_only_when_it_would_be_paged() {
     let other = ["--profile", "quiet", "sts", "get-caller-identity"];
     assert_eq!(dispose(&[], &other, true), None);
 }
+
+/// `_display_structured_error`: the enhanced format writes
+/// `EnhancedErrorFormatter`'s block after the error line; legacy returns
+/// before it, so the block is never written.
+#[test]
+fn details_follow_the_error_line_in_the_enhanced_format_only() {
+    let failure = CommandFailure {
+        code: "InvalidInputException".into(),
+        operation: "ListAssessmentRuns".into(),
+        message: b"bad input".to_vec(),
+        details: b"\nAdditional error details:\ncanRetry: False\n".to_vec(),
+        ..CommandFailure::new(Category::ClientError)
+    };
+    assert_eq!(
+        formatted(&failure, ErrorFormat::Enhanced),
+        "\naws: [ERROR]: An error occurred (InvalidInputException) when calling the \
+         ListAssessmentRuns operation: bad input\n\nAdditional error details:\ncanRetry: False\n"
+    );
+    assert_eq!(
+        formatted(&failure, ErrorFormat::Legacy),
+        "\naws: [ERROR]: An error occurred (InvalidInputException) when calling the \
+         ListAssessmentRuns operation: bad input\n"
+    );
+}
