@@ -6,6 +6,7 @@ mod system;
 use crate::{TaskError, deps, process, python};
 pub(crate) use options::system_target;
 use options::{LinkMode, Options};
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,6 +15,23 @@ use std::process::Command;
 /// CRT that a `--crt-static-prefix` system build links.
 pub fn system_crt(root: &Path, args: &[String]) -> Result<(), TaskError> {
     system::crt(root, args)
+}
+
+/// The directory Cargo builds the checkout at `root` into, where every
+/// built artifact xtask runs is found: `CARGO_TARGET_DIR`, else
+/// `CARGO_BUILD_TARGET_DIR`, else `root/target`, as Cargo chooses. A
+/// relative value is taken from `root`, where xtask runs every Cargo build.
+/// An empty value counts as unset.
+pub fn target_dir(root: &Path) -> PathBuf {
+    target_dir_from(root, |name| std::env::var_os(name))
+}
+
+fn target_dir_from(root: &Path, var: impl Fn(&str) -> Option<OsString>) -> PathBuf {
+    ["CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"]
+        .into_iter()
+        .filter_map(var)
+        .find(|value| !value.is_empty())
+        .map_or_else(|| root.join("target"), |value| root.join(value))
 }
 
 pub fn build(root: &Path, args: &[String]) -> Result<(), TaskError> {
@@ -193,8 +211,7 @@ pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
     let (build_args, aws_args) = split_run_args(args);
     let options = options::parse(build_args)?;
     build(root, build_args)?;
-    let executable = root
-        .join("target")
+    let executable = target_dir(root)
         .join(&options.target)
         .join(options.cargo_profile())
         .join(if cfg!(windows) { "aws.exe" } else { "aws" });
