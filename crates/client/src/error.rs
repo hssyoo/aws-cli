@@ -152,6 +152,9 @@ pub enum CallError {
     /// A call the model client leaves to the Python route, decided before
     /// any request.
     Unsupported(Unsupported),
+    /// A defect in the client itself, named: a refusal that comes after a
+    /// credential provider has run, which prepare should have made.
+    Internal(String),
 }
 
 impl std::fmt::Display for CallError {
@@ -172,6 +175,7 @@ impl std::fmt::Display for CallError {
             Self::Interrupted => f.write_str("the call was interrupted"),
             Self::UnknownOperation(name) => write!(f, "Unknown operation: {name}"),
             Self::Unsupported(unsupported) => write!(f, "not supported natively: {unsupported}"),
+            Self::Internal(text) => write!(f, "internal error in the native client: {text}"),
         }
     }
 }
