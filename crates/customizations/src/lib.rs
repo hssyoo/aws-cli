@@ -32,6 +32,20 @@ pub static TABLE: [&Customization; 4] = [&CORE, &DYNAMODB, &DYNAMODB_STREAMS, &S
 ///   its model directory, so no alias reaches a client;
 /// - `add_generate_presigned_url`: adds a method the CLI's service
 ///   commands never call.
+///
+/// and the handlers botocore registers on every client as it creates it
+/// (`BaseClient._register_handlers`, `ClientCreator._register_retries`):
+///
+/// - `RequestSigner.handler`: the call's SigV4 signer, which also leaves
+///   an `UNSIGNED` request (`--no-sign-request`, `noAuth`) unsigned;
+/// - `UserAgentString.rebuild_and_replace_user_agent_handler`: the
+///   User-Agent stage, with the feature ids the call registers;
+/// - `MaxAttemptsSeeder.seed_max_attempts`: `amz-sdk-request`'s `max`,
+///   from the resolved max attempts;
+/// - `RetryHandler.needs_retry`: standard mode's retry conditions, backoff
+///   and attempt limit;
+/// - `RetryQuotaChecker.release_retry_quota`: the retry quota's refund on
+///   success.
 pub static CORE: Customization = Customization {
     id: "core",
     scope: Scope::ALL,
@@ -46,18 +60,31 @@ pub static CORE: Customization = Customization {
         "botocore.handlers.inject_api_version_header_if_needed",
         "botocore.handlers.handle_service_name_alias",
         "botocore.signers.add_generate_presigned_url",
+        "botocore.signers.RequestSigner.handler",
+        "botocore.useragent.UserAgentString.rebuild_and_replace_user_agent_handler",
+        "botocore.retries.standard.MaxAttemptsSeeder.seed_max_attempts",
+        "botocore.retries.standard.RetryHandler.needs_retry",
+        "botocore.retries.standard.RetryQuotaChecker.release_retry_quota",
     ],
 };
 
 /// dynamodb's defaults: `retries/standard.py`'s `_SERVICE_MAX_ATTEMPTS`
 /// (4) and `ExponentialBackoff._SERVICE_BACKOFF_CONFIG` (a 25 ms base for
 /// errors that are not throttling), and `special.RetryDDBChecksumError`.
+///
+/// It replaces `block_endpoint_discovery_required_operations`, which a
+/// dynamodb client registers (`_register_endpoint_discovery`: the service
+/// has `DescribeEndpoints`, and discovery is `auto` and no operation
+/// requires it): the handler raises `EndpointDiscoveryRequired` only for an
+/// operation whose discovery is required (discovery.py:41-44), and none of
+/// dynamodb's is; admission refuses any that were, and the router sends
+/// any other `endpoint_discovery_enabled` to Python.
 pub static DYNAMODB: Customization = Customization {
     id: "dynamodb",
     scope: Scope::service("dynamodb"),
     setting_defaults: &DYNAMODB_RETRIES,
     interceptors: &[&DynamodbChecksum],
-    replaces: &[],
+    replaces: &["botocore.discovery.block_endpoint_discovery_required_operations"],
 };
 
 /// dynamodb-streams, which the same two tables name; the checksum check is
