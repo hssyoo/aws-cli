@@ -17,10 +17,7 @@ use cli_core::{SnapshotEnv, shared_config};
 use client::credentials::{
     ChainCredentials, CredentialError, CredentialSource, SigningCredentials,
 };
-use credentials::{
-    ConfigProvider, ContainerFetch, ContainerProvider, EnvProvider, InstanceMetadataProvider,
-    Profile, Provider, Resolver, RoleFetcher, SharedCredentialsProvider,
-};
+use credentials::{ContainerFetch, Profile, RoleFetcher};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -98,38 +95,29 @@ impl CredentialSource for LazyChain {
 /// endpoint or the instance metadata service, decided without running any
 /// provider that has effects: a configured `credential_process` answers or
 /// fails before either, and the other providers read the environment and
-/// the files. The walk's own errors are left to the walk, which reports
-/// them as botocore does.
+/// the files. The chain is the one [`LazyChain`] walks, with fetchers that
+/// note that they were asked. The walk's own errors are left to the walk,
+/// which reports them as botocore does.
 pub fn reaches_metadata(env: &SnapshotEnv, files: &ParsedFiles, profile: &Selected) -> bool {
     if shared_config::profile_property(files, &profile.name, "credential_process").is_some() {
         return false;
     }
-    let env = ::credentials::environment(env);
     let asked = Arc::new(AtomicBool::new(false));
     let noted = Arc::clone(&asked);
     let container = ContainerFetch::new(move |_| {
         noted.store(true, Ordering::Relaxed);
         Ok(None)
     });
-    let reached = Arc::new(AtomicBool::new(false));
-    let probed = Arc::clone(&reached);
+    let probed = Arc::clone(&asked);
     let instance = RoleFetcher::new(move || {
         probed.store(true, Ordering::Relaxed);
         Ok(None)
     });
-    let mut providers: Vec<Box<dyn Provider + '_>> = Vec::new();
-    if !profile.explicit {
-        providers.push(Box::new(EnvProvider::new(&env)));
-    }
-    providers.push(Box::new(SharedCredentialsProvider::new(
-        files,
-        &profile.name,
-    )));
-    providers.push(Box::new(ConfigProvider::new(files, &profile.name)));
-    providers.push(Box::new(ContainerProvider::new(&env, container)));
-    providers.push(Box::new(InstanceMetadataProvider::new(&env, instance)));
-    let found = Resolver::new(providers).load_credentials();
-    matches!(found, Ok(None)) && (asked.load(Ordering::Relaxed) || reached.load(Ordering::Relaxed))
+    let env = ::credentials::environment(env);
+    let found =
+        ::credentials::default_resolver(&env, files, profile.profile(), container, instance)
+            .load_credentials();
+    matches!(found, Ok(None)) && asked.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
