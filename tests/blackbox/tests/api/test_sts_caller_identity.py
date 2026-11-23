@@ -10,7 +10,7 @@ from typing import Final
 
 import pytest
 
-from apihelpers import ApiSession, Reply
+from apihelpers import ApiSession, Reply, retries_clause
 
 pytestmark = pytest.mark.asyncio
 
@@ -102,10 +102,10 @@ async def test_a_service_error_names_its_code_and_retries(api: ApiSession) -> No
     run = await api.run(COMMAND, replies=error, expected_rc=254)
     assert run.stdout == ""
     # `Type` is part of every query error, so no details block follows.
+    retries = retries_clause(api.env, retryable=False)
     assert run.stderr == (
         "\naws: [ERROR]: An error occurred (AccessDenied) when calling the "
-        "GetCallerIdentity operation (reached max retries: 0): User is not "
-        "authorized\n"
+        f"GetCallerIdentity operation{retries}: User is not authorized\n"
     ), run.describe()
 
 
@@ -124,9 +124,10 @@ async def test_an_unmodelled_error_field_is_left_out(api: ApiSession) -> None:
         status=403,
     )
     run = await api.run(COMMAND, replies=error, expected_rc=254)
+    retries = retries_clause(api.env, retryable=False)
     assert run.stderr == (
         "\naws: [ERROR]: An error occurred (AccessDenied) when calling the "
-        "GetCallerIdentity operation (reached max retries: 0): denied\n"
+        f"GetCallerIdentity operation{retries}: denied\n"
     ), run.describe()
 
 
