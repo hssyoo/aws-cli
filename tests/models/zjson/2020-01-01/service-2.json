@@ -78,6 +78,9 @@
       "errors": [
         {
           "shape": "Conflict"
+        },
+        {
+          "shape": "Rejected"
         }
       ]
     },
@@ -627,6 +630,29 @@
           "shape": "Record"
         }
       }
+    },
+    "Rejected": {
+      "type": "structure",
+      "members": {
+        "Message": {
+          "shape": "String"
+        },
+        "Reason": {
+          "shape": "String"
+        },
+        "Codes": {
+          "shape": "StringList"
+        },
+        "Detail": {
+          "shape": "Outer"
+        }
+      },
+      "error": {
+        "code": "RejectedError",
+        "httpStatusCode": 400,
+        "senderFault": true
+      },
+      "exception": true
     }
   },
   "documentation": "A fake json service for tests."

@@ -131,12 +131,65 @@ CONFLICT: Final = Reply(
     },
     status=409,
 )
-async def test_a_modelled_error_names_its_code(models: ApiSession) -> None:
+async def test_a_code_naming_no_error_shape_has_no_details(models: ApiSession) -> None:
+    # `Conflict` is no error code of the model (its shape's is
+    # ConflictError), so only Code and Message are modelled, and the stub
+    # serializes only those (awswire's json error body).
     run = await models.run("zjson describe", replies=CONFLICT, expected_rc=254)
     retries = retries_clause(models.env, retryable=False)
     assert run.stderr == (
         "\naws: [ERROR]: An error occurred (Conflict) when calling the Describe "
         f"operation{retries}: in use\n"
+    ), run.describe()
+
+
+def json_error(body: dict) -> HTTPResponse:
+    """An error as a json service writes it: the code in `__type`, the
+    modelled members beside the message (`_do_modeled_error_parse`)."""
+    return HTTPResponse(
+        status=400,
+        headers={"Content-Type": "application/x-amz-json-1.0"},
+        body=json.dumps(body).encode(),
+    )
+
+
+async def test_an_error_s_modelled_members_follow_as_details(models: ApiSession) -> None:
+    # The members of the shape the error code names, ConflictError's here:
+    # a simple value as itself.
+    reply = json_error(
+        {"__type": "ConflictError", "message": "in use", "Resource": "thing-1", "Retry": 3}
+    )
+    run = await models.run("zjson describe", replies=reply, expected_rc=254)
+    retries = retries_clause(models.env, retryable=False)
+    assert run.stderr == (
+        "\naws: [ERROR]: An error occurred (ConflictError) when calling the "
+        f"Describe operation{retries}: in use\n\n"
+        "Additional error details:\nResource: thing-1\nRetry: 3\n"
+    ), run.describe()
+
+
+async def test_details_inline_a_small_collection_and_hide_a_complex_one(
+    models: ApiSession,
+) -> None:
+    reply = json_error(
+        {
+            "__type": "RejectedError",
+            "message": "no",
+            "Reason": "quota",
+            "Codes": ["a", "b"],
+            "Detail": {"Label": "x", "Inner": {"Value": "y"}},
+            "Unmodelled": "hidden",
+        }
+    )
+    run = await models.run("zjson describe", replies=reply, expected_rc=254)
+    retries = retries_clause(models.env, retryable=False)
+    assert run.stderr == (
+        "\naws: [ERROR]: An error occurred (RejectedError) when calling the "
+        f"Describe operation{retries}: no\n\n"
+        "Additional error details:\nReason: quota\nCodes: [a, b]\n"
+        "Detail: <complex value>\n"
+        'Use "--cli-error-format json" or another error format to see the full '
+        "details.\n"
     ), run.describe()
 
 
