@@ -2,7 +2,9 @@ use super::*;
 use model::shapes::Model;
 
 /// An operation with a trait the client does not implement is refused,
-/// whichever trait it is; a plain one is not.
+/// whichever trait it is; a plain one is not, nor one whose endpoint
+/// discovery is optional, which botocore's default `auto` mode does not
+/// discover for (`_requires_endpoint_discovery`).
 #[test]
 fn operations_with_unimplemented_traits_are_refused() -> Result<(), Box<dyn std::error::Error>> {
     let model = Model::from_json(
@@ -14,6 +16,10 @@ fn operations_with_unimplemented_traits_are_refused() -> Result<(), Box<dyn std:
             "httpChecksumRequired": true},
         "Discovered": {"name": "Discovered", "http": {"method": "POST", "requestUri": "/"},
             "endpointdiscovery": {"required": true}},
+        "Optional": {"name": "Optional", "http": {"method": "POST", "requestUri": "/"},
+            "endpointdiscovery": {}},
+        "Endpoints": {"name": "Endpoints", "http": {"method": "POST", "requestUri": "/"},
+            "endpointoperation": true},
         "Compressed": {"name": "Compressed", "http": {"method": "POST", "requestUri": "/"},
             "requestcompression": {"encodings": ["gzip"]}}
     }}"#,
@@ -23,6 +29,8 @@ fn operations_with_unimplemented_traits_are_refused() -> Result<(), Box<dyn std:
         ("Checked", Some("httpChecksum")),
         ("Required", Some("httpChecksumRequired")),
         ("Discovered", Some("endpointdiscovery")),
+        ("Optional", None),
+        ("Endpoints", Some("endpointoperation")),
         ("Compressed", Some("requestcompression")),
     ] {
         let operation = model.operation(name).ok_or(name)?;
