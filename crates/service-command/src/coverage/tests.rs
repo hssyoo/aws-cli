@@ -3,15 +3,12 @@
     reason = "unexpected fixture outcomes must fail the test"
 )]
 use super::*;
-use crate::testing::{Result, replacing_all, source, with_models};
-use awscli_argparse::{Options, unpack};
-use cli_core::SnapshotEnv;
-use cli_router::{Configuration, Verdict};
+use crate::testing::{Result, files, replacing_all, route, with_models};
+use cli_router::Verdict;
 use client::admission::Unsupported;
 use client::endpoint::EndpointData;
+use command::OperationSource;
 use command::models::ModelSource;
-use command::{OperationSource, Registry};
-use std::collections::HashMap;
 
 fn matches(models: &ModelSource<'_>, command: &str, operation: &str) -> Vec<Match> {
     models
@@ -332,51 +329,11 @@ fn case(entry: &str) -> Option<&'static Case> {
         .map(|(_, case)| case)
 }
 
-fn files(config: &'static str, alias: &'static str) -> awscli_config::ParsedFiles {
-    let contents = |source, text: &'static str| {
-        (!text.is_empty()).then_some(awscli_config::Contents {
-            source,
-            bytes: text.as_bytes(),
-        })
-    };
-    awscli_config::ParsedFiles::parse(awscli_config::Inputs {
-        config: contents("config", config),
-        aliases: contents("alias", alias),
-        credentials: None,
-    })
-}
-
-/// The router's verdict for `argv` with `config` and `alias`, over the
-/// fake models and the client's real customizations. Nothing is sent.
-fn verdict(argv: &[&str], config: &'static str, alias: &'static str) -> Result<Verdict> {
-    with_models(|models| {
-        let service = source(models, &customizations::TABLE);
-        let registry = Registry::new(&[], Some(service.models())).with_binder(&service);
-        let argv: Vec<String> = argv.iter().map(|arg| (*arg).to_owned()).collect();
-        let mut parsed = awscli_argparse::parse(&argv, &Options::default(), &registry.tables());
-        let env = SnapshotEnv::from_pairs([
-            ("AWS_ACCESS_KEY_ID", "a"),
-            ("AWS_SECRET_ACCESS_KEY", "b"),
-            ("AWS_DEFAULT_REGION", "us-east-1"),
-            ("AWS_ENDPOINT_URL", "http://127.0.0.1:9"),
-        ]);
-        let variables = HashMap::new();
-        let unpack = unpack::Environment {
-            directory: std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
-            variables: &variables,
-            files: &unpack::FsParamfiles,
-            preferred_encoding: unpack::PreferredEncoding::Locale,
-        };
-        let shared_files = files(config, alias);
-        let configuration = Configuration {
-            env: &env,
-            shared_files: &shared_files,
-            boto_config_credentials: false,
-            embedded_trust: true,
-            registry: &registry,
-        };
-        cli_router::route(&mut parsed, &unpack, &configuration)
-    })
+/// The router's verdict for `argv` with `config` and `alias`, and the
+/// environment's keys.
+fn verdict(argv: &[&str], config: &str, alias: &str) -> Result<Verdict> {
+    let keys = [("AWS_ACCESS_KEY_ID", "a"), ("AWS_SECRET_ACCESS_KEY", "b")];
+    route(argv, &keys, &files(config, alias))
 }
 
 /// The client's static refusal of `[command, operation]`.
