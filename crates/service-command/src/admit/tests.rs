@@ -8,7 +8,7 @@ use crate::testing::{Result, parsed, replacing_all, with_models};
 
 fn admitted(
     source: &ServiceSource<'_>,
-    customizations: &[&Customization],
+    customizations: &[&'static Customization],
     argv: &[&str],
 ) -> std::result::Result<Admitted, PythonReason> {
     admit(source.models(), customizations, &parsed(source, argv))
@@ -39,7 +39,7 @@ fn each_stage_names_its_refusal() -> Result<()> {
     with_models(|models| {
         let everything = replacing_all(&models, "zjson", "list-things");
         let source = crate::testing::source(models, everything);
-        let refused = |customizations: &[&Customization], argv: &[&str]| {
+        let refused = |customizations: &[&'static Customization], argv: &[&str]| {
             admitted(&source, customizations, argv).err()
         };
         assert_eq!(
@@ -83,4 +83,28 @@ fn only_epoch_timestamps_need_the_local_zone() -> Result<()> {
             );
         }
     })
+}
+
+/// Each refusal the client distinguishes keeps its own reason; none is
+/// folded into another.
+#[test]
+fn each_client_refusal_names_its_own_reason() {
+    let refusals = [
+        Unsupported::Protocol("rest-xml".into()),
+        Unsupported::Trait("httpChecksum".into()),
+        Unsupported::OperationContextParams,
+        Unsupported::Builtin("AWS::Example".into()),
+        Unsupported::Auth("aws.auth#sigv4a".into()),
+        Unsupported::UnsignedPayload,
+        Unsupported::EndpointHeaders,
+        Unsupported::RegionPattern,
+        Unsupported::EndpointData,
+        Unsupported::Validation(model::validate::Undecided::Comparison),
+        Unsupported::Hook("declined".into()),
+    ];
+    let reasons: Vec<&str> = refusals.iter().map(|one| reason(one).name()).collect();
+    let mut distinct = reasons.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(distinct.len(), reasons.len(), "{reasons:?}");
 }

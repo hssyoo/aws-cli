@@ -7,14 +7,16 @@
 use crate::coverage;
 use awscli_argparse::ParseResult;
 use cli_core::cli_error::PythonReason;
+use client::admission::Unsupported;
+use client::endpoint::EndpointData;
 use client::hooks::Customization;
-use command::models::{ModelSource, Service};
-use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
+use command::models::ModelSource;
+use model::shapes::{Model, ShapeId, ShapeKind};
 use model::validate::{Validation, validate_input};
 use model::value::Value;
 
 /// An admitted invocation: what it calls, with what.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Admitted {
     /// The root command, as the CLI names it.
     pub command: String,
@@ -26,6 +28,8 @@ pub struct Admitted {
     /// The client's validation of `input`: `Valid`, or the report botocore
     /// would raise, which the invocation renders. Never `Undecided`.
     pub validation: Validation,
+    /// The endpoint data the client is built with.
+    pub endpoints: EndpointData,
 }
 
 /// Admit the completed parse of `[command, operation]`, or name why Python
@@ -33,14 +37,14 @@ pub struct Admitted {
 /// rows.
 pub fn admit(
     source: &ModelSource<'_>,
-    customizations: &[&Customization],
+    customizations: &[&'static Customization],
     parsed: &ParseResult<'_>,
 ) -> Result<Admitted, PythonReason> {
     let [command, cli_operation] = parsed.lineage.as_slice() else {
         return Err(PythonReason::UnsupportedSubcommand);
     };
     let (command, cli_operation) = (&*command.name, &*cli_operation.name);
-    operation(source, customizations, command, cli_operation)?;
+    let endpoints = operation(source, customizations, command, cli_operation)?;
     let lookup = || {
         let service = source.service(command)?;
         let table = source.table(command, cli_operation)?;
@@ -60,17 +64,24 @@ pub fn admit(
         operation: operation.name.to_string(),
         input,
         validation,
+        endpoints,
     })
 }
 
-/// The stages decided by the model and the patterns alone, whatever the
-/// arguments: the protocol, the traits, then the customizations.
+/// The stages decided by the model, its endpoint data and the patterns
+/// alone, whatever the arguments, the configuration and the credentials:
+/// the client's static refusals (`client::admission::static_refusal`: the
+/// protocol, the operation's traits and keys the loader does not interpret,
+/// context parameters, auth, required built-ins), a paginator (the CLI
+/// pages, `CLIOperationCaller._make_client_call`), then the
+/// customizations. Nothing here runs a credential provider. On success,
+/// the endpoint data botocore's client creation loads.
 pub fn operation(
     source: &ModelSource<'_>,
-    customizations: &[&Customization],
+    customizations: &[&'static Customization],
     command: &str,
     cli_operation: &str,
-) -> Result<(), PythonReason> {
+) -> Result<EndpointData, PythonReason> {
     let lookup = || {
         let service = source.service(command)?;
         let matches = source.matches(command, cli_operation)?;
@@ -79,53 +90,54 @@ pub fn operation(
     let Some((service, operation, matches)) = lookup() else {
         return Err(PythonReason::UnsupportedSubcommand);
     };
-    if client::protocol::for_model(&service.model).is_none() {
-        return Err(PythonReason::UnsupportedProtocol);
+    let model = &service.model;
+    let endpoints = EndpointData::load(source.search(), &service.name, model.metadata())
+        .map_err(|_| PythonReason::EndpointData)?;
+    let refused = client::admission::static_refusal(
+        model,
+        operation,
+        &endpoints,
+        &service.name,
+        customizations,
+    );
+    if let Some(unsupported) = refused {
+        return Err(reason(&unsupported));
     }
-    if unimplemented_trait(service, operation) {
+    if service.paginated(&operation.name) {
         return Err(PythonReason::UnsupportedTrait);
     }
     if coverage::uncovered(&matches, customizations, &service.name, &operation.name).is_some() {
         return Err(PythonReason::UnportedCustomization);
     }
-    Ok(())
+    Ok(endpoints)
 }
 
-/// A trait of the operation the native route does not implement: a
-/// paginator (`CLIOperationCaller._make_client_call` paginates), an event
-/// stream or a streaming member at either end (`has_event_stream_input`,
-/// `has_streaming_output` and their kin read the top-level members), or
-/// one the client refuses before any request
-/// (`client::admission::unimplemented_trait`: request checksums, required
-/// endpoint discovery, the endpoint operation, request compression). A
-/// document member is no refusal: the json protocols carry it both ways,
-/// the formatter prints it, and a supplied one is deferred at binding.
-pub fn unimplemented_trait(service: &Service, operation: &Operation) -> bool {
-    let model = &service.model;
-    client::admission::unimplemented_trait(operation).is_some()
-        || service.paginated(&operation.name)
-        || [operation.input, operation.output]
-            .into_iter()
-            .flatten()
-            .any(|shape| streams(model, shape))
-}
-
-fn streams(model: &Model, shape: ShapeId) -> bool {
-    model.members(shape).iter().any(|member| {
-        let traits = &model.shape(member.shape).traits;
-        traits.is(Flag::Streaming) || traits.is(Flag::EventStream)
-    })
+/// The reason the Python route runs a call the client leaves to it, one
+/// for each refusal.
+pub fn reason(unsupported: &Unsupported) -> PythonReason {
+    match unsupported {
+        Unsupported::Protocol(_) => PythonReason::UnsupportedProtocol,
+        Unsupported::Trait(_) => PythonReason::UnsupportedTrait,
+        Unsupported::OperationContextParams => PythonReason::OperationContextParams,
+        Unsupported::Builtin(_) => PythonReason::EndpointBuiltin,
+        Unsupported::Auth(_) => PythonReason::UnsupportedAuth,
+        Unsupported::UnsignedPayload => PythonReason::UnsignedPayload,
+        Unsupported::EndpointHeaders => PythonReason::EndpointHeaders,
+        Unsupported::RegionPattern => PythonReason::RegionPattern,
+        Unsupported::EndpointData => PythonReason::EndpointData,
+        Unsupported::Validation(_) => PythonReason::UnsupportedValue,
+        Unsupported::Hook(_) => PythonReason::CustomizationHook,
+    }
 }
 
 /// Whether `shape` reaches a timestamp the wire sends as an epoch, which
 /// `iso8601` output reads in the local zone (`parse_timestamp` of a
 /// number): a member or shape whose `timestampFormat` is `unixTimestamp`,
-/// or one with none under a json protocol, whose default it is. ISO 8601
-/// and RFC 822 text carries its own offset, and is the XML protocols'
-/// default.
+/// or one with none under a protocol whose default it is
+/// (`client::protocol::epoch_timestamps`). ISO 8601 and RFC 822 text
+/// carries its own offset.
 pub fn reaches_epoch_timestamp(model: &Model, shape: ShapeId) -> bool {
-    let json = client::protocol::resolved_protocol(model.metadata())
-        .is_ok_and(|protocol| matches!(protocol, "json" | "rest-json"));
+    let json = client::protocol::epoch_timestamps(model).unwrap_or(false);
     reaches(model, shape, &mut Vec::new(), &|found| {
         matches!(found.kind, ShapeKind::Timestamp)
             && match found.traits.timestamp_format.as_deref() {

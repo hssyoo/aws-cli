@@ -13,7 +13,7 @@ use cli_core::client_config::{ClientSettings, Trust};
 use cli_core::{EnvMap, aws_profile};
 use client::call::{Client, ClientParts, UserAgentContext};
 use client::credentials::ChainCredentials;
-use client::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
+use client::endpoint::{EndpointConfig, EndpointInputs};
 use client::error::{CallError, ParseError};
 use client::hooks::Customization;
 use client::http::{HttpRequest, HttpResponse};
@@ -32,7 +32,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 pub struct ServiceInvocation {
     pub admitted: Admitted,
     pub model: Arc<Model>,
-    pub endpoints: EndpointData,
     pub customizations: &'static [&'static Customization],
     /// The hyphenized service id the configured-endpoint lookup keys on.
     pub service_id: String,
@@ -60,7 +59,6 @@ impl ServiceInvocation {
     pub fn new(
         admitted: Admitted,
         model: Arc<Model>,
-        endpoints: EndpointData,
         customizations: &'static [&'static Customization],
         service_id: String,
         embedded_trust: Option<&'static [u8]>,
@@ -73,7 +71,6 @@ impl ServiceInvocation {
         Self {
             admitted,
             model,
-            endpoints,
             customizations,
             service_id,
             output_epochs,
@@ -114,7 +111,7 @@ impl Invocation for ServiceInvocation {
         let format = cx.output.format;
         let parser = cx.output.timestamps;
         if parser.needs_local_zone() && self.output_epochs {
-            return Err(PythonReason::UnsupportedTrait);
+            return Err(PythonReason::LocalZone);
         }
         let destination = format::pager::destination(&cx.output.pager.chain(), cx.stdout_is_tty)
             .map_err(|_| PythonReason::Pager)?;
@@ -130,12 +127,16 @@ impl Invocation for ServiceInvocation {
         let client = match self.client(cx)? {
             Ok(Ok(client)) => {
                 match client.prepare(&self.admitted.operation, self.admitted.input.clone()) {
-                    Err(CallError::Unsupported(_)) => return Err(PythonReason::UnsupportedTrait),
+                    Err(CallError::Unsupported(unsupported)) => {
+                        return Err(crate::admit::reason(&unsupported));
+                    }
                     Err(error) => Err(failure(error)),
                     Ok(_) => Ok(client),
                 }
             }
-            Ok(Err(CallError::Unsupported(_))) => return Err(PythonReason::UnsupportedProtocol),
+            Ok(Err(CallError::Unsupported(unsupported))) => {
+                return Err(crate::admit::reason(&unsupported));
+            }
             Ok(Err(error)) => Err(failure(error)),
             Err(credentials) => Err(credentials),
         };
@@ -256,7 +257,7 @@ impl ServiceInvocation {
         Ok(Ok(Client::new(ClientParts {
             service: self.admitted.service.clone(),
             model: Arc::clone(&self.model),
-            endpoints: self.endpoints.clone(),
+            endpoints: self.admitted.endpoints.clone(),
             endpoint,
             settings: settings.clone(),
             credentials: Arc::new(credentials),
@@ -284,14 +285,15 @@ fn cli_parse_hooks() -> client::protocol::ParseHooks {
     }
 }
 
-/// The CLI session's `User-Agent` extras: the install source, the prompt
-/// mode, and the command.
+/// The CLI session's `User-Agent` extras, as the s3 commands send them:
+/// the install source, the prompt mode, and the command's lineage.
 fn session_extras(
     settings: &cli_core::client_config::ClientSettings,
 ) -> client::useragent::SessionExtras {
+    use cli_core::client_config::user_agent::{INSTALLER, PROMPT};
     client::useragent::SessionExtras {
-        installer: "other",
-        prompt: "off",
+        installer: INSTALLER,
+        prompt: PROMPT,
         command: settings.command.clone(),
     }
 }
