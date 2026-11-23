@@ -36,15 +36,25 @@ impl std::fmt::Display for Unsupported {
 }
 
 /// The first operation trait the client does not implement: request
-/// checksums (`httpChecksum`, `httpChecksumRequired`), endpoint discovery,
-/// and request compression.
+/// checksums (`httpChecksum`, `httpChecksumRequired`), required endpoint
+/// discovery, the discovery operation itself (which botocore sends with
+/// `x-amz-api-version`, `inject_api_version_header_if_needed`), and request
+/// compression. Optional discovery is no refusal: botocore's default
+/// `auto` mode discovers only for required operations
+/// (`_requires_endpoint_discovery`, `EndpointDiscoveryManager.
+/// describe_endpoint`).
 pub fn unimplemented_trait(operation: &Operation) -> Option<Unsupported> {
     let found = if operation.http_checksum.is_some() {
         "httpChecksum"
     } else if operation.http_checksum_required {
         "httpChecksumRequired"
-    } else if operation.endpoint_discovery.is_some() || operation.endpoint_operation {
+    } else if operation
+        .endpoint_discovery
+        .is_some_and(|discovery| discovery.required)
+    {
         "endpointdiscovery"
+    } else if operation.endpoint_operation {
+        "endpointoperation"
     } else if operation.request_compression.is_some() {
         "requestcompression"
     } else {
