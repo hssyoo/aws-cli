@@ -13,19 +13,63 @@ fn chain<'a>(aws: Option<&'a str>, profile: Profile<'a>, pager: Option<&'a str>)
 /// `_construct_cli_pager_chain` and `get_output_stream`.
 #[test]
 fn the_pager_is_chosen_as_the_cli_chooses_it() {
-    let words = |words: &[&str]| Ok(Destination::Pager(words.iter().map(|w| (*w).to_owned()).collect()));
+    let words = |words: &[&str]| {
+        Ok(Destination::Pager(
+            words.iter().map(|w| (*w).to_owned()).collect(),
+        ))
+    };
     let cases = [
-        (chain(Some("most -s"), Profile::Text("p"), Some("x")), true, words(&["most", "-s"])),
-        (chain(Some(""), Profile::Text("p"), Some("x")), true, Ok(Destination::Stdout)),
-        (chain(None, Profile::Text("p 'a b'"), Some("x")), true, words(&["p", "a b"])),
-        (chain(None, Profile::Text(""), Some("x")), true, Ok(Destination::Stdout)),
+        (
+            chain(Some("most -s"), Profile::Text("p"), Some("x")),
+            true,
+            words(&["most", "-s"]),
+        ),
+        (
+            chain(Some(""), Profile::Text("p"), Some("x")),
+            true,
+            Ok(Destination::Stdout),
+        ),
+        (
+            chain(None, Profile::Text("p 'a b'"), Some("x")),
+            true,
+            words(&["p", "a b"]),
+        ),
+        (
+            chain(None, Profile::Text(""), Some("x")),
+            true,
+            Ok(Destination::Stdout),
+        ),
         (chain(None, Profile::Absent, Some("x")), true, words(&["x"])),
-        (chain(None, Profile::Absent, Some("")), true, Ok(Destination::Stdout)),
-        (chain(None, Profile::Absent, None), true, words(&[DEFAULT_PAGER])),
-        (chain(Some("most"), Profile::Absent, None), false, Ok(Destination::Stdout)),
-        (chain(None, Profile::Block, None), true, Err(NeedsPython::ProfileBlock)),
-        (chain(Some("a 'b"), Profile::Absent, None), true, Err(NeedsPython::Split("No closing quotation"))),
-        (chain(Some("   "), Profile::Absent, None), true, Err(NeedsPython::NoWords)),
+        (
+            chain(None, Profile::Absent, Some("")),
+            true,
+            Ok(Destination::Stdout),
+        ),
+        (
+            chain(None, Profile::Absent, None),
+            true,
+            words(&[DEFAULT_PAGER]),
+        ),
+        (
+            chain(Some("most"), Profile::Absent, None),
+            false,
+            Ok(Destination::Stdout),
+        ),
+        (
+            chain(None, Profile::Block, None),
+            true,
+            Err(NeedsPython::ProfileBlock),
+        ),
+        (
+            chain(Some("a 'b"), Profile::Absent, None),
+            true,
+            Err(NeedsPython::Split("No closing quotation")),
+        ),
+        (
+            chain(Some("   "), Profile::Absent, None),
+            true,
+            Err(NeedsPython::NoWords),
+        ),
     ];
     for (chain, tty, expected) in cases {
         assert_eq!(destination(&chain, tty), expected, "{chain:?} tty={tty}");
@@ -42,11 +86,21 @@ fn the_pager_is_chosen_as_the_cli_chooses_it() {
 #[test]
 fn the_pager_environment_is_the_cli_s() {
     let pairs = |pairs: &[(&str, &str)]| -> Vec<(OsString, OsString)> {
-        pairs.iter().map(|(k, v)| (OsString::from(k), OsString::from(v))).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+            .collect()
     };
     let mut env = environment(pairs(&[("A", "1"), ("LD_LIBRARY_PATH", "/x")]));
     env.sort();
-    assert_eq!(env, pairs(&[("A", "1"), ("LESS", "FRX"), ("PYINSTALLER_RESET_ENVIRONMENT", "1")]));
+    assert_eq!(
+        env,
+        pairs(&[
+            ("A", "1"),
+            ("LESS", "FRX"),
+            ("PYINSTALLER_RESET_ENVIRONMENT", "1")
+        ])
+    );
     let mut env = environment(pairs(&[
         ("LESS", "-S"),
         ("LD_LIBRARY_PATH", "/x"),
@@ -71,7 +125,10 @@ fn a_pager_receives_the_output_and_is_awaited() -> Result<(), Box<dyn std::error
     let script = dir.join("pager.sh");
     let record = dir.join("record");
     let body = format!(
-        "#!/bin/sh\ncat > '{0}.in'\nprintf '%s' \"$LESS\" > '{0}.less'\nsleep 1\necho done > '{0}.done'\n",
+        concat!(
+            "#!/bin/sh\ncat > '{0}.in'\nprintf '%s' \"$LESS\" > '{0}.less'\n",
+            "sleep 1\necho done > '{0}.done'\n"
+        ),
         record.display()
     );
     std::fs::write(&script, body)?;

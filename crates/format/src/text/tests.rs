@@ -23,7 +23,10 @@ fn lists_of_structures_share_one_set_of_columns() {
 #[test]
 fn bare_lists_and_nested_lists_print_as_text_format_does() {
     assert_eq!(text(r#"["a",1,1.5]"#).as_deref(), Ok("a\t1\t1.5\n"));
-    assert_eq!(text(r#"[["a"],"b",["c","d"]]"#).as_deref(), Ok("b\na\nc\td\n"));
+    assert_eq!(
+        text(r#"[["a"],"b",["c","d"]]"#).as_deref(),
+        Ok("b\na\nc\td\n")
+    );
     assert_eq!(text(r#""plain""#).as_deref(), Ok("plain\n"));
     assert_eq!(text("{}").as_deref(), Ok(""));
 }
@@ -38,5 +41,8 @@ fn a_list_mixing_structures_and_scalars_fails_as_python_does() {
     let error = format_text(&value, &mut out).err();
     assert_eq!(out, "1\n");
     let message = error.map(|error| error.message);
-    assert_eq!(message.as_deref(), Some("'str' object has no attribute 'items'"));
+    assert_eq!(
+        message.as_deref(),
+        Some("'str' object has no attribute 'items'")
+    );
 }

@@ -9,7 +9,13 @@ fn value(text: &str) -> Value {
 #[test]
 fn json_is_json_dumps_indented_by_four_with_a_newline() {
     let text = json(&value(r#"{"b":[1,{"c":null}],"a":"é\u0001"}"#));
-    assert_eq!(text, "{\n    \"b\": [\n        1,\n        {\n            \"c\": null\n        }\n    ],\n    \"a\": \"é\\u0001\"\n}\n");
+    assert_eq!(
+        text,
+        concat!(
+            "{\n    \"b\": [\n        1,\n        {\n            \"c\": null\n",
+            "        }\n    ],\n    \"a\": \"é\\u0001\"\n}\n"
+        )
+    );
     assert_eq!(json(&value("{}")), "");
     assert_eq!(json(&value("[]")), "[]\n");
 }

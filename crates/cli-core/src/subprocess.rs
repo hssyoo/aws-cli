@@ -123,6 +123,32 @@ pub fn shell_split(command: &str) -> Result<Vec<String>, &'static str> {
     Ok(words)
 }
 
+/// Starts the first of `candidates` the kernel starts, as `argv0` with
+/// `arguments` and exactly the environment `env`, with a pipe for its
+/// standard input and this process's other streams: `Popen(args,
+/// stdin=PIPE, env=env)`.
+///
+/// # Errors
+/// As [`output`].
+pub fn spawn_piped<P: AsRef<Path>>(
+    candidates: &[P],
+    argv0: &str,
+    arguments: &[String],
+    env: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> io::Result<std::process::Child> {
+    let mut exec = Exec::new(candidates, argv0, arguments)?;
+    exec.environment(env)?;
+    let Some(first) = candidates.first() else {
+        return Err(io::ErrorKind::NotFound.into());
+    };
+    let mut command = Command::new(first.as_ref());
+    command.stdin(Stdio::piped());
+    // SAFETY: as in `output`: the closure only calls `execve` on strings
+    // and arrays built before the fork.
+    unsafe { command.pre_exec(move || Err(exec.run())) };
+    command.spawn()
+}
+
 /// `execv`'s arguments, built before the fork.
 struct Exec {
     candidates: Vec<CString>,
@@ -130,14 +156,20 @@ struct Exec {
     argv: Vec<*const libc::c_char>,
     /// Owns the strings `argv` points at.
     _words: Vec<CString>,
+    /// A NULL-terminated `envp` for `execve`, or `None` to keep this
+    /// process's environment (`execv`). `Command`'s own environment is not
+    /// in place when a `pre_exec` closure runs on every platform.
+    envp: Option<Vec<*const libc::c_char>>,
+    /// Owns the `NAME=value` strings `envp` points at.
+    _entries: Vec<CString>,
 }
 
-// SAFETY: `argv` points only into the heap buffers of `_words`, which the
-// `Exec` owns and never changes, so moving it to another thread hands over
-// nothing it does not own.
+// SAFETY: `argv` and `envp` point only into the heap buffers of `_words`
+// and `_entries`, which the `Exec` owns and never changes after it is
+// built, so moving it to another thread hands over nothing it does not own.
 unsafe impl Send for Exec {}
 // SAFETY: an `Exec` is never changed after it is built, and the pointers in
-// `argv` are only read.
+// `argv` and `envp` are only read.
 unsafe impl Sync for Exec {}
 
 impl Exec {
@@ -163,7 +195,25 @@ impl Exec {
             candidates,
             argv,
             _words: words,
+            envp: None,
+            _entries: Vec::new(),
         })
+    }
+
+    /// Runs the program with exactly `env` as its environment.
+    fn environment(&mut self, env: &[(std::ffi::OsString, std::ffi::OsString)]) -> io::Result<()> {
+        let entries = env
+            .iter()
+            .map(|(name, value)| c_string(&[name.as_bytes(), b"=", value.as_bytes()].concat()))
+            .collect::<io::Result<Vec<_>>>()?;
+        let envp = entries
+            .iter()
+            .map(|entry| entry.as_ptr())
+            .chain(iter::once(std::ptr::null()))
+            .collect();
+        self.envp = Some(envp);
+        self._entries = entries;
+        Ok(())
     }
 
     /// Calls `execv` on each candidate, which returns only when it fails,
@@ -172,10 +222,16 @@ impl Exec {
         let mut first = None;
         let mut last = io::Error::from_raw_os_error(libc::ENOENT);
         for candidate in &self.candidates {
-            // SAFETY: `candidate` is NUL-terminated, and `argv` is a
-            // NULL-terminated array of NUL-terminated strings, all of which
-            // `self` keeps alive through the call.
-            unsafe { libc::execv(candidate.as_ptr(), self.argv.as_ptr()) };
+            match &self.envp {
+                // SAFETY: `candidate` is NUL-terminated, and `argv` and
+                // `envp` are NULL-terminated arrays of NUL-terminated
+                // strings, all of which `self` keeps alive through the call.
+                Some(envp) => unsafe {
+                    libc::execve(candidate.as_ptr(), self.argv.as_ptr(), envp.as_ptr())
+                },
+                // SAFETY: as above, without `envp`.
+                None => unsafe { libc::execv(candidate.as_ptr(), self.argv.as_ptr()) },
+            };
             let failure = io::Error::last_os_error();
             let missing = matches!(failure.raw_os_error(), Some(libc::ENOENT | libc::ENOTDIR));
             if first.is_none() && !missing {
