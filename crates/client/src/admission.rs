@@ -20,6 +20,9 @@ pub enum Unsupported {
     Trait(&'static str),
     /// A partition `regionRegex` the native variant check cannot read.
     RegionPattern,
+    /// An `endpoints.json` that is not the JSON its kind is, found when a
+    /// call first needs it.
+    EndpointData,
     /// A protocol not implemented, as botocore resolves it for the model.
     Protocol(String),
 }
@@ -33,6 +36,7 @@ impl std::fmt::Display for Unsupported {
             Self::Validation(undecided) => write!(f, "a validation of {undecided:?}"),
             Self::Trait(name) => write!(f, "the {name} trait"),
             Self::RegionPattern => f.write_str("a partition region pattern"),
+            Self::EndpointData => f.write_str("an unreadable endpoints.json"),
             Self::Protocol(name) => write!(f, "the {name} protocol"),
         }
     }

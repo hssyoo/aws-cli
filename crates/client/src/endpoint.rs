@@ -11,6 +11,7 @@ use crate::error::CallError;
 use model::shapes::{Metadata, Model, Operation};
 use model::source::{Kind, LoadError, Source, load_data_bytes, load_service_bytes};
 use model::value::Value;
+use std::sync::{Arc, OnceLock};
 
 /// A rule parameter's value, of a kind a rule set declares.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,11 +90,43 @@ pub struct EndpointData {
     rules: Vec<u8>,
     partitions: Vec<u8>,
     parameters: Vec<ParamDef>,
-    /// The partition endpoint `endpoints.json`'s first partition gives the
-    /// service, which a client with no region resolves to.
+    /// `endpoints.json` and the service's key there, parsed only for a call
+    /// that needs it ([`Legacy`]): parsing the whole document costs about
+    /// 6 ms, and a call with a region and neither FIPS nor dual-stack needs
+    /// none of it.
+    legacy: Option<Arc<LegacyDocument>>,
+}
+
+/// `endpoints.json`'s bytes and, once parsed, what the client reads of it.
+#[derive(Debug)]
+struct LegacyDocument {
+    bytes: Vec<u8>,
+    prefix: String,
+    parsed: OnceLock<Option<Legacy>>,
+}
+
+/// What the legacy resolver says for a client: the partition endpoint the
+/// first partition gives the service, which a client with no region
+/// resolves to, and the partitions, for the variant check.
+#[derive(Debug)]
+struct Legacy {
     partition_endpoint: Option<String>,
-    /// `endpoints.json`'s partitions, for the variant check.
-    legacy: Option<legacy::Legacy>,
+    partitions: Option<legacy::Legacy>,
+}
+
+impl LegacyDocument {
+    /// The parsed document; `None` for one that is not the JSON its kind is.
+    fn get(&self) -> Option<&Legacy> {
+        self.parsed
+            .get_or_init(|| {
+                let document = document(&self.bytes, "endpoints.json").ok()?;
+                Some(Legacy {
+                    partition_endpoint: partition_endpoint(&document, &self.prefix).ok()?,
+                    partitions: legacy::Legacy::parse(&document, &self.prefix),
+                })
+            })
+            .as_ref()
+    }
 }
 
 impl EndpointData {
@@ -125,19 +158,17 @@ impl EndpointData {
         endpoints: Option<(&[u8], &str)>,
     ) -> Result<Self, DataError> {
         let parameters = parameter_defs(&rules)?;
-        let (partition_endpoint, legacy) = match endpoints {
-            Some((json, prefix)) => {
-                let document = document(json, "endpoints.json")?;
-                let legacy = legacy::Legacy::parse(&document, prefix);
-                (partition_endpoint(&document, prefix)?, legacy)
-            }
-            None => (None, None),
-        };
+        let legacy = endpoints.map(|(bytes, prefix)| {
+            Arc::new(LegacyDocument {
+                bytes: bytes.to_vec(),
+                prefix: prefix.to_owned(),
+                parsed: OnceLock::new(),
+            })
+        });
         Ok(Self {
             rules,
             partitions,
             parameters,
-            partition_endpoint,
             legacy,
         })
     }
@@ -296,11 +327,20 @@ impl EndpointConfig {
                 "Provided region_name '{region}' doesn't match a supported format."
             )));
         }
-        let region = self.region.as_ref().or(data.partition_endpoint.as_ref());
-        let (Some(region), Some(legacy)) = (region, &data.legacy) else {
+        if !(self.variant_fips || self.variant_dual_stack) {
+            return Ok(());
+        }
+        let Some(document) = &data.legacy else {
             return Ok(());
         };
-        match legacy.check(region, self.variant_dual_stack, self.variant_fips) {
+        let legacy = document
+            .get()
+            .ok_or(CallError::Unsupported(Unsupported::EndpointData))?;
+        let region = self.region.as_ref().or(legacy.partition_endpoint.as_ref());
+        let (Some(region), Some(partitions)) = (region, &legacy.partitions) else {
+            return Ok(());
+        };
+        match partitions.check(region, self.variant_dual_stack, self.variant_fips) {
             Ok(()) => Ok(()),
             Err(legacy::Refusal::Variant(text)) => Err(CallError::Endpoint(text)),
             Err(legacy::Refusal::Pattern) => {
@@ -318,11 +358,22 @@ impl EndpointConfig {
     /// `NoRegionError` for no region and no partition endpoint, which the
     /// legacy resolver raises as the client is created, endpoint or not.
     pub fn client_region(&self, data: &EndpointData) -> Result<Option<String>, CallError> {
-        match (&self.region, &data.partition_endpoint) {
-            (Some(region), _) => Ok(Some(region.clone())),
-            (None, None) => Err(CallError::NoRegion),
-            (None, Some(_)) if self.endpoint_url.is_some() => Ok(None),
-            (None, Some(name)) => Ok(Some(name.clone())),
+        if let Some(region) = &self.region {
+            return Ok(Some(region.clone()));
+        }
+        let partition_endpoint = match &data.legacy {
+            Some(document) => {
+                let legacy = document
+                    .get()
+                    .ok_or(CallError::Unsupported(Unsupported::EndpointData))?;
+                legacy.partition_endpoint.as_ref()
+            }
+            None => None,
+        };
+        match partition_endpoint {
+            None => Err(CallError::NoRegion),
+            Some(_) if self.endpoint_url.is_some() => Ok(None),
+            Some(name) => Ok(Some(name.clone())),
         }
     }
     /// The built-ins core supplies for `data`'s service. `AWS::Region` is

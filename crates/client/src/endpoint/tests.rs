@@ -516,7 +516,10 @@ fn endpoints_json_is_parsed_only_when_needed() -> TestResult {
         ..EndpointInputs::default()
     });
     assert!(regional.check(&broken).is_ok());
-    assert_eq!(regional.client_region(&broken)?, Some("us-west-2".to_owned()));
+    assert_eq!(
+        regional.client_region(&broken)?,
+        Some("us-west-2".to_owned())
+    );
     let fips = EndpointConfig::new(&EndpointInputs {
         region: Some("us-west-2"),
         use_fips: Some(true),
