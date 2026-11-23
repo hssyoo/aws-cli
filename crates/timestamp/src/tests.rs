@@ -409,7 +409,9 @@ fn civil_anchors_and_an_instant_before_the_epoch() -> TestResult {
 /// the float's fraction rounds half to even at the microsecond.
 #[test]
 fn float_epochs_round_as_fromtimestamp_does() {
-    let at = |value: f64| Timestamp::from_epoch_float(value).map(|t| (t.unix_seconds(), t.subsec_micros()));
+    let at = |value: f64| {
+        Timestamp::from_epoch_float(value).map(|t| (t.unix_seconds(), t.subsec_micros()))
+    };
     for (value, expected) in [
         (1.5, Some((1, 500_000))),
         (-1.5, Some((-2, 500_000))),
@@ -430,7 +432,10 @@ fn float_epochs_round_as_fromtimestamp_does() {
 #[test]
 fn zoned_parses_keep_the_wall_time_and_the_written_zone() -> TestResult {
     let cases = [
-        ("2015-08-30T13:36:00.123+01:00", "2015-08-30T13:36:00.123000+01:00"),
+        (
+            "2015-08-30T13:36:00.123+01:00",
+            "2015-08-30T13:36:00.123000+01:00",
+        ),
         ("2015-08-30T12:36:00Z", "2015-08-30T12:36:00+00:00"),
         ("2015-08-30T11:06:00-0130", "2015-08-30T11:06:00-01:30"),
         ("2015-08-30 12:36:00", "2015-08-30T12:36:00"),
@@ -445,7 +450,11 @@ fn zoned_parses_keep_the_wall_time_and_the_written_zone() -> TestResult {
     assert_eq!(rfc.isoformat(), "2015-08-30T13:36:00+01:00");
     let gmt = Timestamp::parse_rfc822_zoned("30 Aug 2015 12:36:00 GMT").ok_or("gmt")?;
     assert_eq!(gmt.isoformat(), "2015-08-30T12:36:00+00:00");
-    for text in ["2015-08-30T12:36Z", "2015-02-29T00:00:00", "2015-08-30T12:36:00+24:00"] {
+    for text in [
+        "2015-08-30T12:36Z",
+        "2015-02-29T00:00:00",
+        "2015-08-30T12:36:00+24:00",
+    ] {
         assert_eq!(Timestamp::parse_iso8601_zoned(text), None, "{text}");
     }
     Ok(())
