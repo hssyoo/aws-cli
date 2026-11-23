@@ -92,11 +92,12 @@ pub fn operation(
 /// A trait of the operation the native route does not implement: a
 /// paginator (`CLIOperationCaller._make_client_call` paginates), an event
 /// stream or a streaming member at either end (`has_event_stream_input`,
-/// `has_streaming_output` and their kin read the top-level members), or a
-/// document anywhere in its input or output, which neither the binding nor
-/// the formatter carries; or one the client refuses before any request
+/// `has_streaming_output` and their kin read the top-level members), or
+/// one the client refuses before any request
 /// (`client::admission::unimplemented_trait`: request checksums, required
-/// endpoint discovery, the endpoint operation, request compression).
+/// endpoint discovery, the endpoint operation, request compression). A
+/// document member is no refusal: the json protocols carry it both ways,
+/// the formatter prints it, and a supplied one is deferred at binding.
 pub fn unimplemented_trait(service: &Service, operation: &Operation) -> bool {
     let model = &service.model;
     client::admission::unimplemented_trait(operation).is_some()
@@ -104,12 +105,7 @@ pub fn unimplemented_trait(service: &Service, operation: &Operation) -> bool {
         || [operation.input, operation.output]
             .into_iter()
             .flatten()
-            .any(|shape| {
-                streams(model, shape)
-                    || reaches(model, shape, &mut Vec::new(), &|found| {
-                        found.traits.is(Flag::Document)
-                    })
-            })
+            .any(|shape| streams(model, shape))
 }
 
 fn streams(model: &Model, shape: ShapeId) -> bool {
