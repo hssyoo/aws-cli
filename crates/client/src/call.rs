@@ -161,6 +161,9 @@ impl Client {
             .model
             .operation(operation)
             .ok_or_else(|| CallError::UnknownOperation(operation.to_owned()))?;
+        if let Some(unsupported) = crate::admission::unimplemented_trait(operation) {
+            return Err(CallError::Unsupported(unsupported));
+        }
         let mut cx = CallContext::new(&parts.service, &parts.model, operation);
         let mut input = input;
         for hook in self.hooks.interceptors(&operation.name) {
