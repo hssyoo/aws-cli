@@ -309,6 +309,27 @@ async def test_an_epoch_in_a_zone_with_daylight_saving_is_python_s(
     assert "(local_zone)" in run.stderr, run.describe()
 
 
+async def test_a_nested_timestamp_format_is_rejected(models: ApiSession) -> None:
+    # add_timestamp_parser gets the block's dict and rejects it for every
+    # command, before any request.
+    models.config_path.write_text(
+        models.config_path.read_text(encoding="utf-8")
+        + "cli_timestamp_format =\n  nested = x\n",
+        encoding="utf-8",
+    )
+    expected_rc = 255 if FORCED_NATIVE else 253
+    run = await models.run("zjson ping", replies=[], expected_rc=expected_rc)
+    assert run.calls == ()
+    if FORCED_NATIVE:
+        assert "(output_format)" in run.stderr, run.describe()
+    else:
+        assert run.stderr == (
+            "\naws: [ERROR]: An error occurred (Configuration): Unknown "
+            "cli_timestamp_format value: {'nested': 'x'}, "
+            'valid values are "wire" or "iso8601"\n'
+        ), run.describe()
+
+
 @pytest.mark.parametrize(
     "variables,profile,host",
     [

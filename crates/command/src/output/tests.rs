@@ -77,4 +77,9 @@ fn the_timestamp_format_and_the_pager_inputs_are_carried() {
     let bogus = "[default]\ncli_timestamp_format = bogus\n";
     let refused = resolve(&[], bogus, OutputGlobals::default());
     assert_eq!(refused, Err(PythonReason::OutputFormat));
+    // add_timestamp_parser rejects a nested block's dict as it rejects an
+    // unknown name.
+    let block = "[default]\ncli_timestamp_format =\n  nested = x\n";
+    let refused = resolve(&[], block, OutputGlobals::default());
+    assert_eq!(refused, Err(PythonReason::OutputFormat));
 }

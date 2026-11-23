@@ -195,13 +195,16 @@ async def test_forced_native_refuses_a_python_command_line(
          "unsupported_option"),
         # Over the fake models: an auth scheme the native client cannot
         # sign with, and an epoch in a zone with daylight-saving time; and
-        # a model search path native cannot expand as Python does.
+        # a model search path native cannot expand as Python does; and a
+        # nested block for the timestamp format, which Python rejects.
         ({"AWS_DATA_PATH": str(MODELS)}, "", ["zjson", "ping-sigv4a"],
          "unsupported_auth"),
         ({"AWS_DATA_PATH": str(MODELS), "TZ": "America/New_York"}, "",
          ["zjson", "describe"], "local_zone"),
         ({"AWS_DATA_PATH": "~nosuchuser/models"}, "", ["sts", "get-caller-identity"],
          "model_source_unavailable"),
+        ({"AWS_DATA_PATH": str(MODELS)}, "[default]\ncli_timestamp_format =\n  nested = x\n",
+         ["zjson", "ping"], "output_format"),
     ],
     ids=[
         "structured-error-format",
@@ -230,6 +233,7 @@ async def test_forced_native_refuses_a_python_command_line(
         "model-auth",
         "model-local-zone",
         "model-source-unavailable",
+        "model-nested-timestamp-format",
     ],
 )
 async def test_forced_native_refuses_a_python_setting(
