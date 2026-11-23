@@ -208,6 +208,47 @@ fn services_unite_the_greatest_version_wins_and_the_first_file_wins() -> Result<
     Ok(())
 }
 
+/// A model is the payload's only where no user location supplies its
+/// latest version's file or that file's extras.
+#[test]
+fn a_model_is_packed_unless_a_user_location_supplies_its_files() -> Result<()> {
+    let (a, b, home) = two_locations()?;
+    let builtin = service_json("2019-01-01", &["Builtin"]);
+    let blob = payload_with(&[
+        (
+            b"awscli/botocore/data/zver/2019-01-01/service-2.json",
+            &builtin,
+        ),
+        (
+            b"awscli/botocore/data/zpay/2019-01-01/service-2.json",
+            &builtin,
+        ),
+        (
+            b"awscli/botocore/data/zext/2019-01-01/service-2.json",
+            &builtin,
+        ),
+    ]);
+    a.write(
+        "zext/2019-01-01/service-2.sdk-extras.json",
+        br#"{"merge":{"added":1}}"#,
+    )?;
+    let view = View::new(&blob)?;
+    let (a_path, b_path) = (a.path().to_string_lossy(), b.path().to_string_lossy());
+    let home_path = home.path().to_string_lossy();
+    let env = env(&[
+        ("AWS_DATA_PATH", &joined(&[&a_path, &b_path])),
+        ("HOME", &home_path),
+    ]);
+    let source = search(view, &env)?;
+    assert!(source.packed("zpay")?);
+    for user in ["zver", "zfirst", "zhome", "zext"] {
+        assert!(!source.packed(user)?, "{user}");
+    }
+    let source = search(view, &self::env(&[("HOME", &home_path)]))?;
+    assert!(source.packed("zver")?);
+    Ok(())
+}
+
 #[test]
 fn awscli_data_is_searched_after_user_paths_and_before_home_models() -> Result<()> {
     let (user, home) = (Scratch::new("user")?, Scratch::new("home")?);

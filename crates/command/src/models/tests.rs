@@ -290,3 +290,66 @@ fn the_matcher_adds_each_service_s_own_entries() -> Result<()> {
         assert!(!other.iter().any(|entry| entry.contains("iamvirtmfa")));
     })
 }
+
+fn client_handlers(source: &ModelSource<'_>, command: &str, operation: &str) -> Vec<String> {
+    source
+        .client_handlers(command, operation)
+        .unwrap_or_else(|| panic!("{command} {operation}"))
+}
+
+fn generic(source: &ModelSource<'_>) -> Vec<String> {
+    let mut rows: Vec<String> = source
+        .patterns()
+        .client
+        .generic
+        .iter()
+        .map(|row| row.handler.to_string())
+        .collect();
+    rows.sort();
+    rows.dedup();
+    rows
+}
+
+/// The pack observed every client's creation: a service with an
+/// endpoint-discovery operation registers the discovery block, s3control
+/// its ARN handler, and a service botocore does nothing special for only
+/// the rows every client registers.
+#[test]
+fn client_creation_rows_are_the_service_s_and_the_generic_ones() -> Result<()> {
+    with_source(None, |source| {
+        let generic = generic(source);
+        assert!(!generic.is_empty());
+        for (command, operation, wanted) in [
+            (
+                "dynamodb",
+                "list-tables",
+                "botocore.discovery.block_endpoint_discovery_required_operations",
+            ),
+            (
+                "s3control",
+                "list-access-points",
+                "botocore.utils.S3ControlArnParamHandlerv2.handle_arn",
+            ),
+        ] {
+            let rows = client_handlers(source, command, operation);
+            assert!(rows.iter().any(|row| row == wanted), "{command}: {rows:?}");
+            assert!(generic.iter().all(|row| rows.contains(row)), "{command}");
+        }
+        assert_eq!(
+            client_handlers(source, "sts", "get-caller-identity"),
+            generic
+        );
+        assert_eq!(client_handlers(source, "sns", "list-topics"), generic);
+        let touched = touching(source, "sts", "get-caller-identity");
+        assert!(generic.iter().all(|row| touched.contains(row)));
+    })
+}
+
+/// A user model's client meets the generic rows alone: what the pack saw
+/// for a service is its packed model's.
+#[test]
+fn a_user_model_s_client_meets_the_generic_rows() -> Result<()> {
+    with_source(Some(fake_models()), |source| {
+        assert_eq!(client_handlers(source, "zjson", "measure"), generic(source));
+    })
+}
