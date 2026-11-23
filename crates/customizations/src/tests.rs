@@ -121,6 +121,25 @@ fn dynamodb_retries_a_body_whose_crc32_does_not_match() -> TestResult {
         body,
     };
     assert_eq!(decision("dynamodb", &unchecked, None)?, None);
+    // `int(checksum)` is unguarded: a header Python cannot read fails the
+    // call with its ValueError, and a negative or huge one mismatches.
+    assert_eq!(
+        decision("dynamodb", &response("abc"), None)?,
+        Some(RetryDecision::Fail(client::hooks::HookError::Failed(
+            "invalid literal for int() with base 10: 'abc'".into()
+        )))
+    );
+    for value in ["-1", "99999999999999999999999", " +1 "] {
+        assert_eq!(
+            decision("dynamodb", &response(value), None)?,
+            Some(RetryDecision::Retry),
+            "{value}"
+        );
+    }
+    assert_eq!(
+        decision("dynamodb", &response(&format!(" {actual}\n")), None)?,
+        None
+    );
     Ok(())
 }
 
