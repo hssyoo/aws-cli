@@ -1283,3 +1283,45 @@ fn a_max_items_that_is_no_int_is_int_s_value_error() -> TestResult {
     assert!(f.bodies().is_empty());
     Ok(())
 }
+
+/// `first_input`: the first request's input, before and after it is sent,
+/// with what `_inject_starting_params` put in; or the error the first page
+/// fails with before its request. It sends nothing itself.
+#[test]
+fn the_first_input_is_the_first_request_s() -> TestResult {
+    let f = fixture()?;
+    let pagination = PaginationConfig {
+        page_size: Some(Value::Integer(2)),
+        ..starting(M1_AT_1)
+    };
+    let pages = f.pages_of(LIMITED, json(r#"{"Filter": "foo"}"#)?, pagination)?;
+    let expected = json(r#"{"Filter": "foo", "Marker": "m1", "MaxResults": 2}"#)?;
+    assert_eq!(pages.first_input()?, expected);
+    assert!(f.bodies().is_empty());
+    f.respond(&[
+        r#"{"Users": ["a", "b"], "Marker": "m2"}"#,
+        r#"{"Users": ["c"]}"#,
+    ]);
+    let mut pages = pages;
+    all_of(&mut pages)?;
+    assert_eq!(pages.first_input()?, expected);
+    assert_eq!(
+        f.bodies()[0],
+        r#"{"Filter": "foo", "Marker": "m1", "MaxResults": 2}"#
+    );
+    let plain = f.pages(MARKER, PaginationConfig::default())?;
+    assert_eq!(plain.first_input()?, json("{}")?);
+    let bad = f.pages(MARKER, starting("does___not___work"))?;
+    assert_eq!(
+        bad.first_input(),
+        Err(CallError::Pagination(PaginationError::Value(
+            "Bad starting token: does___not___work".into()
+        )))
+    );
+    assert_eq!(f.bodies().len(), 2);
+    Ok(())
+}
+
+fn all_of(pages: &mut PageIterator<'_>) -> Result<Vec<Value>, CallError> {
+    pages.collect()
+}

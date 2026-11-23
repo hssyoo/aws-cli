@@ -165,6 +165,7 @@ pub struct PaginationConfig {
 pub struct PageIterator<'c> {
     client: &'c Client,
     operation: String,
+    /// `paginate`'s keyword arguments, as given.
     input: Value,
     config: Config,
     pagination: PaginationConfig,
@@ -179,7 +180,7 @@ enum State {
     /// `paginate` returned; nothing has run yet.
     Start,
     /// A page was yielded whole; the loop goes on with what it read of it.
-    Yielded(Progress, Read),
+    Yielded(Box<Progress>, Read),
     /// The loop ended.
     Done,
 }
@@ -197,6 +198,8 @@ struct Progress {
     next_token: Map,
     previous_next_token: Option<Map>,
     total_items: i128,
+    /// `current_kwargs`: the input of the request in flight.
+    kwargs: Value,
 }
 
 /// What the loop reads of a page it yielded whole.
@@ -238,6 +241,18 @@ impl<'c> PageIterator<'c> {
     /// set (`_record_non_aggregate_key_values`), each `None` it lacked.
     pub fn non_aggregate_part(&self) -> &Map {
         &self.non_aggregate_part
+    }
+
+    /// The input the first page's request sends, or sent: `paginate`'s
+    /// with the starting token's input tokens and the page size put in
+    /// (`_inject_starting_params`), as a caller would `prepare` it.
+    ///
+    /// # Errors
+    /// What the first page would fail with before its request: a
+    /// `MaxItems` or `PageSize` botocore's `paginate` refuses, or a bad
+    /// starting token.
+    pub fn first_input(&self) -> Result<Value, CallError> {
+        self.prologue().map(|progress| progress.kwargs)
     }
 
     /// `resume_token`: the encoded token to resume from, once iteration
@@ -319,7 +334,7 @@ impl Iterator for PageIterator<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         let progress = match std::mem::replace(&mut self.state, State::Done) {
             State::Start => self.start(),
-            State::Yielded(progress, read) => self.resume(progress, read),
+            State::Yielded(progress, read) => self.resume(*progress, read),
             State::Done => Ok(None),
         };
         match progress {
@@ -331,10 +346,14 @@ impl Iterator for PageIterator<'_> {
 }
 
 impl PageIterator<'_> {
+    fn start(&mut self) -> Result<Option<Progress>, CallError> {
+        self.prologue().map(Some)
+    }
+
     /// `paginate`'s `_extract_paging_params`, then `__iter__` up to its
     /// loop: the starting token read and, with the page size, put into the
     /// input (`_inject_starting_params`).
-    fn start(&mut self) -> Result<Option<Progress>, CallError> {
+    fn prologue(&self) -> Result<Progress, CallError> {
         let max_items = match given(self.pagination.max_items.as_ref()) {
             Some(value) => Some(py::int_number(&py::int(value)?)),
             None => None,
@@ -357,20 +376,22 @@ impl PageIterator<'_> {
                 .map(|key| (key.clone(), Value::Null))
                 .collect(),
         };
+        let mut kwargs = self.input.clone();
         if let Some(starting) = &starting {
-            inject(&mut self.input, &starting.token);
+            inject(&mut kwargs, &starting.token);
         }
         if let (Some(size), Some(limit_key)) = (page_size, &self.config.limit_key) {
-            insert(&mut self.input, limit_key, size);
+            insert(&mut kwargs, limit_key, size);
         }
-        Ok(Some(Progress {
+        Ok(Progress {
             max_items,
             starting_index: starting.map(|starting| starting.index),
             first_request: true,
             next_token,
             previous_next_token: None,
             total_items: 0,
-        }))
+            kwargs,
+        })
     }
 
     /// `_extract_paging_params`' page size: refused without a limit key,
@@ -415,7 +436,7 @@ impl PageIterator<'_> {
         let features: Features = [Feature::Paginator].into_iter().collect();
         let output =
             self.client
-                .call_with_features(&self.operation, self.input.clone(), features)?;
+                .call_with_features(&self.operation, progress.kwargs.clone(), features)?;
         self.page(progress, output.value)
     }
 
@@ -443,7 +464,7 @@ impl PageIterator<'_> {
             self.truncate_response(&mut page, truncate_amount, &starting_truncation, next_token)?;
         } else {
             let next_token = self.get_next_token(&page);
-            self.state = State::Yielded(progress, Read { items, next_token });
+            self.state = State::Yielded(Box::new(progress), Read { items, next_token });
         }
         Ok(page)
     }
@@ -479,7 +500,7 @@ impl PageIterator<'_> {
             ))
             .into());
         }
-        inject(&mut self.input, &next_token);
+        inject(&mut progress.kwargs, &next_token);
         progress.previous_next_token = Some(next_token.clone());
         progress.next_token = next_token;
         Ok(Some(progress))
