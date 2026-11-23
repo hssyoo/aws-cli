@@ -15,12 +15,15 @@ use client::error::{CallError, ServiceError};
 use model::shapes::Model;
 use model::value::{Map, Value};
 
-/// `InterruptExceptionHandler`: a newline on stdout, and 130.
+/// `InterruptExceptionHandler`: a newline on stdout, flushed, and 130.
 ///
 /// # Errors
 /// Writing to `stdout` failed.
 pub fn interrupted(stdout: &mut dyn std::io::Write) -> std::io::Result<u8> {
     stdout.write_all(b"\n")?;
+    // The interpreter flushes stdout at exit; the binary's exit flushes
+    // only what a failed write left.
+    stdout.flush()?;
     Ok(cli_core::interrupt::EXIT_STATUS)
 }
 
@@ -77,7 +80,9 @@ pub fn credentials_failure(error: &credentials::LoadError) -> CommandFailure {
 
 /// `LazyPager`'s failure to start the pager: a missing program is
 /// `PagerInitializationException` (`PagerErrorHandler`, 253, code
-/// `Pager`), and any other `OSError` the general handler's (255).
+/// `Pager`), and an empty command's `IndexError` the general handler's
+/// (255). Any other `OSError` is no failure: `format::pager::run`
+/// reports the pager exited.
 pub fn pager_failure(error: &format::pager::SpawnError) -> CommandFailure {
     if !error.not_found {
         return CommandFailure {
