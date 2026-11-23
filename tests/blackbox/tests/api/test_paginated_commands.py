@@ -873,6 +873,13 @@ ROUTES: Final = {
         f"zjson list-things --starting-token {token(NextToken='t1')}",
         None,
     ),
+    "json-text": ("zjson list-things --output text", None),
+    "json-off": ("zjson list-things --output off", None),
+    "json-non-positive-max-items": ("zjson list-things --max-items 0", None),
+    "rest-json-shadowed-max-items": (
+        "zrestjson list-functions --no-paginate --max-items 1",
+        None,
+    ),
     "query-expression-token": ("zquery list-jobs", "unsupported_trait"),
 }
 
