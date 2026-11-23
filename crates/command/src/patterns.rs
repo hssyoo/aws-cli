@@ -9,7 +9,9 @@
 //! then run for their own events. An entry whose pattern matches any event
 //! the invocation emits is therefore one that can touch it. A botocore
 //! builtin row touches the invocation when its pattern matches one of the
-//! client's events.
+//! client's events, and so does a row the client registers as it is
+//! created (`ClientCreator.create_client`), which the pack observed by
+//! creating every service's client ([`ClientHandlers`]).
 use std::collections::BTreeSet;
 
 /// The payload entry that holds the patterns.
@@ -57,6 +59,28 @@ pub struct Builtin {
     pub section: Section,
 }
 
+/// The segment a generic client row's pattern holds where the client's
+/// own hyphenized service id stands.
+pub const SERVICE_ID: &str = "{service_id}";
+
+/// The handlers a client registers on its own emitter as it is created,
+/// beyond the session's builtins: what the pack saw creating each listed
+/// service's client as the CLI does by default. botocore registers them in
+/// code (`ClientCreator._register_retries`, `_register_s3_events`,
+/// `_register_s3express_events`, `_register_s3_control_events`,
+/// `_register_importexport_events`, `_register_endpoint_discovery`,
+/// `BaseClient._register_handlers`), so only creating the clients shows
+/// them. A row's section is its place in the event's list.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClientHandlers {
+    /// The rows every service's client registers, with [`SERVICE_ID`] for
+    /// the client's own service segment.
+    pub generic: Vec<Builtin>,
+    /// The other rows, by the service's loader name, with [`SERVICE_ID`]
+    /// for the service's own segment.
+    pub services: Vec<(Box<str>, Vec<Builtin>)>,
+}
+
 /// The whole entry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Patterns {
@@ -64,6 +88,7 @@ pub struct Patterns {
     pub registry: Vec<(Box<str>, Vec<Entry>)>,
     pub table_ops: Vec<TableOp>,
     pub builtins: Vec<Builtin>,
+    pub client: ClientHandlers,
 }
 
 /// Why the entry could not be read.
@@ -111,10 +136,8 @@ impl Patterns {
                 .iter()
                 .map(table_op)
                 .collect::<Result<_, _>>()?,
-            builtins: array(field("builtin_handlers")?, "builtin_handlers")?
-                .iter()
-                .map(builtin)
-                .collect::<Result<_, _>>()?,
+            builtins: rows(field("builtin_handlers")?, "builtin_handlers")?,
+            client: client_handlers(field("client_handlers")?)?,
         })
     }
 
@@ -143,6 +166,29 @@ impl Patterns {
             .collect()
     }
 
+    /// The rows `subject`'s client registers as it is created whose
+    /// patterns match one of `events`: the generic rows, and the service's
+    /// own when the subject's model is the one the pack observed. A model a
+    /// user supplies meets the generic rows alone (`Subject::packed`).
+    pub fn client_handlers(&self, subject: &Subject<'_>, events: &[String]) -> BTreeSet<String> {
+        let own = self
+            .client
+            .services
+            .iter()
+            .filter(|(service, _)| subject.packed && **service == *subject.service)
+            .flat_map(|(_, rows)| rows);
+        self.client
+            .generic
+            .iter()
+            .chain(own)
+            .filter(|row| {
+                let pattern = scoped(&row.pattern, subject.service_id);
+                events.iter().any(|event| pattern_matches(&pattern, event))
+            })
+            .map(|row| row.handler.to_string())
+            .collect()
+    }
+
     /// Every awscli entry and botocore handler that touches `subject`. The
     /// clients share the session's lazy emitter, so a registry entry runs
     /// for a client's event as for the CLI's (`after-call.<service>`, say).
@@ -152,8 +198,46 @@ impl Patterns {
         events.extend(client.iter().cloned());
         let mut touched = self.registry_entries(&events);
         touched.extend(self.builtin_handlers(&client));
+        touched.extend(self.client_handlers(subject, &client));
         touched
     }
+}
+
+/// A client row's pattern for the client of `service_id`.
+fn scoped(pattern: &str, service_id: &str) -> String {
+    pattern
+        .split('.')
+        .map(|chunk| {
+            if chunk == SERVICE_ID {
+                service_id
+            } else {
+                chunk
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn rows(value: &Json, at: &'static str) -> Result<Vec<Builtin>, PatternError> {
+    array(value, at)?.iter().map(builtin).collect()
+}
+
+fn client_handlers(value: &Json) -> Result<ClientHandlers, PatternError> {
+    let field = |name: &'static str| value.get(name).ok_or(PatternError::Shape(name));
+    let services = array(field("services")?, "client services")?
+        .iter()
+        .map(|row| match array(row, "client service")? {
+            [service, service_rows] => Ok((
+                text(service, "client service name")?,
+                rows(service_rows, "client service rows")?,
+            )),
+            _ => Err(PatternError::Shape("client service")),
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(ClientHandlers {
+        generic: rows(field("generic")?, "client generic rows")?,
+        services,
+    })
 }
 
 fn registry_row(row: &Json) -> Result<(Box<str>, Vec<Entry>), PatternError> {
@@ -235,6 +319,10 @@ pub struct Subject<'a> {
     /// The argument table's names, each of which a `load-cli-arg` event
     /// names.
     pub arguments: &'a [&'a str],
+    /// Whether the operation's model is the payload's alone
+    /// (`SearchSource::packed`), so what the pack observed of its client
+    /// holds for it.
+    pub packed: bool,
 }
 
 impl Subject<'_> {
