@@ -68,28 +68,13 @@ pub enum ParseIntError {
 /// range applies only to a literal within the limit.
 pub fn parse_int(text: &str) -> Result<i64, ParseIntError> {
     assert!(text.len() <= INT_TEXT_LEN_MAX);
-    let body = text.trim_matches([' ', '\t', '\n', '\u{b}', '\u{c}', '\r']);
-    let (negative, digits) = if let Some(v) = body.strip_prefix('-') {
-        (true, v)
-    } else {
-        (false, body.strip_prefix('+').unwrap_or(body))
-    };
-    let count = literal_digits(digits).ok_or(ParseIntError::InvalidLiteral)?;
+    let body = text.trim_matches(pytext::number::C_SPACE);
+    let canonical = pytext::number::int(body).ok_or(ParseIntError::InvalidLiteral)?;
+    let count = pytext::number::digit_count(body);
     if count > PYTHON_INT_MAX_STR_DIGITS {
         return Err(ParseIntError::DigitLimit(count));
     }
-    let mut value = 0i64;
-    for c in digits.bytes().filter(u8::is_ascii_digit) {
-        value = value
-            .checked_mul(10)
-            .and_then(|v| v.checked_sub(i64::from(c - b'0')))
-            .ok_or(ParseIntError::OutOfRange)?;
-    }
-    if negative {
-        Ok(value)
-    } else {
-        value.checked_neg().ok_or(ParseIntError::OutOfRange)
-    }
+    canonical.parse().map_err(|_| ParseIntError::OutOfRange)
 }
 /// `int()` of an argv value, as a failure when it fails. A value that is not
 /// Unicode decodes to surrogates, which are neither digits nor whitespace,
@@ -101,28 +86,6 @@ pub fn parse_int_os(text: &OsStr) -> Result<i64, Failure> {
             text.to_os_string(),
         ))),
     }
-}
-pub(crate) fn literal_digits(digits: &str) -> Option<usize> {
-    if digits.is_empty() || digits.starts_with('_') || digits.ends_with('_') {
-        return None;
-    }
-    let mut count = 0;
-    let mut underscore = false;
-    for c in digits.bytes() {
-        if c == b'_' {
-            if underscore {
-                return None;
-            }
-            underscore = true;
-            continue;
-        }
-        underscore = false;
-        if !c.is_ascii_digit() {
-            return None;
-        }
-        count += 1;
-    }
-    Some(count)
 }
 /// File classification obtained before any content read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

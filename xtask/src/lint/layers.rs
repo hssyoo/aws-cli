@@ -18,15 +18,17 @@ use std::path::Path;
 /// depend on `s3`, `cli-router`, `aws-cli` or `python-fallback`.
 const ALLOWED: &[(&str, &[&str])] = &[
     // L0: leaves.
-    ("awscli-argparse", &[]),
+    ("awscli-argparse", &["pytext"]),
     ("awscli-config", &[]),
     ("build-support", &[]),
     ("crt-sys", &["build-support"]),
     ("numa", &[]),
     ("pyload", &["sha256"]),
+    // CPython's text primitives, one implementation each.
+    ("pytext", &[]),
     ("sha256", &[]),
     ("sigv4", &["sha256", "timestamp"]),
-    ("timestamp", &[]),
+    ("timestamp", &["pytext"]),
     // L1: credentials, model, crt and cli-core; `cli-core` is the common
     // floor the other three may stand on.
     ("cli-core", &["awscli-argparse", "awscli-config"]),
@@ -45,7 +47,7 @@ const ALLOWED: &[(&str, &[&str])] = &[
             "timestamp",
         ],
     ),
-    ("model", &["pyload", "timestamp"]),
+    ("model", &["pyload", "pytext", "timestamp"]),
     // L2: client and format.
     ("client", CLIENT),
     (
@@ -74,6 +76,7 @@ const CLIENT: &[&str] = &[
     "credentials",
     "crt",
     "model",
+    "pytext",
     "sha256",
     "sigv4",
     "timestamp",
@@ -85,6 +88,7 @@ const COMMAND: &[&str] = &[
     "format",
     "model",
     "pyload",
+    "pytext",
     "timestamp",
 ];
 const CUSTOMIZATIONS: &[&str] = &[
@@ -94,6 +98,7 @@ const CUSTOMIZATIONS: &[&str] = &[
     "command",
     "format",
     "model",
+    "pytext",
     "timestamp",
 ];
 const S3: &[&str] = &[
@@ -105,6 +110,7 @@ const S3: &[&str] = &[
     "model",
     "numa",
     "pyload",
+    "pytext",
     "sigv4",
 ];
 const ROUTER: &[&str] = &[

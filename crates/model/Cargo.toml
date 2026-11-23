@@ -11,6 +11,7 @@ testing = []
 
 [dependencies]
 pyload = { path = "../pyload" }
+pytext = { path = "../pytext" }
 serde_json.workspace = true
 timestamp = { path = "../timestamp" }
 

@@ -4,133 +4,29 @@ use crate::value::Value;
 use std::fmt::Write as _;
 use timestamp::Timestamp;
 
-mod printable;
+use pytext::number;
+use pytext::repr::{bytes_repr, str_repr};
+pub use pytext::repr::{float_repr, is_printable};
 
-/// `str.isprintable()` for one character (`Py_UNICODE_ISPRINTABLE`).
-pub fn is_printable(character: char) -> bool {
-    let code = u32::from(character);
-    let (pairs, _) = printable::NON_PRINTABLE.as_chunks::<2>();
-    let index = pairs.partition_point(|[_, last]| *last < code);
-    pairs.get(index).is_none_or(|[first, _]| code < *first)
+/// What model's readers strip before a literal: Unicode whitespace and the
+/// separators U+001C to U+001F, which `str.strip()` removes. CPython's
+/// `float()` and `int()` strip only C's six from ASCII
+/// ([`pytext::number::C_SPACE`]), so they refuse the separators these
+/// accept: a difference kept, as before this crate.
+fn stripped(text: &str) -> &str {
+    text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
 }
 
-/// `float.__repr__`: the shortest digits that round-trip, in fixed notation
-/// when the decimal point falls within 16 digits, as `float_repr_style
-/// 'short'` with `Py_DTSF_ADD_DOT_0` writes them.
-pub fn float_repr(number: f64) -> String {
-    if number.is_nan() {
-        return "nan".into();
-    }
-    let sign = if number.is_sign_negative() { "-" } else { "" };
-    if number.is_infinite() {
-        return format!("{sign}inf");
-    }
-    let scientific = format!("{:e}", number.abs());
-    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
-    let digits = mantissa.replace('.', "");
-    let exponent: i32 = exponent.parse().unwrap_or(0);
-    let point = exponent + 1;
-    let body = if point <= -4 || point > 16 {
-        exponential(&digits, exponent)
-    } else {
-        fixed(&digits, point)
-    };
-    format!("{sign}{body}")
-}
-
-fn exponential(digits: &str, exponent: i32) -> String {
-    let (first, rest) = digits.split_at(1);
-    let fraction = if rest.is_empty() {
-        String::new()
-    } else {
-        format!(".{rest}")
-    };
-    let sign = if exponent < 0 { '-' } else { '+' };
-    format!("{first}{fraction}e{sign}{:02}", exponent.unsigned_abs())
-}
-
-fn fixed(digits: &str, point: i32) -> String {
-    let length = i32::try_from(digits.len()).unwrap_or(i32::MAX);
-    if point <= 0 {
-        let zeros = "0".repeat(point.unsigned_abs() as usize);
-        format!("0.{zeros}{digits}")
-    } else if point >= length {
-        let zeros = "0".repeat((point - length).unsigned_abs() as usize);
-        format!("{digits}{zeros}.0")
-    } else {
-        let (whole, fraction) = digits.split_at(point.unsigned_abs() as usize);
-        format!("{whole}.{fraction}")
-    }
-}
-
-/// `float(text)`: surrounding whitespace, a sign, digits with single
-/// underscores between them, an optional fraction and exponent, or `inf`,
-/// `infinity` or `nan` in any case.
+/// `float(text)`: [`pytext::number::float`] after [`stripped`].
 pub fn float_from_text(text: &str) -> Option<f64> {
-    let trimmed =
-        text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c));
-    let unsigned = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
-    let negative = trimmed.starts_with('-');
-    let word = unsigned.to_ascii_lowercase();
-    let magnitude = match word.as_str() {
-        "inf" | "infinity" => f64::INFINITY,
-        "nan" => f64::NAN,
-        _ => decimal(unsigned)?,
-    };
-    Some(if negative { -magnitude } else { magnitude })
+    number::float(stripped(text))
 }
 
-/// A decimal literal as `float()` reads it, underscores removed.
-fn decimal(text: &str) -> Option<f64> {
-    let (mantissa, exponent) = match text.find(['e', 'E']) {
-        Some(at) => (&text[..at], Some(&text[at + 1..])),
-        None => (text, None),
-    };
-    let (whole, fraction) = match mantissa.split_once('.') {
-        Some((whole, fraction)) => (whole, Some(fraction)),
-        None => (mantissa, None),
-    };
-    let has_digits = !whole.is_empty() || fraction.is_some_and(|f| !f.is_empty());
-    let valid = has_digits
-        && (whole.is_empty() || digit_part(whole))
-        && fraction.is_none_or(|f| f.is_empty() || digit_part(f))
-        && exponent.is_none_or(|e| digit_part(e.strip_prefix(['+', '-']).unwrap_or(e)));
-    if !valid {
-        return None;
-    }
-    text.replace('_', "").parse().ok()
-}
-
-/// `digit (_? digit)*`.
-fn digit_part(text: &str) -> bool {
-    !text.is_empty()
-        && !text.starts_with('_')
-        && !text.ends_with('_')
-        && !text.contains("__")
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || byte == b'_')
-}
-
-/// `int(text)` in base 10: surrounding whitespace, a sign, and ASCII digits
-/// with single underscores between them, as an `Integer` or, beyond `i64`,
-/// a `BigInteger`. Python also reads non-ASCII decimal digits; those are
-/// refused here.
+/// `int(text)` in base 10, after [`stripped`]: an `Integer` or, beyond
+/// `i64`, a `BigInteger`, of any length. Python also reads non-ASCII
+/// decimal digits; those are refused here.
 pub fn int_from_text(text: &str) -> Option<Value> {
-    let trimmed =
-        text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c));
-    let digits = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
-    if !digit_part(digits) {
-        return None;
-    }
-    let negative = trimmed.starts_with('-');
-    let digits = digits.replace('_', "");
-    let digits = digits.trim_start_matches('0');
-    let canonical = match (negative, digits) {
-        (_, "") => "0".to_owned(),
-        (true, digits) => format!("-{digits}"),
-        (false, digits) => digits.to_owned(),
-    };
+    let canonical = number::int(stripped(text))?;
     Some(match canonical.parse::<i64>() {
         Ok(value) => Value::Integer(value),
         Err(_) => Value::BigInteger(canonical.into()),
@@ -177,8 +73,8 @@ fn write_repr(out: &mut String, value: &Value) {
         Value::Integer(number) => out.push_str(&number.to_string()),
         Value::BigInteger(text) => out.push_str(text),
         Value::Float(number) => out.push_str(&float_repr(*number)),
-        Value::String(text) => string_repr(out, text),
-        Value::Blob(bytes) => bytes_repr(out, bytes),
+        Value::String(text) => out.push_str(&str_repr(text)),
+        Value::Blob(bytes) => out.push_str(&bytes_repr(bytes)),
         Value::Timestamp(at) => datetime_repr(out, *at),
         Value::List(items) => {
             out.push('[');
@@ -196,74 +92,13 @@ fn write_repr(out: &mut String, value: &Value) {
                 if index > 0 {
                     out.push_str(", ");
                 }
-                string_repr(out, key);
+                out.push_str(&str_repr(key));
                 out.push_str(": ");
                 write_repr(out, item);
             }
             out.push('}');
         }
     }
-}
-
-/// `unicode_repr`: single quotes unless the text has one and no double quote.
-fn string_repr(out: &mut String, text: &str) {
-    let quote = if text.contains('\'') && !text.contains('"') {
-        '"'
-    } else {
-        '\''
-    };
-    out.push(quote);
-    for character in text.chars() {
-        match character {
-            c if c == quote || c == '\\' => {
-                out.push('\\');
-                out.push(c);
-            }
-            '\t' => out.push_str("\\t"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            c if c < ' ' || c == '\u{7f}' => {
-                let _ = write!(out, "\\x{:02x}", u32::from(c));
-            }
-            c if c.is_ascii() || is_printable(c) => out.push(c),
-            c => {
-                let code = u32::from(c);
-                let _ = match code {
-                    0..=0xff => write!(out, "\\x{code:02x}"),
-                    0x100..=0xffff => write!(out, "\\u{code:04x}"),
-                    _ => write!(out, "\\U{code:08x}"),
-                };
-            }
-        }
-    }
-    out.push(quote);
-}
-
-/// `bytes.__repr__`.
-fn bytes_repr(out: &mut String, bytes: &[u8]) {
-    let quote = if bytes.contains(&b'\'') && !bytes.contains(&b'"') {
-        b'"'
-    } else {
-        b'\''
-    };
-    out.push('b');
-    out.push(char::from(quote));
-    for &byte in bytes {
-        match byte {
-            b if b == quote || b == b'\\' => {
-                out.push('\\');
-                out.push(char::from(b));
-            }
-            b'\t' => out.push_str("\\t"),
-            b'\n' => out.push_str("\\n"),
-            b'\r' => out.push_str("\\r"),
-            b if !(b' '..0x7f).contains(&b) => {
-                let _ = write!(out, "\\x{b:02x}");
-            }
-            b => out.push(char::from(b)),
-        }
-    }
-    out.push(char::from(quote));
 }
 
 /// `datetime.__str__`: `isoformat(sep=' ')` with the `+00:00` offset.

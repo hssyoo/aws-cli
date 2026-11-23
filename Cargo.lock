@@ -28,6 +28,9 @@ dependencies = [
 [[package]]
 name = "awscli-argparse"
 version = "0.1.0"
+dependencies = [
+ "pytext",
+]
 
 [[package]]
 name = "awscli-config"
@@ -247,6 +250,7 @@ version = "0.1.0"
 dependencies = [
  "awscli-argparse",
  "pyload",
+ "pytext",
  "serde_json",
  "timestamp",
 ]
@@ -275,6 +279,10 @@ dependencies = [
  "ruzstd",
  "sha256",
 ]
+
+[[package]]
+name = "pytext"
+version = "0.1.0"
 
 [[package]]
 name = "python-fallback"
@@ -316,6 +324,7 @@ dependencies = [
  "model",
  "numa",
  "pyload",
+ "pytext",
  "sigv4",
 ]
 
@@ -409,6 +418,9 @@ dependencies = [
 [[package]]
 name = "timestamp"
 version = "0.1.0"
+dependencies = [
+ "pytext",
+]
 
 [[package]]
 name = "toml"

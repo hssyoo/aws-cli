@@ -1,5 +1,9 @@
-use super::super::printable::NONPRINTABLE;
 use super::*;
+
+/// `str.isprintable` of a code point, a lone surrogate never printable.
+fn is_printable(code: u32) -> bool {
+    char::from_u32(code).is_some_and(pytext::repr::is_printable)
+}
 
 #[test]
 fn python_repr_preserves_printable_unicode_and_escapes_surrogates() {
@@ -23,13 +27,7 @@ fn python_repr_preserves_printable_unicode_and_escapes_surrogates() {
 }
 
 #[test]
-fn printable_ranges_are_sorted_maximal_and_match_unicode_boundaries() {
-    for window in NONPRINTABLE.windows(2) {
-        assert!(window[0].0 <= window[0].1);
-        assert!(window[0].1 + 1 < window[1].0);
-    }
-    assert_eq!(NONPRINTABLE.first().map(|range| range.0), Some(0x80));
-    assert_eq!(NONPRINTABLE.last().map(|range| range.1), Some(0x10ffff));
+fn printable_code_points_match_unicode_boundaries() {
     for code in [
         0x80, 0x85, 0xa0, 0xad, 0x378, 0x200b, 0x2028, 0x3000, 0xdc80, 0xdcff, 0xe000, 0xe0001,
         0x10ffff,

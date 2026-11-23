@@ -2,7 +2,6 @@
 
 mod defaults;
 mod errors;
-mod printable;
 #[cfg(windows)]
 mod registry;
 mod text;

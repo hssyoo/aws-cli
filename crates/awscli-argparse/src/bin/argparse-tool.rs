@@ -5,6 +5,8 @@ use awscli_argparse::{
     tables, tool, unpack,
 };
 use std::io::{Read, Write};
+// The library's text primitives; the tool reaches them through it.
+use pytext as _;
 const BATCH_RECORD_COUNT_MAX: usize = 1 << 16;
 const BATCH_RECORD_BYTES_TYPICAL: usize = 4096;
 const BATCH_BYTES_MAX: usize = BATCH_RECORD_COUNT_MAX * BATCH_RECORD_BYTES_TYPICAL;
