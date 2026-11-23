@@ -118,6 +118,34 @@ macro_rules! message_error {
 }
 message_error!(SerializeError, ParseError);
 
+/// What botocore's paginator (paginate.py) raises of its own as it pages,
+/// besides a page's call failure. The CLI's `GeneralExceptionHandler`
+/// prints each as `str(exception)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PaginationError {
+    /// `PaginationError`, with its `message`.
+    Pagination(String),
+    /// A `ValueError`: `Bad starting token: ...`, or `int()`'s of
+    /// `MaxItems` or `PageSize`.
+    Value(String),
+    /// Any other exception the Python route raises on the same input (a
+    /// `TypeError`, `KeyError`, `IndexError`, `AttributeError` or
+    /// `OverflowError`): its text.
+    Other(String),
+}
+
+impl std::fmt::Display for PaginationError {
+    /// `PaginationError.fmt`, and the other exceptions' `str`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pagination(message) => write!(f, "Error during pagination: {message}"),
+            Self::Value(text) | Self::Other(text) => f.write_str(text),
+        }
+    }
+}
+
+impl std::error::Error for PaginationError {}
+
 /// Why a call has no output.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -152,6 +180,14 @@ pub enum CallError {
     /// A call the model client leaves to the Python route, decided before
     /// any request.
     Unsupported(Unsupported),
+    /// What the paginator raises between its calls.
+    Pagination(PaginationError),
+}
+
+impl From<PaginationError> for CallError {
+    fn from(error: PaginationError) -> Self {
+        Self::Pagination(error)
+    }
 }
 
 impl std::fmt::Display for CallError {
@@ -172,6 +208,7 @@ impl std::fmt::Display for CallError {
             Self::Interrupted => f.write_str("the call was interrupted"),
             Self::UnknownOperation(name) => write!(f, "Unknown operation: {name}"),
             Self::Unsupported(unsupported) => write!(f, "not supported natively: {unsupported}"),
+            Self::Pagination(error) => error.fmt(f),
         }
     }
 }
