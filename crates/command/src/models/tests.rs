@@ -33,13 +33,40 @@ fn expand(path: &[u8]) -> Option<Vec<u8>> {
     awscli_argparse::unpack::expand_user(&vars, &env)
 }
 
+/// `check` of the source over the payload, `data_path` and nothing
+/// reproduced: every table an initializer edits is customized.
 fn with_source<T>(
     data_path: Option<OsString>,
     check: impl FnOnce(&ModelSource<'_>) -> T,
 ) -> Result<T> {
+    with_reproduced(data_path, &[], check)
+}
+
+/// Every registry initializer that `operations`' tables and their
+/// services' command tables meet: with all of them reproduced, none of
+/// those tables is customized.
+fn met(data_path: Option<OsString>, operations: &[(&str, &str)]) -> Result<Vec<&'static str>> {
+    with_source(data_path, |source| {
+        let mut met = Vec::new();
+        for (command, operation) in operations {
+            let events = [format!("building-command-table.{command}")];
+            met.extend(touching(source, command, operation));
+            met.extend(source.patterns().registry_entries(&events));
+        }
+        met.into_iter()
+            .map(|name| &*Box::leak(name.into_boxed_str()))
+            .collect()
+    })
+}
+
+fn with_reproduced<T>(
+    data_path: Option<OsString>,
+    reproduced: &[&'static str],
+    check: impl FnOnce(&ModelSource<'_>) -> T,
+) -> Result<T> {
     let bytes = payload()?;
     let view = View::new(&bytes)?;
-    let source = ModelSource::from_payload(view, data_path.as_deref(), &expand)?;
+    let source = ModelSource::from_payload(view, data_path.as_deref(), &expand, reproduced)?;
     Ok(check(&source))
 }
 
@@ -122,7 +149,7 @@ fn an_operation_table_is_its_members_then_the_cross_cutting_arguments() -> Resul
         let skeleton = argument(table, "generate-cli-skeleton");
         assert_eq!(skeleton.constant, Some("input"));
         assert_eq!(table.overrides.len(), 3);
-        assert!(!table.customized && !table.typed());
+        assert!(!table.typed());
     })
 }
 
@@ -150,7 +177,9 @@ fn a_paginated_operation_hides_its_tokens_and_adds_the_page_options() -> Result<
 /// its own failures where nothing customizes it.
 #[test]
 fn a_typed_table_renders_its_failures_natively() -> Result<()> {
-    with_source(Some(fake_models()), |source| {
+    let operations = [("zjson", "list-things"), ("zjson", "measure")];
+    let met = met(Some(fake_models()), &operations)?;
+    with_reproduced(Some(fake_models()), &met, |source| {
         let table = source
             .table("zjson", "list-things")
             .unwrap_or_else(|| panic!("table"));
@@ -186,16 +215,20 @@ fn booleans_pair_with_their_negations_and_stay_optional() -> Result<()> {
     })
 }
 
+/// A table that an initializer outside the reproduced set edits is
+/// customized, and its failures are Python's; with every initializer its
+/// events meet reproduced, it is not.
 #[test]
 fn customized_tables_leave_their_failures_to_python() -> Result<()> {
     with_source(None, |source| {
+        assert!(!source.reproduces_failures("sts", Some("get-caller-identity")));
+        assert!(!source.reproduces_failures("nosuch", None));
+    })?;
+    let met = met(None, &[("sts", "get-caller-identity")])?;
+    with_reproduced(None, &met, |source| {
         assert!(source.reproduces_failures("sts", None));
         assert!(source.reproduces_failures("sts", Some("get-caller-identity")));
-        assert!(
-            !source.reproduces_failures("ec2", None),
-            "removals edit ec2's table"
-        );
-        assert!(!source.reproduces_failures("nosuch", None));
+        assert!(!source.reproduces_failures("ec2", None));
     })
 }
 

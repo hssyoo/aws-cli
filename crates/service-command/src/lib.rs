@@ -15,6 +15,9 @@ pub mod credentials;
 pub mod invoke;
 pub mod source;
 
+// The derive-tables tool reads the payload and writes JSON.
+use {pyload as _, serde_json as _};
+
 pub use source::ServiceSource;
 
 #[cfg(test)]

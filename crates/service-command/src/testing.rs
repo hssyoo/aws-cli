@@ -38,7 +38,8 @@ pub fn with_models<T>(check: impl FnOnce(ModelSource<'_>) -> T) -> Result<T> {
     let bytes = payload()?;
     let view = pyload::View::new(&bytes)?;
     let data_path = fake_models();
-    let source = ModelSource::from_payload(view, Some(&data_path), &expand)?;
+    let edits = crate::coverage::table_edits();
+    let source = ModelSource::from_payload(view, Some(&data_path), &expand, &edits)?;
     Ok(check(source))
 }
 

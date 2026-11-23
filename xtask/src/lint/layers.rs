@@ -132,6 +132,7 @@ const SERVICE_COMMAND: &[&str] = &[
     "credentials",
     "format",
     "model",
+    "pyload",
     "service-errors",
 ];
 const S3: &[&str] = &[

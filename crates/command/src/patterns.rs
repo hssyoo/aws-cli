@@ -466,15 +466,5 @@ impl Subject<'_> {
     }
 }
 
-/// A native piece of the CLI side and the Python registry entries it
-/// stands in for (`module.function`), so admission can tell an entry that
-/// touches an invocation from one whose effect native reproduces. The
-/// client side's counterpart is the `client` crate's `Customization`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CliCustomization {
-    pub id: &'static str,
-    pub replaces: &'static [&'static str],
-}
-
 #[cfg(test)]
 mod tests;

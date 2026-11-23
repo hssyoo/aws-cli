@@ -31,7 +31,9 @@ pub fn source(env: &SnapshotEnv) -> Option<ServiceSource<'static>> {
     }
     let expand =
         |path: &[u8]| unpack::expand_user(&unpack::expand_vars(path, &variables)?, &variables);
-    let models = ModelSource::from_payload(view, env.var_os("AWS_DATA_PATH"), &expand).ok()?;
+    let edits = service_command::coverage::table_edits();
+    let models =
+        ModelSource::from_payload(view, env.var_os("AWS_DATA_PATH"), &expand, &edits).ok()?;
     Some(ServiceSource::new(
         models,
         &customizations::TABLE,
