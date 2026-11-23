@@ -1,5 +1,4 @@
-//! Hand-written command rows and the bound command they produce.
-use awscli_argparse::{Argument, ParseResult};
+//! What a registry command needs, and the bound command it produces.
 use awscli_config::ParsedFiles;
 use cli_core::EnvMap;
 use cli_core::cli_error::{CommandFailure, PythonReason};
@@ -7,23 +6,6 @@ use cli_core::command::Globals;
 use std::borrow::Cow;
 use std::io::Write;
 use std::path::Path;
-
-/// One node of the hand-written command tree: its pinned argparse table,
-/// beside the handler in the owning crate, and how it binds.
-#[derive(Debug)]
-pub struct CommandSpec {
-    pub name: &'static str,
-    pub arguments: &'static [Argument<'static>],
-    pub subcommands: &'static [&'static CommandSpec],
-    pub needs: Needs,
-    pub streams: StreamPolicy,
-    /// `None`: pinned for parsing, with no native handler; the invocation
-    /// is Python's.
-    pub bind: Option<BindFn>,
-}
-
-/// Bind a completed parse to an invocation, or name why Python runs it.
-pub type BindFn = fn(&ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission>;
 
 /// What the router must resolve before the command may run.
 #[derive(Debug, Clone, PartialEq, Eq)]

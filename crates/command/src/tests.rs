@@ -34,7 +34,7 @@ impl OperationSource for Fake {
     fn is_root(&self, name: &str) -> bool {
         // A source that also claims a pinned root's or a spec's name never
         // shadows it.
-        matches!(name, "zsvc" | "s3" | "zlocal")
+        matches!(name, "zsvc" | "s3")
     }
     fn operations(&self, root: &str) -> Option<Cow<'_, [&str]>> {
         self.is_root(root)
@@ -71,59 +71,10 @@ impl OperationSource for Fake {
     }
 }
 
-fn show(_: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
-    Ok(Box::new(Echo("shown".into())))
-}
-const SHOW_ARGUMENTS: &[Argument] = &[Argument::new("key")];
-static SHOW: CommandSpec = CommandSpec {
-    name: "show",
-    arguments: SHOW_ARGUMENTS,
-    subcommands: &[],
-    needs: Needs::Client {
-        service: Cow::Borrowed("zlocal"),
-    },
-    streams: StreamPolicy::Formatted,
-    bind: Some(show),
-};
-static PINNED_ONLY: CommandSpec = CommandSpec {
-    name: "pinned-only",
-    bind: None,
-    ..SHOW_SPEC_BASE
-};
-const SHOW_SPEC_BASE: CommandSpec = CommandSpec {
-    name: "",
-    arguments: &[],
-    subcommands: &[],
-    needs: Needs::Client {
-        service: Cow::Borrowed("zlocal"),
-    },
-    streams: StreamPolicy::Formatted,
-    bind: None,
-};
-static ZLOCAL: CommandSpec = CommandSpec {
-    name: "zlocal",
-    subcommands: &[&SHOW, &PINNED_ONLY],
-    ..SHOW_SPEC_BASE
-};
-static SPECS: [&CommandSpec; 1] = [&ZLOCAL];
 static PINNED: [&awscli_argparse::tables::Command<'static>; 1] = [&awscli_argparse::tables::S3];
 
 fn registry(source: &Fake) -> Registry<'_> {
-    Registry::new(&PINNED, &SPECS, Some(source))
-}
-
-#[test]
-fn a_spec_lineage_resolves_to_its_spec() {
-    let source = Fake;
-    let registry = registry(&source);
-    assert!(matches!(
-        registry.resolve(&["zlocal", "show"]),
-        Resolution::Spec(spec) if std::ptr::eq(spec, &SHOW)
-    ));
-    assert!(matches!(
-        registry.resolve(&["zlocal"]),
-        Resolution::Spec(spec) if std::ptr::eq(spec, &ZLOCAL)
-    ));
+    Registry::new(&PINNED, Some(source))
 }
 
 #[test]
@@ -150,7 +101,6 @@ fn pinned_partial_and_unknown_lineages_resolve_to_nothing() {
         &["zsvc"][..],
         &["zsvc", "nosuch"],
         &["zsvc", "get-thing", "deeper"],
-        &["zlocal", "nosuch"],
         &["s3", "ls"],
         &["s3"],
         &["nosuch"],
@@ -170,10 +120,10 @@ fn root<'a>(registry: &Registry<'a>, name: &str) -> Node<'a> {
 }
 
 #[test]
-fn roots_are_pinned_then_specs_then_the_source() {
+fn roots_are_pinned_then_the_source() {
     let source = Fake;
     let registry = registry(&source);
-    for name in ["s3", "zlocal", "zsvc"] {
+    for name in ["s3", "zsvc"] {
         assert!(registry.is_root(name), "{name}");
     }
     assert!(!registry.is_root("ec2"));
@@ -183,10 +133,6 @@ fn roots_are_pinned_then_specs_then_the_source() {
         pinned.subcommands.as_deref().map(<[&str]>::len),
         awscli_argparse::tables::S3.subcommands.map(<[_]>::len)
     );
-    let spec = root(&registry, "zlocal");
-    assert_eq!(spec.kind, CommandKind::Basic);
-    let children = ["show", "pinned-only"];
-    assert_eq!(spec.subcommands.as_deref(), Some(&children[..]));
     let service = root(&registry, "zsvc");
     assert_eq!(service.kind, CommandKind::Service);
     let operations = ["get-thing", "list-things"];
@@ -206,7 +152,6 @@ fn children_come_from_the_tree_that_owns_the_root() {
     assert_eq!(operation.kind, CommandKind::Operation);
     assert_eq!(&*operation.arguments, THING_ARGUMENTS);
     assert!(operation.subcommands.is_none());
-    assert_eq!(&*child(&["zlocal"], "show").arguments, SHOW_ARGUMENTS);
     assert_eq!(child(&["s3"], "ls").kind, CommandKind::Basic);
     assert!(registry.subcommand(&["zsvc"], "nosuch").is_none());
     assert!(
@@ -223,9 +168,6 @@ fn failures_render_natively_only_where_the_registry_binds() {
     for (lineage, native) in [
         (&["zsvc"][..], true),
         (&["zsvc", "get-thing"], true),
-        (&["zlocal"], true),
-        (&["zlocal", "show"], true),
-        (&["zlocal", "pinned-only"], false),
         (&["s3"], false),
         (&["s3", "ls"], false),
         (&["nosuch"], false),
@@ -263,22 +205,18 @@ fn run(invocation: &dyn Invocation) -> (Result<u8, CommandFailure>, Vec<u8>) {
 }
 
 #[test]
-fn a_parsed_lineage_binds_through_its_spec_or_its_source() {
+fn a_parsed_lineage_binds_through_its_source() {
     let source = Fake;
     let registry = registry(&source);
     for (args, text) in [
         (&["zsvc", "get-thing", "--thing-id", "t-1"][..], "t-1\n"),
         (&["zsvc", "list-things"], "all\n"),
-        (&["zlocal", "show", "--key", "k"], "shown\n"),
     ] {
         let parsed = parse(&registry, args);
         assert_eq!(parsed.outcome, Outcome::Parsed, "{args:?}");
         let names: Vec<_> = parsed.lineage.iter().map(|node| &*node.name).collect();
         let bound = match registry.resolve(&names) {
             Resolution::Operation(operation) => operation.bind(&parsed),
-            Resolution::Spec(CommandSpec {
-                bind: Some(bind), ..
-            }) => bind(&parsed),
             other => panic!("{args:?}: {other:?}"),
         };
         let Ok(invocation) = bound else {

@@ -45,7 +45,7 @@ pub fn with_models<T>(check: impl FnOnce(ModelSource<'_>) -> T) -> Result<T> {
 /// `argv` parsed and unpacked over a registry holding `models`, as the
 /// router completes a model operation's parse.
 pub fn parsed<'s>(source: &'s crate::ServiceSource<'s>, argv: &[&str]) -> ParseResult<'s> {
-    let registry: &'s Registry<'s> = Box::leak(Box::new(Registry::new(&[], &[], Some(source))));
+    let registry: &'s Registry<'s> = Box::leak(Box::new(Registry::new(&[], Some(source))));
     let argv: Vec<String> = argv.iter().map(|arg| (*arg).to_owned()).collect();
     let mut result = awscli_argparse::parse(&argv, &Options::default(), &registry.tables());
     let variables = HashMap::new();

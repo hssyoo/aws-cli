@@ -1,29 +1,10 @@
-//! The route of a command the registry resolves: a hand-written spec or an
-//! operation of a model source. It meets the stages the pinned `s3`
+//! The route of a command the registry resolves: an operation of a model
+//! source. It meets the stages the pinned `s3`
 //! commands meet, in their order: globals, completion, the session's start,
 //! binding, settings admission, the output format, and the endpoint checks.
 //! The prologue (session fallback, alias rule) ran in the caller.
 use super::*;
-use ::command::{CommandSpec, Needs, Operation, Resolution, StreamPolicy};
-
-/// What binds the lineage the parse reached.
-#[derive(Debug, Clone, Copy)]
-enum Bound<'r> {
-    Spec(&'static CommandSpec),
-    Operation(Operation<'r>),
-    /// A hand-written root with subcommands and no handler, whose bare
-    /// parse is its usage failure.
-    Group,
-}
-impl Bound<'_> {
-    fn target(&self) -> globals::Target {
-        match self {
-            Self::Spec(spec) => globals::Target::Streams(spec.streams),
-            Self::Operation(operation) => globals::Target::Streams(operation.streams()),
-            Self::Group => globals::Target::Group,
-        }
-    }
-}
+use ::command::{Needs, Operation, Resolution, StreamPolicy};
 
 /// [`route_parsed`] for a lineage the pinned enum path does not bind.
 pub(super) fn route<E: EnvMap>(
@@ -37,15 +18,11 @@ pub(super) fn route<E: EnvMap>(
         .map(|node| node.name.to_string())
         .collect();
     let names: Vec<&str> = owned.iter().map(String::as_str).collect();
-    let bound = match config.registry.resolve(&names) {
-        Resolution::Spec(spec) if spec.bind.is_some() => Bound::Spec(spec),
-        Resolution::Spec(spec) if !spec.subcommands.is_empty() => Bound::Group,
-        Resolution::Operation(operation) => Bound::Operation(operation),
-        Resolution::Spec(_) | Resolution::Unknown => {
-            return Verdict::Python(PythonReason::UnsupportedSubcommand);
-        }
+    let Resolution::Operation(operation) = config.registry.resolve(&names) else {
+        return Verdict::Python(PythonReason::UnsupportedSubcommand);
     };
-    if let Some(reason) = globals::route_parsed_unsupported_global(result, bound.target()) {
+    let target = globals::Target::Streams(operation.streams());
+    if let Some(reason) = globals::route_parsed_unsupported_global(result, target) {
         return Verdict::Python(reason);
     }
     // Which of a model operation's options bind natively is the source's
@@ -57,7 +34,7 @@ pub(super) fn route<E: EnvMap>(
     if let Outcome::Failure(failure) = &result.outcome {
         return session_start(result, config).unwrap_or(Verdict::Failure(failure.clone()));
     }
-    let verdict = admit(result, config, bound, unpack.directory);
+    let verdict = admit(result, config, operation, unpack.directory);
     if matches!(verdict, Verdict::Run(_))
         && let Some(started) = session_start(result, config)
     {
@@ -89,27 +66,14 @@ fn deferred_reason(result: &ParseResult<'_>) -> PythonReason {
 fn admit<E: EnvMap>(
     result: &ParseResult<'_>,
     config: &Configuration<'_, E>,
-    bound: Bound<'_>,
+    operation: Operation<'_>,
     directory: &std::path::Path,
 ) -> Verdict {
-    let bind = match bound {
-        Bound::Spec(CommandSpec {
-            bind: Some(bind),
-            needs,
-            streams,
-            ..
-        }) => bind(result).map(|invocation| (invocation, needs.clone(), *streams)),
-        Bound::Operation(operation) => operation
-            .bind(result)
-            .map(|invocation| (invocation, operation.needs(), operation.streams())),
-        Bound::Spec(_) | Bound::Group => {
-            return Verdict::Python(PythonReason::UnsupportedSubcommand);
-        }
-    };
-    let (invocation, needs, streams) = match bind {
-        Ok(bound) => bound,
+    let invocation = match operation.bind(result) {
+        Ok(invocation) => invocation,
         Err(::command::Admission::Python(reason)) => return Verdict::Python(reason),
     };
+    let (needs, streams) = (operation.needs(), operation.streams());
     let ns = &result.globals.namespace;
     let globals = bind_globals(ns);
     if let Some(reason) = settings_refusal(config, &globals, ns, streams) {

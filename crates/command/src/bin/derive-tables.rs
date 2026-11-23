@@ -77,7 +77,7 @@ fn touching(
 /// Parse every request of the JSON-lines file: `{"argv": [...], "color":
 /// bool}`, with the chain's value processing for a parse that completes.
 fn parse(source: &ModelSource<'_>, requests: &Path, output: &mut dyn Write) -> Result<(), Error> {
-    let registry = command::Registry::new(&[&awscli_argparse::tables::S3], &[], Some(source));
+    let registry = command::Registry::new(&[&awscli_argparse::tables::S3], Some(source));
     let tables = registry.tables();
     let variables = unpack::process_variables();
     let directory = unpack::current_directory()?;

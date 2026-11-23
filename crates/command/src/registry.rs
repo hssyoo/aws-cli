@@ -1,6 +1,6 @@
 //! Resolving a lineage to what binds it, and supplying the parse's
 //! command tables.
-use crate::spec::{Admission, CommandSpec, Invocation, Needs, StreamPolicy};
+use crate::spec::{Admission, Invocation, Needs, StreamPolicy};
 use awscli_argparse::tables::{self, CommandKind, Node, RequiredOverride, Roots, Tables};
 use awscli_argparse::{Argument, ParseResult};
 use std::borrow::Cow;
@@ -31,21 +31,17 @@ pub trait OperationSource: std::fmt::Debug {
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission>;
 }
 
-/// The root table: pinned grammars, hand-written specs, then a model
-/// source, in that precedence, so a hand-written row claims a path before
-/// the model does.
+/// The root table: pinned grammars, then a model source, in that
+/// precedence, so a pinned grammar claims its root before the model does.
 #[derive(Debug, Clone, Copy)]
 pub struct Registry<'s> {
     pinned: tables::Pinned<'static>,
-    specs: &'static [&'static CommandSpec],
     source: Option<&'s dyn OperationSource>,
 }
 
 /// What a parsed lineage resolves to.
 #[derive(Debug, Clone, Copy)]
 pub enum Resolution<'r> {
-    /// A hand-written command.
-    Spec(&'static CommandSpec),
     /// An operation of a model source.
     Operation(Operation<'r>),
     /// Nothing the registry binds: a pinned grammar, which the router's own
@@ -77,16 +73,13 @@ impl Operation<'_> {
 
 impl<'s> Registry<'s> {
     /// A registry over `pinned` grammars, parsed natively and bound by the
-    /// router's own path; hand-written `specs`; and an optional model
-    /// `source`.
+    /// router's own path, and an optional model `source`.
     pub const fn new(
         pinned: &'static [&'static tables::Command<'static>],
-        specs: &'static [&'static CommandSpec],
         source: Option<&'s dyn OperationSource>,
     ) -> Self {
         Self {
             pinned: tables::Pinned(pinned),
-            specs,
             source,
         }
     }
@@ -100,7 +93,6 @@ impl<'s> Registry<'s> {
     /// Whether `name` is a root of any kind.
     pub fn is_root(&self, name: &str) -> bool {
         self.pinned.find(&[name]).is_some()
-            || self.spec_root(name).is_some()
             || self.source.is_some_and(|source| source.is_root(name))
     }
     /// What `lineage`, outermost first, resolves to.
@@ -111,9 +103,6 @@ impl<'s> Registry<'s> {
         if self.pinned.find(&[root]).is_some() {
             return Resolution::Unknown;
         }
-        if let Some(spec) = self.spec_root(root) {
-            return find_spec(spec, rest).map_or(Resolution::Unknown, Resolution::Spec);
-        }
         match (self.source, rest) {
             (Some(source), [name]) if source.arguments(root, name).is_some() => {
                 Resolution::Operation(Operation { source, root, name })
@@ -122,20 +111,17 @@ impl<'s> Registry<'s> {
         }
     }
     /// Whether a parse failure at `lineage` is one the registry's own
-    /// tables reproduce, and so renders natively: at a hand-written command
-    /// that binds or has subcommands, at a source's root, whose
+    /// tables reproduce, and so renders natively: at a source's root, whose
     /// ServiceArgParser takes only the operation, or at one of its
     /// operations. A pinned grammar's failures are the router's to judge.
     pub fn reproduces_failures(&self, lineage: &[&str]) -> bool {
         match self.resolve(lineage) {
-            Resolution::Spec(spec) => spec.bind.is_some() || !spec.subcommands.is_empty(),
             Resolution::Operation(operation) => operation
                 .source
                 .reproduces_failures(operation.root, Some(operation.name)),
             Resolution::Unknown => match lineage {
                 [root] => {
                     self.pinned.find(&[root]).is_none()
-                        && self.spec_root(root).is_none()
                         && self.source.is_some_and(|source| {
                             source.is_root(root) && source.reproduces_failures(root, None)
                         })
@@ -144,40 +130,12 @@ impl<'s> Registry<'s> {
             },
         }
     }
-    fn spec_root(&self, name: &str) -> Option<&'static CommandSpec> {
-        self.specs.iter().copied().find(|spec| spec.name == name)
-    }
-}
-
-fn find_spec(root: &'static CommandSpec, rest: &[&str]) -> Option<&'static CommandSpec> {
-    rest.iter().try_fold(root, |spec, name| {
-        spec.subcommands
-            .iter()
-            .copied()
-            .find(|child| child.name == *name)
-    })
-}
-
-/// A hand-written command's node: a `BasicCommand`, whose children are its
-/// subcommands.
-fn spec_node<'a>(spec: &'static CommandSpec) -> Node<'a> {
-    Node {
-        name: Cow::Borrowed(spec.name),
-        kind: CommandKind::Basic,
-        arguments: Cow::Borrowed(spec.arguments),
-        subcommands: (!spec.subcommands.is_empty())
-            .then(|| Cow::Owned(spec.subcommands.iter().map(|child| child.name).collect())),
-        overrides: Cow::Borrowed(&[]),
-    }
 }
 
 impl<'a, 's: 'a> Roots<'a> for Registry<'s> {
     fn root(&self, name: &str) -> Option<Node<'a>> {
         if let Some(command) = self.pinned.find(&[name]) {
             return Some(Node::pinned(command));
-        }
-        if let Some(spec) = self.spec_root(name) {
-            return Some(spec_node(spec));
         }
         let source = self.source?;
         Some(Node {
@@ -192,15 +150,6 @@ impl<'a, 's: 'a> Roots<'a> for Registry<'s> {
         let (root, rest) = lineage.split_first()?;
         if let Some(parent) = self.pinned.find(lineage) {
             return parent.subcommand(name).map(Node::pinned);
-        }
-        if let Some(spec) = self.spec_root(root) {
-            let parent = find_spec(spec, rest)?;
-            let child = parent
-                .subcommands
-                .iter()
-                .copied()
-                .find(|c| c.name == name)?;
-            return Some(spec_node(child));
         }
         let source = self.source?;
         if !rest.is_empty() {

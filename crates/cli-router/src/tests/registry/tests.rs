@@ -2,9 +2,7 @@
 //! `OperationSource` knows, through the same ordered stages as the pinned
 //! `s3` commands, to `Verdict::Run`.
 use super::*;
-use ::command::{
-    Admission, CommandSpec, Context, Invocation, Needs, OperationSource, Registry, StreamPolicy,
-};
+use ::command::{Admission, Context, Invocation, Needs, OperationSource, Registry, StreamPolicy};
 use awscli_argparse::Argument;
 use cli_core::cli_error::{Category, CommandFailure, Rendering};
 use std::borrow::Cow;
@@ -96,34 +94,6 @@ impl OperationSource for Fake {
     }
 }
 
-fn show(_: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
-    Ok(Box::new(Echo("shown".into())))
-}
-const SPEC: CommandSpec = CommandSpec {
-    name: "",
-    arguments: &[],
-    subcommands: &[],
-    needs: Needs::Client {
-        service: Cow::Borrowed("zlocal"),
-    },
-    streams: StreamPolicy::Formatted,
-    bind: None,
-};
-static SHOW: CommandSpec = CommandSpec {
-    name: "show",
-    bind: Some(show),
-    ..SPEC
-};
-static UNBOUND: CommandSpec = CommandSpec {
-    name: "unbound",
-    ..SPEC
-};
-static ZLOCAL: CommandSpec = CommandSpec {
-    name: "zlocal",
-    subcommands: &[&SHOW, &UNBOUND],
-    ..SPEC
-};
-static SPECS: [&CommandSpec; 1] = [&ZLOCAL];
 static PINNED: [&tables::Command<'static>; 1] = [&tables::S3];
 
 fn evaluate_in(
@@ -131,7 +101,7 @@ fn evaluate_in(
     env: &BTreeMap<String, String>,
     files: &ParsedFiles,
 ) -> (Verdict, ParseResult<'static>) {
-    const REGISTRY: Registry<'static> = Registry::new(&PINNED, &SPECS, Some(&Fake));
+    const REGISTRY: Registry<'static> = Registry::new(&PINNED, Some(&Fake));
     let argv = args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
     let mut result = awscli_argparse::parse(&argv, &Options::default(), &REGISTRY.tables());
     let vars = env
@@ -209,41 +179,6 @@ fn a_root_only_the_registry_knows_parses_binds_and_runs() {
     );
 }
 
-#[test]
-fn a_hand_written_spec_runs_and_one_without_a_handler_is_python_s() {
-    let run = run_of(evaluate_with(
-        &["zlocal", "show"],
-        &BTreeMap::new(),
-        &files(""),
-    ));
-    assert_eq!(
-        run.needs,
-        Needs::Client {
-            service: "zlocal".into()
-        }
-    );
-    assert_eq!(output(&run), b"shown\n");
-    assert!(matches!(
-        evaluate_with(&["zlocal", "unbound"], &BTreeMap::new(), &files("")),
-        Verdict::Python(PythonReason::UnsupportedSubcommand)
-    ));
-    assert!(matches!(
-        evaluate_with(
-            &["zlocal", "unbound", "--bogus"],
-            &BTreeMap::new(),
-            &files("")
-        ),
-        Verdict::Python(PythonReason::UnsupportedSubcommand)
-    ));
-    match evaluate_with(&["zlocal"], &BTreeMap::new(), &files("")) {
-        Verdict::Failure(failure) => assert_eq!(failure.kind, "too_few_arguments"),
-        other => panic!("{other:?}"),
-    }
-}
-
-/// Python's stderr for `aws sts nosuch`, `aws sts get-caller-identity
-/// --nosuch` and `aws sts assume-role --role-arn x`, captured from the
-/// Python route on 2026-11-22 (reports/T3/python-parity-capture.txt).
 #[test]
 fn parse_failures_of_a_derived_command_render_as_python_does() {
     const HELP: &str = "usage: aws [options] <command> <subcommand> [<subcommand> ...] \

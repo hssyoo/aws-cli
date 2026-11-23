@@ -11,7 +11,7 @@ use std::{
 /// The registry the pinned tables parse with: the `s3` tree, no
 /// hand-written commands and no model source.
 const PINNED_REGISTRY: ::command::Registry<'static> =
-    ::command::Registry::new(&[&tables::S3], &[], None);
+    ::command::Registry::new(&[&tables::S3], None);
 /// The assertions compare verdicts whole. A `Run` holds a boxed
 /// invocation, which has no equality of its own, so two runs are equal
 /// when their fields are and their invocations print alike.
