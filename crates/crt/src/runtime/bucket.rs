@@ -130,8 +130,11 @@ impl BucketRuntime {
                 outcome.retries_exhausted = attempts.exhausted(limit);
                 return Ok(result);
             }
-            let delay =
-                botocore_retry::backoff_delay(&mut cli_core::random::word, attempts.count, kind);
+            let delay = botocore_retry::backoff_delay(
+                &mut cli_core::random::word,
+                attempts.count,
+                kind.base(),
+            );
             if interrupt.sleep(delay).is_err() {
                 cancel(outcome);
                 return Ok(result);
