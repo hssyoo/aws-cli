@@ -80,8 +80,16 @@ def printed(value: dict[str, Any]) -> str:
 
 # Operations of services whose tables the editors alone touched, which
 # meet no other uncovered customization: lambda (rest-json) and ses
-# (query).
+# (query), one of them paginated.
 FREED: Final = {
+    "lambda-list-functions-no-paginate": (
+        "lambda list-functions --no-paginate",
+        {"Functions": [{"FunctionName": "f"}]},
+    ),
+    "lambda-list-functions": (
+        "lambda list-functions",
+        {"Functions": [{"FunctionName": "f"}]},
+    ),
     "lambda-get-account-settings": (
         "lambda get-account-settings",
         {"AccountLimit": {"TotalCodeSize": 80530636800},
