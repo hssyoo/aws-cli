@@ -106,8 +106,11 @@ fn user_agent() -> UserAgentContext {
     }
 }
 
+/// More attempts than any service's default makes.
+const RESPONSES: usize = 10;
+
 /// The client `oracle.py`'s `layer_b` makes for `case`, and its transport.
-fn client(case: &Json, attempts: u64) -> Result<(Client, Arc<InMemoryTransport>)> {
+fn client(case: &Json) -> Result<(Client, Arc<InMemoryTransport>)> {
     let service = case["service"].as_str().ok_or("service")?;
     let settings = &case["settings"];
     let source = locations(case);
@@ -118,12 +121,14 @@ fn client(case: &Json, attempts: u64) -> Result<(Client, Arc<InMemoryTransport>)
         ..HttpResponse::default()
     });
     let transport = Arc::new(InMemoryTransport::new());
-    for _ in 0..attempts {
+    for _ in 0..RESPONSES {
         transport.respond(canned.clone());
     }
     let endpoint_url = settings["endpoint_url"].as_str();
     let mut client_settings = ClientSettings::new(format!("{service}.call"));
-    client_settings.max_attempts = Some(Resolved::new(attempts, SettingSource::Default));
+    client_settings.max_attempts = settings["max_attempts"]
+        .as_u64()
+        .map(|attempts| Resolved::new(attempts, SettingSource::Profile("max_attempts")));
     client_settings.endpoint_override = endpoint_url.is_some();
     // The oracle's keys are in the environment.
     client_settings.credential_source = cli_core::command::CredentialSource::Environment;
@@ -214,8 +219,7 @@ fn error_json(model: &Model, error: &CallError) -> Json {
 
 /// Layer B for one case, as `oracle.py` writes it.
 pub fn layer_b(case: &Json) -> Result<Json> {
-    let attempts = case["settings"]["max_attempts"].as_u64().unwrap_or(3);
-    let (client, transport) = client(case, attempts)?;
+    let (client, transport) = client(case)?;
     let operation = case["operation"].as_str().ok_or("operation")?;
     let input = decode(Value::from_serde(&case["input"]))?;
     let outcome = client.call(operation, input);

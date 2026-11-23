@@ -15,9 +15,8 @@ layer B, the call level: every prepared request a client of the CLI's own
 session sends (method, URL, ordered headers with Authorization, body) for
 pinned credentials, clock and uuids, and the outcome, captured in a
 before-send handler that returns the canned response to every attempt.
-Nothing is sent. The conventions are those of
-crates/customizations/tests/signature_parity: uuids numbered from 1, as
-client::testing::FixedRuntime numbers them, and SigV4's clock pinned.
+Nothing is sent. Uuids are numbered from 1, as client::testing::FixedRuntime
+numbers them, and SigV4's clock is pinned.
 
 Only inputs are committed; this output lives under target/parity.
 """
@@ -242,12 +241,16 @@ def layer_b(case, models):
     session = create_clidriver().session
     if case.get("models") == "fake":
         session.get_component("data_loader").search_paths.insert(0, str(models))
+    retries = {"mode": "standard"}
+    if "max_attempts" in settings:
+        # Attempts in all, as the config file's max_attempts counts them
+        # (botocore/config.py). Without it, a service's own default holds
+        # (retries/standard.py's _SERVICE_MAX_ATTEMPTS).
+        retries["max_attempts"] = settings["max_attempts"]
     config = Config(
         use_fips_endpoint=settings.get("fips", False),
         use_dualstack_endpoint=settings.get("dualstack", False),
-        # Attempts in all, as the config file's max_attempts counts them
-        # (botocore/config.py).
-        retries={"max_attempts": settings.get("max_attempts", 3), "mode": "standard"},
+        retries=retries,
     )
     client = session.create_client(
         case["service"],
