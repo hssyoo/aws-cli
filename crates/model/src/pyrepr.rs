@@ -112,6 +112,31 @@ fn digit_part(text: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || byte == b'_')
 }
 
+/// `int(text)` in base 10: surrounding whitespace, a sign, and ASCII digits
+/// with single underscores between them, as an `Integer` or, beyond `i64`,
+/// a `BigInteger`. Python also reads non-ASCII decimal digits; those are
+/// refused here.
+pub fn int_from_text(text: &str) -> Option<Value> {
+    let trimmed =
+        text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c));
+    let digits = trimmed.strip_prefix(['+', '-']).unwrap_or(trimmed);
+    if !digit_part(digits) {
+        return None;
+    }
+    let negative = trimmed.starts_with('-');
+    let digits = digits.replace('_', "");
+    let digits = digits.trim_start_matches('0');
+    let canonical = match (negative, digits) {
+        (_, "") => "0".to_owned(),
+        (true, digits) => format!("-{digits}"),
+        (false, digits) => digits.to_owned(),
+    };
+    Some(match canonical.parse::<i64>() {
+        Ok(value) => Value::Integer(value),
+        Err(_) => Value::BigInteger(canonical.into()),
+    })
+}
+
 /// `repr(value)` for the Python object the value stands for.
 pub fn py_repr(value: &Value) -> String {
     let mut out = String::new();

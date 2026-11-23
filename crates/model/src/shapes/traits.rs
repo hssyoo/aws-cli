@@ -163,7 +163,7 @@ impl Traits {
             "enum" => self.enum_values = strings(value).ok_or("enum")?.into(),
             "min" => self.min = Some(bound(value).ok_or("min")?),
             "max" => self.max = Some(bound(value).ok_or("max")?),
-            "xmlNamespace" => self.xml_namespace = Some(namespace(object(value, "xmlNamespace")?)),
+            "xmlNamespace" => self.xml_namespace = Some(namespace(value)?),
             "error" => self.error = Some(error(object(value, "error")?)),
             "retryable" => self.retryable = Some(retryable(object(value, "retryable")?)),
             "contextParam" => self.context_param = context_param(object(value, "contextParam")?),
@@ -232,12 +232,21 @@ fn bound(value: &Json) -> Option<Bound> {
     }
 }
 
-fn namespace(object: &serde_json::Map<String, Json>) -> XmlNamespace {
+/// An `xmlNamespace`: `{"uri", "prefix"}`, or the URI alone as text, as the
+/// protocol suite's models also write it.
+fn namespace(value: &Json) -> Result<XmlNamespace, &'static str> {
+    if let Some(uri) = value.as_str() {
+        return Ok(XmlNamespace {
+            uri: Some(uri.into()),
+            prefix: None,
+        });
+    }
+    let object = object(value, "xmlNamespace")?;
     let field = |name| object.get(name).and_then(Json::as_str).map(Box::from);
-    XmlNamespace {
+    Ok(XmlNamespace {
         uri: field("uri"),
         prefix: field("prefix"),
-    }
+    })
 }
 
 fn error(object: &serde_json::Map<String, Json>) -> ErrorTrait {

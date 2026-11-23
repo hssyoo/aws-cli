@@ -1,6 +1,7 @@
 //! A wire protocol: how an operation's input becomes a request and a
 //! response becomes its output or a service error. One implementation per
-//! protocol family; none is implemented yet.
+//! protocol family: [`query`] and [`json`] (1.0 and 1.1, with the
+//! query-compatible mode).
 use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse, Method};
 use model::shapes::{Metadata, Model, Operation};
@@ -18,6 +19,39 @@ pub struct Serialized {
     pub query: String,
     pub headers: Headers,
     pub body: Vec<u8>,
+    /// `host_prefix`: the operation's `endpoint.hostPrefix` with its host
+    /// labels filled in (`Serializer._expand_host_prefix`), for the call to
+    /// put before the endpoint's host.
+    pub host_prefix: Option<String>,
+}
+
+/// botocore's `timestamp_parser`: a timestamp member's wire value (XML text
+/// or a JSON number or string) to the parsed value.
+pub type TimestampHandler<'a> = &'a (dyn Fn(&Value) -> Result<Value, ParseError> + Sync);
+/// botocore's `blob_parser`: a blob member's base64 text to the parsed value.
+pub type BlobHandler<'a> = &'a (dyn Fn(&str) -> Result<Value, ParseError> + Sync);
+
+/// The parser defaults `ResponseParserFactory.set_parser_defaults` sets.
+#[derive(Clone, Copy)]
+pub struct ParseOptions<'a> {
+    pub timestamp: TimestampHandler<'a>,
+    pub blob: BlobHandler<'a>,
+}
+
+impl std::fmt::Debug for ParseOptions<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParseOptions").finish_non_exhaustive()
+    }
+}
+
+impl ParseOptions<'static> {
+    /// botocore's own: `parse_timestamp` to a [`Value::Timestamp`] and
+    /// `base64.b64decode` to a [`Value::Blob`]. The CLI replaces both
+    /// (`add_timestamp_parser`, its identity blob parser).
+    pub const BOTOCORE: Self = Self {
+        timestamp: &common::parse_timestamp,
+        blob: &common::decode_blob,
+    };
 }
 
 pub trait Protocol: Sync + std::fmt::Debug {
@@ -43,20 +77,31 @@ pub trait Protocol: Sync + std::fmt::Debug {
         model: &Model,
         operation: &Operation,
         response: &HttpResponse,
+        options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError>;
-    /// The service error a response that is not a success carries, as
-    /// botocore parses it, its modelled members included.
+    /// The service error a response with a status of 300 or more carries,
+    /// as botocore parses it (`ResponseParser.parse`, whose error path
+    /// starts at 301), its modelled members included
+    /// (`Endpoint._add_modeled_error_fields`).
+    ///
+    /// # Errors
+    /// `ResponseParserError`: a body the protocol cannot read.
     fn parse_error(
         &self,
         model: &Model,
         operation: &Operation,
         response: &HttpResponse,
-    ) -> ServiceError;
+        options: &ParseOptions<'_>,
+    ) -> Result<ServiceError, ParseError>;
 }
 
+mod common;
+pub mod json;
+pub mod query;
+
 /// The protocols implemented, which admission asks about without building
-/// a client. None yet: the query and json protocols come next.
-static IMPLEMENTED: &[&'static dyn Protocol] = &[];
+/// a client.
+static IMPLEMENTED: &[&'static dyn Protocol] = &[&query::Query, &json::Json];
 
 /// Why a model has no protocol botocore would speak.
 #[derive(Clone, Debug, PartialEq, Eq)]

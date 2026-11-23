@@ -85,6 +85,7 @@ version = "0.1.0"
 dependencies = [
  "cli-core",
  "model",
+ "serde_json",
  "timestamp",
 ]
 
