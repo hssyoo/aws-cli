@@ -20,4 +20,5 @@ format = { path = "../format" }
 model = { path = "../model" }
 
 [dev-dependencies]
+customizations = { path = "../customizations" }
 pyload = { path = "../pyload" }

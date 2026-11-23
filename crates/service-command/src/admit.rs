@@ -38,24 +38,15 @@ pub fn admit(
         return Err(PythonReason::UnsupportedSubcommand);
     };
     let (command, cli_operation) = (&*command.name, &*cli_operation.name);
+    operation(source, customizations, command, cli_operation)?;
     let lookup = || {
         let service = source.service(command)?;
         let table = source.table(command, cli_operation)?;
-        let matches = source.matches(command, cli_operation)?;
-        Some((service, service.operation(cli_operation)?, table, matches))
+        Some((service, service.operation(cli_operation)?, table))
     };
-    let Some((service, operation, table, matches)) = lookup() else {
+    let Some((service, operation, table)) = lookup() else {
         return Err(PythonReason::UnsupportedSubcommand);
     };
-    if client::protocol::for_model(&service.model).is_none() {
-        return Err(PythonReason::UnsupportedProtocol);
-    }
-    if unimplemented_trait(service, operation) {
-        return Err(PythonReason::UnsupportedTrait);
-    }
-    if coverage::uncovered(&matches, customizations, &service.name, &operation.name).is_some() {
-        return Err(PythonReason::UnportedCustomization);
-    }
     let input = crate::bind::bind(table, &parsed.values)?;
     let validation = validate_input(&service.model, operation, &input);
     if matches!(validation, Validation::Undecided(_)) {
@@ -70,15 +61,46 @@ pub fn admit(
     })
 }
 
+/// The stages decided by the model and the patterns alone, whatever the
+/// arguments: the protocol, the traits, then the customizations.
+pub fn operation(
+    source: &ModelSource<'_>,
+    customizations: &[&Customization],
+    command: &str,
+    cli_operation: &str,
+) -> Result<(), PythonReason> {
+    let lookup = || {
+        let service = source.service(command)?;
+        let matches = source.matches(command, cli_operation)?;
+        Some((service, service.operation(cli_operation)?, matches))
+    };
+    let Some((service, operation, matches)) = lookup() else {
+        return Err(PythonReason::UnsupportedSubcommand);
+    };
+    if client::protocol::for_model(&service.model).is_none() {
+        return Err(PythonReason::UnsupportedProtocol);
+    }
+    if unimplemented_trait(service, operation) {
+        return Err(PythonReason::UnsupportedTrait);
+    }
+    if coverage::uncovered(&matches, customizations, &service.name, &operation.name).is_some() {
+        return Err(PythonReason::UnportedCustomization);
+    }
+    Ok(())
+}
+
 /// A trait of the operation the native route does not implement: a
 /// paginator (`CLIOperationCaller._make_client_call` paginates), an event
 /// stream or a streaming member at either end (`has_event_stream_input`,
 /// `has_streaming_output` and their kin read the top-level members), or a
 /// document anywhere in its input or output, which neither the binding nor
-/// the formatter carries.
+/// the formatter carries; or one the client refuses before any request
+/// (`client::admission::unimplemented_trait`: request checksums, required
+/// endpoint discovery, the endpoint operation, request compression).
 pub fn unimplemented_trait(service: &Service, operation: &Operation) -> bool {
     let model = &service.model;
-    service.paginated(&operation.name)
+    client::admission::unimplemented_trait(operation).is_some()
+        || service.paginated(&operation.name)
         || [operation.input, operation.output]
             .into_iter()
             .flatten()
