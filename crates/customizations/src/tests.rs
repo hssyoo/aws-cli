@@ -67,7 +67,11 @@ fn sts_never_uses_its_global_endpoint_unless_its_rules_do() -> TestResult {
     Ok(())
 }
 
-fn decision(service: &str, response: &HttpResponse, error: Option<&ServiceError>) -> TestResult<Option<RetryDecision>> {
+fn decision(
+    service: &str,
+    response: &HttpResponse,
+    error: Option<&ServiceError>,
+) -> TestResult<Option<RetryDecision>> {
     let model = stub_model()?;
     let mut cx = context_for(service, &model)?;
     let attempt = Attempt::Response { response, error };
@@ -86,7 +90,10 @@ fn sts_retries_an_idp_communication_error() -> TestResult {
     };
     let mut error = ServiceError::new("AssumeRoleWithWebIdentity", 400);
     error.code = Some("IDPCommunicationError".into());
-    assert_eq!(decision("sts", &response, Some(&error))?, Some(RetryDecision::Retry));
+    assert_eq!(
+        decision("sts", &response, Some(&error))?,
+        Some(RetryDecision::Retry)
+    );
     assert_eq!(decision("iam", &response, Some(&error))?, None);
     error.code = Some("AccessDenied".into());
     assert_eq!(decision("sts", &response, Some(&error))?, None);
@@ -105,7 +112,10 @@ fn dynamodb_retries_a_body_whose_crc32_does_not_match() -> TestResult {
     };
     let actual = crc32(&body).to_string();
     assert_eq!(decision("dynamodb", &response(&actual), None)?, None);
-    assert_eq!(decision("dynamodb", &response("1"), None)?, Some(RetryDecision::Retry));
+    assert_eq!(
+        decision("dynamodb", &response("1"), None)?,
+        Some(RetryDecision::Retry)
+    );
     assert_eq!(decision("dynamodbstreams", &response("1"), None)?, None);
     let unchecked = HttpResponse {
         status: 200,
@@ -130,7 +140,10 @@ fn replaced_handlers_exist_in_botocore() -> TestResult {
     for customization in TABLE {
         for name in customization.replaces {
             let (module, function) = name.rsplit_once('.').ok_or(*name)?;
-            let path = module.strip_prefix("botocore.").ok_or(*name)?.replace('.', "/");
+            let path = module
+                .strip_prefix("botocore.")
+                .ok_or(*name)?
+                .replace('.', "/");
             let source = std::fs::read_to_string(data().join(format!("{path}.py")))?;
             assert!(source.contains(&format!("def {function}(")), "{name}");
         }
