@@ -117,6 +117,48 @@
         "shape": "StampOutput",
         "resultWrapper": "StampResult"
       }
+    },
+    "DescribeWidgets": {
+      "name": "DescribeWidgets",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "DescribeWidgetsMessage"
+      },
+      "output": {
+        "shape": "WidgetMessage",
+        "resultWrapper": "DescribeWidgetsResult"
+      }
+    },
+    "DescribeDefaults": {
+      "name": "DescribeDefaults",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "DescribeDefaultsMessage"
+      },
+      "output": {
+        "shape": "DescribeDefaultsResult",
+        "resultWrapper": "DescribeDefaultsResult"
+      }
+    },
+    "ListJobs": {
+      "name": "ListJobs",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "ListJobsInput"
+      },
+      "output": {
+        "shape": "ListJobsOutput",
+        "resultWrapper": "ListJobsResult"
+      }
     }
   },
   "shapes": {
@@ -639,6 +681,145 @@
         },
         "WhenHttp": {
           "shape": "HttpTime"
+        }
+      }
+    },
+    "DescribeWidgetsMessage": {
+      "type": "structure",
+      "members": {
+        "WidgetId": {
+          "shape": "String"
+        },
+        "MaxRecords": {
+          "shape": "Integer"
+        },
+        "Marker": {
+          "shape": "String"
+        }
+      }
+    },
+    "WidgetMessage": {
+      "type": "structure",
+      "members": {
+        "Marker": {
+          "shape": "String"
+        },
+        "Widgets": {
+          "shape": "WidgetList"
+        }
+      }
+    },
+    "WidgetList": {
+      "type": "list",
+      "member": {
+        "shape": "Widget",
+        "locationName": "Widget"
+      }
+    },
+    "Widget": {
+      "type": "structure",
+      "members": {
+        "WidgetId": {
+          "shape": "String"
+        },
+        "Size": {
+          "shape": "Integer"
+        }
+      }
+    },
+    "DescribeDefaultsMessage": {
+      "type": "structure",
+      "required": [
+        "Family"
+      ],
+      "members": {
+        "Family": {
+          "shape": "String"
+        },
+        "MaxRecords": {
+          "shape": "Integer"
+        },
+        "Marker": {
+          "shape": "String"
+        }
+      }
+    },
+    "DescribeDefaultsResult": {
+      "type": "structure",
+      "members": {
+        "Defaults": {
+          "shape": "Defaults"
+        }
+      }
+    },
+    "Defaults": {
+      "type": "structure",
+      "members": {
+        "Family": {
+          "shape": "String"
+        },
+        "Marker": {
+          "shape": "String"
+        },
+        "Parameters": {
+          "shape": "ParameterList"
+        }
+      }
+    },
+    "ParameterList": {
+      "type": "list",
+      "member": {
+        "shape": "Parameter",
+        "locationName": "Parameter"
+      }
+    },
+    "Parameter": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "String"
+        },
+        "Value": {
+          "shape": "String"
+        }
+      }
+    },
+    "ListJobsInput": {
+      "type": "structure",
+      "members": {
+        "MaxJobs": {
+          "shape": "Integer"
+        },
+        "Marker": {
+          "shape": "String"
+        }
+      }
+    },
+    "ListJobsOutput": {
+      "type": "structure",
+      "members": {
+        "Jobs": {
+          "shape": "JobsList"
+        },
+        "IsTruncated": {
+          "shape": "Boolean"
+        }
+      }
+    },
+    "JobsList": {
+      "type": "list",
+      "member": {
+        "shape": "Job"
+      }
+    },
+    "Job": {
+      "type": "structure",
+      "members": {
+        "JobId": {
+          "shape": "String"
+        },
+        "IsCanceled": {
+          "shape": "Boolean"
         }
       }
     }
