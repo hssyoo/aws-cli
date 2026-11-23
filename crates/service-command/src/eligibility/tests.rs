@@ -1,9 +1,10 @@
 use super::*;
 use crate::testing::{Result, with_models};
 
-/// sts's caller identity is admitted with no arguments, a paginated
-/// operation is refused, and the census over every service writes its
-/// counts to `target/service-eligibility.txt` for the report.
+/// sts's caller identity is admitted with no arguments, an operation whose
+/// paginator reads its token with an expression (`Jobs[-1].JobId`) is
+/// refused, and the census over every service writes its counts to
+/// `target/service-eligibility.txt` for the report.
 #[test]
 fn every_operation_has_a_standing() -> Result<()> {
     with_models(|models| {
@@ -13,7 +14,7 @@ fn every_operation_has_a_standing() -> Result<()> {
             Standing::NoArguments
         );
         assert_eq!(
-            standing(&models, table, "zjson", "list-things"),
+            standing(&models, table, "zquery", "list-jobs"),
             Standing::Refused(PythonReasonName("unsupported_trait"))
         );
         let started = std::time::Instant::now();
