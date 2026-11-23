@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 awscli-argparse = { path = "../awscli-argparse" }
+awscli-config = { path = "../awscli-config" }
 cli-core = { path = "../cli-core" }
 client = { path = "../client" }
 command = { path = "../command" }

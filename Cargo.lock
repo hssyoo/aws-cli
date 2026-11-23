@@ -389,6 +389,7 @@ name = "service-command"
 version = "0.1.0"
 dependencies = [
  "awscli-argparse",
+ "awscli-config",
  "cli-core",
  "client",
  "command",

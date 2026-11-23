@@ -125,6 +125,7 @@ const SERVICE_ERRORS: &[&str] = &[
 ];
 const SERVICE_COMMAND: &[&str] = &[
     "awscli-argparse",
+    "awscli-config",
     "cli-core",
     "client",
     "command",

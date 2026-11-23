@@ -3,16 +3,19 @@
 //! printed by the formatter `--output` selects, to stdout or the pager.
 //!
 //! [`Invocation::preflight`] does everything that needs neither a native
-//! runtime nor the network: the output format, the pager, the timestamp
-//! parser, the credential chain, the client, and the client's own refusals
-//! ([`Client::prepare`]), any of which can still hand the invocation to
-//! Python. [`Invocation::run`] then sends the call.
+//! runtime, the network nor a credential provider: the output format, the
+//! pager, the timestamp parser, whether the credential chain would reach a
+//! service the model client does not fetch from, the client, and the
+//! client's own refusals ([`Client::prepare`]), any of which can still hand
+//! the invocation to Python. [`Invocation::run`] then sends the prepared
+//! call; the credential chain is walked then, once (`crate::credentials`).
 use crate::admit::Admitted;
 use cli_core::cli_error::{CommandFailure, PythonReason};
 use cli_core::client_config::{ClientSettings, Trust};
 use cli_core::{EnvMap, aws_profile};
+use client::call::Prepared;
 use client::call::{Client, ClientParts, UserAgentContext};
-use client::credentials::ChainCredentials;
+use client::credentials::{ChainCredentials, CredentialSource};
 use client::endpoint::{EndpointConfig, EndpointInputs};
 use client::error::{CallError, ParseError};
 use client::hooks::Customization;
@@ -45,10 +48,11 @@ pub struct ServiceInvocation {
 /// What the preflight settled.
 #[derive(Debug)]
 struct Ready {
-    /// The client, or the failure botocore raises as its session loads
-    /// credentials, creates the client or prepares the call, which the run
-    /// reports.
+    /// The client and the prepared call, or the failure botocore raises as
+    /// it creates the client or prepares the call, which the run reports.
     client: Result<Client, CommandFailure>,
+    /// The call, prepared once in the preflight and sent by the run.
+    prepared: std::cell::RefCell<Option<Prepared>>,
     format: OutputFormat,
     destination: Destination,
     pager_env: Vec<(OsString, OsString)>,
@@ -96,22 +100,22 @@ impl Invocation for ServiceInvocation {
         {
             return Err(PythonReason::OutputEncoding);
         }
-        let failure = |error: CallError| service_errors::call_failure(&error, &self.model);
+        let failure = |error: CallError| match error {
+            CallError::Unsupported(unsupported) => Err(crate::admit::reason(&unsupported)),
+            other => Ok(service_errors::call_failure(&other, &self.model)),
+        };
+        let mut prepared = None;
         let client = match self.client(cx)? {
-            Ok(Ok(client)) => {
+            Ok(client) => {
                 match client.prepare(&self.admitted.operation, self.admitted.input.clone()) {
-                    Err(CallError::Unsupported(unsupported)) => {
-                        return Err(crate::admit::reason(&unsupported));
+                    Ok(call) => {
+                        prepared = Some(call);
+                        Ok(client)
                     }
-                    Err(error) => Err(failure(error)),
-                    Ok(_) => Ok(client),
+                    Err(error) => Err(failure(error)?),
                 }
             }
-            Ok(Err(CallError::Unsupported(unsupported))) => {
-                return Err(crate::admit::reason(&unsupported));
-            }
-            Ok(Err(error)) => Err(failure(error)),
-            Err(credentials) => Err(credentials),
+            Err(error) => Err(failure(error)?),
         };
         let pager_env = format::pager::environment(
             cx.variables
@@ -120,6 +124,7 @@ impl Invocation for ServiceInvocation {
         );
         let _ = self.ready.set(Ready {
             client,
+            prepared: std::cell::RefCell::new(prepared),
             format,
             destination,
             pager_env,
@@ -135,7 +140,13 @@ impl Invocation for ServiceInvocation {
             });
         };
         let client = ready.client.as_ref().map_err(Clone::clone)?;
-        let output = match client.call(&self.admitted.operation, self.admitted.input.clone()) {
+        let Some(prepared) = ready.prepared.borrow_mut().take() else {
+            return Err(CommandFailure {
+                message: b"the prepared call was already sent".to_vec(),
+                ..CommandFailure::new(cli_core::cli_error::Category::General)
+            });
+        };
+        let output = match client.send(prepared) {
             Ok(output) => output,
             Err(CallError::Interrupted) => return Ok(interrupted(cx)),
             Err(error) => return Err(service_errors::call_failure(&error, &self.model)),
@@ -180,12 +191,10 @@ fn interrupted(cx: &mut Context<'_>) -> u8 {
 
 impl ServiceInvocation {
     /// The client the session would create for this invocation, or the
-    /// failure its credentials (outside) or its creation (inside) raise; a
-    /// credential source the native chain does not fetch from is Python's.
-    fn client(
-        &self,
-        cx: &Preflight<'_>,
-    ) -> Result<Result<Result<Client, CallError>, CommandFailure>, PythonReason> {
+    /// failure its creation raises; a credential chain that would reach a
+    /// service the model client does not fetch from is Python's. No
+    /// credential provider runs here.
+    fn client(&self, cx: &Preflight<'_>) -> Result<Result<Client, CallError>, PythonReason> {
         let globals = cx.globals;
         let profile = globals.profile.as_deref();
         let region = cli_core::region::configured_region(
@@ -203,10 +212,7 @@ impl ServiceInvocation {
             profile,
         )
         .map_err(|_| PythonReason::EndpointSetting)?;
-        let credentials = match credentials(cx)? {
-            Ok(credentials) => credentials,
-            Err(failure) => return Ok(Err(failure)),
-        };
+        let credentials = credentials(cx)?;
         let settings = cx.settings;
         let endpoint = EndpointConfig::new(&EndpointInputs {
             region,
@@ -227,13 +233,13 @@ impl ServiceInvocation {
             cx.env.clone(),
             globals.debug,
         ));
-        Ok(Ok(Client::new(ClientParts {
+        Ok(Client::new(ClientParts {
             service: self.admitted.service.clone(),
             model: Arc::clone(&self.model),
             endpoints: self.admitted.endpoints.clone(),
             endpoint,
             settings: settings.clone(),
-            credentials: Arc::new(credentials),
+            credentials,
             transport,
             runtime: Arc::new(client::runtime::SystemRuntime::new(
                 cli_core::interrupt::process_state(),
@@ -246,7 +252,7 @@ impl ServiceInvocation {
                 versions: self.versions,
                 extras: session_extras(settings),
             },
-        })))
+        }))
     }
 }
 
@@ -278,49 +284,30 @@ fn session_extras(
     }
 }
 
-/// botocore's chain for the selected profile, walked before the client
-/// exists, as `Session.create_client` walks it. A chain that would ask the
-/// container's endpoint or the instance metadata service is Python's: the
-/// model client does not fetch from them. A provider's failure is
-/// botocore's, which the run reports.
-fn credentials(
-    cx: &Preflight<'_>,
-) -> Result<Result<ChainCredentials, CommandFailure>, PythonReason> {
+/// The client's credential source: botocore's chain for the selected
+/// profile, walked when the client first signs (`crate::credentials`), or
+/// none for an unsigned call. A chain that would ask the container's
+/// endpoint or the instance metadata service is Python's.
+fn credentials(cx: &Preflight<'_>) -> Result<Arc<dyn CredentialSource>, PythonReason> {
     if !cx.settings.signing.value {
-        return Ok(Ok(ChainCredentials::new(None)));
+        return Ok(Arc::new(ChainCredentials::new(None)));
     }
     let selected = cx.globals.profile.as_deref();
-    let name = aws_profile::select_or_default(cx.env, selected)
-        .to_str()
-        .unwrap_or("default");
-    let profile = if aws_profile::is_explicit(selected) {
-        ::credentials::Profile::Explicit(name)
-    } else {
-        ::credentials::Profile::Ambient(name)
+    let profile = crate::credentials::Selected {
+        name: aws_profile::select_or_default(cx.env, selected)
+            .to_str()
+            .unwrap_or("default")
+            .to_owned(),
+        explicit: aws_profile::is_explicit(selected),
     };
-    let env = ::credentials::environment(cx.env);
-    let asked = std::cell::Cell::new(false);
-    let container = ::credentials::ContainerFetch::new(|_| {
-        asked.set(true);
-        Ok(None)
-    });
-    let reached = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let noted = Arc::clone(&reached);
-    let instance = ::credentials::RoleFetcher::new(move || {
-        noted.store(true, std::sync::atomic::Ordering::Relaxed);
-        Ok(None)
-    });
-    let found =
-        ::credentials::default_resolver(&env, cx.shared_files, profile, container, instance)
-            .load_credentials();
-    let found = match found {
-        Ok(found) => found,
-        Err(error) => return Ok(Err(service_errors::credentials_failure(&error))),
-    };
-    if found.is_none() && (asked.get() || reached.load(std::sync::atomic::Ordering::Relaxed)) {
+    if crate::credentials::reaches_metadata(cx.env, cx.shared_files, &profile) {
         return Err(PythonReason::CredentialForm);
     }
-    Ok(Ok(ChainCredentials::new(found)))
+    Ok(Arc::new(crate::credentials::LazyChain::new(
+        cx.env,
+        cx.shared_files,
+        profile,
+    )))
 }
 
 /// Python's UTF-8 mode, which `PYTHONUTF8=1` turns on.
