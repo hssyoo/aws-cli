@@ -86,8 +86,8 @@ fn build_bin(
     ]);
     environment.apply(&mut build);
     process::run(&mut build)?;
-    Ok(root
-        .join("target/debug")
+    Ok(product::target_dir(root)
+        .join("debug")
         .join(bin)
         .with_extension(std::env::consts::EXE_EXTENSION))
 }

@@ -144,8 +144,8 @@ fn build_tool(root: &Path) -> Result<PathBuf, TaskError> {
         "--bin",
         "argparse-tool",
     ]))?;
-    Ok(root
-        .join("target/debug/argparse-tool")
+    Ok(product::target_dir(root)
+        .join("debug/argparse-tool")
         .with_extension(std::env::consts::EXE_EXTENSION))
 }
 

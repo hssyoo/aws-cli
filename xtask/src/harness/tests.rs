@@ -1,4 +1,12 @@
 use super::*;
+use std::time::{Duration, SystemTime};
+
+fn default(target: fn() -> Result<String, TaskError>) -> Default {
+    Default {
+        target,
+        build: "cargo xtask build",
+    }
+}
 
 /// Only the default artifact names `deps::TARGET`, so only it takes the
 /// static host list; an explicit binary runs on any host.
@@ -12,28 +20,29 @@ fn only_the_default_artifact_takes_the_static_host_check() -> Result<(), TaskErr
         .to_str()
         .ok_or_else(|| deps::error("test executable path is not UTF-8"))?;
     let args = ["--aws-binary".to_owned(), path.to_owned()];
+    let (root, target) = (Path::new("/workspace"), Path::new("/workspace/target"));
     assert_eq!(
-        select_binary(Path::new("/workspace"), &args, unsupported)?,
+        select_binary(root, target, &args, &default(unsupported))?,
         explicit
     );
     assert_eq!(
-        select_binary(Path::new("/workspace"), &[], unsupported).map_err(|error| error.to_string()),
+        select_binary(root, target, &[], &default(unsupported)).map_err(|e| e.to_string()),
         Err("unsupported native host".to_owned())
     );
     Ok(())
 }
 
-/// A system build's default artifact lies under the triple its target
-/// check names, as the build writes it.
+/// The default artifact lies under the target directory given, which
+/// `binary` takes from `product::target_dir`, and under the triple its
+/// target check names, as the build writes it.
 #[test]
-fn the_default_artifact_lies_under_the_default_target() {
+fn the_default_artifact_lies_under_the_target_directory() {
     fn system() -> Result<String, TaskError> {
         Ok("x86_64-unknown-linux-gnu".to_owned())
     }
     // Joined component by component, as the host spells a path.
     let expected = [
-        "/workspace",
-        "target",
+        "/elsewhere",
         "x86_64-unknown-linux-gnu",
         "release-safe",
         "aws",
@@ -41,13 +50,136 @@ fn the_default_artifact_lies_under_the_default_target() {
     .iter()
     .collect::<PathBuf>()
     .with_extension(std::env::consts::EXE_EXTENSION);
+    let selected = select_binary(
+        Path::new("/workspace"),
+        Path::new("/elsewhere"),
+        &[],
+        &default(system),
+    );
     assert_eq!(
-        select_binary(Path::new("/workspace"), &[], system).map_err(|error| error.to_string()),
+        selected.map_err(|error| error.to_string()),
         Err(format!(
-            "Rust CLI is absent: {}; build it or supply --aws-binary",
+            "Rust CLI is absent: {}; run `cargo xtask build` or supply --aws-binary",
             expected.display()
         ))
     );
+}
+
+/// A scratch directory holding a binary built at `built` from the sources
+/// `sources` names, each written at its time, and `aws.d` recording them.
+struct Built {
+    directory: PathBuf,
+    binary: PathBuf,
+}
+
+impl Built {
+    fn new(name: &str, built: SystemTime, sources: &[(&str, SystemTime)]) -> io::Result<Self> {
+        let directory =
+            std::env::temp_dir().join(format!("xtask-harness-{name}-{}", std::process::id()));
+        fs::create_dir_all(&directory)?;
+        let binary = directory.join("aws");
+        write_at(&binary, built)?;
+        let mut record = format!("{}:", binary.display());
+        for (source, time) in sources {
+            let path = directory.join(source);
+            write_at(&path, *time)?;
+            record.push(' ');
+            record.push_str(&path.display().to_string().replace(' ', "\\ "));
+        }
+        record.push('\n');
+        fs::write(directory.join("aws.d"), record)?;
+        Ok(Self { directory, binary })
+    }
+
+    fn check(&self) -> Result<(), String> {
+        require_current(Path::new("/workspace"), &self.binary, "cargo xtask build")
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl Drop for Built {
+    fn drop(&mut self) {
+        // A scratch directory left behind is only clutter in the temp dir.
+        let _ = fs::remove_dir_all(&self.directory);
+    }
+}
+
+fn write_at(path: &Path, time: SystemTime) -> io::Result<()> {
+    fs::write(path, b"")?;
+    fs::File::options()
+        .write(true)
+        .open(path)?
+        .set_modified(time)
+}
+
+#[test]
+fn a_binary_newer_than_its_recorded_sources_is_current() -> Result<(), TaskError> {
+    let then = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    let built = Built::new(
+        "current",
+        then,
+        &[
+            ("lib.rs", then),
+            ("with space.rs", then - Duration::from_secs(1)),
+        ],
+    )?;
+    assert_eq!(built.check(), Ok(()));
+    Ok(())
+}
+
+/// A source newer than the binary, a recorded source that is gone, and a
+/// binary without its dep-info each fail before any test runs, naming the
+/// file and the command that rebuilds it.
+#[test]
+fn a_stale_or_unrecorded_binary_fails_naming_why_and_the_build() -> Result<(), TaskError> {
+    let then = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+    let later = then + Duration::from_secs(60);
+    let stale = Built::new("stale", then, &[("lib.rs", then), ("edited rs", later)])?;
+    assert_eq!(
+        stale.check(),
+        Err(format!(
+            "Rust CLI is stale: {} was built from {}, which is newer than it; \
+             run `cargo xtask build`",
+            stale.binary.display(),
+            stale.directory.join("edited rs").display()
+        ))
+    );
+    let gone = Built::new("gone", then, &[("removed.rs", then)])?;
+    fs::remove_file(gone.directory.join("removed.rs"))?;
+    assert_eq!(
+        gone.check(),
+        Err(format!(
+            "Rust CLI is stale: {} was built from {}, which is gone; run `cargo xtask build`",
+            gone.binary.display(),
+            gone.directory.join("removed.rs").display()
+        ))
+    );
+    let unrecorded = Built::new("unrecorded", then, &[])?;
+    fs::remove_file(unrecorded.directory.join("aws.d"))?;
+    assert_eq!(
+        unrecorded.check(),
+        Err(format!(
+            "Rust CLI {} has no Cargo dep-info {}, so whether it is current is unknown; \
+             run `cargo xtask build`",
+            unrecorded.binary.display(),
+            unrecorded.directory.join("aws.d").display()
+        ))
+    );
+    Ok(())
+}
+
+#[test]
+fn dep_info_sources_unescape_spaces_and_read_only_the_first_rule() {
+    let text = "/t/aws: /a/b.rs /a/with\\ space.rs  /c.rs\n\n/a/b.rs:\n";
+    assert_eq!(
+        dep_info_sources(text),
+        [
+            PathBuf::from("/a/b.rs"),
+            PathBuf::from("/a/with space.rs"),
+            PathBuf::from("/c.rs")
+        ]
+    );
+    assert!(dep_info_sources("no rule here").is_empty());
 }
 
 #[test]

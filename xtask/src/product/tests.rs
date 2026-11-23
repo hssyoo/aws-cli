@@ -329,3 +329,45 @@ fn run_without_a_separator_builds_with_every_option_and_runs_aws_without_argumen
     assert_eq!(split_run_args(&nested), (empty, &nested[1..]));
     assert_eq!(split_run_args(&nested).1, args(&["s3", "--", "ls"]));
 }
+
+/// Cargo's target directory: `CARGO_TARGET_DIR` over
+/// `CARGO_BUILD_TARGET_DIR` over the checkout's `target`, a relative value
+/// taken from the checkout and an empty one ignored.
+#[test]
+fn the_target_directory_is_the_one_cargo_builds_into() {
+    let root = Path::new("/workspace");
+    let choose = |values: &[(&str, &str)]| {
+        let values: BTreeMap<String, OsString> = values
+            .iter()
+            .map(|(name, value)| ((*name).to_owned(), OsString::from(value)))
+            .collect();
+        target_dir_from(root, |name| values.get(name).cloned())
+    };
+    assert_eq!(choose(&[]), root.join("target"));
+    assert_eq!(
+        choose(&[("CARGO_TARGET_DIR", "/elsewhere")]),
+        Path::new("/elsewhere")
+    );
+    assert_eq!(
+        choose(&[("CARGO_TARGET_DIR", "target-own")]),
+        root.join("target-own")
+    );
+    assert_eq!(
+        choose(&[("CARGO_BUILD_TARGET_DIR", "/build")]),
+        Path::new("/build")
+    );
+    assert_eq!(
+        choose(&[
+            ("CARGO_TARGET_DIR", "/first"),
+            ("CARGO_BUILD_TARGET_DIR", "/second")
+        ]),
+        Path::new("/first")
+    );
+    assert_eq!(
+        choose(&[
+            ("CARGO_TARGET_DIR", ""),
+            ("CARGO_BUILD_TARGET_DIR", "/second")
+        ]),
+        Path::new("/second")
+    );
+}

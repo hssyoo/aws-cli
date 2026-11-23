@@ -5,13 +5,14 @@
 //! client, nothing below the commands pulls in a command or the router,
 //! and only the client among the dynamic-client crates reaches the CRT. A
 //! workspace crate's normal and build dependencies on other workspace
-//! crates must appear in its row of [`ALLOWED`], and every workspace crate
-//! must have a row.
+//! crates must appear in its row of [`ALLOWED`], every workspace crate
+//! must have a row, and a row names no crate its crate does not depend on,
+//! so an allowance outlives no dependency.
 //!
 //! Dev-dependencies are not checked: a crate's tests may assemble layers
 //! above it (the parity test renders `client`'s results with `format`).
-//! Which source may name a service is the no-service-name test's rule, not
-//! this one.
+//! Which source may name a service is the `service_name` rule's
+//! (`services.rs`), not this one.
 use super::{Diagnostic, Report, Rule, TaskError, read_source};
 use std::path::Path;
 
@@ -37,28 +38,12 @@ const ALLOWED: &[(&str, &[&str])] = &[
     // L1: credentials, model, crt and cli-core; `cli-core` is the common
     // floor the other three may stand on.
     ("cli-core", &["awscli-argparse", "awscli-config"]),
-    (
-        "credentials",
-        &["awscli-config", "cli-core", "sha256", "sigv4", "timestamp"],
-    ),
-    (
-        "crt",
-        &[
-            "cli-core",
-            "crt-sys",
-            "numa",
-            "sha256",
-            "sigv4",
-            "timestamp",
-        ],
-    ),
+    ("credentials", &["awscli-config", "cli-core"]),
+    ("crt", &["cli-core", "crt-sys", "numa", "sigv4"]),
     ("model", &["pyload", "pytext", "timestamp"]),
     // L2: client and format.
     ("client", CLIENT),
-    (
-        "format",
-        &["awscli-config", "cli-core", "model", "pytext", "timestamp"],
-    ),
+    ("format", &["cli-core", "model", "pytext", "timestamp"]),
     // L3: the command API, over format and the model, never the client.
     ("command", COMMAND),
     // The CLI's rendering of a call's errors (`errorhandler.py`): over the
@@ -66,8 +51,8 @@ const ALLOWED: &[(&str, &[&str])] = &[
     // crate.
     ("service-errors", SERVICE_ERRORS),
     // L4: the command crates. `customizations` holds the per-service
-    // edits and hooks, over the client and the command API; what it needs
-    // of `s3` goes through a trait in `command`, not a dependency.
+    // edits and hooks, over the client and the model; it depends on no
+    // command crate.
     ("s3", S3),
     ("customizations", CUSTOMIZATIONS),
     // The generic service command: admission, binding and the call, over
@@ -86,13 +71,11 @@ const ALLOWED: &[(&str, &[&str])] = &[
 ];
 
 const CLIENT: &[&str] = &[
-    "awscli-config",
     "cli-core",
     "credentials",
     "crt",
     "model",
     "pytext",
-    "sha256",
     "sigv4",
     "timestamp",
 ];
@@ -103,19 +86,8 @@ const COMMAND: &[&str] = &[
     "format",
     "model",
     "pyload",
-    "pytext",
-    "timestamp",
 ];
-const CUSTOMIZATIONS: &[&str] = &[
-    "awscli-config",
-    "cli-core",
-    "client",
-    "command",
-    "format",
-    "model",
-    "pytext",
-    "timestamp",
-];
+const CUSTOMIZATIONS: &[&str] = &["cli-core", "client", "model"];
 const MODEL_TOOLS: &[&str] = &[
     "awscli-argparse",
     "cli-core",
@@ -125,16 +97,7 @@ const MODEL_TOOLS: &[&str] = &[
     "pyload",
     "service-command",
 ];
-const SERVICE_ERRORS: &[&str] = &[
-    "awscli-config",
-    "cli-core",
-    "client",
-    "credentials",
-    "format",
-    "model",
-    "pytext",
-    "timestamp",
-];
+const SERVICE_ERRORS: &[&str] = &["cli-core", "client", "credentials", "format", "model"];
 const SERVICE_COMMAND: &[&str] = &[
     "awscli-argparse",
     "awscli-config",
@@ -144,7 +107,6 @@ const SERVICE_COMMAND: &[&str] = &[
     "credentials",
     "format",
     "model",
-    "pyload",
     "service-errors",
 ];
 const S3: &[&str] = &[
@@ -187,30 +149,47 @@ const BINARY: &[&str] = &[
 pub(super) fn check(metadata: &serde_json::Value) -> Result<Vec<Diagnostic>, TaskError> {
     let mut report = Report::default();
     for package in metadata["packages"].as_array().into_iter().flatten() {
-        let name = package["name"].as_str().unwrap_or_default();
-        let manifest = Path::new(package["manifest_path"].as_str().unwrap_or_default());
-        let Some((_, allowed)) = ALLOWED.iter().find(|(crate_name, _)| *crate_name == name) else {
-            let detail = format!("crate {name} has no row in the layer table");
-            report.add(manifest, 0, Rule::Layering, detail)?;
-            continue;
-        };
-        for dependency in package["dependencies"].as_array().into_iter().flatten() {
-            let on = dependency["name"].as_str().unwrap_or_default();
-            let checked = dependency["kind"].as_str() != Some("dev");
-            if checked && dependency["path"].is_string() && !allowed.contains(&on) {
-                let key = dependency["rename"].as_str().unwrap_or(on);
-                let line = declared_line(manifest, key)?;
-                let detail = format!(
-                    "{name} may not depend on {on}: a crate depends only on lower layers \
-                     (leaves; cli-core, credentials, crt, model; client, format; the command \
-                     API; the commands; routing; the binary), as `ALLOWED` in \
-                     xtask/src/lint/layers.rs lists them"
-                );
-                report.add(manifest, line, Rule::Layering, detail)?;
-            }
-        }
+        check_package(package, &mut report)?;
     }
     Ok(report.diagnostics)
+}
+
+/// One package's diagnostics: a missing row, each workspace dependency its
+/// row does not allow, and each allowance it does not use.
+fn check_package(package: &serde_json::Value, report: &mut Report) -> Result<(), TaskError> {
+    let name = package["name"].as_str().unwrap_or_default();
+    let manifest = Path::new(package["manifest_path"].as_str().unwrap_or_default());
+    let Some((_, allowed)) = ALLOWED.iter().find(|(crate_name, _)| *crate_name == name) else {
+        let detail = format!("crate {name} has no row in the layer table");
+        return report.add(manifest, 0, Rule::Layering, detail);
+    };
+    let mut used = Vec::new();
+    for dependency in package["dependencies"].as_array().into_iter().flatten() {
+        let on = dependency["name"].as_str().unwrap_or_default();
+        if dependency["kind"].as_str() == Some("dev") || !dependency["path"].is_string() {
+            continue;
+        }
+        used.push(on);
+        if !allowed.contains(&on) {
+            let key = dependency["rename"].as_str().unwrap_or(on);
+            let line = declared_line(manifest, key)?;
+            let detail = format!(
+                "{name} may not depend on {on}: a crate depends only on lower layers \
+                 (leaves; cli-core, credentials, crt, model; client, format; the command \
+                 API; the commands; routing; the binary), as `ALLOWED` in \
+                 xtask/src/lint/layers.rs lists them"
+            );
+            report.add(manifest, line, Rule::Layering, detail)?;
+        }
+    }
+    for on in allowed.iter().filter(|on| !used.contains(on)) {
+        let detail = format!(
+            "the layer table lets {name} depend on {on}, which it does not; drop {on} \
+             from its row in xtask/src/lint/layers.rs"
+        );
+        report.add(manifest, 0, Rule::Layering, detail)?;
+    }
+    Ok(())
 }
 
 /// The line declaring dependency `key` in `manifest`, or zero when the

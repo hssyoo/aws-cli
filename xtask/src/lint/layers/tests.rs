@@ -27,12 +27,12 @@ fn a_planted_upward_dependency_fails_on_its_manifest_line() -> Result<(), TaskEr
     let directory = std::env::temp_dir().join(format!("awscli-layers-{}", std::process::id()));
     fs::create_dir_all(&directory)?;
     let manifest = directory.join("Cargo.toml");
-    let text = "[package]\nname = \"format\"\n\n[dependencies]\nmodel.workspace = true\n\
+    let text = "[package]\nname = \"timestamp\"\n\n[dependencies]\npytext.workspace = true\n\
                 client = { path = \"../client\" }\n";
     fs::write(&manifest, text)?;
     let metadata = json!({"packages": [
-        package("format", &manifest, &[("model", None), ("client", None)]),
-        package("client", &manifest, &[("crt", None), ("format", Some("dev"))]),
+        package("timestamp", &manifest, &[("pytext", None), ("client", None)]),
+        package("pytext", &manifest, &[("timestamp", Some("dev"))]),
     ]});
     let diagnostics = check(&metadata);
     fs::remove_dir_all(&directory)?;
@@ -44,9 +44,31 @@ fn a_planted_upward_dependency_fails_on_its_manifest_line() -> Result<(), TaskEr
     );
     assert_eq!(
         diagnostics[0].detail,
-        "format may not depend on client: a crate depends only on lower layers (leaves; \
+        "timestamp may not depend on client: a crate depends only on lower layers (leaves; \
          cli-core, credentials, crt, model; client, format; the command API; the commands; \
          routing; the binary), as `ALLOWED` in xtask/src/lint/layers.rs lists them"
+    );
+    Ok(())
+}
+
+/// An allowance its crate no longer uses fails, as a dev-dependency does
+/// not use it.
+#[test]
+fn an_allowance_without_its_dependency_fails() -> Result<(), TaskError> {
+    let manifest = Path::new("/absent/Cargo.toml");
+    let metadata = json!({"packages": [
+        package("sigv4", manifest, &[("sha256", None), ("timestamp", Some("dev"))]),
+    ]});
+    let details: Vec<String> = check(&metadata)?
+        .into_iter()
+        .map(|diagnostic| diagnostic.detail)
+        .collect();
+    assert_eq!(
+        details,
+        [
+            "the layer table lets sigv4 depend on timestamp, which it does not; drop timestamp \
+          from its row in xtask/src/lint/layers.rs"
+        ]
     );
     Ok(())
 }
@@ -68,7 +90,7 @@ fn a_crate_without_a_row_fails() -> Result<(), TaskError> {
 fn registry_dependencies_are_not_layered() -> Result<(), TaskError> {
     let manifest = Path::new("/absent/Cargo.toml");
     let metadata = json!({"packages": [{
-        "name": "model",
+        "name": "pytext",
         "manifest_path": manifest,
         "dependencies": [{"name": "serde_json", "kind": null, "rename": null}],
     }]});
