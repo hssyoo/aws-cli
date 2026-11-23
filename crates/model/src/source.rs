@@ -39,6 +39,12 @@ pub trait Source {
     /// The bytes of `<name>.json`, or `None` when this source has no such
     /// file (`JSONFileLoader.load_file`).
     fn read(&self, name: &str) -> Result<Option<Vec<u8>>, LoadError>;
+
+    /// Whether [`Source::read`] would find `<name>.json`, without reading
+    /// it. A source that can tell more cheaply says so.
+    fn contains(&self, name: &str) -> Result<bool, LoadError> {
+        Ok(self.read(name)?.is_some())
+    }
 }
 
 /// What a model lookup can fail with.
@@ -337,6 +343,12 @@ impl Source for DirSource {
             .collect();
         versions.sort();
         Ok(versions)
+    }
+
+    /// `os.path.isfile`, as `JSONFileLoader.exists` asks.
+    fn contains(&self, name: &str) -> Result<bool, LoadError> {
+        check_name(name)?;
+        Ok(self.is_location() && self.root.join(format!("{name}.json")).is_file())
     }
 
     fn read(&self, name: &str) -> Result<Option<Vec<u8>>, LoadError> {

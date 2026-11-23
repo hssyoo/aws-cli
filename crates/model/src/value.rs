@@ -126,6 +126,40 @@ impl std::fmt::Display for JsonError {
 impl std::error::Error for JsonError {}
 
 impl Value {
+    /// A map's value for `key`, as `dict.get` reads it; `None` when absent
+    /// or when this is not a map.
+    pub fn get(&self, key: &str) -> Option<&Self> {
+        self.as_map()?.get(key)
+    }
+
+    pub const fn as_map(&self) -> Option<&Map> {
+        match self {
+            Self::Map(map) => Some(map),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(text) => Some(text),
+            _ => None,
+        }
+    }
+
+    pub fn as_list(&self) -> Option<&[Self]> {
+        match self {
+            Self::List(items) => Some(items),
+            _ => None,
+        }
+    }
+
+    pub const fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
+
     /// `json.loads(text)`, with Python's number rules: a number with a
     /// fraction or exponent is a `float` (`1.50` is `1.5`, `1e400` is
     /// infinity), any other is an `int` of any size.

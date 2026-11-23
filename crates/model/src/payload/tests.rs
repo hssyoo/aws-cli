@@ -78,6 +78,25 @@ fn compressed_resources_decode_through_the_reserved_scratch() -> Result<()> {
     Ok(())
 }
 
+/// `contains` finds an entry without decompressing it: a corrupt frame,
+/// which a read fails on, is there all the same.
+#[test]
+fn contains_finds_an_entry_without_decompressing_it() -> Result<()> {
+    let name = b"awscli/botocore/data/s3/2006-03-01/endpoint-rule-set-1.json";
+    let mut corrupt = blobs::entry(
+        name,
+        b"not a zstd frame",
+        flags::RESOURCE | flags::COMPRESSED,
+    );
+    corrupt.raw_len = 17;
+    let blob = blobs::blob(&[corrupt], false, 2);
+    let source = PayloadSource::botocore(View::new(&blob)?);
+    assert!(source.read("s3/2006-03-01/endpoint-rule-set-1").is_err());
+    assert!(source.contains("s3/2006-03-01/endpoint-rule-set-1")?);
+    assert!(!source.contains("s3/2006-03-01/service-2")?);
+    Ok(())
+}
+
 #[test]
 fn compressed_decode_failures_keep_the_decoder_error_names() -> Result<()> {
     let rules = br#"{"version":"1.0"}"#;

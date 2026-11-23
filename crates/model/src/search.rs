@@ -110,9 +110,10 @@ impl<'a> SearchSource<'a> {
         Ok(true)
     }
 
-    /// The first location that has `name`, as [`Source::read`] finds it.
+    /// The first location that has `name`, as [`Source::read`] finds it,
+    /// asked of each without reading the file.
     fn origin(&self, name: &str) -> Result<Option<&Location>, LoadError> {
-        self.each(|location, source| Ok(source.read(name)?.map(|_| location)))
+        self.each(|location, source| Ok(source.contains(name)?.then_some(location)))
     }
 
     fn each<'s, T>(
@@ -180,6 +181,10 @@ impl Source for SearchSource<'_> {
 
     fn read(&self, name: &str) -> Result<Option<Vec<u8>>, LoadError> {
         self.each(|_, source| source.read(name))
+    }
+
+    fn contains(&self, name: &str) -> Result<bool, LoadError> {
+        Ok(self.origin(name)?.is_some())
     }
 }
 
