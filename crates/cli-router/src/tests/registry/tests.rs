@@ -82,6 +82,9 @@ impl OperationSource for Fake {
     fn reproduces_failures(&self, _root: &str, operation: Option<&str>) -> bool {
         operation != Some("get-session-token")
     }
+    fn paginated(&self, _root: &str, operation: &str) -> bool {
+        operation == "decode-authorization-message"
+    }
     fn needs(&self, root: &str) -> Needs {
         Needs::Client {
             service: root.to_owned().into(),
@@ -328,8 +331,10 @@ fn the_prologue_and_the_command_line_refuse_before_run() {
             "",
             PythonReason::PythonOnlyGlobal,
         ),
+        // A paginated operation pages unless --no-paginate says not to,
+        // which only Python does.
         (
-            &["--no-paginate", "sts", "get-caller-identity"],
+            &["--no-paginate", "sts", "decode-authorization-message"],
             &[],
             "",
             PythonReason::PythonOnlyGlobal,
@@ -464,6 +469,8 @@ fn globals_are_classified_for_a_formatted_command() {
         &["--no-sign-request"],
         &["--cli-connect-timeout", "5"],
         &["--cli-error-format", "legacy"],
+        // Python ignores it for an operation that does not paginate.
+        &["--no-paginate"],
     ] {
         let args = [globals, &["sts", "get-caller-identity"]].concat();
         let verdict = evaluate_with(&args, &BTreeMap::new(), &files(""));
