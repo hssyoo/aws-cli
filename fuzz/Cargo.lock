@@ -11,6 +11,9 @@ checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 [[package]]
 name = "awscli-argparse"
 version = "0.1.0"
+dependencies = [
+ "pytext",
+]
 
 [[package]]
 name = "awscli-config"
@@ -48,6 +51,18 @@ dependencies = [
  "awscli-argparse",
  "awscli-config",
  "libc",
+]
+
+[[package]]
+name = "client"
+version = "0.1.0"
+dependencies = [
+ "cli-core",
+ "credentials",
+ "crt",
+ "model",
+ "sigv4",
+ "timestamp",
 ]
 
 [[package]]
@@ -166,6 +181,7 @@ name = "model"
 version = "0.1.0"
 dependencies = [
  "pyload",
+ "pytext",
  "serde_json",
  "timestamp",
 ]
@@ -194,6 +210,10 @@ dependencies = [
  "ruzstd",
  "sha256",
 ]
+
+[[package]]
+name = "pytext"
+version = "0.1.0"
 
 [[package]]
 name = "quote"
@@ -233,6 +253,7 @@ dependencies = [
  "model",
  "numa",
  "pyload",
+ "pytext",
  "sigv4",
 ]
 
@@ -301,9 +322,13 @@ dependencies = [
 name = "source-pool-fuzz"
 version = "0.1.0"
 dependencies = [
+ "awscli-argparse",
+ "client",
  "crt",
  "libfuzzer-sys",
+ "model",
  "s3",
+ "timestamp",
 ]
 
 [[package]]
@@ -320,6 +345,9 @@ dependencies = [
 [[package]]
 name = "timestamp"
 version = "0.1.0"
+dependencies = [
+ "pytext",
+]
 
 [[package]]
 name = "twox-hash"

@@ -240,14 +240,22 @@ impl Reader<'_> {
         Err((Fault::InvalidToken, self.at))
     }
 
+    /// `<?target ...?>`: expat reads the target's name first, so a `?>`
+    /// is looked for only after it, and anything but a name start after
+    /// `<?` is an invalid token there.
     fn instruction(&mut self) -> Step<()> {
         let start = self.at;
+        self.at += 2;
+        match self.rest().chars().next() {
+            None => return Err(self.end(Fault::Unclosed, start)),
+            Some(c) if !is_name_start(c) => return Err((Fault::InvalidToken, self.at)),
+            Some(_) => {}
+        }
         let Some(index) = self.rest().find("?>") else {
             return Err(self.end(Fault::Unclosed, start));
         };
-        self.at += 2;
-        self.check_chars(index - 2)?;
-        self.at += index;
+        self.check_chars(index)?;
+        self.at += index + 2;
         Ok(())
     }
 

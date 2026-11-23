@@ -12,7 +12,7 @@
 //! other text, Python reads through Unicode tables (other digits, other
 //! spaces), and a value that is not Unicode decodes to surrogates; both are
 //! [`Converted::Undecided`], which the parse hands to Python.
-use crate::unpack::{PYTHON_INT_MAX_STR_DIGITS, literal_digits};
+use crate::unpack::PYTHON_INT_MAX_STR_DIGITS;
 use std::ffi::OsStr;
 
 /// The conversion an argument's value goes through while it is parsed.
@@ -55,7 +55,7 @@ pub fn convert(value_type: ValueType, text: &OsStr) -> Converted {
     };
     // int() and float() strip C's six whitespace characters from ASCII
     // text, not the separators U+001C to U+001F that `str.strip()` removes.
-    let body = text.trim_matches([' ', '\t', '\n', '\u{b}', '\u{c}', '\r']);
+    let body = text.trim_matches(pytext::number::C_SPACE);
     let converted = match value_type {
         ValueType::Int => int(body),
         ValueType::Float => float(body),
@@ -63,69 +63,17 @@ pub fn convert(value_type: ValueType, text: &OsStr) -> Converted {
     converted.map_or(Converted::Invalid, Converted::Value)
 }
 
-fn split_sign(text: &str) -> (bool, &str) {
-    match text.as_bytes().first() {
-        Some(b'-') => (true, &text[1..]),
-        Some(b'+') => (false, &text[1..]),
-        _ => (false, text),
-    }
-}
-
-/// `int(text)` in base 10: a sign, digits with single underscores between
-/// them, leading zeros allowed, and at most `sys.get_int_max_str_digits()`
-/// digits (a longer literal is a ValueError).
+/// `int(text)` in base 10: [`pytext::number::int`], and at most
+/// `sys.get_int_max_str_digits()` digits (a longer literal is a
+/// ValueError).
 fn int(text: &str) -> Option<String> {
-    let (negative, digits) = split_sign(text);
-    let count = literal_digits(digits)?;
-    if count > PYTHON_INT_MAX_STR_DIGITS {
-        return None;
-    }
-    let digits: String = digits.chars().filter(char::is_ascii_digit).collect();
-    let magnitude = digits.trim_start_matches('0');
-    Some(match (negative, magnitude) {
-        (_, "") => "0".to_owned(),
-        (true, magnitude) => format!("-{magnitude}"),
-        (false, magnitude) => magnitude.to_owned(),
-    })
+    let canonical = pytext::number::int(text)?;
+    (pytext::number::digit_count(text) <= PYTHON_INT_MAX_STR_DIGITS).then_some(canonical)
 }
 
-/// `float(text)`: `inf`, `infinity` or `nan` in any case after a sign, or
-/// a decimal literal (digits, an optional point with optional digits on
-/// either side but some digits, an optional exponent), with underscores
-/// only between two digits (`_Py_string_to_number_with_underscores`).
+/// `float(text)`: [`pytext::number::float`], as JSON number text.
 fn float(text: &str) -> Option<String> {
-    let (negative, rest) = split_sign(text);
-    let special = match rest.to_ascii_lowercase().as_str() {
-        "inf" | "infinity" => Some(f64::INFINITY),
-        "nan" => Some(f64::NAN),
-        _ => None,
-    };
-    if let Some(value) = special {
-        return Some(json_float(if negative { -value } else { value }));
-    }
-    if !underscores_between_digits(text) {
-        return None;
-    }
-    let rest: String = rest.chars().filter(|c| *c != '_').collect();
-    let (mantissa, exponent) = match rest.split_once(['e', 'E']) {
-        Some((mantissa, exponent)) => (mantissa, Some(exponent)),
-        None => (rest.as_str(), None),
-    };
-    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-    let digits = |part: &str| part.bytes().all(|byte| byte.is_ascii_digit());
-    if (whole.is_empty() && fraction.is_empty()) || !digits(whole) || !digits(fraction) {
-        return None;
-    }
-    let exponent = match exponent {
-        None => "0",
-        Some(exponent) => {
-            let (_, magnitude) = split_sign(exponent);
-            (!magnitude.is_empty() && digits(magnitude)).then_some(exponent)?
-        }
-    };
-    let sign = if negative { "-" } else { "" };
-    let normalized = format!("{sign}0{whole}.{fraction}0e{exponent}");
-    normalized.parse().ok().map(json_float)
+    pytext::number::float(text).map(json_float)
 }
 
 /// A double as JSON number text, the non-finite ones as `json.dumps`
@@ -137,16 +85,6 @@ fn json_float(value: f64) -> String {
         f64::NEG_INFINITY => "-Infinity".to_owned(),
         value => format!("{value:?}"),
     }
-}
-
-fn underscores_between_digits(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    bytes.iter().enumerate().all(|(at, byte)| {
-        *byte != b'_'
-            || (at > 0
-                && bytes[at - 1].is_ascii_digit()
-                && bytes.get(at + 1).is_some_and(u8::is_ascii_digit))
-    })
 }
 
 #[cfg(test)]

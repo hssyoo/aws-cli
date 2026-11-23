@@ -19,8 +19,11 @@ sigv4 = { path = "../sigv4" }
 timestamp = { path = "../timestamp" }
 
 [dev-dependencies]
+awscli-argparse = { path = "../awscli-argparse", features = ["testing"] }
 crt = { path = "../crt", features = ["loopback"] }
+model = { path = "../model", features = ["testing"] }
 sigv4 = { path = "../sigv4", features = ["testing"] }
+timestamp = { path = "../timestamp", features = ["testing"] }
 serde_json.workspace = true
 
 [lints]

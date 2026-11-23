@@ -1,7 +1,10 @@
 # Transfer fuzz models
 
-Eleven targets drive the source pool, the download writer, the recursive
-scheduler, a recursive download's local paths and the S3 error-body reader. Each checks its code against an
+Seventeen targets drive the source pool, the download writer, the recursive
+scheduler, a recursive download's local paths, the S3 error-body reader, and
+the dynamic client's readers: the XML reader, the query and json response
+and error parsers, the model reader and validator, the timestamp readers
+and argparse's number conversion. Each checks its code against an
 independent model, except `pool_operations`, which checks the pool's
 invariants after every operation. A target passes libFuzzer's bytes straight to its model. The models use
 fake allocation, request and disk operations; they make no AWS calls. A
@@ -23,6 +26,12 @@ campaign.
 | `scheduler_phases` | `s3::scheduler::model::smith_ownership` | Per-request phases, releases, cancels, output lines and slot counts after every step |
 | `path_containment` | `s3::testing::path_containment` | Destination paths of any listing key stay under the root, or name its parent when the key does; temp names keep the parent and the name limit; absolute paths are absolute and idempotent |
 | `error_body` | `crt::s3::error_body::fuzz_read` | Fields of any body the reader accepts decode to UTF-8 |
+| `client_xml` | `client::testing::fuzz::xml` | `client::xml::parse` of any bytes gives a tree or expat's error, the same twice |
+| `protocol_responses` | `client::testing::fuzz::responses` | Any response (status, headers, body) to any operation of the fake query, json 1.0 and json 1.1 models parses, or fails as `ResponseParserError`, under botocore's and the CLI's parser defaults |
+| `model_json` | `model::fuzz::model_json` | `Model::from_json` of any bytes; a model it builds validates an empty input for each operation |
+| `model_validate` | `model::fuzz::validate` | `ParamValidator` of any JSON against every operation of the fake query and json models; a report prints |
+| `timestamp_text` | `timestamp::fuzz::parse` | Every timestamp reader over any text; each value read prints in its form and reads back as itself |
+| `argparse_convert` | `awscli_argparse::fuzz::convert_both` | argparse's `type=int` and `type=float` of any argv text: an `int` is canonical, a `float` reads back, and text `int()` takes `float()` takes as the same number |
 
 Writer statistics are enabled in the fuzz build (`download-writer-debug`), so
 the disk ledger checks the call, retry, bounce and padding counters the writes
@@ -30,7 +39,9 @@ return.
 
 ## Input format
 
-Every model except `error_body`, which reads its input as a response body,
+Every model except `error_body` and the six parser targets, which read
+their input as the text they parse (`protocol_responses` takes its first
+three bytes as the model and operation, the status, and the headers),
 reads its choices through `Choices` in its crate's `testing` module
 (`crates/crt/src/testing.rs`, `crates/s3/src/testing.rs`), a thin layer over
 `arbitrary::Unstructured`. A choice reads from the front of the input. A range
@@ -60,6 +71,11 @@ inputs filled from SplitMix64, one seed per case. A failing case prints its
 seed and bytes, and those bytes reproduce the failure under the fuzz target.
 `cargo xtask test --miri -p crt -p s3` runs the pool, writer and scheduler
 replay tests with eight sweep cases each.
+
+The six parser targets' curated inputs are plain inputs, not scripts: a
+response, a model, a timestamp's text. `client::testing::fuzz`'s tests, which
+`cargo xtask test -p client` runs, replay each file and every prefix of it
+through the same body the target runs, then sweep 256 SplitMix64 inputs.
 
 Two models have no target. `byte_budget` checks the pool's budget predicate
 against wider arithmetic, and `shared_writer_reentry` runs the shared writer

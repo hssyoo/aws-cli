@@ -471,9 +471,7 @@ impl Reader<'_, '_> {
             ShapeKind::Float | ShapeKind::Double => float_from_text(text)
                 .map(Value::Float)
                 .ok_or_else(|| invalid("could not convert string to float")),
-            ShapeKind::Integer | ShapeKind::Long => {
-                int_from_text(text).ok_or_else(|| invalid("invalid literal for int() with base 10"))
-            }
+            ShapeKind::Integer | ShapeKind::Long => int_from_text(text).map_err(ParseError::new),
             ShapeKind::Timestamp => (self.options.timestamp)(&Value::String(text.into())),
             ShapeKind::Blob => (self.options.blob)(text),
             _ => Ok(Value::String(text.into())),

@@ -1,6 +1,7 @@
 use super::*;
 use crate::testing::{self, Result};
 use crate::value::{Map, Value};
+use pytext::repr::str_repr;
 use timestamp::Timestamp;
 
 #[test]
@@ -144,7 +145,11 @@ fn float_from_text_reads_what_python_float_reads() {
         ("-12e3", Some(-12_000.0)),
         ("+.5", Some(0.5)),
         ("5.", Some(5.0)),
-        ("\u{1c}7\t", Some(7.0)),
+        ("\t7\u{b}", Some(7.0)),
+        ("\u{3000}7\u{a0}", Some(7.0)),
+        // CPython strips C's six, not str.strip()'s separators.
+        ("\u{1c}7", None),
+        ("7\u{1f}", None),
         ("Infinity", Some(f64::INFINITY)),
         ("-inf", Some(f64::NEG_INFINITY)),
         ("1__0", None),
@@ -162,25 +167,35 @@ fn float_from_text_reads_what_python_float_reads() {
     assert!(float_from_text("NaN").is_some_and(f64::is_nan));
 }
 
-/// `int(text)` in CPython 3.14, for the ASCII digits read here.
+/// `int(text)` in CPython 3.14, for the ASCII digits read here, with its
+/// ValueError's text.
 #[test]
 fn int_from_text_reads_what_python_int_reads() {
     let cases = [
-        (" 12 ", Some(Value::Integer(12))),
-        ("-0", Some(Value::Integer(0))),
-        ("+5", Some(Value::Integer(5))),
-        ("1_000", Some(Value::Integer(1000))),
-        ("007", Some(Value::Integer(7))),
+        (" 12 ", Value::Integer(12)),
+        ("-0", Value::Integer(0)),
+        ("+5", Value::Integer(5)),
+        ("1_000", Value::Integer(1000)),
+        ("007", Value::Integer(7)),
         (
             "-99999999999999999999",
-            Some(Value::BigInteger("-99999999999999999999".into())),
+            Value::BigInteger("-99999999999999999999".into()),
         ),
-        ("1__0", None),
-        ("0x10", None),
-        ("1.5", None),
-        ("", None),
     ];
     for (text, expected) in cases {
-        assert_eq!(int_from_text(text), expected, "{text:?}");
+        assert_eq!(int_from_text(text), Ok(expected), "{text:?}");
     }
+    for text in ["1__0", "0x10", "1.5", "", "\u{1c}7", "7\u{1f}"] {
+        let message = format!("invalid literal for int() with base 10: {}", str_repr(text));
+        assert_eq!(int_from_text(text), Err(message), "{text:?}");
+    }
+    assert!(int_from_text(&"1".repeat(4300)).is_ok());
+    assert_eq!(
+        int_from_text(&format!(" {} ", "0".repeat(4301))),
+        Err(
+            "Exceeds the limit (4300 digits) for integer string conversion: value has 4301 \
+             digits; use sys.set_int_max_str_digits() to increase the limit"
+                .into()
+        )
+    );
 }

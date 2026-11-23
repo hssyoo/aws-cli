@@ -1,33 +1,38 @@
-//! Python diagnostic string representation and code-point precision.
+//! Python diagnostic string representation and code-point precision, over
+//! [`pytext::repr`]: `str.__repr__`'s escapes, what `str.isprintable`
+//! rejects included.
 use crate::Value;
-const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
-/// Quote strings with Python's ASCII escaping and printable Unicode policy.
+use pytext::repr::{quote_for, write_escaped};
+/// Quote strings as `str.__repr__` does.
 pub fn repr(text: &str) -> String {
-    let mut output = Vec::with_capacity(text.len() + 2);
-    write(text.as_bytes(), &mut output);
-    into_text(output)
+    quoted(text.as_bytes(), |each| decode_bytes(text.as_bytes(), each))
 }
-/// Quote a string as Python does for ASCII, preserving non-ASCII UTF-8;
-/// every repr in this module builds on it. Text reads as Python decodes
+/// Quote a string as `str.__repr__` does; every repr in this module builds
+/// on it. Text reads as Python decodes
 /// argv, so each byte outside a valid UTF-8 sequence is its lone
 /// surrogate's `\udcXX` escape.
 pub fn write(value: &[u8], output: &mut Vec<u8>) {
-    let quote = choose_quote(value);
+    output.extend_from_slice(quoted(value, |each| decode_bytes(value, each)).as_bytes());
+}
+/// `value` quoted, its pieces escaped as `visit` yields them.
+fn quoted(value: &[u8], visit: impl FnOnce(&mut dyn FnMut(Piece<'_>))) -> String {
+    let quote = quote_for(value);
+    let mut output = String::with_capacity(value.len() + 2);
     output.push(quote);
-    decode_bytes(value, |piece| match piece {
-        Piece::Text(text) => write_escaped(text.as_bytes(), quote, output),
-        Piece::Surrogate(unit) => output.extend_from_slice(escaped_surrogate(unit).as_bytes()),
+    visit(&mut |piece| match piece {
+        Piece::Text(text) => write_escaped(&mut output, text, quote),
+        Piece::Surrogate(unit) => output.push_str(&escaped_surrogate(unit)),
     });
     output.push(quote);
+    output
 }
 /// The repr of an argv value as [`write`] spells it, from the value's
 /// encoded bytes. On Windows those are WTF-8, so an unpaired UTF-16
 /// surrogate there is three escapes, one per byte of its encoding, where
 /// CPython writes one.
 pub fn argv(value: &std::ffi::OsStr) -> String {
-    let mut output = Vec::with_capacity(value.len() + 2);
-    write(value.as_encoded_bytes(), &mut output);
-    into_text(output)
+    let bytes = value.as_encoded_bytes();
+    quoted(bytes, |each| decode_bytes(bytes, each))
 }
 /// `text` as Python's stderr writes it: UTF-8 under the `backslashreplace`
 /// handler, which spells the surrogate a byte outside a valid sequence
@@ -50,53 +55,6 @@ pub fn code_point_count(text: &[u8]) -> usize {
         Piece::Surrogate(_) => count += 1,
     });
     count
-}
-fn write_escaped(value: &[u8], quote: u8, output: &mut Vec<u8>) {
-    let mut buffer = [0; 4];
-    for &byte in value {
-        output.extend_from_slice(escape(&mut buffer, byte, quote));
-    }
-}
-/// Python's quote selection: double quotes only when the string contains a
-/// single quote and no double quote.
-fn choose_quote(value: &[u8]) -> u8 {
-    if value.contains(&b'\'') && !value.contains(&b'"') {
-        b'"'
-    } else {
-        b'\''
-    }
-}
-fn escape(buffer: &mut [u8; 4], byte: u8, quote: u8) -> &[u8] {
-    if byte == quote || byte == b'\\' {
-        *buffer = [b'\\', byte, 0, 0];
-        return &buffer[..2];
-    }
-    match byte {
-        b'\n' => b"\\n",
-        b'\r' => b"\\r",
-        b'\t' => b"\\t",
-        0..=8 | 11 | 12 | 14..=31 | 127 => hex_escape(buffer, byte),
-        _ => {
-            buffer[0] = byte;
-            &buffer[..1]
-        }
-    }
-}
-fn hex_escape(buffer: &mut [u8; 4], byte: u8) -> &[u8] {
-    *buffer = [
-        b'\\',
-        b'x',
-        HEX_DIGITS[usize::from(byte >> 4)],
-        HEX_DIGITS[usize::from(byte & 0xf)],
-    ];
-    buffer
-}
-#[expect(
-    clippy::expect_used,
-    reason = "escapes are ASCII and every other byte is copied from UTF-8 text"
-)]
-fn into_text(output: Vec<u8>) -> String {
-    String::from_utf8(output).expect("a repr of UTF-8 text is UTF-8")
 }
 /// One run of an operating-system string as CPython decodes it with the
 /// surrogateescape error handler: decodable text, or the lone surrogate
@@ -168,30 +126,12 @@ pub fn escaped_surrogate(unit: u16) -> String {
 /// upstream prints for such a path. On Windows this decodes UTF-16, as
 /// CPython does, where [`argv`] spells an argv value's WTF-8 bytes.
 pub fn os(text: &std::ffi::OsStr) -> String {
-    let quote = choose_quote(text.as_encoded_bytes());
-    let mut output = vec![quote];
-    decode_os(text, |piece| match piece {
-        Piece::Text(valid) => write_escaped(valid.as_bytes(), quote, &mut output),
-        Piece::Surrogate(unit) => output.extend_from_slice(escaped_surrogate(unit).as_bytes()),
-    });
-    output.push(quote);
-    into_text(output)
+    quoted(text.as_encoded_bytes(), |each| decode_os(text, each))
 }
 /// Python's repr of a bytes object: `b` and the quoted value, with every
 /// byte outside printable ASCII spelled `\xNN`.
 pub fn bytes(value: &[u8]) -> String {
-    let quote = choose_quote(value);
-    let mut output = vec![b'b', quote];
-    let mut buffer = [0; 4];
-    for &byte in value {
-        output.extend_from_slice(if byte.is_ascii() {
-            escape(&mut buffer, byte, quote)
-        } else {
-            hex_escape(&mut buffer, byte)
-        });
-    }
-    output.push(quote);
-    into_text(output)
+    pytext::repr::bytes_repr(value)
 }
 /// CPython precision applies to rendered code points, including escapes.
 pub fn limited(text: impl AsRef<std::ffi::OsStr>, limit: usize) -> String {

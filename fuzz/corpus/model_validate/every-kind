@@ -1,0 +1,1 @@
+{"Name": "n", "Count": "1", "Flag": 1, "When": "2020-01-01", "Tags": ["a", {"b": 1}], "Doc": {"x": [1]}, "Choice": {"A": 1, "B": 2}, "Bogus": null}

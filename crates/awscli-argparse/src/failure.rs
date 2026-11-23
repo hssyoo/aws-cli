@@ -1,7 +1,7 @@
 //! Structured parser diagnostics before AWS error-handler framing.
 use crate::pyrepr;
 use crate::tables::CommandKind;
-use crate::unpack::{PYTHON_INT_MAX_STR_DIGITS, ParseIntError};
+use crate::unpack::ParseIntError;
 use std::ffi::{OsStr, OsString};
 /// CPython formats the literal of an int() failure with `%.200R`.
 const INTEGER_REPR_CODEPOINTS_MAX: usize = 200;
@@ -314,11 +314,7 @@ impl FailureKind {
                 "invalid literal for int() with base 10: {}",
                 pyrepr::limited(value, INTEGER_REPR_CODEPOINTS_MAX)
             ),
-            Self::IntegerDigitLimit(digits) => format!(
-                "Exceeds the limit ({PYTHON_INT_MAX_STR_DIGITS} digits) for integer string \
-                 conversion: value has {digits} digits; use sys.set_int_max_str_digits() to \
-                 increase the limit"
-            ),
+            Self::IntegerDigitLimit(digits) => pytext::number::digit_limit_message(*digits),
             Self::IntegerOutOfRange(value) => format!(
                 "integer outside the 64-bit range of the native command: {}",
                 pyrepr::limited(value, INTEGER_REPR_CODEPOINTS_MAX)

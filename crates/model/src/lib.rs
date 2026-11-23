@@ -4,6 +4,8 @@
 #![forbid(unsafe_code)]
 
 pub mod base64;
+#[cfg(any(test, feature = "testing"))]
+pub mod fuzz;
 pub mod payload;
 pub mod pyjson;
 pub mod pyrepr;

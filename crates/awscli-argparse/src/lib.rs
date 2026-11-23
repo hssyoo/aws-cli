@@ -6,6 +6,8 @@ pub mod chain;
 pub mod close_matches;
 pub mod convert;
 pub mod failure;
+#[cfg(any(test, feature = "testing"))]
+pub mod fuzz;
 pub mod json;
 pub mod namespace;
 pub mod parser;
