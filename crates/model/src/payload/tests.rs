@@ -222,3 +222,59 @@ fn the_embedded_payload_holds_the_repository_data_directory() -> Result<()> {
     }
     Ok(())
 }
+
+/// Model load on the built binary's own payload, best of seven per stage:
+/// the entry's zstd decode, the JSON parse, the arena, and `Model::load`
+/// whole (which also merges any `sdk-extras`). The binary is
+/// `AWS_NATIVE_TIMING_BINARY`; `tests/numbers/measure.py` sets it and runs
+/// `RUST_TEST_NOCAPTURE=1 cargo xtask test -p model --profile release-safe
+/// --filter --ignored`.
+#[test]
+#[ignore = "a timing report, not a check"]
+fn payload_load_timings() -> Result<()> {
+    let Some(binary) = std::env::var_os("AWS_NATIVE_TIMING_BINARY") else {
+        return Err("AWS_NATIVE_TIMING_BINARY names no binary".into());
+    };
+    let bytes = std::fs::read(&binary)?;
+    let located = pyload::locate(&bytes)?;
+    let source = PayloadSource::botocore(pyload::View::new(located.bytes)?);
+    let mut report =
+        String::from("model-load service  json_bytes  decode_ms  parse_ms  arena_ms  load_ms\n");
+    for service in ["sts", "dynamodb", "s3", "ec2"] {
+        let version = crate::source::latest_version(&source, service, Kind::Service)?;
+        let name = format!("{service}/{version}/service-2");
+        let best = |times: &mut std::time::Duration, started: std::time::Instant| {
+            *times = (*times).min(started.elapsed());
+        };
+        let max = std::time::Duration::MAX;
+        let (mut decode, mut parse, mut arena, mut load) = (max, max, max, max);
+        let mut size = 0;
+        for _ in 0..7 {
+            let started = std::time::Instant::now();
+            let json = source.read(&name)?.ok_or("no service-2 entry")?;
+            best(&mut decode, started);
+            size = json.len();
+            let started = std::time::Instant::now();
+            let value: serde_json::Value = serde_json::from_slice(&json)?;
+            best(&mut parse, started);
+            let started = std::time::Instant::now();
+            let model = crate::shapes::Model::from_value(&value)?;
+            best(&mut arena, started);
+            drop(model);
+            let started = std::time::Instant::now();
+            let model = crate::shapes::Model::load(&source, service)?;
+            best(&mut load, started);
+            drop(model);
+        }
+        let ms = |time: std::time::Duration| time.as_secs_f64() * 1e3;
+        report.push_str(&format!(
+            "model-load {service:<9} {size:>10} {:>10.2} {:>9.2} {:>9.2} {:>8.2}\n",
+            ms(decode),
+            ms(parse),
+            ms(arena),
+            ms(load)
+        ));
+    }
+    std::io::Write::write_all(&mut std::io::stderr(), report.as_bytes())?;
+    Ok(())
+}
