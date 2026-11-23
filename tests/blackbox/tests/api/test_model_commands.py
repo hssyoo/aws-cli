@@ -301,3 +301,71 @@ async def test_an_epoch_in_a_zone_with_daylight_saving_is_python_s(
     run = await models.run("zjson describe", replies=[], expected_rc=255)
     assert run.calls == ()
     assert "(unsupported_trait)" in run.stderr, run.describe()
+
+
+@pytest.mark.parametrize(
+    "variables,profile,host",
+    [
+        ({}, "", "zquery.us-east-1.amazonaws.com"),
+        ({"AWS_USE_FIPS_ENDPOINT": "true"}, "", "zquery-fips.us-east-1.amazonaws.com"),
+        ({"AWS_USE_DUALSTACK_ENDPOINT": "true"}, "", "zquery.us-east-1.api.aws"),
+        (
+            {"AWS_USE_FIPS_ENDPOINT": "true", "AWS_USE_DUALSTACK_ENDPOINT": "true"},
+            "",
+            "zquery-fips.us-east-1.api.aws",
+        ),
+        ({}, "use_fips_endpoint = true\n", "zquery-fips.us-east-1.amazonaws.com"),
+        ({}, "use_dualstack_endpoint = true\n", "zquery.us-east-1.api.aws"),
+    ],
+    ids=["regional", "fips", "dual-stack", "fips-dual-stack", "fips-profile", "dual-stack-profile"],
+)
+async def test_the_rule_set_s_variants_name_their_host(
+    models: ApiSession, variables: dict[str, str], profile: str, host: str
+) -> None:
+    models.env.update(variables)
+    models.config_path.write_text(
+        models.config_path.read_text(encoding="utf-8") + profile, encoding="utf-8"
+    )
+    run = await models.run("zquery get-thing --thing-id t", replies={"ThingId": "t"})
+    assert run.calls[0].request.headers.get("host") == host, run.describe()
+
+
+async def test_a_malformed_xml_body_is_a_parser_error(models: ApiSession) -> None:
+    # ResponseParserError, which is not retried.
+    reply = HTTPResponse(
+        status=200,
+        headers={"Content-Type": "text/xml"},
+        body=b"<GetThingResponse><GetThingResult>",
+    )
+    run = await models.run("zquery get-thing --thing-id t", replies=reply, expected_rc=255)
+    assert run.stdout == ""
+    assert run.stderr == (
+        "\naws: [ERROR]: Unable to parse response (no element found: line 1, "
+        "column 34), invalid XML received. Further retries may succeed:\n"
+        "b'<GetThingResponse><GetThingResult>'\n"
+    ), run.describe()
+
+
+async def test_a_malformed_json_body_parses_as_empty(models: ApiSession) -> None:
+    # botocore's json parser reads a success body it cannot decode as no
+    # members, so nothing is printed and the command succeeds.
+    reply = HTTPResponse(
+        status=200,
+        headers={"Content-Type": "application/x-amz-json-1.0"},
+        body=b'{"ThingId": ',
+    )
+    run = await models.run("zjson get-thing --thing-id t", replies=reply)
+    assert (run.stdout, run.stderr) == ("", ""), run.describe()
+
+
+async def test_a_redirect_is_a_client_error(models: ApiSession) -> None:
+    run = await models.run(
+        "zjson ping",
+        replies=HTTPResponse(status=301, headers={}, body=b""),
+        expected_rc=254,
+    )
+    retries = retries_clause(models.env, retryable=False)
+    assert run.stdout == ""
+    assert run.stderr == (
+        f"\naws: [ERROR]: An error occurred (301) when calling the Ping operation{retries}:\n"
+    ), run.describe()
