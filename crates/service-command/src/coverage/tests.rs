@@ -165,14 +165,7 @@ fn every_inert_refusal_refuses_where_the_initializer_acts() -> Result<()> {
         let Basis::Inert { refused_as, .. } = row.basis else {
             continue;
         };
-        let case = case(row.entry).unwrap_or_else(|| panic!("no case for {}", row.entry));
-        let native = verdict(case.native, "", "")?;
-        assert!(
-            matches!(native, Verdict::Run(_)),
-            "{}: {native:?}",
-            row.entry
-        );
-        let acting = verdict(case.acting, case.config, case.alias)?;
+        let (case, acting) = routed(row.entry)?;
         match refused_as {
             Refusal::Router(reason) => assert!(
                 matches!(acting, Verdict::Python(found) if found == reason),
@@ -190,6 +183,44 @@ fn every_inert_refusal_refuses_where_the_initializer_acts() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Every router refusal a client customization's `Inert` basis claims is
+/// what refuses an invocation the botocore handler would act on, one that
+/// otherwise routes native, as for the CLI's rows. A trait refusal is the
+/// client's own, which the `customizations` crate checks.
+#[test]
+fn every_core_router_refusal_refuses_where_the_customization_acts() -> Result<()> {
+    let mut checked = 0;
+    for customization in customizations::TABLE {
+        for (name, basis) in customization.replaces {
+            let Basis::Inert {
+                refused_as: Refusal::Router(reason),
+                ..
+            } = basis
+            else {
+                continue;
+            };
+            let (_, acting) = routed(name)?;
+            assert!(
+                matches!(acting, Verdict::Python(found) if found == *reason),
+                "{name}: {acting:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no router refusal was checked");
+    Ok(())
+}
+
+/// The case of `entry`, whose native invocation is checked to route
+/// native, and the verdict of its acting one.
+fn routed(entry: &str) -> Result<(&'static Case, Verdict)> {
+    let case = case(entry).unwrap_or_else(|| panic!("no case for {entry}"));
+    let native = verdict(case.native, "", "")?;
+    assert!(matches!(native, Verdict::Run(_)), "{entry}: {native:?}");
+    let acting = verdict(case.acting, case.config, case.alias)?;
+    Ok((case, acting))
 }
 
 /// The client refuses the operation `acting` names as carrying `key`.
@@ -249,8 +280,17 @@ const fn with_argv(native: &'static [&'static str], acting: &'static [&'static s
     }
 }
 
-/// The case of each `Inert` row, by the end of its entry.
+/// The case of each `Inert` basis with a router refusal or a CLI row, by
+/// the end of its entry.
 const CASES: &[(&str, Case)] = &[
+    (
+        "._set_auth_scheme_preference_signer",
+        with_files("[default]\nauth_scheme_preference = sigv4\n", ""),
+    ),
+    (
+        ".add_generate_presigned_url",
+        with_argv(IDENTITY, &["eks", "get-token", "--cluster-name", "c"]),
+    ),
     (
         ".register_cli_input_args",
         with_argv(
