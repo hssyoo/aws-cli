@@ -137,7 +137,7 @@ fn streams(model: &Model, operation: &Operation) -> Option<Unsupported> {
 /// `auto` mode discovers only for required operations
 /// (`_requires_endpoint_discovery`, `EndpointDiscoveryManager.
 /// describe_endpoint`).
-pub fn unimplemented_trait(operation: &Operation) -> Option<Unsupported> {
+pub(crate) fn unimplemented_trait(operation: &Operation) -> Option<Unsupported> {
     let found = if operation.http_checksum.is_some() {
         "httpChecksum"
     } else if operation.http_checksum_required {
