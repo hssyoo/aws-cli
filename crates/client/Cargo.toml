@@ -1,0 +1,19 @@
+[package]
+name = "client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The in-memory transport and the fixed runtime, for tests.
+testing = []
+
+[dependencies]
+cli-core = { path = "../cli-core" }
+model = { path = "../model" }
+timestamp = { path = "../timestamp" }
+
+[lints]
+workspace = true

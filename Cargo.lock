@@ -80,6 +80,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "client"
+version = "0.1.0"
+dependencies = [
+ "cli-core",
+ "model",
+ "timestamp",
+]
+
+[[package]]
 name = "command"
 version = "0.1.0"
 dependencies = [
