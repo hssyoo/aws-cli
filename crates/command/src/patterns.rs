@@ -81,6 +81,34 @@ pub struct ClientHandlers {
     pub services: Vec<(Box<str>, Vec<Builtin>)>,
 }
 
+/// What a command-table handler does to its table: one name it sets
+/// (`command_table[name] = ...`) or deletes (`del command_table[name]`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableEdit {
+    Set(Box<str>),
+    Delete(Box<str>),
+}
+
+/// One handler a table editor registers: the root command table event it
+/// is registered on, its name, and what it does to that table, in order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableHandler {
+    pub event: Box<str>,
+    pub handler: Box<str>,
+    pub edits: Vec<TableEdit>,
+}
+
+/// A registry initializer whose handlers do nothing but edit root command
+/// tables, with the handlers the pack saw it register, in its order. The
+/// pack refuses one the registry lists under any pattern but a root's
+/// table event (`building-command-table.<command>`), or that registers
+/// anywhere else or reads its table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TableEditor {
+    pub entry: Entry,
+    pub handlers: Vec<TableHandler>,
+}
+
 /// The whole entry.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Patterns {
@@ -89,6 +117,7 @@ pub struct Patterns {
     pub table_ops: Vec<TableOp>,
     pub builtins: Vec<Builtin>,
     pub client: ClientHandlers,
+    pub table_editors: Vec<TableEditor>,
 }
 
 /// Where a match comes from, which says what can cover it.
@@ -159,7 +188,44 @@ impl Patterns {
                 .collect::<Result<_, _>>()?,
             builtins: rows(field("builtin_handlers")?, "builtin_handlers")?,
             client: client_handlers(field("client_handlers")?)?,
+            table_editors: array(field("command_table_edits")?, "command_table_edits")?
+                .iter()
+                .map(table_editor)
+                .collect::<Result<_, _>>()?,
         })
+    }
+
+    /// The edits the table editors make to the table of the root
+    /// `command`, in the order Python makes them. Its event,
+    /// `building-command-table.<command>`, initializes the editors listed
+    /// under it, in the registry's order
+    /// (`LazyInitEmitter._ensure_initialized`); no earlier event of the
+    /// invocation reaches one, as the pack lists them under root table
+    /// events alone. Their handlers on that event then run in the order
+    /// they were registered, all at the event's own node
+    /// (`HierarchicalEmitter._emit`), so before any registered on the bare
+    /// `building-command-table`, as `add_waiters` is. An editor the
+    /// registry does not list under the event is never initialized for it,
+    /// so its handlers there never run.
+    pub fn table_edits(&self, command: &str) -> Vec<&TableEdit> {
+        let event = format!("building-command-table.{command}");
+        let listed = self
+            .registry
+            .iter()
+            .filter(|(pattern, _)| **pattern == *event)
+            .flat_map(|(_, entries)| entries);
+        let mut edits = Vec::new();
+        for entry in listed {
+            let editor = self
+                .table_editors
+                .iter()
+                .find(|editor| editor.entry == *entry);
+            let handlers = editor.into_iter().flat_map(|editor| &editor.handlers);
+            for handler in handlers.filter(|handler| *handler.event == *event) {
+                edits.extend(&handler.edits);
+            }
+        }
+        edits
     }
 
     /// The awscli entries whose patterns match one of `events`, by
@@ -337,6 +403,44 @@ fn table_op(row: &Json) -> Result<TableOp, PatternError> {
             class: text(class, "added class")?,
         }),
         _ => Err(PatternError::Shape("table op")),
+    }
+}
+
+fn table_editor(row: &Json) -> Result<TableEditor, PatternError> {
+    let [entry, handlers] = array(row, "table editor")? else {
+        return Err(PatternError::Shape("table editor"));
+    };
+    let [module, function] = array(entry, "table editor entry")? else {
+        return Err(PatternError::Shape("table editor entry"));
+    };
+    let handlers = array(handlers, "table editor handlers")?
+        .iter()
+        .map(|handler| match array(handler, "table handler")? {
+            [event, name, edits] => Ok(TableHandler {
+                event: text(event, "table handler event")?,
+                handler: text(name, "table handler name")?,
+                edits: array(edits, "table edits")?
+                    .iter()
+                    .map(table_edit)
+                    .collect::<Result<_, _>>()?,
+            }),
+            _ => Err(PatternError::Shape("table handler")),
+        })
+        .collect::<Result<_, _>>()?;
+    Ok(TableEditor {
+        entry: Entry {
+            module: text(module, "table editor module")?,
+            function: text(function, "table editor function")?,
+        },
+        handlers,
+    })
+}
+
+fn table_edit(edit: &Json) -> Result<TableEdit, PatternError> {
+    match array(edit, "table edit")? {
+        [kind, name] if kind == "set" => Ok(TableEdit::Set(text(name, "set name")?)),
+        [kind, name] if kind == "del" => Ok(TableEdit::Delete(text(name, "deleted name")?)),
+        _ => Err(PatternError::Shape("table edit")),
     }
 }
 
