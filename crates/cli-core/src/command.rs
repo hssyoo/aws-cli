@@ -63,6 +63,18 @@ pub enum CredentialSource {
     DefaultChain,
 }
 impl CredentialSource {
+    /// The `METHOD` of botocore's provider that answers. A profile's keys
+    /// are `shared-credentials-file`'s or `config-file`'s, which register the
+    /// same feature id, so the shared file's stands for both.
+    pub const fn method(self) -> &'static str {
+        match self {
+            Self::Environment => "env",
+            Self::SharedProfile => "shared-credentials-file",
+            Self::Process => "custom-process",
+            Self::Container => "container-role",
+            Self::DefaultChain => "iam-role",
+        }
+    }
     /// The source for `env`, the shared files and the `--profile` value. An
     /// access key selects its provider whatever its value, and whatever
     /// the provider then finds missing.

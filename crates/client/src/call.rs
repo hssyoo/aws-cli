@@ -359,6 +359,23 @@ fn prepare_hook_error(error: HookError) -> CallError {
     }
 }
 
+/// A `prepare` stage's error when [`Client::send`] runs it again, after a
+/// credential provider has run, too late to leave the call to Python: a
+/// customization's refusal fails the call ([`HookError::after_prepare`]),
+/// and any other refusal is a defect of the client, named as one.
+fn after_prepare(error: CallError) -> CallError {
+    match error {
+        CallError::Unsupported(Unsupported::Hook(reason)) => {
+            CallError::Hook(HookError::Refuse(reason).after_prepare())
+        }
+        CallError::Unsupported(unsupported) => CallError::Internal(format!(
+            "the call was refused after credentials had loaded, which prepare should have \
+             done: {unsupported}"
+        )),
+        other => other,
+    }
+}
+
 /// `prepare_request_dict`: the serialized request joined to the endpoint
 /// (`_urljoin`), its host prefix before the endpoint's host, its query
 /// after the endpoint's, and `User-Agent` set after the serializer's
@@ -434,13 +451,18 @@ impl Client {
         if let Some(account_id) = self.deferred_account_id()? {
             // The endpoint as the account id gives it; the refusals it could
             // meet were made on the same rule set in prepare
-            // (`account_id_endpoints_refuse_nothing_more` pins it).
-            let (endpoint, resolved_features) =
-                self.resolve_endpoint(&mut cx, operation, &input, Some(&account_id))?;
+            // (`account_id_endpoints_refuse_nothing_more` pins it), so one
+            // here is a defect, not a reason to leave the call to Python.
+            let (endpoint, resolved_features) = self
+                .resolve_endpoint(&mut cx, operation, &input, Some(&account_id))
+                .map_err(after_prepare)?;
             if endpoint.url != endpoint_url || resolved_features != features {
-                request =
-                    self.join_request(&mut cx, &serialized, &endpoint.url, resolved_features)?;
-                scheme = self.select_auth(&mut cx, operation, &endpoint)?;
+                request = self
+                    .join_request(&mut cx, &serialized, &endpoint.url, resolved_features)
+                    .map_err(after_prepare)?;
+                scheme = self
+                    .select_auth(&mut cx, operation, &endpoint)
+                    .map_err(after_prepare)?;
             }
         }
         let invocation = self.parts.runtime.uuid4();
@@ -506,7 +528,11 @@ impl Client {
             // after the signer, which does not sign `User-Agent`.
             if let Some(method) = self.parts.credentials.method() {
                 let mut features = features;
-                features.extend(crate::useragent::credential_features(method).iter());
+                features.extend(
+                    cli_core::client_config::user_agent::credential_features(method)
+                        .iter()
+                        .copied(),
+                );
                 let parts = &self.parts;
                 let agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
                 request.headers.set("User-Agent", agent);

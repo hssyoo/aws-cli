@@ -2,7 +2,7 @@
 //! fake protocol.
 use super::*;
 use crate::credentials::{CredentialError, CredentialSource, SigningCredentials};
-use crate::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
+use crate::endpoint::{Builtins, EndpointConfig, EndpointData, EndpointInputs};
 use crate::error::{CallError, ParseError, SerializeError, ServiceError};
 use crate::hooks::{
     CallContext, Customization, HookError, HookResult, Interceptor, Scope, SettingDefault,
@@ -788,6 +788,83 @@ fn the_deferred_account_id_resolves_when_the_call_is_sent() -> TestResult {
         let sent = f.transport.sent();
         assert_eq!(sent[0].0.url.to_string(), url);
     }
+    Ok(())
+}
+
+/// Refuses at `endpoint_builtins` from its second call on: prepare's
+/// resolution passes, the account-id one in `send` refuses.
+#[derive(Debug)]
+struct RefusesAgain(std::sync::atomic::AtomicUsize);
+
+impl Interceptor for RefusesAgain {
+    fn endpoint_builtins(&self, _: &mut CallContext<'_>, _: &mut Builtins) -> HookResult {
+        match self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+            0 => Ok(()),
+            _ => Err(HookError::Refuse("not ported".into())),
+        }
+    }
+}
+
+static REFUSES_AGAIN: RefusesAgain = RefusesAgain(std::sync::atomic::AtomicUsize::new(0));
+static REFUSE_AGAIN: Customization = Customization {
+    id: "again",
+    scope: Scope::ALL,
+    setting_defaults: &[],
+    builtins: &[],
+    interceptors: &[&REFUSES_AGAIN],
+    replaces: &[],
+};
+static AGAIN: [&Customization; 1] = [&REFUSE_AGAIN];
+
+/// An account-id endpoint that carries headers the client does not send.
+const ACCOUNT_HEADER_RULES: &str = r#"{
+    "version": "1.0",
+    "parameters": {
+        "Region": {"type": "String", "builtIn": "AWS::Region", "required": false},
+        "AccountId": {"type": "String", "builtIn": "AWS::Auth::AccountId", "required": false}
+    },
+    "rules": [
+        {"conditions": [{"fn": "isSet", "argv": [{"ref": "AccountId"}]}],
+         "endpoint": {"url": "https://{AccountId}.zfake.{Region}.example.com",
+             "headers": {"x-zfake-account": ["{AccountId}"]}}, "type": "endpoint"},
+        {"conditions": [{"fn": "isSet", "argv": [{"ref": "Region"}]}],
+         "endpoint": {"url": "https://zfake.{Region}.example.com"}, "type": "endpoint"},
+        {"conditions": [], "error": "Missing Region", "type": "error"}
+    ]
+}"#;
+
+/// `send` resolves the endpoint again once credentials carry an account id,
+/// after a credential provider has run: a refusal there can no longer leave
+/// the call to Python. A customization's becomes its failure, and the rule
+/// set's names the defect that let prepare admit the call; neither reads as
+/// "not supported natively", and nothing is sent.
+#[test]
+fn a_refusal_when_send_resolves_again_fails_the_call() -> TestResult {
+    let counted = || {
+        Arc::new(Counted {
+            account_id: Some("123456789012".into()),
+            ..Counted::default()
+        })
+    };
+    let f = fixture_with(ACCOUNT_RULES, settings(), counted(), &AGAIN)?;
+    let prepared = f.client.prepare("Op", input("a"))?;
+    let failed = f.client.send(prepared).err();
+    let refused = |text: &str| text.contains("not ported");
+    assert!(
+        matches!(&failed, Some(CallError::Hook(HookError::Failed(text))) if refused(text)),
+        "{failed:?}"
+    );
+    assert!(f.transport.sent().is_empty());
+    let f = fixture_with(ACCOUNT_HEADER_RULES, settings(), counted(), &[])?;
+    let prepared = f.client.prepare("Op", input("a"))?;
+    let failed = f.client.send(prepared).err();
+    assert!(
+        matches!(&failed, Some(CallError::Internal(text)) if text.contains("endpoint headers")),
+        "{failed:?}"
+    );
+    let text = failed.map(|error| error.to_string()).unwrap_or_default();
+    assert!(!text.contains("not supported natively"), "{text}");
+    assert!(f.transport.sent().is_empty());
     Ok(())
 }
 

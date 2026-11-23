@@ -289,6 +289,24 @@ const fn features_bytes_all() -> usize {
     }
     bytes
 }
+/// The feature ids botocore's credential provider whose `METHOD` is `method`
+/// registers when it answers (credentials.py: `EnvProvider`,
+/// `SharedCredentialProvider`, `ConfigProvider`, `ProcessProvider`,
+/// `ContainerProvider`). Any other provider has none here: the instance
+/// metadata provider's `CREDENTIALS_IMDS` is left out (see the module doc),
+/// and admission sends the rest to Python.
+pub fn credential_features(method: &str) -> &'static [Feature] {
+    match method {
+        "env" => &[Feature::CredentialsEnvVars],
+        "shared-credentials-file" | "config-file" => &[Feature::CredentialsProfile],
+        "custom-process" => &[
+            Feature::CredentialsProfileProcess,
+            Feature::CredentialsProcess,
+        ],
+        "container-role" => &[Feature::CredentialsHttp],
+        _ => &[],
+    }
+}
 /// A set of features for the `m/` component, iterated in declaration order.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Features(u32);

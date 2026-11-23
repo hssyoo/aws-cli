@@ -61,7 +61,8 @@ pub type OwnedBlobHandler = std::sync::Arc<dyn Fn(&str) -> Result<Value, ParseEr
 
 impl ParseHooks {
     /// botocore's own handlers ([`ParseOptions::BOTOCORE`], the one place
-    /// they are named).
+    /// they are named), for tests: the CLI's clients carry its own.
+    #[cfg(any(test, feature = "testing"))]
     pub fn botocore() -> Self {
         Self {
             timestamp: std::sync::Arc::new(ParseOptions::BOTOCORE.timestamp),

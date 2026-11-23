@@ -466,10 +466,12 @@ pub fn missing_builtin(
 
 /// `EndpointRulesetResolver._get_provider_params`: for each parameter the
 /// rule set declares, in its order, the operation's static context value,
-/// else the input member's that names it (`contextParam`), else the
-/// built-in's, so a customization's built-in never overrides a context
-/// parameter. `account_id` is the deferred `AWS::Auth::AccountId`, `None`
-/// until the credentials are known.
+/// else the input member's that names it (`contextParam`), else the client
+/// context's (`_resolve_param_as_client_context_param`), which in the CLI
+/// is empty ([`missing_client_context`]), else the built-in's, so a
+/// customization's built-in never overrides a context parameter.
+/// `account_id` is the deferred `AWS::Auth::AccountId`, `None` until the
+/// credentials are known.
 pub fn provider_params(
     data: &EndpointData,
     model: &Model,
@@ -482,7 +484,6 @@ pub fn provider_params(
     for def in &data.parameters {
         let value = static_param(operation, &def.name)
             .or_else(|| context_param(model, operation, input, &def.name))
-            .or_else(|| client_context_param(model, &def.name))
             .or_else(|| match def.builtin.as_deref()? {
                 "AWS::Auth::AccountId" => account_id.map(|id| ParamValue::String(id.to_owned())),
                 builtin => builtins.get(builtin).cloned(),
@@ -494,35 +495,15 @@ pub fn provider_params(
     params
 }
 
-/// The AWS CLI's `client_context_params`: none. It builds its clients with
-/// no `Config(client_context_params=...)`, and only an S3 client folds its
-/// `s3` configuration section into the client context (args.py
-/// `ClientArgsCreator.compute_client_args`), a protocol the client does not
-/// implement.
-const CLIENT_CONTEXT: [(&str, &str); 0] = [];
-
-/// `_resolve_param_as_client_context_param`: a parameter the model declares
-/// in `clientContextParams` takes the client context's value, under the
-/// parameter's `xform_name`. The CLI's client context is empty
-/// ([`CLIENT_CONTEXT`]), so this supplies nothing; a rule set that requires
-/// such a parameter and an operation that does not set it are refused by
-/// [`missing_client_context`].
-fn client_context_param(model: &Model, name: &str) -> Option<ParamValue> {
-    model
-        .client_context_params()
-        .iter()
-        .find(|param| &*param.name == name)?;
-    CLIENT_CONTEXT
-        .iter()
-        .find(|(key, _)| *key == name)
-        .map(|(_, value)| ParamValue::String((*value).to_owned()))
-}
-
 /// The first parameter the rule set requires, without a default or a
 /// built-in, that only the client context could give `operation`: one the
 /// model declares in `clientContextParams` and the operation neither sets
 /// (`staticContextParams`) nor binds to an input member (`contextParam`).
-/// The CLI's client context is empty, so nothing supplies it.
+/// The AWS CLI's client context is empty: it builds its clients with no
+/// `Config(client_context_params=...)`, and only an S3 client folds its `s3`
+/// configuration section into it (args.py
+/// `ClientArgsCreator.compute_client_args`), a protocol the client does not
+/// implement. So nothing supplies such a parameter.
 pub fn missing_client_context(
     data: &EndpointData,
     model: &Model,

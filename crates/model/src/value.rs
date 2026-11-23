@@ -153,13 +153,6 @@ impl Value {
         }
     }
 
-    pub const fn as_bool(&self) -> Option<bool> {
-        match self {
-            Self::Bool(value) => Some(*value),
-            _ => None,
-        }
-    }
-
     /// `json.loads(text)`, with Python's number rules: a number with a
     /// fraction or exponent is a `float` (`1.50` is `1.5`, `1e400` is
     /// infinity), any other is an `int` of any size.
