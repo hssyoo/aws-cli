@@ -8,7 +8,7 @@
 //! A client picks the customizations of its service once, when it is
 //! built ([`Hooks::for_service`]).
 use crate::auth::AuthScheme;
-use crate::endpoint::EndpointParams;
+use crate::endpoint::Builtins;
 use crate::http::{HttpRequest, HttpResponse};
 use crate::retry::{Attempt, RetryDecision};
 use model::shapes::{Model, Operation};
@@ -63,11 +63,43 @@ pub enum Order {
 
 /// An interceptor's failure, which ends the call.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HookError(pub String);
+pub enum HookError {
+    /// Leave the call to the Python route, for the reason named: a partial
+    /// port declines what it does not reproduce. Only the stages
+    /// [`crate::call::Client::prepare`] runs may refuse (`modify_input`,
+    /// `endpoint_builtins`, `after_serialize`), which happen before any
+    /// credential provider runs or anything is sent; there it becomes
+    /// [`crate::admission::Unsupported::Hook`]. A later stage's refusal is
+    /// a fault of the customization, and the call fails with
+    /// [`Self::Failed`] instead.
+    Refuse(String),
+    /// botocore's `ParamValidationError`: the input is invalid, which the
+    /// CLI reports as a parameter validation failure (252).
+    Validation(String),
+    /// Any other exception a ported handler raises, `str(exception)`.
+    Failed(String),
+}
+
+impl HookError {
+    /// The error a stage after `prepare` reports: a refusal there comes too
+    /// late to leave the call to Python.
+    pub(crate) fn after_prepare(self) -> Self {
+        match self {
+            Self::Refuse(reason) => Self::Failed(format!(
+                "a customization refused a call already started: {reason}"
+            )),
+            other => other,
+        }
+    }
+}
 
 impl std::fmt::Display for HookError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        match self {
+            Self::Refuse(reason) | Self::Validation(reason) | Self::Failed(reason) => {
+                f.write_str(reason)
+            }
+        }
     }
 }
 
@@ -117,6 +149,39 @@ impl<'a> CallContext<'a> {
     }
 }
 
+/// What a call's stages share once [`crate::call::Client::prepare`] has
+/// run, carried in its [`crate::call::Prepared`] to the attempts.
+#[derive(Default)]
+pub struct Slots(Vec<Box<dyn Any + Send>>);
+
+impl std::fmt::Debug for Slots {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Slots({})", self.0.len())
+    }
+}
+
+impl<'a> CallContext<'a> {
+    /// The call's shared state, to carry past the borrow of its model.
+    pub(crate) fn into_slots(self) -> Slots {
+        Slots(self.slots)
+    }
+    /// A context that resumes `slots` for `operation`.
+    pub(crate) fn resume(
+        service: &'a str,
+        model: &'a Model,
+        operation: &'a Operation,
+        slots: Slots,
+    ) -> Self {
+        Self {
+            service,
+            model,
+            operation,
+            attempt: 1,
+            slots: slots.0,
+        }
+    }
+}
+
 impl std::fmt::Debug for CallContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CallContext")
@@ -140,12 +205,14 @@ pub trait Interceptor: Sync + std::fmt::Debug {
     fn modify_input(&self, _cx: &mut CallContext<'_>, _input: &mut Value) -> HookResult {
         Ok(())
     }
-    /// The rule parameters before resolution (`before-endpoint-resolution`).
-    fn endpoint_params(
-        &self,
-        _cx: &mut CallContext<'_>,
-        _params: &mut EndpointParams,
-    ) -> HookResult {
+    /// The built-ins before the rule parameters are assembled
+    /// (`before-endpoint-resolution`'s `builtins` dict): a customization
+    /// sets a built-in by its `builtIn` name, and an operation's static or
+    /// context parameter still wins over it
+    /// (`EndpointRulesetResolver._get_provider_params`). A built-in a rule
+    /// set requires is one the customization must name in
+    /// [`Customization::builtins`].
+    fn endpoint_builtins(&self, _cx: &mut CallContext<'_>, _builtins: &mut Builtins) -> HookResult {
         Ok(())
     }
     /// The request once serialized and joined to its endpoint
@@ -211,6 +278,10 @@ pub struct Customization {
     /// Defaults a client of the scope's service takes; only a
     /// customization for a whole service supplies them.
     pub setting_defaults: &'static [SettingDefault],
+    /// The endpoint built-ins its interceptors set, by `builtIn` name, so
+    /// admission knows before any call that a rule set's required
+    /// built-in is supplied ([`crate::admission::static_refusal`]).
+    pub builtins: &'static [&'static str],
     pub interceptors: &'static [&'static dyn Interceptor],
     /// The Python handlers this ports, as `module.qualname`, the way the
     /// customization-pattern payload entry names them

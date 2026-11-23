@@ -44,6 +44,44 @@ impl std::fmt::Debug for ParseOptions<'_> {
     }
 }
 
+/// The response parsers' handlers, owned by the client that uses them, so
+/// each client can carry its own (the CLI's depend on the invocation's
+/// `cli_timestamp_format`). Each call borrows them as [`ParseOptions`].
+#[derive(Clone)]
+pub struct ParseHooks {
+    pub timestamp: OwnedTimestampHandler,
+    pub blob: OwnedBlobHandler,
+}
+
+/// A [`TimestampHandler`] a client owns.
+pub type OwnedTimestampHandler =
+    std::sync::Arc<dyn Fn(&Value) -> Result<Value, ParseError> + Send + Sync>;
+/// A [`BlobHandler`] a client owns.
+pub type OwnedBlobHandler = std::sync::Arc<dyn Fn(&str) -> Result<Value, ParseError> + Send + Sync>;
+
+impl ParseHooks {
+    /// botocore's own handlers ([`ParseOptions::BOTOCORE`]).
+    pub fn botocore() -> Self {
+        Self {
+            timestamp: std::sync::Arc::new(common::parse_timestamp),
+            blob: std::sync::Arc::new(common::decode_blob),
+        }
+    }
+    /// The handlers as one call's parse borrows them.
+    pub fn options(&self) -> ParseOptions<'_> {
+        ParseOptions {
+            timestamp: &*self.timestamp,
+            blob: &*self.blob,
+        }
+    }
+}
+
+impl std::fmt::Debug for ParseHooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ParseHooks").finish_non_exhaustive()
+    }
+}
+
 impl ParseOptions<'static> {
     /// botocore's own: `parse_timestamp` to a [`Value::Timestamp`] and
     /// `base64.b64decode` to a [`Value::Blob`]. The CLI replaces both
@@ -58,6 +96,11 @@ pub trait Protocol: Sync + std::fmt::Debug {
     /// The protocol's name, as a model's `protocol` and `protocols` spell
     /// it.
     fn name(&self) -> &'static str;
+    /// Whether a timestamp member with no `timestampFormat` goes over the
+    /// wire as an epoch number (`JSONSerializer.TIMESTAMP_FORMAT`,
+    /// `unixtimestamp`) rather than ISO 8601 text (`QuerySerializer`'s and
+    /// the XML protocols' `iso8601`).
+    fn epoch_timestamps(&self) -> bool;
     /// The request for `operation` with `input`, which validation passed.
     ///
     /// # Errors
@@ -138,6 +181,13 @@ pub fn resolved_protocol(metadata: &Metadata) -> Result<&str, Unresolved> {
             .ok_or_else(|| Unresolved::Unsupported(listed.iter().map(|n| n.to_string()).collect())),
         _ => metadata.protocol.as_deref().ok_or(Unresolved::Missing),
     }
+}
+
+/// Whether `model`'s service sends a timestamp member with no
+/// `timestampFormat` as an epoch number; `None` when its protocol is not
+/// implemented.
+pub fn epoch_timestamps(model: &Model) -> Option<bool> {
+    for_model(model).map(Protocol::epoch_timestamps)
 }
 
 /// Whether the protocol named `name` is implemented.

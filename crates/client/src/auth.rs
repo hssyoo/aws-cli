@@ -73,6 +73,28 @@ fn client_signature_version(model: &Model, signing: bool) -> Result<Option<Strin
     }
 }
 
+/// What the model alone says the client cannot sign: the operation's auth
+/// type (`auth`, else `authtype`), else the service's, when it is neither
+/// SigV4 nor none, or an unsigned payload under SigV4. An endpoint's
+/// `authSchemes` can still override the operation's type at resolution
+/// ([`select`]); refusing on the model's is the conservative reading.
+pub fn static_refusal(model: &Model, operation: &Operation) -> Option<Unsupported> {
+    let version = match operation_auth_type(operation) {
+        Err(unsupported) => return Some(unsupported),
+        Ok(Some(version)) => version,
+        Ok(None) => match client_signature_version(model, true) {
+            Err(unsupported) => return Some(unsupported),
+            Ok(version) => version.unwrap_or_else(|| "v4".to_owned()),
+        },
+    };
+    match version.as_str() {
+        "none" => None,
+        "v4" if operation.unsigned_payload => Some(Unsupported::UnsignedPayload),
+        "v4" => None,
+        other => Some(Unsupported::Auth(other.to_owned())),
+    }
+}
+
 /// The scheme of a call of `operation` that resolved to `endpoint`, and the
 /// signing region and name it signs with.
 ///
@@ -109,7 +131,10 @@ pub fn select(
     };
     match version.as_deref() {
         None | Some("none") => return Ok(AuthScheme::None),
-        Some("v4") if !operation.unsigned_payload => {}
+        Some("v4") if operation.unsigned_payload => {
+            return Err(CallError::Unsupported(Unsupported::UnsignedPayload));
+        }
+        Some("v4") => {}
         Some(other) => return Err(CallError::Unsupported(Unsupported::Auth(other.to_owned()))),
     }
     let metadata = model.metadata();

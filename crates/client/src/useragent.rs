@@ -13,12 +13,28 @@ use cli_core::client_config::user_agent::{
 };
 
 /// The process facts the header states, read once by the caller
-/// ([`user_agent::host`], [`user_agent::distribution`]).
+/// ([`user_agent::host`], [`user_agent::distribution`]), and the extras the
+/// caller's session appends after botocore's parts.
 #[derive(Clone, Debug)]
 pub struct UserAgentContext {
     pub host: Host,
     pub distribution: Option<Distribution>,
     pub versions: Versions<'static>,
+    pub extras: SessionExtras,
+}
+
+/// What the AWS CLI's session adds to every `User-Agent`
+/// (`awscli/clidriver.py`, `add_metadata_component_to_user_agent_extra`):
+/// the install source, the auto-prompt mode and the command, which only
+/// the CLI knows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionExtras {
+    /// `md/installer#<source>` (`get_distribution_source`).
+    pub installer: &'static str,
+    /// `md/prompt#<mode>`.
+    pub prompt: &'static str,
+    /// `md/command#<lineage>`: the command's names joined by dots.
+    pub command: String,
 }
 
 /// The feature ids a call registers as it resolves its endpoint
@@ -53,9 +69,9 @@ pub fn header(settings: &ClientSettings, context: &UserAgentContext, call: Featu
         retry_mode: settings.retry_mode().value,
         app_id: settings.app_id.as_ref().map(|v| v.value.as_slice()),
         extras: Extras {
-            installer: "other",
-            prompt: "off",
-            command: &settings.command,
+            installer: context.extras.installer,
+            prompt: context.extras.prompt,
+            command: &context.extras.command,
         },
     };
     user_agent::render(

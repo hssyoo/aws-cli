@@ -17,6 +17,9 @@ impl Protocol for Query {
     fn name(&self) -> &'static str {
         "query"
     }
+    fn epoch_timestamps(&self) -> bool {
+        false
+    }
 
     /// `QuerySerializer.serialize_to_request`.
     fn serialize(

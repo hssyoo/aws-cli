@@ -11,7 +11,6 @@ use client::credentials::{CredentialError, CredentialSource, SigningCredentials}
 use client::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
 use client::error::CallError;
 use client::http::{HttpRequest, HttpResponse};
-use client::protocol::ParseOptions;
 use client::testing::{FixedRuntime, InMemoryTransport};
 use model::shapes::Model;
 use model::source::{DirSource, Kind, LoadError, Source};
@@ -103,6 +102,12 @@ fn user_agent() -> UserAgentContext {
             crt: "0.38.1",
             rust: "1.96.0",
         },
+        // The comparison reads only the `m/` feature codes.
+        extras: client::useragent::SessionExtras {
+            installer: "other",
+            prompt: "off",
+            command: String::new(),
+        },
     }
 }
 
@@ -151,7 +156,7 @@ fn client(case: &Json) -> Result<(Client, Arc<InMemoryTransport>)> {
             0.0,
         )),
         customizations: &customizations::TABLE,
-        parse: ParseOptions::BOTOCORE,
+        parse: client::protocol::ParseHooks::botocore(),
         user_agent: user_agent(),
     })?;
     Ok((client, transport))

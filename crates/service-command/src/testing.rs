@@ -83,6 +83,7 @@ pub fn replacing_all(
         id: "test",
         scope: client::hooks::Scope::ALL,
         setting_defaults: &[],
+        builtins: &[],
         interceptors: &[],
         replaces: Box::leak(names.into_boxed_slice()),
     }));

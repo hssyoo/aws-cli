@@ -54,6 +54,9 @@ impl Protocol for Fake {
     fn name(&self) -> &'static str {
         self.0
     }
+    fn epoch_timestamps(&self) -> bool {
+        false
+    }
     fn serialize(
         &self,
         _model: &Model,

@@ -117,6 +117,7 @@ _Static_assert(ZAWS_STAGE_ENDPOINT == 0 && ZAWS_STAGE_REGION == 1 && ZAWS_STAGE_
 _Static_assert(ZAWS_STAGE_BOOTSTRAP == 4 && ZAWS_STAGE_TLS == 5 && ZAWS_STAGE_CREDENTIALS == 6 && ZAWS_STAGE_CLIENT == 7, "stage values");
 _Static_assert(sizeof(enum zaws_request_kind) == 4, "request kind size");
 _Static_assert(ZAWS_REQUEST_GET == 0 && ZAWS_REQUEST_HEAD == 1 && ZAWS_REQUEST_PUT == 2 && ZAWS_REQUEST_HEAD_BUCKET == 3, "request kind values");
+#include <aws/common/hash_table.h>
 #include <aws/sdkutils/endpoints_rule_engine.h>
 #include <aws/sdkutils/partitions.h>
 #include <aws/sdkutils/sdkutils.h>
@@ -137,6 +138,8 @@ CHECK(aws_endpoints_rule_engine_resolve,int,struct aws_endpoints_rule_engine *,c
 CHECK(aws_endpoints_resolved_endpoint_get_type,enum aws_endpoints_resolved_endpoint_type,const struct aws_endpoints_resolved_endpoint *);
 CHECK(aws_endpoints_resolved_endpoint_get_url,int,const struct aws_endpoints_resolved_endpoint *,struct aws_byte_cursor *);
 CHECK(aws_endpoints_resolved_endpoint_get_properties,int,const struct aws_endpoints_resolved_endpoint *,struct aws_byte_cursor *);
+CHECK(aws_endpoints_resolved_endpoint_get_headers,int,const struct aws_endpoints_resolved_endpoint *,const struct aws_hash_table **);
+CHECK(aws_hash_table_get_entry_count,size_t,const struct aws_hash_table *);
 CHECK(aws_endpoints_resolved_endpoint_get_error,int,const struct aws_endpoints_resolved_endpoint *,struct aws_byte_cursor *);
 CHECK(aws_endpoints_resolved_endpoint_release,struct aws_endpoints_resolved_endpoint *,struct aws_endpoints_resolved_endpoint *);
 _Static_assert(AWS_ENDPOINTS_RESOLVED_ERROR == 1,"endpoint rule error type");

@@ -3,9 +3,9 @@
 //! input and the client's built-ins, then the service's rule set,
 //! evaluated by the CRT's rules engine.
 //!
-//! Endpoint headers a rule may return are not read: of the rule sets this
-//! botocore ships, only s3control's returns any, and that service's
-//! protocol is not implemented.
+//! The client sends no endpoint headers, so a resolution that returns any
+//! is refused ([`Unsupported::EndpointHeaders`]): of the rule sets this
+//! botocore ships, only s3control's returns them.
 use crate::admission::Unsupported;
 use crate::error::CallError;
 use model::shapes::{Metadata, Model, Operation};
@@ -22,7 +22,7 @@ pub enum ParamValue {
 }
 
 /// The parameters of one resolution, in the order they were set; a name
-/// left out is unset. The `endpoint_params` stage may change them.
+/// left out is unset.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EndpointParams(Vec<(String, ParamValue)>);
 
@@ -384,57 +384,112 @@ impl EndpointConfig {
     /// # Errors
     /// See [`Self::client_region`].
     pub fn builtins(&self, data: &EndpointData) -> Result<Builtins, CallError> {
-        Ok(Builtins {
-            region: self.client_region(data)?,
-            use_fips: self.use_fips,
-            use_dual_stack: self.use_dual_stack,
-            endpoint: self.endpoint_url.clone(),
-            account_id_endpoint_mode: self.account_id_endpoint_mode(),
-        })
+        let mut builtins = Builtins::default();
+        if let Some(region) = self.client_region(data)? {
+            builtins.set("AWS::Region", ParamValue::String(region));
+        }
+        builtins.set("AWS::UseFIPS", ParamValue::Boolean(self.use_fips));
+        builtins.set(
+            "AWS::UseDualStack",
+            ParamValue::Boolean(self.use_dual_stack),
+        );
+        // Constants botocore gives every client
+        // (`compute_endpoint_resolver_builtin_defaults`).
+        builtins.set("AWS::STS::UseGlobalEndpoint", ParamValue::Boolean(false));
+        builtins.set("AWS::S3::UseGlobalEndpoint", ParamValue::Boolean(false));
+        if let Some(endpoint) = &self.endpoint_url {
+            builtins.set("SDK::Endpoint", ParamValue::String(endpoint.clone()));
+        }
+        builtins.set(
+            "AWS::Auth::AccountIdEndpointMode",
+            ParamValue::String(self.account_id_endpoint_mode().to_owned()),
+        );
+        Ok(builtins)
     }
 }
 
-/// The built-in values core supplies, by `builtIn` name.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Builtins {
-    pub region: Option<String>,
-    pub use_fips: bool,
-    pub use_dual_stack: bool,
-    pub endpoint: Option<String>,
-    pub account_id_endpoint_mode: &'static str,
+/// Built-in values by `builtIn` name (`EndpointResolverBuiltins`): core's,
+/// then what customizations set at the `endpoint_builtins` stage, as
+/// botocore's `before-endpoint-resolution` handlers change the built-ins
+/// dict. `AWS::Auth::AccountId` is never here: it is deferred to the
+/// credentials, as botocore's `get_deferred_property` defers it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Builtins(EndpointParams);
+
+impl Builtins {
+    /// Sets the built-in `name`.
+    pub fn set(&mut self, name: &str, value: ParamValue) {
+        self.0.set(name, value);
+    }
+    pub fn get(&self, name: &str) -> Option<&ParamValue> {
+        self.0.get(name)
+    }
+    /// Unsets the built-in `name`, which then leaves its parameter unset.
+    pub fn remove(&mut self, name: &str) {
+        self.0.remove(name);
+    }
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &ParamValue)> {
+        self.0.iter()
+    }
 }
 
-/// The built-ins core knows. Any other is a customization's to supply.
-const CORE_BUILTINS: [&str; 6] = [
+/// The built-ins core supplies, `AWS::Auth::AccountId` among them by
+/// deferral. Any other is a customization's to supply.
+const CORE_BUILTINS: [&str; 8] = [
     "AWS::Region",
     "AWS::UseFIPS",
     "AWS::UseDualStack",
+    "AWS::STS::UseGlobalEndpoint",
+    "AWS::S3::UseGlobalEndpoint",
     "SDK::Endpoint",
     "AWS::Auth::AccountId",
     "AWS::Auth::AccountIdEndpointMode",
 ];
 
+/// The first built-in the rule set requires without a default that neither
+/// core nor a customization in scope for `service` supplies (a
+/// customization names the built-ins it sets,
+/// [`crate::hooks::Customization::builtins`]).
+pub fn missing_builtin(
+    data: &EndpointData,
+    service: &str,
+    customizations: &[&'static crate::hooks::Customization],
+) -> Option<String> {
+    let supplied = |builtin: &str| {
+        CORE_BUILTINS.contains(&builtin)
+            || customizations.iter().any(|customization| {
+                customization.scope.matches_service(service)
+                    && customization.builtins.contains(&builtin)
+            })
+    };
+    data.parameters
+        .iter()
+        .filter(|def| def.required && !def.has_default)
+        .find_map(|def| def.builtin.as_deref().filter(|builtin| !supplied(builtin)))
+        .map(str::to_owned)
+}
+
 /// `EndpointRulesetResolver._get_provider_params`: for each parameter the
 /// rule set declares, in its order, the operation's static context value,
 /// else the input member's that names it (`contextParam`), else the
-/// built-in's. `account_id` reads the credentials' account id, as the
-/// deferred `AWS::Auth::AccountId` does, and only if the rule set asks.
+/// built-in's, so a customization's built-in never overrides a context
+/// parameter. `account_id` is the deferred `AWS::Auth::AccountId`, `None`
+/// until the credentials are known.
 pub fn provider_params(
     data: &EndpointData,
     model: &Model,
     operation: &Operation,
     input: &Value,
     builtins: &Builtins,
-    account_id: impl FnOnce() -> Option<String>,
+    account_id: Option<&str>,
 ) -> EndpointParams {
-    let mut account_id = Some(account_id);
     let mut params = EndpointParams::default();
     for def in &data.parameters {
         let value = static_param(operation, &def.name)
             .or_else(|| context_param(model, operation, input, &def.name))
-            .or_else(|| {
-                let builtin = def.builtin.as_deref()?;
-                builtin_value(builtin, builtins, &mut account_id)
+            .or_else(|| match def.builtin.as_deref()? {
+                "AWS::Auth::AccountId" => account_id.map(|id| ParamValue::String(id.to_owned())),
+                builtin => builtins.get(builtin).cloned(),
             });
         if let Some(value) = value {
             params.set(&def.name, value);
@@ -486,49 +541,12 @@ fn param_value(value: &Value) -> Option<ParamValue> {
     }
 }
 
-fn builtin_value<F: FnOnce() -> Option<String>>(
-    builtin: &str,
-    builtins: &Builtins,
-    account_id: &mut Option<F>,
-) -> Option<ParamValue> {
-    match builtin {
-        "AWS::Region" => builtins.region.clone().map(ParamValue::String),
-        "AWS::UseFIPS" => Some(ParamValue::Boolean(builtins.use_fips)),
-        "AWS::UseDualStack" => Some(ParamValue::Boolean(builtins.use_dual_stack)),
-        "SDK::Endpoint" => builtins.endpoint.clone().map(ParamValue::String),
-        "AWS::Auth::AccountId" => account_id
-            .take()
-            .and_then(|read| read())
-            .map(ParamValue::String),
-        "AWS::Auth::AccountIdEndpointMode" => Some(ParamValue::String(
-            builtins.account_id_endpoint_mode.to_owned(),
-        )),
-        _ => None,
-    }
-}
-
-/// What keeps `operation` from resolving natively, given the parameters
-/// after the `endpoint_params` stage.
-pub fn unsupported(
-    data: &EndpointData,
-    operation: &Operation,
-    params: &EndpointParams,
-) -> Option<Unsupported> {
-    if !operation.operation_context_params.is_empty() {
-        return Some(Unsupported::OperationContextParams);
-    }
+/// Whether the rule set reads the deferred `AWS::Auth::AccountId`, so a
+/// call's endpoint can change once the credentials carry an account id.
+pub fn reads_account_id(data: &EndpointData) -> bool {
     data.parameters
         .iter()
-        .find(|def| {
-            def.required
-                && !def.has_default
-                && params.get(&def.name).is_none()
-                && def
-                    .builtin
-                    .as_deref()
-                    .is_some_and(|builtin| !CORE_BUILTINS.contains(&builtin))
-        })
-        .and_then(|def| def.builtin.clone().map(Unsupported::Builtin))
+        .any(|def| def.builtin.as_deref() == Some("AWS::Auth::AccountId"))
 }
 
 /// An `authSchemes` entry of a resolved endpoint's properties.
@@ -646,12 +664,17 @@ pub fn resolve(
         rules_json: &data.rules,
         partitions_json: &data.partitions,
     };
-    match crt::endpoints::resolve(documents, &list) {
-        Ok(Resolved::Endpoint { url, properties }) => Ok(ResolvedEndpoint {
+    match crt::endpoints::resolve_with_headers(documents, &list) {
+        // The client sends no endpoint headers (only s3control's rule set
+        // returns any today), so a resolution with them is Python's.
+        Ok((Resolved::Endpoint { .. }, headers)) if headers > 0 => {
+            Err(CallError::Unsupported(Unsupported::EndpointHeaders))
+        }
+        Ok((Resolved::Endpoint { url, properties }, _)) => Ok(ResolvedEndpoint {
             url: String::from_utf8_lossy(&url).into_owned(),
             auth_schemes: auth_schemes(&properties),
         }),
-        Ok(Resolved::RuleError(message)) => Err(CallError::Endpoint(rule_error_text(
+        Ok((Resolved::RuleError(message), _)) => Err(CallError::Endpoint(rule_error_text(
             &String::from_utf8_lossy(&message),
         ))),
         Err(error) => Err(CallError::Endpoint(error.to_string())),

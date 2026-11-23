@@ -19,7 +19,6 @@ use client::credentials::{CredentialError, CredentialSource, SigningCredentials}
 use client::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
 use client::error::CallError;
 use client::http::{Headers, HttpResponse};
-use client::protocol::ParseOptions;
 use client::testing::{FixedRuntime, InMemoryTransport};
 use client::transport::TransportError;
 use model::shapes::Model;
@@ -222,7 +221,7 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
             0.0,
         )),
         customizations: &[],
-        parse: ParseOptions::BOTOCORE,
+        parse: client::protocol::ParseHooks::botocore(),
         user_agent: UserAgentContext {
             host: Host::default(),
             distribution: None,
@@ -230,6 +229,11 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
                 cli: "2.0.0",
                 crt: "0.1.0",
                 rust: "1.96.0",
+            },
+            extras: client::useragent::SessionExtras {
+                installer: "other",
+                prompt: "off",
+                command: format!("{service}.test"),
             },
         },
     };

@@ -20,9 +20,9 @@ use crate::auth::{self, AuthScheme};
 use crate::credentials::CredentialSource;
 use crate::endpoint::{self, EndpointConfig, EndpointData, ResolvedEndpoint};
 use crate::error::{CallError, ParseError, ServiceError};
-use crate::hooks::{CallContext, Customization, Hooks};
+use crate::hooks::{CallContext, Customization, HookError, Hooks, Slots};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method, Url};
-use crate::protocol::{self, ParseOptions, Protocol, Serialized};
+use crate::protocol::{self, ParseHooks, Protocol, Serialized};
 use crate::retry::{self, Attempt, ErrorKind, RetryDecision, Standard};
 use crate::runtime::Runtime;
 use crate::transport::{Timeouts, Transport, TransportError};
@@ -52,7 +52,7 @@ pub struct ClientParts {
     pub customizations: &'static [&'static Customization],
     /// The response parsers' timestamp and blob handlers: the CLI's own,
     /// which it sets on every client (`add_timestamp_parser`).
-    pub parse: ParseOptions<'static>,
+    pub parse: ParseHooks,
     pub user_agent: UserAgentContext,
 }
 
@@ -77,12 +77,22 @@ pub struct Client {
     timeouts: Timeouts,
 }
 
-/// A call ready to send: [`Client::prepare`]'s result.
+/// A call ready to send: [`Client::prepare`]'s result, which owns all it
+/// holds, so a caller can keep it beside its client and send it later
+/// without preparing again.
 #[derive(Debug)]
-pub struct Prepared<'a> {
-    cx: CallContext<'a>,
+pub struct Prepared {
+    operation: String,
+    slots: Slots,
     request: HttpRequest,
     scheme: AuthScheme,
+    /// The serialized request and the call's feature ids, to join again
+    /// when the deferred account id changes the endpoint.
+    serialized: Serialized,
+    features: cli_core::client_config::user_agent::Features,
+    input: Value,
+    /// The endpoint the deferred account id left out.
+    endpoint_url: String,
 }
 
 impl Client {
@@ -155,6 +165,7 @@ fn timeout(milliseconds: u32) -> Duration {
 
 impl Client {
     /// Everything before the first attempt, in botocore's order: the
+    /// static refusals ([`crate::admission::static_refusal`]), the
     /// `modify_input` stage (`provide-client-params`,
     /// `before-parameter-build`), idempotency tokens
     /// (`generate_idempotent_uuid`), the endpoint (`_resolve_endpoint_ruleset`),
@@ -162,28 +173,41 @@ impl Client {
     /// with the endpoint and the `User-Agent` (`prepare_request_dict`), the
     /// `after_serialize` stage, and auth selection.
     ///
+    /// It needs no credentials, network or runtime, so every refusal comes
+    /// before any credential provider runs: the endpoint resolves with
+    /// `AWS::Auth::AccountId` deferred, as botocore defers it
+    /// (`credentials.get_deferred_property`), and [`Self::send`] resolves
+    /// again only when the credentials carry an account id the rule set
+    /// reads.
+    ///
     /// # Errors
     /// Anything botocore raises before it sends, and
     /// [`CallError::Unsupported`] for a call to leave to the Python route.
-    pub fn prepare(&self, operation: &str, input: Value) -> Result<Prepared<'_>, CallError> {
+    pub fn prepare(&self, operation: &str, input: Value) -> Result<Prepared, CallError> {
         let parts = &self.parts;
-        // What botocore's client creation raises once a region resolves.
-        parts.endpoint.check(&parts.endpoints)?;
         let operation = parts
             .model
             .operation(operation)
             .ok_or_else(|| CallError::UnknownOperation(operation.to_owned()))?;
-        if let Some(unsupported) = crate::admission::unimplemented_trait(operation) {
+        if let Some(unsupported) = crate::admission::static_refusal(
+            &parts.model,
+            operation,
+            &parts.endpoints,
+            &parts.service,
+            parts.customizations,
+        ) {
             return Err(CallError::Unsupported(unsupported));
         }
+        // What botocore's client creation raises once a region resolves.
+        parts.endpoint.check(&parts.endpoints)?;
         let mut cx = CallContext::new(&parts.service, &parts.model, operation);
         let mut input = input;
         for hook in self.hooks.interceptors(&operation.name) {
             hook.modify_input(&mut cx, &mut input)
-                .map_err(CallError::Hook)?;
+                .map_err(prepare_hook_error)?;
         }
         self.fill_idempotency_tokens(operation, &mut input);
-        let (endpoint, features) = self.resolve_endpoint(&mut cx, operation, &input)?;
+        let (endpoint, features) = self.resolve_endpoint(&mut cx, operation, &input, None)?;
         match validate_input(&parts.model, operation, &input) {
             Validation::Valid => {}
             Validation::Invalid(report) => return Err(CallError::Validation(report)),
@@ -195,18 +219,36 @@ impl Client {
             .protocol
             .serialize(&parts.model, operation, &input)
             .map_err(CallError::Serialize)?;
-        let user_agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
-        let mut request = join(serialized, &endpoint.url, &user_agent)?;
-        for hook in self.hooks.interceptors(&operation.name) {
-            hook.after_serialize(&mut cx, &mut request)
-                .map_err(CallError::Hook)?;
-        }
+        let request = self.join_request(&mut cx, &serialized, &endpoint.url, features)?;
         let scheme = self.select_auth(&mut cx, operation, &endpoint)?;
         Ok(Prepared {
-            cx,
+            operation: operation.name.to_string(),
+            slots: cx.into_slots(),
             request,
             scheme,
+            serialized,
+            features,
+            input,
+            endpoint_url: endpoint.url,
         })
+    }
+    /// The serialized request joined to `url` with the call's
+    /// `User-Agent`, after the `after_serialize` stage.
+    fn join_request(
+        &self,
+        cx: &mut CallContext<'_>,
+        serialized: &Serialized,
+        url: &str,
+        features: cli_core::client_config::user_agent::Features,
+    ) -> Result<HttpRequest, CallError> {
+        let parts = &self.parts;
+        let user_agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
+        let mut request = join(serialized.clone(), url, &user_agent)?;
+        for hook in self.hooks.interceptors(&cx.operation.name) {
+            hook.after_serialize(cx, &mut request)
+                .map_err(prepare_hook_error)?;
+        }
+        Ok(request)
     }
     /// `generate_idempotent_uuid`: each input member marked
     /// `idempotencyToken` and left out gets `str(uuid.uuid4())`.
@@ -235,14 +277,15 @@ impl Client {
             }
         }
     }
-    /// The endpoint of a call of `operation` with `input`, after the
-    /// `endpoint_params` stage, and the feature ids resolving it
-    /// registered.
+    /// The endpoint of a call of `operation` with `input`, the built-ins
+    /// after the `endpoint_builtins` stage and the deferred account id
+    /// `account_id`, and the feature ids resolving it registered.
     fn resolve_endpoint(
         &self,
         cx: &mut CallContext<'_>,
         operation: &Operation,
         input: &Value,
+        account_id: Option<&str>,
     ) -> Result<
         (
             ResolvedEndpoint,
@@ -251,22 +294,12 @@ impl Client {
         CallError,
     > {
         let parts = &self.parts;
-        let builtins = parts.endpoint.builtins(&parts.endpoints)?;
-        let mut credential_error = None;
-        let signing = parts.settings.signing.value;
-        let account_id = || {
-            if !signing {
-                return None;
-            }
-            match parts.credentials.credentials() {
-                Ok(credentials) => credentials.and_then(|credentials| credentials.account_id),
-                Err(error) => {
-                    credential_error = Some(error);
-                    None
-                }
-            }
-        };
-        let mut params = endpoint::provider_params(
+        let mut builtins = parts.endpoint.builtins(&parts.endpoints)?;
+        for hook in self.hooks.interceptors(&operation.name) {
+            hook.endpoint_builtins(cx, &mut builtins)
+                .map_err(prepare_hook_error)?;
+        }
+        let params = endpoint::provider_params(
             &parts.endpoints,
             &parts.model,
             operation,
@@ -274,18 +307,22 @@ impl Client {
             &builtins,
             account_id,
         );
-        if let Some(error) = credential_error {
-            return Err(CallError::Credentials(error.0));
-        }
-        for hook in self.hooks.interceptors(&operation.name) {
-            hook.endpoint_params(cx, &mut params)
-                .map_err(CallError::Hook)?;
-        }
-        if let Some(unsupported) = endpoint::unsupported(&parts.endpoints, operation, &params) {
-            return Err(CallError::Unsupported(unsupported));
-        }
         let resolved = endpoint::resolve(&parts.endpoints, &params)?;
         Ok((resolved, crate::useragent::endpoint_features(&params)))
+    }
+    /// The account id the deferred `AWS::Auth::AccountId` reads, when the
+    /// rule set reads it and the client signs: the credentials' own, which
+    /// loads them as botocore's deferred property does.
+    fn deferred_account_id(&self) -> Result<Option<String>, CallError> {
+        let parts = &self.parts;
+        if !parts.settings.signing.value || !endpoint::reads_account_id(&parts.endpoints) {
+            return Ok(None);
+        }
+        let credentials = parts
+            .credentials
+            .credentials()
+            .map_err(|error| CallError::Credentials(error.0))?;
+        Ok(credentials.and_then(|credentials| credentials.account_id))
     }
     /// The scheme botocore's selection gives, unless a `select_auth`
     /// interceptor gives another.
@@ -309,6 +346,16 @@ impl Client {
             .interceptors(&operation.name)
             .find_map(|hook| hook.select_auth(cx, &resolved));
         Ok(chosen.unwrap_or(resolved))
+    }
+}
+
+/// A `prepare` stage's hook error: a refusal leaves the call to Python,
+/// which is legal there because nothing has been sent and no credential
+/// provider has run.
+fn prepare_hook_error(error: HookError) -> CallError {
+    match error {
+        HookError::Refuse(reason) => CallError::Unsupported(Unsupported::Hook(reason)),
+        other => CallError::Hook(other),
     }
 }
 
@@ -367,12 +414,35 @@ impl Client {
     ///
     /// # Errors
     /// See [`CallError`].
-    pub fn send(&self, prepared: Prepared<'_>) -> Result<Output, CallError> {
+    pub fn send(&self, prepared: Prepared) -> Result<Output, CallError> {
         let Prepared {
-            mut cx,
-            request,
-            scheme,
+            operation,
+            slots,
+            mut request,
+            mut scheme,
+            serialized,
+            features,
+            input,
+            endpoint_url,
         } = prepared;
+        let parts = &self.parts;
+        let operation = parts
+            .model
+            .operation(&operation)
+            .ok_or_else(|| CallError::UnknownOperation(operation.clone()))?;
+        let mut cx = CallContext::resume(&parts.service, &parts.model, operation, slots);
+        if let Some(account_id) = self.deferred_account_id()? {
+            // The endpoint as the account id gives it; the refusals it could
+            // meet were made on the same rule set in prepare
+            // (`account_id_endpoints_refuse_nothing_more` pins it).
+            let (endpoint, resolved_features) =
+                self.resolve_endpoint(&mut cx, operation, &input, Some(&account_id))?;
+            if endpoint.url != endpoint_url || resolved_features != features {
+                request =
+                    self.join_request(&mut cx, &serialized, &endpoint.url, resolved_features)?;
+                scheme = self.select_auth(&mut cx, operation, &endpoint)?;
+            }
+        }
         let invocation = self.parts.runtime.uuid4();
         let mut ttl: Option<String> = None;
         let mut last_cost = None;
@@ -411,7 +481,7 @@ impl Client {
         let mut request = request.clone();
         for hook in self.hooks.interceptors(&cx.operation.name) {
             hook.before_sign(cx, &mut request)
-                .map_err(CallError::Hook)?;
+                .map_err(|error| CallError::Hook(error.after_prepare()))?;
         }
         if let AuthScheme::SigV4 {
             signing_region,
@@ -455,7 +525,10 @@ impl Client {
         request: &HttpRequest,
     ) -> Result<Result<HttpResponse, TransportError>, CallError> {
         for hook in self.hooks.interceptors(&cx.operation.name) {
-            if let Some(response) = hook.before_transmit(cx, request).map_err(CallError::Hook)? {
+            if let Some(response) = hook
+                .before_transmit(cx, request)
+                .map_err(|error| CallError::Hook(error.after_prepare()))?
+            {
                 return Ok(Ok(response));
             }
         }
@@ -491,12 +564,12 @@ impl Client {
         };
         for hook in self.hooks.interceptors(&cx.operation.name) {
             if let Err(error) = hook.after_receive(cx, &mut response) {
-                return Step::Done(Err(CallError::Hook(error)));
+                return Step::Done(Err(CallError::Hook(error.after_prepare())));
             }
         }
         // A body neither parse can read is `ResponseParserError`, which
         // botocore raises before `needs-retry`.
-        let (model, options) = (&self.parts.model, &self.parts.parse);
+        let (model, options) = (&self.parts.model, &self.parts.parse.options());
         if response.status >= 300 {
             return match self
                 .protocol
@@ -609,7 +682,7 @@ impl Client {
         self.retry.succeeded(last_cost);
         for hook in self.hooks.interceptors(&cx.operation.name) {
             if let Err(error) = hook.modify_output(cx, &mut value) {
-                return Step::Done(Err(CallError::Hook(error)));
+                return Step::Done(Err(CallError::Hook(error.after_prepare())));
             }
         }
         Step::Done(Ok(Output {
