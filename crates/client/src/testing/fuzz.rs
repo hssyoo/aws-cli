@@ -20,14 +20,17 @@ const STATUSES: [u16; 16] = [
     200, 200, 202, 204, 300, 301, 304, 400, 403, 404, 409, 413, 500, 502, 503, 599,
 ];
 
-/// The response headers the parsers read, each a flag bit.
-const HEADERS: [(&str, &str); 6] = [
+/// The response headers the parsers read, each a flag bit: rest-json's
+/// error type names a modelled error of the fake rest-json model, with the
+/// suffix `_inject_error_code` drops.
+const HEADERS: [(&str, &str); 7] = [
     ("Content-Type", "application/x-amz-json-1.0"),
     ("Content-Type", "text/xml"),
     ("x-amzn-RequestId", "fuzz-request"),
     ("x-amzn-query-error", "Fuzz.Code;Sender"),
     ("x-amz-request-id", "fuzz-id"),
     ("Content-Type", "text/html"),
+    ("x-amzn-errortype", "ItemLocked:http://fuzz.example/"),
 ];
 
 /// The CLI's parser defaults for `cli_timestamp_format=wire`: both values
