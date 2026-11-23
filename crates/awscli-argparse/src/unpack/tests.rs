@@ -927,3 +927,68 @@ mod os {
         assert_eq!((error.dest.as_str(), error.failure), ("metadata", None));
     }
 }
+
+const MODEL_TABLE: &[Argument] = &[
+    Argument {
+        cli_type: Some(CliType::UnboundedInteger),
+        ..Argument::new("count")
+    },
+    Argument {
+        cli_type: Some(CliType::Deferred),
+        nargs: Some(Nargs::ZeroOrMore),
+        ..Argument::new("tags")
+    },
+    Argument::new("name"),
+];
+
+/// A model integer member is `int()` of its text at any magnitude, as
+/// `unpack_scalar_cli_arg` returns it, with `int()`'s failure otherwise.
+#[test]
+fn model_integers_keep_any_magnitude_and_fail_as_int_does() {
+    let files = FakeFiles::fixtures();
+    let vars = variables();
+    let environment = environment(&vars, &files);
+    for (text, expected) in [
+        ("5", "5"),
+        (" -0_7 ", "-7"),
+        ("99999999999999999999999", "99999999999999999999999"),
+        ("file://ten.txt", "10"),
+    ] {
+        let values = unpack(MODEL_TABLE, &one("count", text), &environment).unwrap();
+        assert_eq!(
+            values.value("count").unwrap().to_string(),
+            expected,
+            "{text}"
+        );
+    }
+    let error = unpack(MODEL_TABLE, &one("count", "x"), &environment).unwrap_err();
+    assert_eq!(
+        error.failure.unwrap().error_text(Color::default()),
+        "invalid literal for int() with base 10: 'x'"
+    );
+}
+
+/// A value only Python unpacks stops at its destination before its
+/// parameter file is read; a later value is not reached, and an unset one
+/// is no stop.
+#[test]
+fn deferred_values_stop_at_their_destination_before_loading() {
+    let files = FakeFiles::fixtures();
+    let vars = variables();
+    let environment = environment(&vars, &files);
+    let mut namespace = Namespace::default();
+    namespace.put("tags", Value::Null, false);
+    namespace.put("name", Value::from("n"), true);
+    assert!(unpack(MODEL_TABLE, &namespace, &environment).is_ok());
+    let mut namespace = Namespace::default();
+    namespace.put(
+        "tags",
+        Value::Array(vec![Value::from("file://missing")]),
+        true,
+    );
+    namespace.put("name", Value::from("file://missing"), true);
+    let error = unpack(MODEL_TABLE, &namespace, &environment).unwrap_err();
+    assert_eq!(error.dest, "tags");
+    assert!(error.failure.is_none());
+    assert_eq!(files.reads.get(), 0);
+}
