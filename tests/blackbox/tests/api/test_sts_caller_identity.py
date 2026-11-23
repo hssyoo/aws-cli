@@ -290,3 +290,25 @@ async def test_a_credential_process_signs(api: ApiSession) -> None:
     assert signing_key(run) == "process_key", run.describe()
     (call,) = run.calls
     assert call.request.headers.get("x-amz-security-token") == "process_token"
+
+
+# botocore's credential feature codes (useragent.py): environment keys,
+# a shared profile, a profile's process, a process.
+CREDENTIAL_CODES: Final = {"g", "n", "v", "w"}
+
+
+def feature_codes(run) -> set[str]:
+    (call,) = run.calls
+    tokens = (call.request.headers.get("user-agent") or "").split()
+    listed = next((token for token in tokens if token.startswith("m/")), "m/")
+    return set(listed.removeprefix("m/").split(","))
+
+
+async def test_the_answering_provider_names_the_credential_feature(api: ApiSession) -> None:
+    # The codes come from the provider that answered, after credentials
+    # resolve: the environment's keys sign this call, and an unsigned one
+    # resolves none, whatever a prediction from the same keys would say.
+    signed = await api.run(COMMAND, replies=IDENTITY)
+    assert feature_codes(signed) & CREDENTIAL_CODES == {"g"}, signed.describe()
+    unsigned = await api.run([*COMMAND, "--no-sign-request"], replies=IDENTITY)
+    assert feature_codes(unsigned) & CREDENTIAL_CODES == set(), unsigned.describe()
