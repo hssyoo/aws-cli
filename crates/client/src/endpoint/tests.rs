@@ -277,6 +277,55 @@ fn cases() -> Vec<Value> {
         iam(Some("us-gov-west-1"), None),
         iam(Some("us-east-1"), Some(true)),
     ]);
+    cases.extend(variant_cases());
+    cases
+}
+
+/// FIPS and dual-stack where `endpoints.json` may have no variant
+/// (`EndpointResolver._resolve`'s `EndpointVariantError`): each iso
+/// partition, the dual-stack skip of iso and iso-b, a region no partition
+/// matches, a service `endpoints.json` lacks, both variants together, and
+/// an endpoint URL, which does not stop the check.
+fn variant_cases() -> Vec<Value> {
+    let both = (Some(true), Some(true));
+    let fips = (Some(true), None);
+    let dual = (None, Some(true));
+    let mut cases = Vec::new();
+    for (service, operation) in [
+        ("sts", "GetCallerIdentity"),
+        ("dynamodb", "ListTables"),
+        ("b2bi", "ListCapabilities"),
+    ] {
+        for (region, (use_fips, dualstack)) in [
+            ("us-east-1", both),
+            ("eu-isoe-west-1", both),
+            ("eu-isoe-west-1", fips),
+            ("us-iso-east-1", dual),
+            ("us-iso-east-1", fips),
+            ("us-isob-east-1", dual),
+            ("us-isof-south-1", both),
+            ("cn-north-1", fips),
+            ("cn-north-1", both),
+            ("us-gov-west-1", dual),
+            ("eusc-de-east-1", both),
+            ("mars-1", fips),
+            ("mars-1", dual),
+        ] {
+            cases.push(case(service, operation, Some(region), use_fips, dualstack, None));
+        }
+    }
+    cases.extend([
+        case("sts", "GetCallerIdentity", None, Some(true), Some(true), None),
+        case(
+            "sts",
+            "GetCallerIdentity",
+            Some("eu-isoe-west-1"),
+            Some(true),
+            Some(true),
+            Some("http://localhost:4566"),
+        ),
+        case("sts", "GetCallerIdentity", Some("fips-eu-isoe-west-1"), None, None, None),
+    ]);
     cases
 }
 
@@ -351,7 +400,7 @@ fn native(case: &Value) -> TestResult<Value> {
         signing: true,
     });
     let mut result = Map::new();
-    let outcome = config.builtins(&data).and_then(|builtins| {
+    let outcome = config.check(&data).and_then(|()| config.builtins(&data)).and_then(|builtins| {
         let operation = model
             .operation(text(case, "operation").unwrap_or_default())
             .ok_or_else(|| CallError::Endpoint("no operation".into()))?;
@@ -377,8 +426,11 @@ fn native(case: &Value) -> TestResult<Value> {
             result.insert("signing_name".into(), opt(signing.and_then(|s| s.name)));
         }
         Err(error) => {
-            let name = match error {
+            let name = match &error {
                 CallError::NoRegion => "NoRegionError",
+                CallError::Endpoint(text) if text.starts_with("Unable to construct a modeled") => {
+                    "EndpointVariantError"
+                }
                 _ => "EndpointResolutionError",
             };
             result.insert("error".into(), Value::String(name.into()));
@@ -402,5 +454,24 @@ fn endpoints_resolve_as_botocore_resolves_them() -> TestResult {
     for (case, expected) in cases.iter().zip(&expected) {
         assert_eq!(&native(case)?, expected, "{case:?}");
     }
+    Ok(())
+}
+
+/// `validate_region_name` (`Session.create_client`): the library refuses a
+/// region that is no host label, as botocore does, though the router sends
+/// such an invocation to Python first.
+#[test]
+fn a_region_that_is_no_host_label_is_refused() -> TestResult {
+    let (_, data) = fixture()?;
+    let config = EndpointConfig::new(&EndpointInputs {
+        region: Some("bad region!"),
+        signing: true,
+        ..EndpointInputs::default()
+    });
+    let refused = config.check(&data).err().map(|error| error.to_string());
+    assert_eq!(
+        refused.as_deref(),
+        Some("Provided region_name 'bad region!' doesn't match a supported format.")
+    );
     Ok(())
 }
