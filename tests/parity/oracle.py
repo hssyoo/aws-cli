@@ -11,10 +11,13 @@ layer A, the protocol level, against botocore's own pieces:
     each with awscli's JSONFormatter and TextFormatter output for the CLI
     ones, or the ClientError text with the parsed Error dict;
 
-layer B, the call level: the full prepared request a client sends (method,
-URL, ordered headers with Authorization, body) for pinned credentials,
-clock and uuid, and the outcome, captured in a before-send handler that
-returns the canned response. Nothing is sent.
+layer B, the call level: every prepared request a client of the CLI's own
+session sends (method, URL, ordered headers with Authorization, body) for
+pinned credentials, clock and uuids, and the outcome, captured in a
+before-send handler that returns the canned response to every attempt.
+Nothing is sent. The conventions are those of
+crates/customizations/tests/signature_parity: uuids numbered from 1, as
+client::testing::FixedRuntime numbers them, and SigV4's clock pinned.
 
 Only inputs are committed; this output lives under target/parity.
 """
@@ -33,7 +36,7 @@ import uuid
 from pathlib import Path
 
 PINNED = datetime.datetime(2026, 11, 22, 21, 24, 3)
-PINNED_UUID = uuid.UUID("2803f16f-0000-4000-8000-000000000001")
+ISSUED = [0]
 
 
 def decode(value):
@@ -65,6 +68,7 @@ def service_model(case, models):
 
 
 def request_dict(model, operation, params):
+    from botocore.awsrequest import AWSRequestPreparer
     from botocore.serialize import create_serializer
     from botocore.utils import percent_encode_sequence
 
@@ -72,7 +76,10 @@ def request_dict(model, operation, params):
     request = serializer.serialize_to_request(params, operation)
     body = request["body"]
     if isinstance(body, dict):
-        body = percent_encode_sequence(body).encode("utf-8")
+        # As the wire carries it: AWSRequestPreparer._prepare_body.
+        body = AWSRequestPreparer()._prepare_body(types.SimpleNamespace(data=body)) or b""
+        if isinstance(body, str):
+            body = body.encode("utf-8")
     query = request["query_string"]
     if isinstance(query, dict):
         query = percent_encode_sequence(query)
@@ -197,7 +204,11 @@ def pin_clock_and_uuid():
     auth.datetime = types.SimpleNamespace(
         datetime=Datetime, timedelta=datetime.timedelta, timezone=datetime.timezone
     )
-    pinned = types.SimpleNamespace(uuid4=lambda: PINNED_UUID)
+    def uuid4():
+        ISSUED[0] += 1
+        return uuid.UUID(f"00000000-0000-4000-8000-{ISSUED[0]:012x}")
+
+    pinned = types.SimpleNamespace(uuid4=uuid4)
     endpoint.uuid = pinned
     handlers.uuid = pinned
     # Retries do not wait: the endpoint's backoff sleep is a no-op, so the
@@ -217,9 +228,9 @@ def layer_b(case, models):
     """The prepared request and the outcome of a real client call."""
     import os
 
+    from awscli.clidriver import create_clidriver
     from botocore.awsrequest import AWSResponse
     from botocore.config import Config
-    from botocore.session import Session
 
     settings = case.get("settings", {})
     os.environ["AWS_ACCESS_KEY_ID"] = settings.get("access_key", "AKIDEXAMPLE")
@@ -227,12 +238,15 @@ def layer_b(case, models):
     os.environ.pop("AWS_SESSION_TOKEN", None)
     if "session_token" in settings:
         os.environ["AWS_SESSION_TOKEN"] = settings["session_token"]
-    session = Session()
+    ISSUED[0] = 0
+    session = create_clidriver().session
     if case.get("models") == "fake":
         session.get_component("data_loader").search_paths.insert(0, str(models))
     config = Config(
         use_fips_endpoint=settings.get("fips", False),
         use_dualstack_endpoint=settings.get("dualstack", False),
+        # Attempts in all, as the config file's max_attempts counts them
+        # (botocore/config.py).
         retries={"max_attempts": settings.get("max_attempts", 3), "mode": "standard"},
     )
     client = session.create_client(
@@ -241,19 +255,19 @@ def layer_b(case, models):
         endpoint_url=settings.get("endpoint_url"),
         config=config,
     )
-    seen = {}
+    seen = {"requests": []}
     canned = case.get("response", {"status": 200, "headers": {}, "body": ""})
 
     def capture(request, **kwargs):
         body = request.body or b""
         if isinstance(body, str):
             body = body.encode()
-        seen["request"] = {
+        seen["requests"].append({
             "method": request.method,
             "url": request.url,
             "headers": [[k, v.decode() if isinstance(v, bytes) else v] for k, v in request.headers.items()],
             "body": base64.b64encode(body).decode(),
-        }
+        })
         return AWSResponse(
             request.url, canned.get("status", 200), canned.get("headers", {}),
             Raw(canned.get("body", "").encode()),
@@ -265,7 +279,7 @@ def layer_b(case, models):
         parsed = getattr(client, names[case["operation"]])(**decode(case.get("input", {})))
         seen["parsed"] = dump(parsed)
     except Exception as error:
-        seen["error"] = f"{type(error).__name__}: {error}"
+        seen["error"] = {"class": type(error).__name__, "text": str(error)}
     return seen
 
 
