@@ -549,3 +549,22 @@ fn load_timings() -> Result<()> {
     std::io::Write::write_all(&mut std::io::stderr(), report.as_bytes())?;
     Ok(())
 }
+
+/// `xmlNamespace` written as the URI alone.
+#[test]
+fn a_namespace_may_be_written_as_its_uri() -> Result<()> {
+    let model = Model::from_json(
+        br#"{"shapes":{"L":{"type":"list","member":{"shape":"S"},"xmlNamespace":"https://x/"},
+        "S":{"type":"string"}}}"#,
+    )?;
+    let list = named(&model, "L")?;
+    let namespace = model
+        .shape(list)
+        .traits
+        .xml_namespace
+        .clone()
+        .ok_or("namespace")?;
+    assert_eq!(namespace.uri.as_deref(), Some("https://x/"));
+    assert_eq!(namespace.prefix, None);
+    Ok(())
+}
