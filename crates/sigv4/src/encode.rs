@@ -44,29 +44,43 @@ pub(crate) fn canonical_query(query: &str) -> String {
 }
 
 /// `SigV4Auth._normalize_url_path`: `botocore.utils.normalize_url_path`
-/// (dot segments removed) quoted with `/~` safe.
+/// quoted with `/~` safe.
 pub(crate) fn normalize_path(path: &str) -> String {
+    quote(&normalize_url_path(path), "/~")
+}
+
+/// `botocore.utils.normalize_url_path`: `/` for an empty path, else
+/// [`remove_dot_segments`].
+fn normalize_url_path(path: &str) -> String {
     if path.is_empty() {
         return "/".to_owned();
     }
-    let mut kept: Vec<&str> = Vec::new();
-    for segment in path.split('/') {
+    remove_dot_segments(path)
+}
+
+/// `botocore.utils.remove_dot_segments`: RFC 3986's dot segments removed
+/// (a `..` past the start drops nothing) and, as AWS services require, the
+/// empty segments too, so `//` collapses. A leading `/` stays; a trailing
+/// one stays when the path ends in `/` and a segment is left.
+fn remove_dot_segments(url: &str) -> String {
+    if url.is_empty() {
+        return String::new();
+    }
+    let mut output: Vec<&str> = Vec::new();
+    for segment in url.split('/') {
         match segment {
-            "." => {}
+            "" | "." => {}
             ".." => {
-                if kept.len() > 1 {
-                    kept.pop();
-                }
+                output.pop();
             }
-            _ => kept.push(segment),
+            _ => output.push(segment),
         }
     }
-    let joined = kept.join("/");
-    let trailing = path.ends_with("/.") || path.ends_with("/..");
-    let joined = if trailing && !joined.ends_with('/') {
-        format!("{joined}/")
+    let first = if url.starts_with('/') { "/" } else { "" };
+    let last = if url.ends_with('/') && !output.is_empty() {
+        "/"
     } else {
-        joined
+        ""
     };
-    quote(&joined, "/~")
+    format!("{first}{}{last}", output.join("/"))
 }
