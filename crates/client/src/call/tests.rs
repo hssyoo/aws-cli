@@ -853,3 +853,56 @@ fn a_hook_refuses_only_before_the_call_starts() -> TestResult {
     assert!(f.transport.sent().is_empty());
     Ok(())
 }
+
+/// Credentials from `custom-process`, as a chain reports the provider that
+/// answered.
+#[derive(Debug)]
+struct FromProcess;
+
+impl CredentialSource for FromProcess {
+    fn credentials(&self) -> Result<Option<SigningCredentials>, CredentialError> {
+        Ok(Some(SigningCredentials {
+            access_key_id: "AKIDEXAMPLE".into(),
+            secret_access_key: "SECRET".into(),
+            session_token: None,
+            account_id: None,
+        }))
+    }
+    fn method(&self) -> Option<&'static str> {
+        Some("custom-process")
+    }
+}
+
+/// The credential provider's feature codes join the `User-Agent` once it
+/// has answered, as botocore's providers register them when the signer
+/// asks for credentials and `rebuild_and_replace_user_agent_handler`
+/// rebuilds the header after: `v` and `w` for a process, none unsigned.
+#[test]
+fn the_answering_provider_s_features_join_the_user_agent() -> TestResult {
+    let features = |agent: &str| {
+        agent
+            .split(' ')
+            .find_map(|part| part.strip_prefix("m/"))
+            .unwrap_or("")
+            .to_owned()
+    };
+    let f = fixture(settings(), Arc::new(FromProcess), &[])?;
+    let prepared = f.client.prepare("Op", input("a"))?;
+    f.transport.respond(ok("{}"));
+    f.client.send(prepared)?;
+    let sent = f.transport.sent();
+    let agent = sent[0].0.headers.get("User-Agent").unwrap_or_default();
+    let codes = features(agent);
+    assert!(codes.split(',').any(|code| code == "v"), "{agent}");
+    assert!(codes.split(',').any(|code| code == "w"), "{agent}");
+    let mut unsigned = settings();
+    unsigned.signing = Resolved::new(false, Source::Flag("--no-sign-request"));
+    let f = fixture(unsigned, Arc::new(FromProcess), &[])?;
+    f.transport.respond(ok("{}"));
+    f.client.call("Op", input("a"))?;
+    let sent = f.transport.sent();
+    let agent = sent[0].0.headers.get("User-Agent").unwrap_or_default();
+    let codes = features(agent);
+    assert!(!codes.split(',').any(|code| code == "v" || code == "w"), "{agent}");
+    Ok(())
+}
