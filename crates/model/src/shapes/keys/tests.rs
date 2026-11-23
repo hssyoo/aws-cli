@@ -253,7 +253,7 @@ fn print_census(
     )?)
 }
 
-/// The census of every shipped model (client F1): the operations each
+/// The census of every shipped model: the operations each
 /// uninterpreted key reaches, which a client refuses, and how often each
 /// ignored key occurs. It prints the table and asserts its structure: every
 /// recorded key is reached by some operation or is the service's, and every

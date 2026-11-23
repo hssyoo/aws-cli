@@ -200,15 +200,6 @@ impl Patterns {
             .collect()
     }
 
-    /// Every awscli entry and botocore handler that touches `subject`, by
-    /// name ([`Patterns::matches`]).
-    pub fn touching(&self, subject: &Subject<'_>) -> BTreeSet<String> {
-        self.matches(subject)
-            .into_iter()
-            .map(|found| found.name)
-            .collect()
-    }
-
     /// Every pattern that matches one of `subject`'s events, with what it
     /// names: the registry's over the CLI's and the client's events (the
     /// clients share the session's lazy emitter, so a registry entry runs

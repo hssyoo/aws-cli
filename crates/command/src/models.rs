@@ -284,14 +284,6 @@ impl<'a> ModelSource<'a> {
         }))
     }
 
-    /// The awscli entries and botocore handlers that touch `[command,
-    /// operation]`, by dotted name.
-    pub fn touching(&self, command: &str, operation: &str) -> Option<Vec<String>> {
-        self.with_subject(command, operation, |subject| {
-            self.patterns.touching(subject).into_iter().collect()
-        })
-    }
-
     /// Every pattern that matches `[command, operation]`'s events, with
     /// what it names ([`Patterns::matches`]).
     pub fn matches(&self, command: &str, operation: &str) -> Option<Vec<Match>> {

@@ -96,10 +96,19 @@ fn the_entry_reads_as_the_generator_writes_it() -> Result<(), PatternError> {
     Ok(())
 }
 
+/// Every awscli entry and botocore handler that touches `subject`, by name.
+fn touching(patterns: &Patterns, subject: &Subject<'_>) -> BTreeSet<String> {
+    patterns
+        .matches(subject)
+        .into_iter()
+        .map(|found| found.name)
+        .collect()
+}
+
 #[test]
 fn a_subject_meets_its_service_s_entries_and_the_session_s() -> Result<(), PatternError> {
     let patterns = Patterns::parse(DOCUMENT.as_bytes())?;
-    let touched = patterns.touching(&subject("zsvc", true));
+    let touched = touching(&patterns, &subject("zsvc", true));
     let expected = [
         "awscli.customizations.z.fix",
         "awscli.paramfile.register_init_uri_param_handler",
@@ -111,7 +120,7 @@ fn a_subject_meets_its_service_s_entries_and_the_session_s() -> Result<(), Patte
         touched.iter().map(String::as_str).collect::<Vec<_>>(),
         expected
     );
-    let other = patterns.touching(&subject("other", true));
+    let other = touching(&patterns, &subject("other", true));
     assert_eq!(other.len(), 2);
     Ok(())
 }
@@ -196,7 +205,5 @@ fn matches_carry_their_pattern_and_origin() -> Result<(), PatternError> {
             ),
         ]
     );
-    let names: BTreeSet<String> = matches.into_iter().map(|found| found.name).collect();
-    assert_eq!(names, patterns.touching(&subject("zsvc", true)));
     Ok(())
 }
