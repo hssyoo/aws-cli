@@ -143,7 +143,20 @@ fn a_paginated_operation_hides_its_tokens_and_adds_the_page_options() -> Result<
         }
         assert_eq!(argument(table, "starting-token").value_type, None);
         assert!(table.typed());
-        assert!(!source.reproduces_failures("dynamodb", Some("list-tables")));
+    })
+}
+
+/// argparse's value types are parsed natively, so a typed table renders
+/// its own failures where nothing customizes it.
+#[test]
+fn a_typed_table_renders_its_failures_natively() -> Result<()> {
+    with_source(Some(fake_models()), |source| {
+        let table = source
+            .table("zjson", "list-things")
+            .unwrap_or_else(|| panic!("table"));
+        assert!(table.typed());
+        assert!(source.reproduces_failures("zjson", Some("list-things")));
+        assert!(source.reproduces_failures("zjson", Some("measure")));
     })
 }
 
