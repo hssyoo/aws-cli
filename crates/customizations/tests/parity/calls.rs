@@ -77,6 +77,11 @@ impl CredentialSource for Keys {
     fn credentials(&self) -> std::result::Result<Option<SigningCredentials>, CredentialError> {
         Ok(Some(self.0.clone()))
     }
+    /// The oracle supplies the keys in the environment, so botocore's
+    /// `EnvProvider` answers.
+    fn method(&self) -> Option<&'static str> {
+        Some("env")
+    }
 }
 
 fn keys(settings: &Json) -> Keys {

@@ -903,6 +903,9 @@ fn the_answering_provider_s_features_join_the_user_agent() -> TestResult {
     let sent = f.transport.sent();
     let agent = sent[0].0.headers.get("User-Agent").unwrap_or_default();
     let codes = features(agent);
-    assert!(!codes.split(',').any(|code| code == "v" || code == "w"), "{agent}");
+    assert!(
+        !codes.split(',').any(|code| code == "v" || code == "w"),
+        "{agent}"
+    );
     Ok(())
 }

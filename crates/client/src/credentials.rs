@@ -34,6 +34,13 @@ pub trait CredentialSource: Send + Sync + std::fmt::Debug {
     /// # Errors
     /// A refresh botocore raises to the caller.
     fn credentials(&self) -> Result<Option<SigningCredentials>, CredentialError>;
+    /// botocore's `method` of the provider that answered, once
+    /// [`Self::credentials`] has found credentials; `None` before then, or
+    /// for a source that cannot say. The `User-Agent` names the provider by
+    /// it ([`crate::useragent::credential_features`]).
+    fn method(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// The chain's result as botocore's session holds it for a client: found
@@ -50,6 +57,9 @@ impl ChainCredentials {
 }
 
 impl CredentialSource for ChainCredentials {
+    fn method(&self) -> Option<&'static str> {
+        self.0.as_ref().map(credentials::Loaded::method)
+    }
     fn credentials(&self) -> Result<Option<SigningCredentials>, CredentialError> {
         let Some(loaded) = &self.0 else {
             return Ok(None);
