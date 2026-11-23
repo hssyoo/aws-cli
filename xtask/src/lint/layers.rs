@@ -65,6 +65,9 @@ const ALLOWED: &[(&str, &[&str])] = &[
     // one drawn edge to `s3` goes through a trait in `command`.
     ("s3", S3),
     ("customizations", CUSTOMIZATIONS),
+    // The generic service command: admission, binding and the call, over
+    // the command API, the client and the CLI's error rendering.
+    ("service-command", SERVICE_COMMAND),
     // L5: routing. Its `s3` and `command` edges are the arms the plan's
     // §2.2 rule 2 removes when the binary assembles the registry.
     ("cli-router", ROUTER),
@@ -115,6 +118,16 @@ const SERVICE_ERRORS: &[&str] = &[
     "pytext",
     "timestamp",
 ];
+const SERVICE_COMMAND: &[&str] = &[
+    "awscli-argparse",
+    "cli-core",
+    "client",
+    "command",
+    "credentials",
+    "format",
+    "model",
+    "service-errors",
+];
 const S3: &[&str] = &[
     "awscli-argparse",
     "awscli-config",
@@ -144,9 +157,11 @@ const BINARY: &[&str] = &[
     "command",
     "crt",
     "crt-sys",
+    "customizations",
     "pyload",
     "python-fallback",
     "s3",
+    "service-command",
 ];
 
 /// The layering diagnostics for `cargo metadata`'s workspace `packages`.
