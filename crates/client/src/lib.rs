@@ -30,8 +30,3 @@ pub mod xml;
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
-
-// The census test (`tests/census.rs`) counts refusals with the CLI's
-// customization table; the unit tests do not use it.
-#[cfg(test)]
-use customizations as _;

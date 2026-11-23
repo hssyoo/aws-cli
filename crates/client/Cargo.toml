@@ -21,8 +21,6 @@ timestamp = { path = "../timestamp" }
 [dev-dependencies]
 awscli-argparse = { path = "../awscli-argparse", features = ["testing"] }
 crt = { path = "../crt", features = ["loopback"] }
-# The census counts refusals with the CLI's own customizations.
-customizations = { path = "../customizations" }
 model = { path = "../model", features = ["testing"] }
 sigv4 = { path = "../sigv4", features = ["testing"] }
 timestamp = { path = "../timestamp", features = ["testing"] }
