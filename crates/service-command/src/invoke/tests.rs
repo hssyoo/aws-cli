@@ -21,44 +21,85 @@ fn trust_follows_the_setting_and_the_payload() {
     );
 }
 
+/// A scratch directory holding a `credential_process` that records each
+/// run in `runs` and fails, and the shared files that configure it.
+#[cfg(unix)]
+struct FailingProcess {
+    directory: std::path::PathBuf,
+    runs: std::path::PathBuf,
+    files: awscli_config::ParsedFiles,
+}
+
+#[cfg(unix)]
+impl FailingProcess {
+    fn new(name: &str) -> crate::testing::Result<Self> {
+        let directory = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&directory)?;
+        let runs = directory.join("runs");
+        let script = directory.join("process.sh");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\necho run >> {}\nexit 1\n", runs.display()),
+        )?;
+        let mut permissions = std::fs::metadata(&script)?.permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&script, permissions)?;
+        let config = format!("[default]\ncredential_process = {}\n", script.display());
+        let files = crate::testing::files(&config, "");
+        Ok(Self {
+            directory,
+            runs,
+            files,
+        })
+    }
+
+    fn runs(&self) -> crate::testing::Result<usize> {
+        Ok(if self.runs.exists() {
+            std::fs::read_to_string(&self.runs)?.lines().count()
+        } else {
+            0
+        })
+    }
+
+    /// `argv`, routed and preflighted in the routed environment.
+    fn preflight(&self, argv: &[&str]) -> crate::testing::Result<Box<cli_router::Run>> {
+        let verdict = crate::testing::route(argv, &[], &self.files)?;
+        let cli_router::Verdict::Run(run) = verdict else {
+            return Err(format!("not native: {verdict:?}").into());
+        };
+        let env = crate::testing::environment(&[]);
+        let variables = std::collections::HashMap::new();
+        let preflight = Preflight {
+            env: &env,
+            variables: &variables,
+            shared_files: &self.files,
+            globals: &run.globals,
+            directory: &self.directory,
+            settings: &run.settings,
+            output: &run.output,
+            stdout_is_tty: false,
+        };
+        assert_eq!(run.invocation.preflight(&preflight), Ok(()));
+        Ok(run)
+    }
+}
+
+#[cfg(unix)]
+impl Drop for FailingProcess {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.directory);
+    }
+}
+
 /// The preflight runs no credential provider, so nothing it or the client's
 /// `prepare` refuses can have run one before Python runs the chain again:
 /// a `credential_process` runs first when the client signs.
 #[test]
 #[cfg(unix)]
 fn the_preflight_runs_no_credential_provider() -> crate::testing::Result<()> {
-    let directory = std::env::temp_dir().join(format!("preflight-{}", std::process::id()));
-    std::fs::create_dir_all(&directory)?;
-    let runs = directory.join("runs");
-    let script = directory.join("process.sh");
-    std::fs::write(
-        &script,
-        format!("#!/bin/sh\necho run >> {}\nexit 1\n", runs.display()),
-    )?;
-    let mut permissions = std::fs::metadata(&script)?.permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
-    std::fs::set_permissions(&script, permissions)?;
-    let config = format!("[default]\ncredential_process = {}\n", script.display());
-    let files = crate::testing::files(&config, "");
-    let verdict = crate::testing::route(&["zjson", "ping"], &[], &files)?;
-    let cli_router::Verdict::Run(run) = verdict else {
-        return Err(format!("not native: {verdict:?}").into());
-    };
-    let env = cli_core::SnapshotEnv::from_pairs([("AWS_DEFAULT_REGION", "us-east-1")]);
-    let variables = std::collections::HashMap::new();
-    let preflight = Preflight {
-        env: &env,
-        variables: &variables,
-        shared_files: &files,
-        globals: &run.globals,
-        directory: &directory,
-        settings: &run.settings,
-        output: &run.output,
-        stdout_is_tty: false,
-    };
-    assert_eq!(run.invocation.preflight(&preflight), Ok(()));
-    assert!(!runs.exists(), "the preflight ran the process");
-    std::fs::remove_dir_all(&directory)?;
+    let process = FailingProcess::new("preflight")?;
+    process.preflight(&["zjson", "ping"])?;
+    assert_eq!(process.runs()?, 0, "the preflight ran the process");
     Ok(())
 }
 

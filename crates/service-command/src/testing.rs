@@ -127,6 +127,15 @@ pub fn files(config: &str, alias: &str) -> awscli_config::ParsedFiles {
     })
 }
 
+/// `env` with a region and a refused loopback endpoint, as [`route`]
+/// routes with it, so nothing built from it can reach a real endpoint.
+pub fn environment(env: &[(&str, &str)]) -> cli_core::SnapshotEnv {
+    cli_core::SnapshotEnv::from_pairs(env.iter().copied().chain([
+        ("AWS_DEFAULT_REGION", "us-east-1"),
+        ("AWS_ENDPOINT_URL", "http://127.0.0.1:9"),
+    ]))
+}
+
 /// The router's verdict for `argv` over the fake models and the client's
 /// real customizations, with `env` (and a region, and a refused loopback
 /// endpoint) and `files`. Nothing is sent.
@@ -140,10 +149,7 @@ pub fn route(
         let registry = Registry::new(&[], Some(service.models())).with_binder(&service);
         let argv: Vec<String> = argv.iter().map(|arg| (*arg).to_owned()).collect();
         let mut parsed = awscli_argparse::parse(&argv, &Options::default(), &registry.tables());
-        let env = cli_core::SnapshotEnv::from_pairs(env.iter().copied().chain([
-            ("AWS_DEFAULT_REGION", "us-east-1"),
-            ("AWS_ENDPOINT_URL", "http://127.0.0.1:9"),
-        ]));
+        let env = environment(env);
         let variables = HashMap::new();
         let unpack = unpack::Environment {
             directory: std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
