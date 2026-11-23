@@ -75,15 +75,12 @@ impl OperationSource for ServiceSource<'_> {
         let Needs::Client {
             service: service_id,
         } = self.models.needs(&admitted.command);
-        let namespace = &parsed.globals.namespace;
         Ok(Box::new(crate::invoke::ServiceInvocation::new(
             admitted,
             std::sync::Arc::new(service.model.clone()),
             endpoints,
             self.customizations,
             service_id.into_owned(),
-            namespace.string("output").map(str::to_owned),
-            namespace.boolean("no_cli_pager"),
             self.embedded_trust,
             self.versions,
         )))

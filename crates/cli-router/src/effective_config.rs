@@ -123,7 +123,7 @@ pub enum Consumer {
     Credentials,
     /// The model source, which reads botocore's search path (`Loader`).
     Models,
-    /// The router's output-format stage (`generic::output_format_refusal`).
+    /// The router's output stage (`command::OutputSettings::resolve`).
     Output,
     /// The invocation's preflight, which starts the pager as
     /// `OutputStreamFactory` does (`format::pager`).
@@ -716,13 +716,13 @@ pub const SETTINGS: &[Setting] = &[
         scope: Scope::S3,
     },
     // A model operation's response prints its timestamps as `iso8601`
-    // formats them or, for `wire`, as the response's text, through the
-    // invocation's timestamp parser (`format::TimestampParser`); any other
-    // value fails the session (`add_timestamp_parser`).
+    // formats them or, for `wire`, as the response's text; the output
+    // stage parses the value once (`command::OutputSettings`) and hands a
+    // value `add_timestamp_parser` rejects to Python.
     Setting {
         source: Source::Profile("cli_timestamp_format"),
-        support: Support::Unsupported(PythonReason::OutputFormat),
-        matching: Match::NoneOf(&["iso8601", "wire"]),
+        support: Support::Honored(Consumer::Output),
+        matching: Match::Present,
         scope: Scope::Service,
     },
     Setting {

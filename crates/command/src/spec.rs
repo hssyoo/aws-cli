@@ -65,6 +65,8 @@ pub struct Preflight<'a> {
     pub directory: &'a Path,
     /// The settings the router resolved for the command's client.
     pub settings: &'a cli_core::client_config::ClientSettings,
+    /// How the response prints, which the router resolved.
+    pub output: &'a crate::OutputSettings,
     pub stdout_is_tty: bool,
 }
 impl std::fmt::Debug for Preflight<'_> {

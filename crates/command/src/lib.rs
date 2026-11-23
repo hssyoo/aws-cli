@@ -6,12 +6,14 @@
 //! grammar ([`Registry::new`]).
 #![forbid(unsafe_code)]
 pub mod models;
+pub mod output;
 pub mod patterns;
 mod registry;
 mod spec;
 #[doc(inline)]
-pub use registry::{Operation, OperationSource, Registry, Resolution};
+pub use output::{OutputFormat, OutputGlobals, OutputSettings, PagerProfile, PagerSettings};
 #[doc(inline)]
+pub use registry::{Operation, OperationSource, Registry, Resolution};
 pub use spec::{Admission, Context, Invocation, Needs, Preflight, StreamPolicy};
 #[cfg(test)]
 mod tests;

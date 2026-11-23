@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use {awscli_config as _, cli_core as _, model as _};
+use {awscli_config as _, cli_core as _, format as _, model as _};
 
 type Error = Box<dyn std::error::Error>;
 

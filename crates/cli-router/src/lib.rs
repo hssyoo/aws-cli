@@ -77,6 +77,8 @@ pub struct Run {
     pub streams: ::command::StreamPolicy,
     /// The settings the command's client runs with, resolved once.
     pub settings: client_config::ClientSettings,
+    /// How the command's response prints, resolved once.
+    pub output: ::command::OutputSettings,
 }
 /// The router's decision. A failure is an owned copy of the parse result's.
 /// `Native` is a pinned `s3` command of the router's own enum path; `Run`

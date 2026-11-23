@@ -4,7 +4,7 @@
 //! binding, settings admission, the output format, and the endpoint checks.
 //! The prologue (session fallback, alias rule) ran in the caller.
 use super::*;
-use ::command::{Needs, Operation, Resolution, StreamPolicy};
+use ::command::{Needs, Operation, Resolution};
 
 /// [`route_parsed`] for a lineage the pinned enum path does not bind.
 pub(super) fn route<E: EnvMap>(
@@ -82,9 +82,10 @@ fn admit<E: EnvMap>(
     let (needs, streams) = (operation.needs(), operation.streams());
     let ns = &result.globals.namespace;
     let globals = bind_globals(ns);
-    if let Some(reason) = settings_refusal(config, &globals, ns, streams) {
-        return Verdict::Python(reason);
-    }
+    let output = match settings(config, &globals, ns) {
+        Ok(output) => output,
+        Err(reason) => return Verdict::Python(reason),
+    };
     let Needs::Client { service } = &needs;
     if let Some(reason) = endpoint_refusal(config, &globals, ns, service) {
         return Verdict::Python(reason);
@@ -106,21 +107,21 @@ fn admit<E: EnvMap>(
             needs,
             streams,
             settings,
+            output,
         })),
         Err(reason) => Verdict::Python(reason),
     }
 }
 
 /// The settings stage: the decision table's rows for a model operation's
-/// client (`Scope::Service`), then the output format a formatting command
-/// would print with. The client's own settings resolve after the endpoint
-/// checks, in the s3 commands' order.
-fn settings_refusal<E: EnvMap>(
+/// client (`Scope::Service`), then how its response prints, resolved once
+/// ([`::command::OutputSettings`]). The client's own settings resolve after
+/// the endpoint checks, in the s3 commands' order.
+fn settings<E: EnvMap>(
     config: &Configuration<'_, E>,
     globals: &Globals,
     ns: &Namespace,
-    streams: StreamPolicy,
-) -> Option<PythonReason> {
+) -> Result<::command::OutputSettings, PythonReason> {
     let refused = effective_config::admit(&effective_config::Inputs {
         env: config.env,
         shared_files: config.shared_files,
@@ -129,34 +130,23 @@ fn settings_refusal<E: EnvMap>(
         scope: effective_config::Scope::Service,
         boto_config_credentials: config.boto_config_credentials,
     });
-    if refused.is_some() {
-        return refused;
+    if let Some(reason) = refused {
+        return Err(reason);
     }
-    (streams == StreamPolicy::Formatted)
-        .then(|| output_format_refusal(config, globals, ns))
-        .flatten()
-}
-
-/// [`PythonReason::OutputFormat`] unless the format
-/// `CLIOperationCaller._display_response` hands `get_formatter` is one the
-/// native formatters write. `CLIDriver._construct_cli_output_chain` reads
-/// `--output`, then `AWS_DEFAULT_OUTPUT` whenever it is set, then the
-/// selected profile's `output`, then `json`. A value that is not Unicode,
-/// or a nested block, which botocore returns as a dictionary, is no format
-/// native writes.
-fn output_format_refusal<E: EnvMap>(
-    config: &Configuration<'_, E>,
-    globals: &Globals,
-    ns: &Namespace,
-) -> Option<PythonReason> {
-    use cli_core::shared_config::{profile_property, profile_property_is_block};
-    let files = config.shared_files;
-    let profile = cli_core::aws_profile::select_or_default(config.env, globals.profile.as_deref());
-    let format = match (ns.value("output"), config.env.var_os("AWS_DEFAULT_OUTPUT")) {
-        (Some(value), _) if !value.is_null() => value.as_str(),
-        (_, Some(variable)) => variable.to_str(),
-        _ if profile_property_is_block(files, profile, "output") => None,
-        _ => Some(profile_property(files, profile, "output").unwrap_or("json")),
-    };
-    (!matches!(format, Some("json" | "text" | "off"))).then_some(PythonReason::OutputFormat)
+    let output = ns
+        .value("output")
+        .filter(|value| !value.is_null())
+        .map(|value| value.as_str());
+    let local_offset =
+        cli_core::local_zone::LocalZone::system().and_then(|zone| zone.fixed_offset());
+    ::command::OutputSettings::resolve(
+        config.env,
+        config.shared_files,
+        &::command::OutputGlobals {
+            output,
+            no_cli_pager: ns.boolean("no_cli_pager"),
+            profile: globals.profile.as_deref(),
+        },
+        local_offset,
+    )
 }

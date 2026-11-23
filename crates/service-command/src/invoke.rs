@@ -10,7 +10,7 @@
 use crate::admit::Admitted;
 use cli_core::cli_error::{CommandFailure, PythonReason};
 use cli_core::client_config::{ClientSettings, Trust};
-use cli_core::{EnvMap, aws_profile, shared_config};
+use cli_core::{EnvMap, aws_profile};
 use client::call::{Client, ClientParts, UserAgentContext};
 use client::credentials::ChainCredentials;
 use client::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
@@ -36,9 +36,6 @@ pub struct ServiceInvocation {
     pub customizations: &'static [&'static Customization],
     /// The hyphenized service id the configured-endpoint lookup keys on.
     pub service_id: String,
-    /// `--output`, when given.
-    pub output: Option<String>,
-    pub no_cli_pager: bool,
     /// The output shape reaches a timestamp the wire sends as an epoch.
     pub output_epochs: bool,
     /// The payload's CA bundle, trusted when nothing configures another.
@@ -60,15 +57,12 @@ struct Ready {
 }
 
 impl ServiceInvocation {
-    #[expect(clippy::too_many_arguments, reason = "one field each, from binding")]
     pub fn new(
         admitted: Admitted,
         model: Arc<Model>,
         endpoints: EndpointData,
         customizations: &'static [&'static Customization],
         service_id: String,
-        output: Option<String>,
-        no_cli_pager: bool,
         embedded_trust: Option<&'static [u8]>,
         versions: cli_core::client_config::user_agent::Versions<'static>,
     ) -> Self {
@@ -82,8 +76,6 @@ impl ServiceInvocation {
             endpoints,
             customizations,
             service_id,
-            output,
-            no_cli_pager,
             output_epochs,
             embedded_trust,
             versions,
@@ -119,12 +111,13 @@ const CLI_PARSE: ParseOptions<'static> = ParseOptions {
 
 impl Invocation for ServiceInvocation {
     fn preflight(&self, cx: &Preflight<'_>) -> Result<(), PythonReason> {
-        let format = output_format(cx, self.output.as_deref());
-        let parser = timestamp_parser(cx)?;
+        let format = cx.output.format;
+        let parser = cx.output.timestamps;
         if parser.needs_local_zone() && self.output_epochs {
             return Err(PythonReason::UnsupportedTrait);
         }
-        let destination = destination(cx, self.no_cli_pager)?;
+        let destination = format::pager::destination(&cx.output.pager.chain(), cx.stdout_is_tty)
+            .map_err(|_| PythonReason::Pager)?;
         if !awscli_argparse::unpack::text_encoding_is_utf8(cx.variables)
             || (utf8_mode(cx.env)
                 && format == OutputFormat::Json
@@ -325,50 +318,6 @@ fn credentials(
         return Err(PythonReason::CredentialForm);
     }
     Ok(Ok(ChainCredentials::new(found)))
-}
-
-/// The `--output` format: `--output`, else `AWS_DEFAULT_OUTPUT`, else the
-/// profile's `output`, else `json` (`_construct_cli_output_chain`). The
-/// router refused any other.
-fn output_format(cx: &Preflight<'_>, output: Option<&str>) -> OutputFormat {
-    let profile = aws_profile::select_or_default(cx.env, cx.globals.profile.as_deref());
-    let variable = cx.env.var_os("AWS_DEFAULT_OUTPUT");
-    let name = output
-        .or_else(|| variable.and_then(std::ffi::OsStr::to_str))
-        .or_else(|| shared_config::profile_property(cx.shared_files, profile, "output"))
-        .unwrap_or("json");
-    OutputFormat::from_name(name).unwrap_or(OutputFormat::Json)
-}
-
-/// `add_timestamp_parser`: the profile's `cli_timestamp_format` and this
-/// process's local zone.
-fn timestamp_parser(cx: &Preflight<'_>) -> Result<TimestampParser, PythonReason> {
-    let profile = aws_profile::select_or_default(cx.env, cx.globals.profile.as_deref());
-    let setting = shared_config::profile_property(cx.shared_files, profile, "cli_timestamp_format");
-    let format = TimestampFormat::from_setting(setting).map_err(|_| PythonReason::OutputFormat)?;
-    let offset = cli_core::local_zone::LocalZone::system().and_then(|zone| zone.fixed_offset());
-    Ok(TimestampParser::new(format, offset))
-}
-
-/// `OutputStreamFactory`'s choice of stdout or the pager.
-fn destination(cx: &Preflight<'_>, no_cli_pager: bool) -> Result<Destination, PythonReason> {
-    let profile = aws_profile::select_or_default(cx.env, cx.globals.profile.as_deref());
-    let cli_pager =
-        if shared_config::profile_property_is_block(cx.shared_files, profile, "cli_pager") {
-            format::Profile::Block
-        } else {
-            shared_config::profile_property(cx.shared_files, profile, "cli_pager")
-                .map_or(format::Profile::Absent, format::Profile::Text)
-        };
-    let aws_pager = cx.env.var_os("AWS_PAGER");
-    let pager = cx.env.var_os("PAGER");
-    let chain = format::Chain {
-        no_cli_pager,
-        aws_pager,
-        cli_pager,
-        pager,
-    };
-    format::pager::destination(&chain, cx.stdout_is_tty).map_err(|_| PythonReason::Pager)
 }
 
 /// Python's UTF-8 mode, which `PYTHONUTF8=1` turns on.
