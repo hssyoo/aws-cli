@@ -182,7 +182,7 @@ fn a_variable_reference_in_a_non_unicode_path_is_python_s() {
         shared_files: &files(""),
         cli_profile: None,
         cli_error_format: None,
-        transfers: false,
+        scope: effective_config::Scope::S3,
         boto_config_credentials: false,
     });
     assert_eq!(reason, Some(PythonReason::SharedFilePath));

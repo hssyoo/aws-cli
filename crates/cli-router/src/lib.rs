@@ -75,6 +75,8 @@ pub struct Run {
     pub needs: ::command::Needs,
     /// How the command's streams are buffered.
     pub streams: ::command::StreamPolicy,
+    /// The settings the command's client runs with, resolved once.
+    pub settings: client_config::ClientSettings,
 }
 /// The router's decision. A failure is an owned copy of the parse result's.
 /// `Native` is a pinned `s3` command of the router's own enum path; `Run`
@@ -382,7 +384,11 @@ fn route_admitted<E: EnvMap>(
         shared_files: config.shared_files,
         cli_profile: globals.profile.as_deref(),
         cli_error_format: ns.string("cli_error_format"),
-        transfers: client_command.transfers(),
+        scope: if client_command.transfers() {
+            effective_config::Scope::Transfer
+        } else {
+            effective_config::Scope::S3
+        },
         boto_config_credentials: config.boto_config_credentials,
     });
     if let Some(reason) = configured {
@@ -525,12 +531,15 @@ fn bind_globals(ns: &Namespace) -> Globals {
         endpoint_url: ns.string("endpoint_url").map(str::to_owned),
         ca_bundle: ns.string("ca_bundle").map(str::to_owned),
         no_sign_request: !ns.boolean("sign_request"),
-        connect_timeout: bind_connect_timeout(ns),
+        connect_timeout: bind_timeout(ns, "connect_timeout"),
+        read_timeout: bind_timeout(ns, "read_timeout"),
     }
 }
-fn bind_connect_timeout(ns: &Namespace) -> Option<i64> {
-    ns.is_explicit("connect_timeout")
-        .then(|| ns.integer("connect_timeout").unwrap_or(0))
+/// A timeout global as global resolution leaves it: `None` when the command
+/// line did not set it, else its seconds, with 0 for the null that an
+/// explicit 0 resolves to (globalargs.py `_resolve_timeout`).
+fn bind_timeout(ns: &Namespace, dest: &str) -> Option<i64> {
+    ns.is_explicit(dest).then(|| ns.integer(dest).unwrap_or(0))
 }
 
 fn native_lineage(result: &ParseResult<'_>) -> Option<NativeLineage> {

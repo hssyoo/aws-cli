@@ -14,8 +14,8 @@ fn trust_precedence_preserves_sources_and_serializer_validation() -> Result<(), 
             &globals,
             Platform::default(),
         )?;
-        assert_eq!(config.trust.source, Source::Flag("--ca-bundle"));
-        assert!(matches!(config.trust.value, Trust::File(_)));
+        assert_eq!(config.settings.trust.source, Source::Flag("--ca-bundle"));
+        assert!(matches!(config.settings.trust.value, Trust::File(_)));
         let config = customized(
             profile,
             &[("AWS_CA_BUNDLE", "testdata/ca.pem")],
@@ -23,7 +23,7 @@ fn trust_precedence_preserves_sources_and_serializer_validation() -> Result<(), 
             &Globals::default(),
             Platform::default(),
         )?;
-        assert_eq!(config.trust.source, Source::Env("AWS_CA_BUNDLE"));
+        assert_eq!(config.settings.trust.source, Source::Env("AWS_CA_BUNDLE"));
         let config = customized(
             profile,
             &[("REQUESTS_CA_BUNDLE", "missing")],
@@ -31,7 +31,7 @@ fn trust_precedence_preserves_sources_and_serializer_validation() -> Result<(), 
             &Globals::default(),
             Platform::default(),
         )?;
-        assert_eq!(config.trust.source, Source::Profile("ca_bundle"));
+        assert_eq!(config.settings.trust.source, Source::Profile("ca_bundle"));
     }
     assert!(
         customized(
@@ -60,7 +60,7 @@ fn an_empty_chain_falls_back_to_requests_ca_bundle_which_s3_cp_leaves_to_python(
     let requests = |command| {
         let env = [("REQUESTS_CA_BUNDLE", "testdata/ca.pem")];
         let config = customized("", &env, command, &Globals::default(), Platform::default());
-        config.map(|config| config.trust.source)
+        config.map(|config| config.settings.trust.source)
     };
     assert_eq!(requests(Command::Ls), Ok(Source::Env("REQUESTS_CA_BUNDLE")));
     assert_eq!(requests(Command::Cp), Err(PythonReason::NetworkSetting));
@@ -137,7 +137,7 @@ fn endpoint_and_keepalive_values_apply_with_source_provenance() -> Result<(), Py
         Command::Ls,
     )?;
     assert_eq!(
-        config.keep_alive,
+        config.settings.keep_alive,
         Resolved::new(true, Source::Profile("tcp_keepalive"))
     );
     assert_eq!(config.addressing_style.value, AddressingStyle::Virtual);
@@ -209,7 +209,7 @@ impl Bundles {
             .map(|&(name, value)| (name, OsStr::new(value)))
             .collect::<Vec<_>>();
         let config = self.resolve_on(command, globals, &env, platform)?;
-        Ok(config.trust)
+        Ok(config.settings.trust)
     }
     fn resolve_on(
         &self,
@@ -262,7 +262,10 @@ fn a_ca_bundle_upstream_rejects_or_native_cannot_pass_is_python() -> std::io::Re
         Err(PythonReason::NetworkSetting)
     );
     let trust = Resolved::new(Trust::File("ca.pem".into()), Source::Profile("ca_bundle"));
-    assert_eq!(bundles.resolve(&set, &[]).map(|c| c.trust), Ok(trust));
+    assert_eq!(
+        bundles.resolve(&set, &[]).map(|c| c.settings.trust),
+        Ok(trust)
+    );
     let long = "a".repeat(4096);
     for value in [
         "",
@@ -307,7 +310,7 @@ fn a_ca_bundle_resolves_from_the_working_directory_as_a_regular_file() -> std::i
         assert_eq!(
             bundles
                 .resolve(&set, &[("AWS_CA_BUNDLE", value)])
-                .map(|c| c.trust),
+                .map(|c| c.settings.trust),
             Ok(trust)
         );
     }
@@ -346,7 +349,7 @@ fn non_unicode_environment_bundle_keeps_bytes_and_precedence() -> std::io::Resul
                 assert_eq!(
                     bundles
                         .resolve(globals, &[(variable, name)])
-                        .map(|c| c.trust),
+                        .map(|c| c.settings.trust),
                     Ok(trust)
                 );
             }

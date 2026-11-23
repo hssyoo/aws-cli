@@ -98,7 +98,7 @@ pub fn copy_runtime_options(
 fn signing_credentials(
     context: &CommandContext<'_, impl EnvMap>,
 ) -> Result<crt::credentials::Source, CommandFailure> {
-    if !context.client.signing.value {
+    if !context.client.settings.signing.value {
         return Ok(crt::credentials::Source::default());
     }
     let selected = context.globals.profile.as_deref();
@@ -178,7 +178,7 @@ pub fn embeds_trust_bundle(payload: &[u8]) -> bool {
 
 fn embedded_ca(context: &CommandContext<'_, impl EnvMap>, options: &mut RuntimeOptions) {
     let embedded = matches!(
-        context.client.trust.value,
+        context.client.settings.trust.value,
         cli_core::client_config::Trust::Embedded
     );
     if let Some(pem) = embedded.then(|| cacert::find(context.payload)).flatten() {
@@ -259,16 +259,16 @@ pub fn client_options(
     RuntimeOptions {
         // The payload's bundle replaces the platform store of an embedded
         // trust in copy_runtime_options.
-        trust: match &client.trust.value {
+        trust: match &client.settings.trust.value {
             Trust::File(path) => crt::runtime::Trust::File {
                 path: path.clone(),
-                setting: client.trust.source.setting_name(),
+                setting: client.settings.trust.source.setting_name(),
             },
             Trust::Platform | Trust::Embedded => crt::runtime::Trust::Platform,
         },
-        no_sign_request: !client.signing.value,
-        keep_alive: client.keep_alive.value,
-        connect_timeout_ms: client.connect_timeout_ms.value,
+        no_sign_request: !client.settings.signing.value,
+        keep_alive: client.settings.keep_alive.value,
+        connect_timeout_ms: client.settings.connect_timeout_ms.value,
         max_attempts: client.retry_attempts.value,
         botocore_attempts: client.botocore_attempts(),
         part_size: client.part_size.value,
@@ -292,8 +292,8 @@ pub fn client_options(
                 .map_or(0.0, |v| v.value),
             direct_io: client.direct_io.as_ref().is_some_and(|v| v.value),
         }),
-        request_checksum_calculation: checksum(client.request_checksum.value),
-        response_checksum_validation: checksum(client.response_checksum.value),
+        request_checksum_calculation: checksum(client.settings.request_checksum.value),
+        response_checksum_validation: checksum(client.settings.response_checksum.value),
         user_agent: user_agent::assemble(
             client,
             &user_agent::host(),

@@ -139,6 +139,11 @@ fn dispatch(
             if let Some(reason) = cli_error::dispose_native(environment) {
                 return Ok(Outcome::Python(reason));
             }
+            if run.streams == ::command::StreamPolicy::Formatted
+                && let Some(reason) = cli_error::dispose_formatted(environment, parsed)
+            {
+                return Ok(Outcome::Python(reason));
+            }
             let status = crate::bootstrap::run_after_preparation(
                 || crate::bootstrap::prepare_native(environment.env),
                 || Ok(run_registered(&run, environment, parsed, directory)),
@@ -314,7 +319,7 @@ fn log_credential_source(
     native: &cli_router::Native,
     context: &command::CommandContext<'_, SnapshotEnv>,
 ) {
-    let signing = &native.client.signing;
+    let signing = &native.client.settings.signing;
     let credentials = if signing.value {
         let profile = cli_core::aws_profile::select_or_default(
             context.env,

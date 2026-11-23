@@ -360,7 +360,7 @@ pub fn agentic_caller_features<E: EnvMap>(env: &E) -> Features {
 /// it under `AWS_CLI_SESSION_ID_DISABLED`. The distribution, which upstream
 /// appends after the installer, is [`render`]'s own argument.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Extras {
+pub struct Extras<'a> {
     /// `md/installer#<source>`: `get_distribution_source()`, which is `other`
     /// when no install metadata file exists.
     pub installer: &'static str,
@@ -371,7 +371,7 @@ pub struct Extras {
     pub prompt: &'static str,
     /// `md/command#<lineage>`: the dotted command lineage, such as `s3.cp`
     /// (`add_command_lineage_to_user_agent_extra`).
-    pub command: &'static str,
+    pub command: &'a str,
 }
 /// Everything the header states besides the host facts, the distribution and
 /// the versions, borrowed for one assembly.
@@ -387,12 +387,16 @@ pub struct Inputs<'a> {
     /// `sdk_ua_app_id`; `None` or empty omits `app/`.
     pub app_id: Option<&'a [u8]>,
     /// The session-level components that end the header.
-    pub extras: Extras,
+    pub extras: Extras<'a>,
 }
 
+/// The User-Agent's inputs a client of `inputs.service` reads: the app id
+/// and the execution environment, which together must fit the native
+/// header, whether an endpoint is configured for the service, and the
+/// agentic callers.
 pub(super) fn resolve<E: EnvMap>(
-    inputs: &super::Inputs<'_, E>,
-    config: &mut ClientConfig,
+    inputs: &super::SettingsInputs<'_, E>,
+    config: &mut super::ClientSettings,
 ) -> Result<(), PythonReason> {
     let bytes = |v: Resolved<&OsStr>| Resolved::new(v.value.as_encoded_bytes().to_vec(), v.source);
     config.app_id = inputs.first_os(Field::AppId)?.map(bytes);
@@ -405,7 +409,7 @@ pub(super) fn resolve<E: EnvMap>(
     config.endpoint_override = crate::endpoint_config::endpoint_configured(
         inputs.env,
         inputs.files,
-        "s3",
+        inputs.service,
         inputs.globals.endpoint_url.as_deref(),
         inputs.globals.profile.as_deref(),
     );
