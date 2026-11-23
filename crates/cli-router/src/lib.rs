@@ -229,7 +229,7 @@ pub fn route_with_process_lock<E: EnvMap>(
         Outcome::Version => Verdict::Python(PythonReason::VersionRequested),
         Outcome::UnsupportedOsValue => Verdict::Python(PythonReason::UnsupportedValue),
         Outcome::Help => Verdict::Python(PythonReason::HelpRequested),
-        Outcome::Unresolved { .. } => Verdict::Python(PythonReason::UnsupportedCommand),
+        Outcome::Unresolved { .. } => Verdict::Python(config.registry.unknown_command_reason()),
         Outcome::Failure(failure) => route_failure(result, failure.clone(), config),
         Outcome::Parsed => route_parsed(result, unpack, config, probe, acquire_process_lock),
     }
@@ -258,7 +258,7 @@ fn route_failure<E: EnvMap>(
             .as_ref()
             .and_then(|n| n.string("command"))
             .filter(|c| !config.registry.is_root(c))
-            .map(|_| PythonReason::UnsupportedCommand),
+            .map(|_| config.registry.unknown_command_reason()),
         _ if names.first().is_some_and(|root| defines_alias(files, root)) => {
             Some(PythonReason::CommandAlias)
         }

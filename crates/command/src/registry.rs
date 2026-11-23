@@ -46,6 +46,7 @@ pub struct Registry<'s> {
     pinned: tables::Pinned<'static>,
     source: Option<&'s dyn OperationSource>,
     binder: Option<&'s dyn Binder>,
+    models_unavailable: bool,
 }
 
 /// What a parsed lineage resolves to.
@@ -101,6 +102,24 @@ impl<'s> Registry<'s> {
             pinned: tables::Pinned(pinned),
             source,
             binder: None,
+            models_unavailable: false,
+        }
+    }
+    /// This registry, recording that its model source could not be built:
+    /// a word no pinned grammar claims may then be a model command.
+    pub const fn without_models(self) -> Self {
+        Self {
+            models_unavailable: true,
+            ..self
+        }
+    }
+    /// Why Python runs a command word no root claims: an unknown command,
+    /// or one the unavailable model source might have derived.
+    pub const fn unknown_command_reason(&self) -> PythonReason {
+        if self.models_unavailable {
+            PythonReason::ModelSourceUnavailable
+        } else {
+            PythonReason::UnsupportedCommand
         }
     }
     /// This registry, binding its source's operations through `binder`.

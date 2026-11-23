@@ -45,6 +45,6 @@ pub fn source(env: &SnapshotEnv) -> Option<ServiceSource<'static>> {
 pub fn registry<'s>(source: Option<&'s ServiceSource<'static>>) -> Registry<'s> {
     match source {
         Some(source) => Registry::new(&[&tables::S3], Some(source.models())).with_binder(source),
-        None => Registry::new(&[&tables::S3], None),
+        None => Registry::new(&[&tables::S3], None).without_models(),
     }
 }
