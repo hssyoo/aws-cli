@@ -632,6 +632,23 @@ impl Client {
             None => retry::classify(&self.parts.model, cx.operation, attempt),
         })
     }
+    /// `RetryHandler.needs_retry` for a long-polling operation whose retry
+    /// only the quota refused: it sleeps the delay it would have waited.
+    fn long_poll_wait(
+        &self,
+        cx: &CallContext<'_>,
+        verdict: &retry::Verdict,
+    ) -> Result<(), CallError> {
+        if let (None, Some(delay)) = (verdict.delay, verdict.exhausted_delay)
+            && self.hooks.long_polls(&cx.operation.name)
+        {
+            self.parts
+                .runtime
+                .sleep(delay)
+                .map_err(|_| CallError::Interrupted)?;
+        }
+        Ok(())
+    }
     fn failed(
         &self,
         cx: &mut CallContext<'_>,
@@ -646,6 +663,9 @@ impl Client {
         let verdict = self
             .retry
             .needs_retry(attempt, kind, None, self.parts.runtime.random());
+        if let Err(error) = self.long_poll_wait(cx, &verdict) {
+            return Step::Done(Err(error));
+        }
         match verdict.delay {
             Some(delay) => Step::Retry {
                 delay,
@@ -677,6 +697,9 @@ impl Client {
         let verdict =
             self.retry
                 .needs_retry(attempt, kind, retry_after, self.parts.runtime.random());
+        if let Err(error) = self.long_poll_wait(cx, &verdict) {
+            return Step::Done(Err(error));
+        }
         if let Some(delay) = verdict.delay {
             return Step::Retry {
                 delay,
@@ -708,6 +731,9 @@ impl Client {
         let verdict = self
             .retry
             .needs_retry(attempt, kind, None, self.parts.runtime.random());
+        if let Err(error) = self.long_poll_wait(cx, &verdict) {
+            return Step::Done(Err(error));
+        }
         if let Some(delay) = verdict.delay {
             return Step::Retry {
                 delay,

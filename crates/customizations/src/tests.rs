@@ -424,8 +424,7 @@ fn a_planted_service_name_is_found() -> TestResult {
 /// each operation.
 #[test]
 fn long_polling_operations_are_botocore_s() -> TestResult {
-    let standard =
-        std::fs::read_to_string(data().join("retries/standard.py"))?;
+    let standard = std::fs::read_to_string(data().join("retries/standard.py"))?;
     let mut found: Vec<(&str, &str)> = TABLE
         .iter()
         .filter(|customization| {

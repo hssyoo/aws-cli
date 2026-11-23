@@ -250,6 +250,12 @@ pub trait Interceptor: Sync + std::fmt::Debug {
     ) -> Option<RetryDecision> {
         None
     }
+    /// Whether the call long-polls: once the retry quota refuses a retry, it
+    /// still sleeps the delay a retry would have waited, then stops
+    /// (`RetryHandler._is_long_polling_operation`).
+    fn long_polls(&self) -> bool {
+        false
+    }
     /// The output before it is returned (`after-call`).
     fn modify_output(&self, _cx: &mut CallContext<'_>, _output: &mut Value) -> HookResult {
         Ok(())
@@ -347,6 +353,10 @@ pub struct Hooks {
 
 impl Hooks {
     /// The customizations of `table` whose scope names `service`.
+    /// Whether an interceptor in scope for `operation` long-polls.
+    pub fn long_polls(&self, operation: &str) -> bool {
+        self.interceptors(operation).any(|hook| hook.long_polls())
+    }
     pub fn for_service(table: &[&'static Customization], service: &str) -> Self {
         let matching: Vec<&Customization> = table
             .iter()

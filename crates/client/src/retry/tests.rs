@@ -125,6 +125,7 @@ fn retries_stop_at_max_attempts_and_say_so() {
             delay: None,
             max_attempts_reached: true,
             retry_cost: None,
+            exhausted_delay: None,
         }
     );
     let not_retryable = policy.needs_retry(1, None, None, 0.5);
@@ -270,5 +271,9 @@ fn an_exhausted_quota_still_reports_the_delay() {
         }
     }
     let refused = refused.unwrap_or_else(|| panic!("the quota never ran out"));
-    assert!(refused.exhausted_delay.is_some_and(|delay| delay > Duration::ZERO));
+    assert!(
+        refused
+            .exhausted_delay
+            .is_some_and(|delay| delay > Duration::ZERO)
+    );
 }

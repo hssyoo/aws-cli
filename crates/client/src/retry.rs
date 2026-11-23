@@ -119,10 +119,22 @@ fn is_modeled(model: &Model, operation: &Operation, code: &str) -> bool {
 }
 
 /// `ExponentialBackoff._get_retry_after_delay`: `x-amz-retry-after` in
-/// milliseconds, when it is a non-negative integer.
+/// milliseconds, `int(value) / 1000.0`, as Python's `int()` reads it;
+/// `None` for a value it cannot read, a negative one, or one beyond a
+/// float (`OverflowError`). A value beyond a `Duration` is the longest
+/// one, which the delay's cap at `t_i + 5` makes equal to any other.
 pub fn retry_after(headers: &crate::http::Headers) -> Option<Duration> {
-    let millis: i64 = headers.get("x-amz-retry-after")?.trim().parse().ok()?;
-    u64::try_from(millis).ok().map(Duration::from_millis)
+    let value = model::pyrepr::int_from_text(headers.get("x-amz-retry-after")?).ok()?;
+    match value {
+        model::value::Value::Integer(millis) => {
+            u64::try_from(millis).ok().map(Duration::from_millis)
+        }
+        model::value::Value::BigInteger(digits) => {
+            let float: f64 = digits.parse().ok()?;
+            (float.is_finite() && float >= 0.0).then_some(Duration::MAX)
+        }
+        _ => None,
+    }
 }
 
 /// What [`Standard::needs_retry`] decided for one attempt.
@@ -134,6 +146,10 @@ pub struct Verdict {
     pub max_attempts_reached: bool,
     /// What the retry took from the quota.
     pub retry_cost: Option<u32>,
+    /// The delay a retry would have waited when only the quota refused it,
+    /// which a long-polling operation still sleeps
+    /// (`RetryHandler.needs_retry`).
+    pub exhausted_delay: Option<Duration>,
 }
 
 /// botocore's standard retry handler for one client (`RetryHandler` with
@@ -175,16 +191,9 @@ impl Standard {
             delay: None,
             max_attempts_reached,
             retry_cost: None,
+            exhausted_delay: None,
         };
         let Some(kind) = retryable.filter(|_| !max_attempts_reached) else {
-            return refused;
-        };
-        let Some(cost) = self
-            .quota
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .acquire(kind)
-        else {
             return refused;
         };
         let base = match kind {
@@ -195,10 +204,22 @@ impl Standard {
         let delay = retry_after.map_or(backoff, |after| {
             backoff.max(after.min(backoff + RETRY_AFTER_ADDITIONAL_MAX))
         });
+        let Some(cost) = self
+            .quota
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .acquire(kind)
+        else {
+            return Verdict {
+                exhausted_delay: Some(delay),
+                ..refused
+            };
+        };
         Verdict {
             delay: Some(delay),
             max_attempts_reached,
             retry_cost: Some(cost),
+            exhausted_delay: None,
         }
     }
     /// `RetryQuotaChecker.release_retry_quota` for a call that succeeded:

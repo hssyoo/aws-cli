@@ -18,7 +18,16 @@ use client::retry::{Attempt, RetryDecision};
 use std::time::Duration;
 
 /// Every customization, in the order a client applies them.
-pub static TABLE: [&Customization; 4] = [&CORE, &DYNAMODB, &DYNAMODB_STREAMS, &STS];
+pub static TABLE: [&Customization; 8] = [
+    &CORE,
+    &DYNAMODB,
+    &DYNAMODB_STREAMS,
+    &STS,
+    &SQS_RECEIVE_MESSAGE,
+    &SFN_GET_ACTIVITY_TASK,
+    &SWF_POLL_FOR_ACTIVITY_TASK,
+    &SWF_POLL_FOR_DECISION_TASK,
+];
 
 /// The botocore handlers registered for every service
 /// (`botocore.handlers.BUILTIN_HANDLERS`, the rows without a service in
@@ -232,6 +241,45 @@ impl Interceptor for DynamodbChecksum {
             Ok(_) => false,
         };
         (!matches).then_some(RetryDecision::Retry)
+    }
+}
+
+/// botocore's `_LONG_POLLING_OPERATIONS` (retries/standard.py), a table of
+/// operations by hyphenized service id that its source says the
+/// `aws.api#longPoll` trait will replace: once the retry quota refuses a
+/// retry, the call still sleeps the delay it would have waited.
+const fn long_polling(
+    id: &'static str,
+    service: &'static str,
+    operation: &'static str,
+) -> Customization {
+    Customization {
+        id,
+        scope: Scope::operation(service, operation),
+        setting_defaults: &[],
+        builtins: &[],
+        interceptors: &[&LongPoll],
+        replaces: &[],
+    }
+}
+
+pub static SQS_RECEIVE_MESSAGE: Customization =
+    long_polling("sqs-long-poll", "sqs", "ReceiveMessage");
+/// `sfn` in botocore's table, the hyphenized id of the `stepfunctions`
+/// model.
+pub static SFN_GET_ACTIVITY_TASK: Customization =
+    long_polling("sfn-long-poll", "stepfunctions", "GetActivityTask");
+pub static SWF_POLL_FOR_ACTIVITY_TASK: Customization =
+    long_polling("swf-activity-long-poll", "swf", "PollForActivityTask");
+pub static SWF_POLL_FOR_DECISION_TASK: Customization =
+    long_polling("swf-decision-long-poll", "swf", "PollForDecisionTask");
+
+#[derive(Debug)]
+struct LongPoll;
+
+impl Interceptor for LongPoll {
+    fn long_polls(&self) -> bool {
+        true
     }
 }
 
