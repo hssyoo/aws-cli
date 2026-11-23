@@ -93,6 +93,7 @@ dependencies = [
  "credentials",
  "crt",
  "model",
+ "pytext",
  "serde_json",
  "sigv4",
  "timestamp",
@@ -166,6 +167,7 @@ dependencies = [
  "client",
  "format",
  "model",
+ "pytext",
  "serde_json",
  "timestamp",
 ]
