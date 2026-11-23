@@ -102,32 +102,12 @@ fn tagged(map: &Map) -> Option<Value> {
         return None;
     }
     match map.iter().next()? {
-        ("$bytes", Value::String(text)) => Some(Value::Blob(decode_base64(text))),
+        ("$bytes", Value::String(text)) => pytext::base64::decode(text).ok().map(Value::Blob),
         ("$datetime", Value::Integer(micros)) => {
             Timestamp::from_unix_micros(*micros).map(Value::Timestamp)
         }
         _ => None,
     }
-}
-
-/// The test corpus's base64, decoded for the bytes values.
-fn decode_base64(text: &str) -> Vec<u8> {
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let sextets: Vec<u32> = text
-        .bytes()
-        .filter_map(|byte| ALPHABET.iter().position(|a| *a == byte))
-        .filter_map(|index| u32::try_from(index).ok())
-        .collect();
-    let mut bytes = Vec::new();
-    for chunk in sextets.chunks(4) {
-        let group = chunk
-            .iter()
-            .enumerate()
-            .fold(0, |g, (i, s)| g | s << (18 - 6 * i));
-        let count = chunk.len() * 6 / 8;
-        bytes.extend(group.to_be_bytes()[1..=count].iter());
-    }
-    bytes
 }
 
 fn rust_row(response: &Value) -> serde_json::Value {

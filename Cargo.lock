@@ -199,6 +199,7 @@ version = "0.1.0"
 dependencies = [
  "cli-core",
  "model",
+ "pytext",
  "serde_json",
  "timestamp",
 ]
