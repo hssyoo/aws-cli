@@ -33,12 +33,12 @@ fn a_covered_operation_is_admitted_with_its_request() -> Result<()> {
 }
 
 /// Each stage refuses with its own reason: an uncovered customization, a
-/// paginator whose expression the native paginator does not run (kinesis's
-/// `StreamDescription.Shards[-1].ShardId`), an unimplemented protocol.
+/// paginator whose expression the native paginator does not run (zquery's
+/// ListJobs reads its token as `Jobs[-1].JobId`), an unimplemented protocol.
 #[test]
 fn each_stage_names_its_refusal() -> Result<()> {
     with_models(|models| {
-        let everything = replacing_all(&models, "kinesis", "describe-stream");
+        let everything = replacing_all(&models, "zquery", "list-jobs");
         let source = crate::testing::source(models, everything);
         let refused = |customizations: &[&Customization], argv: &[&str]| {
             admitted(&source, customizations, argv).err()
