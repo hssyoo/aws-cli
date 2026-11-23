@@ -198,7 +198,7 @@ fn transport_error(error: ::crt::http::Error, proxy: Option<&ForwardProxy>) -> T
 }
 
 fn crt_message(code: i32) -> String {
-    String::from_utf8_lossy(&::crt::s3::error_message(code)).into_owned()
+    String::from_utf8_lossy(&::crt::error_message(code)).into_owned()
 }
 
 #[cfg(test)]

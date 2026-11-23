@@ -1,11 +1,12 @@
 use super::*;
 mod callbacks;
 use crate::crt_error::check_pointer;
+use crate::crt_error::{error_message, error_name};
 use crate::runtime::{Library, Runtime};
 use crate::signal::lock;
 pub use callbacks::{CallbackBody, CallbackBodyFn, CallbackRequest, RequestCallbacks};
 use crt_sys::{self as ffi, native as c};
-use std::ffi::{CStr, c_void};
+use std::ffi::c_void;
 use std::path::Path;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,27 +21,6 @@ unsafe fn bytes<'a>(value: ffi::AwsByteCursor) -> &'a [u8] {
     }
     // SAFETY: callers supply a live CRT cursor and constrain its returned borrow.
     unsafe { std::slice::from_raw_parts(value.ptr, value.len) }
-}
-fn copy_c_string(pointer: *const std::ffi::c_char) -> Vec<u8> {
-    if pointer.is_null() {
-        return Vec::new();
-    }
-    // SAFETY: CRT lookup returns a static NUL-terminated string while initialized.
-    unsafe { CStr::from_ptr(pointer).to_bytes().to_vec() }
-}
-/// The CRT's name for `code`, `AWS_ERROR_OOM` for example; empty for a code
-/// the CRT does not recognize.
-pub fn error_name(code: i32) -> Vec<u8> {
-    let _library = Library::acquire();
-    // SAFETY: CRT accepts any integer error code.
-    copy_c_string(unsafe { ffi::rust_crt_error_name(code) })
-}
-/// The CRT's sentence for `code`; empty for a code the CRT does not
-/// recognize. Holds its own `Library` reference, as [`error_name`] does.
-pub fn error_message(code: i32) -> Vec<u8> {
-    let _library = Library::acquire();
-    // SAFETY: CRT accepts any integer error code.
-    copy_c_string(unsafe { ffi::rust_crt_error_message(code) })
 }
 impl TransferResult {
     pub fn from_crt_error(code: i32) -> Self {

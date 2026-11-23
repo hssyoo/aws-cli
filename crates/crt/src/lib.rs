@@ -3,6 +3,7 @@
 pub mod allocator;
 pub mod credentials;
 mod crt_error;
+pub use crt_error::{error_message, error_name};
 pub mod debug;
 pub mod http;
 #[cfg(all(unix, any(test, feature = "loopback")))]
