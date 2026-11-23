@@ -57,11 +57,34 @@ pub fn endpoint_features(params: &EndpointParams) -> Features {
     features
 }
 
+/// The feature ids botocore's provider of `method` registers when it
+/// answers (credentials.py: `EnvProvider`, `SharedCredentialProvider`,
+/// `ConfigProvider`, `ProcessProvider`, `ContainerProvider`). The instance
+/// metadata provider's `CREDENTIALS_IMDS` has no code here: no model call
+/// runs natively with that provider.
+pub fn credential_features(method: &str) -> Features {
+    let mut features = Features::default();
+    let ids: &[Feature] = match method {
+        "env" => &[Feature::CredentialsEnvVars],
+        "shared-credentials-file" | "config-file" => &[Feature::CredentialsProfile],
+        "custom-process" => &[
+            Feature::CredentialsProfileProcess,
+            Feature::CredentialsProcess,
+        ],
+        "container-role" => &[Feature::CredentialsHttp],
+        _ => &[],
+    };
+    for id in ids {
+        features.insert(*id);
+    }
+    features
+}
+
 /// The header for a call of a client with `settings`: the settings' own
-/// feature ids, its credential provider's, and `call`'s.
+/// feature ids and `call`'s, which hold the answering credential provider's
+/// once the call has asked for credentials.
 pub fn header(settings: &ClientSettings, context: &UserAgentContext, call: Features) -> String {
     let mut features = settings.user_agent_features();
-    features.extend(settings.credential_features().iter().copied());
     features.extend(call.iter());
     let inputs = Inputs {
         execution_env: settings.execution_env.as_ref().map(|v| v.value.as_slice()),

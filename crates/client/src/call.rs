@@ -449,8 +449,14 @@ impl Client {
         let mut attempt = 1;
         loop {
             cx.attempt = attempt;
-            let sent =
-                self.attempt_request(&mut cx, &request, &scheme, &invocation, ttl.as_deref())?;
+            let sent = self.attempt_request(
+                &mut cx,
+                &request,
+                &scheme,
+                features,
+                &invocation,
+                ttl.as_deref(),
+            )?;
             let result = self.transmit(&mut cx, &sent)?;
             match self.evaluate(&mut cx, attempt, &sent, result, last_cost) {
                 Step::Done(outcome) => return outcome,
@@ -475,6 +481,7 @@ impl Client {
         cx: &mut CallContext<'_>,
         request: &HttpRequest,
         scheme: &AuthScheme,
+        features: cli_core::client_config::user_agent::Features,
         invocation: &str,
         ttl: Option<&str>,
     ) -> Result<HttpRequest, CallError> {
@@ -494,6 +501,16 @@ impl Client {
                 .credentials()
                 .map_err(|error| CallError::Credentials(error.0))?
                 .ok_or(CallError::NoCredentials)?;
+            // The provider registers its feature ids as it answers, and
+            // `rebuild_and_replace_user_agent_handler` rebuilds the header
+            // after the signer, which does not sign `User-Agent`.
+            if let Some(method) = self.parts.credentials.method() {
+                let mut features = features;
+                features.extend(crate::useragent::credential_features(method).iter());
+                let parts = &self.parts;
+                let agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
+                request.headers.set("User-Agent", agent);
+            }
             let now = self.parts.runtime.now();
             auth::sign(
                 signing_region,
