@@ -62,3 +62,6 @@ pub fn decode(text: &str) -> Result<Vec<u8>, String> {
         _ => Err("Incorrect padding".into()),
     }
 }
+
+#[cfg(test)]
+mod tests;

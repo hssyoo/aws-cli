@@ -7,6 +7,8 @@
 pub mod base64;
 pub mod number;
 pub mod repr;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 #[cfg(test)]
 mod tests;

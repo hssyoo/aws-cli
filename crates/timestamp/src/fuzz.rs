@@ -22,7 +22,7 @@ pub fn parse(bytes: &[u8]) {
         assert!(zoned.offset_seconds.is_some());
     }
     let readers: [Form; 3] = [
-        (Timestamp::parse_iso8601, Timestamp::iso8601),
+        (iso8601_instant, Timestamp::iso8601),
         (Timestamp::parse_iso8601_basic, Timestamp::iso8601_basic),
         (Timestamp::parse_rfc822, Timestamp::rfc822),
     ];
@@ -42,4 +42,9 @@ pub fn parse(bytes: &[u8]) {
             "{text:?}"
         );
     }
+}
+
+/// An ISO 8601 text's instant, `None` for a naive one.
+fn iso8601_instant(text: &str) -> Option<Timestamp> {
+    Timestamp::parse_iso8601_zoned(text)?.instant()
 }
