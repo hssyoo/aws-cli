@@ -235,3 +235,21 @@ fn every_stage_defaults_to_doing_nothing() -> TestResult {
     assert_eq!(output, Value::Null);
     Ok(())
 }
+
+/// A `Basis::Implemented` path resolves only to an item the source
+/// defines.
+#[test]
+fn an_implemented_basis_names_an_item_that_exists() -> std::io::Result<()> {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    assert!(crate::testing::defines(
+        &workspace,
+        "client::call::Client::prepare"
+    )?);
+    assert!(crate::testing::defines(&workspace, "client::hooks::Basis")?);
+    assert!(!crate::testing::defines(
+        &workspace,
+        "client::call::Client::no_such_item"
+    )?);
+    assert!(!crate::testing::defines(&workspace, "nosuchcrate::thing")?);
+    Ok(())
+}
