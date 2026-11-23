@@ -128,7 +128,8 @@ impl driver::PageOps for NativeOps<'_> {
         unsafe { ffi::aws_s3_meta_request_release(handle.as_ptr()) };
     }
     fn backoff(&mut self, attempt: u64, kind: ErrorKind) -> Result<(), Canceled> {
-        let delay = botocore_retry::backoff_delay(&mut cli_core::random::word, attempt, kind);
+        let delay =
+            botocore_retry::backoff_delay(&mut cli_core::random::word, attempt, kind.base());
         self.client.interrupt().sleep(delay)
     }
 }

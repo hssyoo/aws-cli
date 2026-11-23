@@ -518,29 +518,13 @@ impl ClientConfig {
             Command::Ls => {
                 debug_assert!(!uploads, "a listing uploads nothing");
                 features.insert(Feature::Paginator);
-                features.extend(self.credential_features().iter().copied());
+                features.extend(self.settings.credential_features().iter().copied());
             }
             Command::Cp | Command::Mv | Command::Rm | Command::Sync => {
                 features.extend(self.transfer_features(uploads).iter());
             }
         }
         features
-    }
-    fn credential_features(&self) -> &'static [user_agent::Feature] {
-        use user_agent::Feature;
-        if !self.settings.signing.value {
-            return &[];
-        }
-        match self.settings.credential_source {
-            CredentialSource::Environment => &[Feature::CredentialsEnvVars],
-            CredentialSource::SharedProfile => &[Feature::CredentialsProfile],
-            CredentialSource::Process => &[
-                Feature::CredentialsProfileProcess,
-                Feature::CredentialsProcess,
-            ],
-            CredentialSource::Container => &[Feature::CredentialsHttp],
-            CredentialSource::DefaultChain => &[],
-        }
     }
     fn transfer_features(&self, uploads: bool) -> user_agent::Features {
         use user_agent::Feature;

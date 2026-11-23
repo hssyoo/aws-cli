@@ -17,6 +17,8 @@ fn is_uuid4(text: &str) -> bool {
         && groups[3].starts_with(['8', '9', 'a', 'b'])
 }
 
+/// uuids come from the operating system's random source, as Python's
+/// `uuid.uuid4` reads `os.urandom`.
 #[test]
 fn the_system_runtime_makes_random_version_4_uuids() {
     static STATE: State = State::new();

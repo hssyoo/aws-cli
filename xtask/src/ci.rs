@@ -336,6 +336,7 @@ fn lane_inventory_for(host: Host, forwarded: &Forwarded) -> Vec<ProductCommand> 
     add(Lane::Runtime, &RELEASE_BUILD);
     blackbox(&mut add, &release);
     add(Lane::Checks, &["xtask", "check-argparse"]);
+    add(Lane::Checks, &["xtask", "parity"]);
     add(Lane::Checks, &["xtask", "fuzz-argparse"]);
     // The model fuzz campaigns run on the checks runner. The Windows fuzz
     // targets link the MSVC AddressSanitizer runtime DLL, which the runner

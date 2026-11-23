@@ -1,0 +1,269 @@
+[
+ {
+  "name": "zjson-describe-every-member",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {
+   "Text": "a b&c=é/~+%",
+   "Count": 3,
+   "Total": 12345678901234,
+   "On": true,
+   "Fraction": 1.5,
+   "Precise": 0.1,
+   "Data": {
+    "$blob": "AAFiaW7/"
+   },
+   "When": {
+    "$datetime": "2015-08-30T12:36:00Z"
+   },
+   "WhenEpoch": {
+    "$datetime": "2015-08-30T12:36:00.5Z"
+   },
+   "WhenHttp": "2015-08-30T12:36:00Z",
+   "WhenIso": 1440938160,
+   "Nested": {
+    "Label": "l",
+    "Inner": {
+     "Value": "v",
+     "Depth": 2
+    }
+   },
+   "Items": [
+    "x",
+    "y"
+   ],
+   "Records": [
+    {
+     "Key": "k",
+     "Weight": 2.5
+    },
+    {
+     "Weight": 1e-07
+    }
+   ],
+   "Times": [
+    "2015-08-30T12:36:00Z"
+   ],
+   "Pairs": {
+    "b": "2",
+    "a": "1"
+   },
+   "Named": {
+    "n": 7
+   },
+   "RecordsByName": {
+    "r": {
+     "Key": "rk"
+    }
+   },
+   "Renamed": "alt",
+   "Token": "token-1",
+   "Doc": {
+    "any": [
+     1,
+     "two",
+     null,
+     {
+      "three": 3.5
+     }
+    ]
+   },
+   "Choice": {
+    "Record": {
+     "Key": "k"
+    }
+   }
+  },
+  "response": {
+   "status": 200,
+   "headers": {
+    "x-amzn-RequestId": "rj-1"
+   },
+   "body": "{\"Text\": \"t é \\u0001\", \"Count\": 3, \"Total\": 12345678901234567890, \"On\": true, \"Fraction\": 1.5, \"Precise\": 1e+16, \"Data\": \"aGVsbG8=\", \"When\": 1440938160.123, \"WhenEpoch\": 1440938160, \"WhenHttp\": \"Sun, 30 Aug 2015 12:36:00 GMT\", \"WhenIso\": \"2015-08-30T13:36:00+01:00\", \"Nested\": {\"Label\": null, \"Inner\": {\"Value\": \"v\", \"Depth\": 2}}, \"Items\": [\"x\", null], \"Records\": [{\"Key\": \"k\", \"Weight\": 2.5}], \"Times\": [1440938160], \"Pairs\": {\"b\": \"2\", \"a\": null}, \"Named\": {\"n\": 7}, \"RecordsByName\": {\"r\": {\"Key\": \"rk\"}}, \"AltName\": \"alt\", \"Doc\": {\"x\": [1, {\"y\": null}]}, \"Choice\": {\"Number\": 5}, \"Extra\": 1}"
+  }
+ },
+ {
+  "name": "zjson-empty-input",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": ""
+  }
+ },
+ {
+  "name": "zjson-host-prefix",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Locate",
+  "input": {
+   "Zone": "z-2"
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{\"Where\": \"w\"}"
+  }
+ },
+ {
+  "name": "zjson-union-unknown-member",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {
+   "Choice": {
+    "Text": "a"
+   }
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{\"Choice\": {\"Novel\": 1}}"
+  }
+ },
+ {
+  "name": "zjson-union-two-members",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {},
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{\"Choice\": {\"Text\": \"a\", \"Number\": 1}}"
+  }
+ },
+ {
+  "name": "zjson-null-output",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {},
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "null"
+  }
+ },
+ {
+  "name": "zjson-modelled-error-by-type",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {},
+  "response": {
+   "status": 409,
+   "headers": {
+    "x-amzn-requestid": "rj-e"
+   },
+   "body": "{\"__type\": \"zjson#ConflictError\", \"message\": \"busy\", \"Resource\": \"r\", \"Retry\": 2}"
+  }
+ },
+ {
+  "name": "zjson-type-with-uri",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Describe",
+  "input": {},
+  "response": {
+   "status": 400,
+   "headers": {},
+   "body": "{\"__type\": \"aws.protocoltests#Oops:http://internal/\", \"Message\": \"m\"}"
+  }
+ },
+ {
+  "name": "zjson-not-json-500",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 500,
+   "headers": {},
+   "body": "upstream connect error"
+  }
+ },
+ {
+  "name": "zjson-html-502",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 502,
+   "headers": {},
+   "body": "<html>bad gateway</html>"
+  }
+ },
+ {
+  "name": "zjson-413-plain",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 413,
+   "headers": {},
+   "body": "Request Entity Too Large"
+  }
+ },
+ {
+  "name": "zjson-empty-error-body",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 400,
+   "headers": {},
+   "body": ""
+  }
+ },
+ {
+  "name": "zjson-measure",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Measure",
+  "input": {
+   "Total": 9007199254740993,
+   "Ratio": 2.5
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "{}"
+  }
+ },
+ {
+  "name": "zjson-validation-each-kind",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Strict",
+  "input": {
+   "Name": "",
+   "Size": 0,
+   "Ratio": 0.25,
+   "Tags": [],
+   "Choice": {},
+   "Bogus": 1
+  }
+ },
+ {
+  "name": "zjson-validation-union-two",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "Strict",
+  "input": {
+   "Name": "n",
+   "Size": 1,
+   "Choice": {
+    "Text": "a",
+    "Number": 1
+   }
+  }
+ }
+]

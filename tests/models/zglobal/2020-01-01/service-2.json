@@ -1,0 +1,40 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zglobal",
+    "protocol": "query",
+    "serviceFullName": "Fake zglobal",
+    "serviceId": "Zglobal",
+    "signatureVersion": "v4",
+    "uid": "zglobal-2020-01-01",
+    "xmlNamespace": "https://zglobal.example.com/doc/2020-01-01/",
+    "globalEndpoint": "zglobal.amazonaws.com"
+  },
+  "operations": {
+    "Whoami": {
+      "name": "Whoami",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "output": {
+        "shape": "WhoamiOutput",
+        "resultWrapper": "WhoamiResult"
+      }
+    }
+  },
+  "shapes": {
+    "WhoamiOutput": {
+      "type": "structure",
+      "members": {
+        "Account": {
+          "shape": "String"
+        }
+      }
+    },
+    "String": {
+      "type": "string"
+    }
+  }
+}

@@ -607,76 +607,6 @@ pub fn recursive_upload_walk_step(path: &Path) -> io::Result<UploadWalkStep> {
         UploadWalkStep::Inspect
     })
 }
-/// Fills an array from the operating system's random source.
-#[cfg(target_os = "linux")]
-pub fn random_bytes<const N: usize>() -> io::Result<[u8; N]> {
-    let mut bytes = [0; N];
-    let mut filled = 0;
-    while filled < N {
-        let rest = &mut bytes[filled..];
-        // SAFETY: the kernel writes at most `rest.len()` bytes to the live
-        // slice `rest` points at.
-        let written = unsafe { libc::getrandom(rest.as_mut_ptr().cast(), rest.len(), 0) };
-        match usize::try_from(written) {
-            Ok(written) => filled += written,
-            Err(_) => {
-                let error = io::Error::last_os_error();
-                if error.kind() != io::ErrorKind::Interrupted {
-                    return Err(error);
-                }
-            }
-        }
-    }
-    Ok(bytes)
-}
-/// Fills an array from the operating system's random source.
-#[cfg(target_vendor = "apple")]
-pub fn random_bytes<const N: usize>() -> io::Result<[u8; N]> {
-    let mut bytes = [0; N];
-    // SAFETY: arc4random_buf writes exactly `N` bytes to the live array and
-    // cannot fail.
-    unsafe { libc::arc4random_buf(bytes.as_mut_ptr().cast(), N) };
-    Ok(bytes)
-}
-/// Fills an array from the operating system's random source.
-#[cfg(all(unix, not(target_os = "linux"), not(target_vendor = "apple")))]
-pub fn random_bytes<const N: usize>() -> io::Result<[u8; N]> {
-    use io::Read;
-    let mut bytes = [0; N];
-    fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
-    Ok(bytes)
-}
-/// Fills an array from the operating system's random source.
-#[cfg(windows)]
-pub fn random_bytes<const N: usize>() -> io::Result<[u8; N]> {
-    #[link(name = "bcrypt")]
-    unsafe extern "system" {
-        fn BCryptGenRandom(
-            algorithm: *mut std::ffi::c_void,
-            output: *mut u8,
-            size: u32,
-            flags: u32,
-        ) -> i32;
-    }
-    let size = u32::try_from(N).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput))?;
-    let mut bytes = [0; N];
-    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 2;
-    // SAFETY: the system-preferred provider writes exactly size bytes to the live array.
-    let status = unsafe {
-        BCryptGenRandom(
-            std::ptr::null_mut(),
-            bytes.as_mut_ptr(),
-            size,
-            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
-        )
-    };
-    if status != 0 {
-        return Err(io::Error::other(format!(
-            "random generator failed: {status:#x}"
-        )));
-    }
-    Ok(bytes)
-}
 /// A fresh id for a download's temp name, drawn from the operating system's
 /// random source through this thread's batch (see [`random`]): seeing one id
 /// says nothing about the next.
@@ -684,7 +614,7 @@ pub fn random_bytes<const N: usize>() -> io::Result<[u8; N]> {
 /// # Errors
 /// Fails when the random source does, which fails that download.
 pub fn temp_name_id() -> io::Result<u64> {
-    random::draw(random_bytes::<{ random::BATCH_BYTES }>)
+    random::draw(cli_core::random::os_bytes::<{ random::BATCH_BYTES }>)
 }
 const TEMP_NAME_BYTES_MAX: usize = 255;
 const TEMP_NAME_SUFFIX_DIGITS: usize = u64::BITS as usize / 4;

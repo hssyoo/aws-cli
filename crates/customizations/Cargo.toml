@@ -1,0 +1,19 @@
+[package]
+name = "customizations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+client = { path = "../client" }
+
+[dev-dependencies]
+cli-core = { path = "../cli-core" }
+client = { path = "../client", features = ["testing"] }
+model = { path = "../model" }
+timestamp = { path = "../timestamp" }
+
+[lints]
+workspace = true

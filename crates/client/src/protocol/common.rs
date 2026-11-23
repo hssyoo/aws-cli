@@ -19,7 +19,7 @@ pub(super) trait Family {
         shape: Option<ShapeId>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
-    ) -> Result<Map, ParseError>;
+    ) -> Result<Value, ParseError>;
     fn do_error_parse(&self, response: &HttpResponse) -> Result<Map, ParseError>;
     fn do_modeled_error_parse(
         &self,
@@ -38,19 +38,25 @@ pub(super) fn parse(
     shape: Option<ShapeId>,
     response: &HttpResponse,
     options: &ParseOptions<'_>,
-) -> Result<Map, ParseError> {
+) -> Result<Value, ParseError> {
     let exception = shape.filter(|shape| model.shape(*shape).traits.is(Flag::Exception));
-    let mut parsed = if response.status < 301 {
+    let parsed = if response.status < 301 {
         family.do_parse(model, shape, response, options)?
     } else if is_generic_error(response) {
-        generic_error(response.status)
+        Value::Map(generic_error(response.status))
     } else if let Some(shape) = exception {
-        return family.do_modeled_error_parse(model, shape, response, options);
+        return family
+            .do_modeled_error_parse(model, shape, response, options)
+            .map(Value::Map);
     } else {
-        family.do_error_parse(response)?
+        Value::Map(family.do_error_parse(response)?)
+    };
+    // `if isinstance(parsed, dict)`: a `None` output gets no metadata.
+    let Value::Map(mut parsed) = parsed else {
+        return Ok(parsed);
     };
     if shape.is_some_and(|shape| model.shape(shape).traits.is(Flag::EventStream)) {
-        return Ok(parsed);
+        return Ok(Value::Map(parsed));
     }
     let mut metadata = match parsed.remove("ResponseMetadata") {
         Some(Value::Map(metadata)) => metadata,
@@ -65,7 +71,7 @@ pub(super) fn parse(
         Value::Map(lowercase_headers(&response.headers)),
     );
     parsed.insert("ResponseMetadata".into(), Value::Map(metadata));
-    Ok(parsed)
+    Ok(Value::Map(parsed))
 }
 
 /// `parse` then, when the error's code names a modelled error,
@@ -78,7 +84,9 @@ pub(super) fn parse_error(
     response: &HttpResponse,
     options: &ParseOptions<'_>,
 ) -> Result<ServiceError, ParseError> {
-    let mut parsed = parse(family, model, operation.output, response, options)?;
+    let Value::Map(mut parsed) = parse(family, model, operation.output, response, options)? else {
+        return Err(ParseError::new("'NoneType' object has no attribute 'get'"));
+    };
     let code = match parsed.get("Error") {
         Some(Value::Map(error)) => error.get("Code").and_then(text_value),
         _ => None,
@@ -87,7 +95,10 @@ pub(super) fn parse_error(
         .as_deref()
         .and_then(|code| model.shape_for_error_code(code))
     {
-        for (key, value) in parse(family, model, Some(shape), response, options)? {
+        let Value::Map(modelled) = parse(family, model, Some(shape), response, options)? else {
+            return Err(ParseError::new("'NoneType' object is not iterable"));
+        };
+        for (key, value) in modelled {
             parsed.insert(key, value);
         }
     }

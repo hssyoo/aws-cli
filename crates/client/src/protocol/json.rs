@@ -66,7 +66,7 @@ impl Protocol for Json {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
-        common::parse(self, model, operation.output, response, options).map(Value::Map)
+        common::parse(self, model, operation.output, response, options)
     }
 
     fn parse_error(
@@ -279,10 +279,10 @@ impl Reader<'_, '_> {
         Ok(Value::List(parsed))
     }
 
-    fn body(&self, shape: ShapeId, body: &[u8]) -> Result<Map, ParseError> {
+    /// `_handle_json_body`: a structure, or `None` for a `null` body.
+    fn body(&self, shape: ShapeId, body: &[u8]) -> Result<Value, ParseError> {
         match self.shape(shape, &body_json(body)?)? {
-            Value::Map(map) => Ok(map),
-            Value::Null => Ok(Map::new()),
+            parsed @ (Value::Map(_) | Value::Null) => Ok(parsed),
             other => Err(ParseError::new(format!(
                 "expected a structure, parsed {}",
                 py_str(&other)
@@ -319,8 +319,8 @@ impl Family for Json {
         shape: Option<ShapeId>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
-    ) -> Result<Map, ParseError> {
-        let mut parsed = match shape {
+    ) -> Result<Value, ParseError> {
+        let parsed = match shape {
             Some(shape)
                 if model.shape(shape).traits.is(Flag::EventStream)
                     || has_event_stream(model, shape) =>
@@ -328,10 +328,19 @@ impl Family for Json {
                 return Err(ParseError::new("event stream responses are not supported"));
             }
             Some(shape) => Reader { model, options }.body(shape, &response.body)?,
-            None => Map::new(),
+            None => Value::Map(Map::new()),
         };
-        request_id(&mut parsed, &response.headers);
-        Ok(parsed)
+        match parsed {
+            Value::Map(mut map) => {
+                request_id(&mut map, &response.headers);
+                Ok(Value::Map(map))
+            }
+            // `parsed.setdefault` on the `None` a `null` body parses to.
+            _ if response.headers.contains("x-amzn-requestid") => Err(ParseError::new(
+                "'NoneType' object has no attribute 'setdefault'",
+            )),
+            other => Ok(other),
+        }
     }
 
     /// `BaseJSONParser._do_error_parse`: the message from `message` or
@@ -373,7 +382,10 @@ impl Family for Json {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Map, ParseError> {
-        Reader { model, options }.body(shape, &response.body)
+        match (Reader { model, options }).body(shape, &response.body)? {
+            Value::Map(map) => Ok(map),
+            _ => Err(ParseError::new("'NoneType' object is not iterable")),
+        }
     }
 }
 

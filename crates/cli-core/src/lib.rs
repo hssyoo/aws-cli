@@ -14,6 +14,7 @@ mod passwd;
 pub mod proxy;
 pub mod random;
 pub mod region;
+pub mod retry;
 pub mod shared_config;
 #[cfg(any(windows, test))]
 mod snapshot_env;

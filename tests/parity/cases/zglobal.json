@@ -1,0 +1,33 @@
+[
+ {
+  "name": "zglobal-whoami-west",
+  "service": "zglobal",
+  "models": "fake",
+  "operation": "Whoami",
+  "input": {},
+  "settings": {
+   "region": "us-west-2"
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<WhoamiResponse><WhoamiResult><Account>1</Account></WhoamiResult></WhoamiResponse>"
+  }
+ },
+ {
+  "name": "zglobal-whoami-fips",
+  "service": "zglobal",
+  "models": "fake",
+  "operation": "Whoami",
+  "input": {},
+  "settings": {
+   "region": "us-west-2",
+   "fips": true
+  },
+  "response": {
+   "status": 200,
+   "headers": {},
+   "body": "<WhoamiResponse><WhoamiResult><Account>2</Account></WhoamiResult></WhoamiResponse>"
+  }
+ }
+]

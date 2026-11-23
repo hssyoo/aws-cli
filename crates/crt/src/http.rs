@@ -201,6 +201,10 @@ const HTTP_ERROR_CODES_END: i32 = 3 * 1024;
 /// `AWS_IO_SOCKET_TIMEOUT`: a connect that outlasted its timeout.
 pub const SOCKET_TIMEOUT_ERROR_CODE: i32 = ffi::AWS_IO_SOCKET_TIMEOUT;
 
+/// `AWS_IO_TLS_ERROR_NEGOTIATION_FAILURE`: a TLS handshake that failed, a
+/// certificate the runtime's trust does not verify among the causes.
+pub const TLS_FAILURE_ERROR_CODE: i32 = ffi::AWS_IO_TLS_ERROR_NEGOTIATION_FAILURE;
+
 /// `AWS_IO_TLS_NEGOTIATION_TIMEOUT`: a TLS handshake that outlasted the
 /// connect timeout, which bounds it as well.
 pub const TLS_TIMEOUT_ERROR_CODE: i32 = ffi::AWS_IO_TLS_NEGOTIATION_TIMEOUT;

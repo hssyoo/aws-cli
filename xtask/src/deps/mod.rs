@@ -67,6 +67,12 @@ pub struct NativeEnvironment {
 }
 
 impl NativeEnvironment {
+    /// The managed CPython's install prefix, the interpreter the product
+    /// embeds.
+    pub fn cpython(&self) -> &Path {
+        &self.cpython
+    }
+
     /// The fallback payload prefix, `AWS_NATIVE_FALLBACK_PREFIX`.
     pub fn fallback(&self) -> &Path {
         &self.fallback

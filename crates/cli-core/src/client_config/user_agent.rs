@@ -65,6 +65,15 @@ pub enum Feature {
     S3Transfer,
     /// `ENDPOINT_OVERRIDE` (N): a configured endpoint URL (`compute_client_args`).
     EndpointOverride,
+    /// `ACCOUNT_ID_MODE_PREFERRED` (P): the rules' `AccountIdEndpointMode`
+    /// is `preferred` (`EndpointRulesetResolver._register_endpoint_feature_ids`).
+    AccountIdModePreferred,
+    /// `ACCOUNT_ID_MODE_DISABLED` (Q): it is `disabled`, as for an unsigned
+    /// client.
+    AccountIdModeDisabled,
+    /// `RESOLVED_ACCOUNT_ID` (T): the rules were given the credentials'
+    /// account id.
+    ResolvedAccountId,
     /// `FLEXIBLE_CHECKSUMS_REQ_CRC64` (W): a CRC64NVME upload checksum
     /// (`_register_checksum_algorithm_feature_id`).
     FlexibleChecksumsReqCrc64,
@@ -123,12 +132,15 @@ pub enum Feature {
 }
 impl Feature {
     /// Every feature in declaration order, which is the `m/` order.
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 30] = [
         Self::Paginator,
         Self::RetryModeStandard,
         Self::RetryModeAdaptive,
         Self::S3Transfer,
         Self::EndpointOverride,
+        Self::AccountIdModePreferred,
+        Self::AccountIdModeDisabled,
+        Self::ResolvedAccountId,
         Self::FlexibleChecksumsReqCrc64,
         Self::FlexibleChecksumsReqWhenSupported,
         Self::FlexibleChecksumsReqWhenRequired,
@@ -160,6 +172,9 @@ impl Feature {
             Self::RetryModeAdaptive => "F",
             Self::S3Transfer => "G",
             Self::EndpointOverride => "N",
+            Self::AccountIdModePreferred => "P",
+            Self::AccountIdModeDisabled => "Q",
+            Self::ResolvedAccountId => "T",
             Self::FlexibleChecksumsReqCrc64 => "W",
             Self::FlexibleChecksumsReqWhenSupported => "Z",
             Self::FlexibleChecksumsReqWhenRequired => "a",
@@ -191,7 +206,7 @@ impl Feature {
 /// Feature pairs upstream never registers together: one retry mode per client,
 /// one value per checksum setting, one transfer client per command, and one
 /// credential provider per session (credentials.py `CredentialResolver`).
-pub const EXCLUSIVE_PAIRS: [[Feature; 2]; 10] = [
+pub const EXCLUSIVE_PAIRS: [[Feature; 2]; 11] = [
     [Feature::RetryModeStandard, Feature::RetryModeAdaptive],
     [
         Feature::FlexibleChecksumsReqWhenSupported,
@@ -202,6 +217,10 @@ pub const EXCLUSIVE_PAIRS: [[Feature; 2]; 10] = [
         Feature::FlexibleChecksumsResWhenRequired,
     ],
     [Feature::S3TransferCrtExplicit, Feature::S3TransferCrtAuto],
+    [
+        Feature::AccountIdModePreferred,
+        Feature::AccountIdModeDisabled,
+    ],
     [Feature::CredentialsEnvVars, Feature::CredentialsProfile],
     [Feature::CredentialsEnvVars, Feature::CredentialsProcess],
     [Feature::CredentialsProfile, Feature::CredentialsProcess],

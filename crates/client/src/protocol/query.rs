@@ -58,7 +58,7 @@ impl Protocol for Query {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
-        common::parse(self, model, operation.output, response, options).map(Value::Map)
+        common::parse(self, model, operation.output, response, options)
     }
 
     fn parse_error(
@@ -542,7 +542,7 @@ impl Family for Query {
         shape: Option<ShapeId>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
-    ) -> Result<Map, ParseError> {
+    ) -> Result<Value, ParseError> {
         let root = document(&response.body)?;
         let mut parsed = match shape {
             Some(shape) => body_shape(model, shape, &root, options)?,
@@ -560,7 +560,7 @@ impl Family for Query {
                 .collect();
             parsed.insert("ResponseMetadata".into(), Value::Map(fields));
         }
-        Ok(parsed)
+        Ok(Value::Map(parsed))
     }
 
     /// `QueryParser._do_error_parse`.

@@ -291,6 +291,27 @@ fn the_matcher_adds_each_service_s_own_entries() -> Result<()> {
     })
 }
 
+/// The fake models' names match no Python customization: every operation
+/// of every fake service is touched by the same, cross-cutting entries.
+#[test]
+fn the_fake_models_meet_only_cross_cutting_customizations() -> Result<()> {
+    with_source(Some(fake_models()), |source| {
+        let mut seen: Option<(String, Vec<String>)> = None;
+        for service in ["zquery", "zjson", "zjson11", "zglobal"] {
+            let operations = source.operations(service).unwrap_or_default();
+            assert!(!operations.is_empty(), "{service} has no operations");
+            for operation in operations.iter() {
+                let touched = source.touching(service, operation).unwrap_or_default();
+                let at = format!("{service} {operation}");
+                match &seen {
+                    None => seen = Some((at, touched)),
+                    Some((first, expected)) => assert_eq!(&touched, expected, "{at} vs {first}"),
+                }
+            }
+        }
+    })
+}
+
 fn client_handlers(source: &ModelSource<'_>, command: &str, operation: &str) -> Vec<String> {
     source
         .client_handlers(command, operation)

@@ -62,6 +62,57 @@
       "input": {
         "shape": "MeasureRequest"
       }
+    },
+    "Describe": {
+      "name": "Describe",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "DescribeInput"
+      },
+      "output": {
+        "shape": "DescribeOutput"
+      },
+      "errors": [
+        {
+          "shape": "Conflict"
+        }
+      ]
+    },
+    "Locate": {
+      "name": "Locate",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "LocateInput"
+      },
+      "output": {
+        "shape": "LocateOutput"
+      },
+      "endpoint": {
+        "hostPrefix": "{Zone}.data."
+      }
+    },
+    "Strict": {
+      "name": "Strict",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "StrictInput"
+      }
+    },
+    "Ping": {
+      "name": "Ping",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      }
     }
   },
   "shapes": {
@@ -224,6 +275,356 @@
         },
         "Ratio": {
           "shape": "Double"
+        }
+      }
+    },
+    "Float": {
+      "type": "float"
+    },
+    "EpochTime": {
+      "type": "timestamp",
+      "timestampFormat": "unixTimestamp"
+    },
+    "HttpTime": {
+      "type": "timestamp",
+      "timestampFormat": "rfc822"
+    },
+    "IsoTime": {
+      "type": "timestamp",
+      "timestampFormat": "iso8601"
+    },
+    "Name": {
+      "type": "string",
+      "min": 1
+    },
+    "Size": {
+      "type": "integer",
+      "min": 1
+    },
+    "Ratio": {
+      "type": "double",
+      "min": 0.5
+    },
+    "Inner": {
+      "type": "structure",
+      "members": {
+        "Value": {
+          "shape": "String"
+        },
+        "Depth": {
+          "shape": "Integer"
+        }
+      }
+    },
+    "Outer": {
+      "type": "structure",
+      "members": {
+        "Inner": {
+          "shape": "Inner"
+        },
+        "Label": {
+          "shape": "String"
+        }
+      }
+    },
+    "Record": {
+      "type": "structure",
+      "members": {
+        "Key": {
+          "shape": "String"
+        },
+        "Weight": {
+          "shape": "Double"
+        }
+      }
+    },
+    "ItemList": {
+      "type": "list",
+      "member": {
+        "shape": "String",
+        "locationName": "item"
+      }
+    },
+    "RecordList": {
+      "type": "list",
+      "member": {
+        "shape": "Record"
+      }
+    },
+    "TimeList": {
+      "type": "list",
+      "member": {
+        "shape": "Timestamp"
+      }
+    },
+    "PairMap": {
+      "type": "map",
+      "key": {
+        "shape": "String"
+      },
+      "value": {
+        "shape": "String"
+      }
+    },
+    "NamedMap": {
+      "type": "map",
+      "key": {
+        "shape": "String",
+        "locationName": "Name"
+      },
+      "value": {
+        "shape": "Integer",
+        "locationName": "Content"
+      }
+    },
+    "RecordMap": {
+      "type": "map",
+      "key": {
+        "shape": "String"
+      },
+      "value": {
+        "shape": "Record"
+      }
+    },
+    "DescribeInput": {
+      "type": "structure",
+      "members": {
+        "Text": {
+          "shape": "String"
+        },
+        "Count": {
+          "shape": "Integer"
+        },
+        "Total": {
+          "shape": "Long"
+        },
+        "On": {
+          "shape": "Boolean"
+        },
+        "Fraction": {
+          "shape": "Float"
+        },
+        "Precise": {
+          "shape": "Double"
+        },
+        "Data": {
+          "shape": "Blob"
+        },
+        "When": {
+          "shape": "Timestamp"
+        },
+        "WhenEpoch": {
+          "shape": "EpochTime"
+        },
+        "WhenHttp": {
+          "shape": "HttpTime"
+        },
+        "WhenIso": {
+          "shape": "IsoTime"
+        },
+        "Nested": {
+          "shape": "Outer"
+        },
+        "Items": {
+          "shape": "ItemList"
+        },
+        "Records": {
+          "shape": "RecordList"
+        },
+        "Times": {
+          "shape": "TimeList"
+        },
+        "Pairs": {
+          "shape": "PairMap"
+        },
+        "Named": {
+          "shape": "NamedMap"
+        },
+        "RecordsByName": {
+          "shape": "RecordMap"
+        },
+        "Renamed": {
+          "shape": "String",
+          "locationName": "AltName"
+        },
+        "Token": {
+          "shape": "String",
+          "idempotencyToken": true
+        },
+        "Doc": {
+          "shape": "Document"
+        },
+        "Choice": {
+          "shape": "Choice"
+        }
+      }
+    },
+    "DescribeOutput": {
+      "type": "structure",
+      "members": {
+        "Text": {
+          "shape": "String"
+        },
+        "Count": {
+          "shape": "Integer"
+        },
+        "Total": {
+          "shape": "Long"
+        },
+        "On": {
+          "shape": "Boolean"
+        },
+        "Fraction": {
+          "shape": "Float"
+        },
+        "Precise": {
+          "shape": "Double"
+        },
+        "Data": {
+          "shape": "Blob"
+        },
+        "When": {
+          "shape": "Timestamp"
+        },
+        "WhenEpoch": {
+          "shape": "EpochTime"
+        },
+        "WhenHttp": {
+          "shape": "HttpTime"
+        },
+        "WhenIso": {
+          "shape": "IsoTime"
+        },
+        "Nested": {
+          "shape": "Outer"
+        },
+        "Items": {
+          "shape": "ItemList"
+        },
+        "Records": {
+          "shape": "RecordList"
+        },
+        "Times": {
+          "shape": "TimeList"
+        },
+        "Pairs": {
+          "shape": "PairMap"
+        },
+        "Named": {
+          "shape": "NamedMap"
+        },
+        "RecordsByName": {
+          "shape": "RecordMap"
+        },
+        "Renamed": {
+          "shape": "String",
+          "locationName": "AltName"
+        },
+        "Doc": {
+          "shape": "Document"
+        },
+        "Choice": {
+          "shape": "Choice"
+        }
+      }
+    },
+    "Conflict": {
+      "type": "structure",
+      "members": {
+        "Message": {
+          "shape": "String"
+        },
+        "Resource": {
+          "shape": "String"
+        },
+        "Retry": {
+          "shape": "Integer"
+        }
+      },
+      "error": {
+        "code": "ConflictError",
+        "httpStatusCode": 409,
+        "senderFault": true
+      },
+      "exception": true
+    },
+    "LocateInput": {
+      "type": "structure",
+      "required": [
+        "Zone"
+      ],
+      "members": {
+        "Zone": {
+          "shape": "String",
+          "hostLabel": true
+        },
+        "Hint": {
+          "shape": "String"
+        }
+      }
+    },
+    "LocateOutput": {
+      "type": "structure",
+      "members": {
+        "Where": {
+          "shape": "String"
+        }
+      }
+    },
+    "StrictInput": {
+      "type": "structure",
+      "required": [
+        "Name",
+        "Size"
+      ],
+      "members": {
+        "Name": {
+          "shape": "Name"
+        },
+        "Size": {
+          "shape": "Size"
+        },
+        "Ratio": {
+          "shape": "Ratio"
+        },
+        "Tags": {
+          "shape": "TagList"
+        },
+        "Labels": {
+          "shape": "PairMap"
+        },
+        "Nested": {
+          "shape": "Outer"
+        },
+        "Choice": {
+          "shape": "Choice"
+        }
+      }
+    },
+    "TagList": {
+      "type": "list",
+      "member": {
+        "shape": "String"
+      },
+      "min": 1
+    },
+    "Document": {
+      "type": "structure",
+      "members": {},
+      "document": true
+    },
+    "Choice": {
+      "type": "structure",
+      "union": true,
+      "members": {
+        "Text": {
+          "shape": "String"
+        },
+        "Number": {
+          "shape": "Integer"
+        },
+        "Record": {
+          "shape": "Record"
         }
       }
     }

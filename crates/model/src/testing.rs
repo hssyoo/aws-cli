@@ -116,6 +116,8 @@ pub fn python(script: &str, input: &[u8]) -> Result<Vec<u8>> {
     let prefix = std::env::var_os("AWS_NATIVE_CPYTHON_PREFIX")
         .ok_or("AWS_NATIVE_CPYTHON_PREFIX must name the toolchain CPython")?;
     let mut child = std::process::Command::new(PathBuf::from(prefix).join("bin/python3"))
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
         .args(["-I", "-c", script])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
