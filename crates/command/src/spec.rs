@@ -7,15 +7,15 @@ use std::borrow::Cow;
 use std::io::Write;
 use std::path::Path;
 
-/// What the router must resolve before the command may run.
+/// What the router must resolve before a model operation may run: a
+/// client for its service.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Needs {
-    /// A client for a service. `service` is the identity botocore's
-    /// configured-endpoint lookup keys on (`ConfiguredEndpointProvider`):
-    /// the model's `serviceId`, hyphenated and lowercased, which names the
-    /// `AWS_ENDPOINT_URL_<SERVICE>` variable and the `services` section's
-    /// entry.
-    Client { service: Cow<'static, str> },
+pub struct Needs {
+    /// The identity botocore's configured-endpoint lookup keys on
+    /// (`ConfiguredEndpointProvider`): the model's `serviceId`, hyphenated
+    /// and lowercased, which names the `AWS_ENDPOINT_URL_<SERVICE>`
+    /// variable and the `services` section's entry.
+    pub service: Cow<'static, str>,
 }
 
 /// How the command's standard streams are buffered: the only thing this

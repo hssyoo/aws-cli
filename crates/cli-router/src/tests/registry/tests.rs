@@ -2,7 +2,9 @@
 //! `OperationSource` knows, through the same ordered stages as the pinned
 //! `s3` commands, to `Verdict::Run`.
 use super::*;
-use ::command::{Admission, Context, Invocation, Needs, OperationSource, Registry, StreamPolicy};
+use ::command::{
+    Admission, Binder, Context, Invocation, Needs, OperationSource, Registry, StreamPolicy,
+};
 use awscli_argparse::Argument;
 use cli_core::cli_error::{Category, CommandFailure, Rendering};
 use std::borrow::Cow;
@@ -86,10 +88,12 @@ impl OperationSource for Fake {
         operation == "decode-authorization-message"
     }
     fn needs(&self, root: &str) -> Needs {
-        Needs::Client {
+        Needs {
             service: root.to_owned().into(),
         }
     }
+}
+impl Binder for Fake {
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
         match parsed.values.string("role_session_name") {
             Some("refused") => Err(Admission::Python(PythonReason::UnsupportedOption)),
@@ -106,7 +110,7 @@ fn evaluate_in(
     env: &BTreeMap<String, String>,
     files: &ParsedFiles,
 ) -> (Verdict, ParseResult<'static>) {
-    const REGISTRY: Registry<'static> = Registry::new(&PINNED, Some(&Fake));
+    const REGISTRY: Registry<'static> = Registry::new(&PINNED, Some(&Fake)).with_binder(&Fake);
     let argv = args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
     let mut result = awscli_argparse::parse(&argv, &Options::default(), &REGISTRY.tables());
     let vars = env
@@ -163,7 +167,7 @@ fn a_root_only_the_registry_knows_parses_binds_and_runs() {
     ));
     assert_eq!(
         run.needs,
-        Needs::Client {
+        Needs {
             service: "sts".into()
         }
     );

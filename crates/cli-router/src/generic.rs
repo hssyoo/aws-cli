@@ -4,7 +4,7 @@
 //! binding, settings admission, the output format, and the endpoint checks.
 //! The prologue (session fallback, alias rule) ran in the caller.
 use super::*;
-use ::command::{Needs, Operation, Resolution};
+use ::command::{Operation, Resolution};
 
 /// [`route_parsed`] for a lineage the pinned enum path does not bind.
 pub(super) fn route<E: EnvMap>(
@@ -88,7 +88,7 @@ fn admit<E: EnvMap>(
         Ok(output) => output,
         Err(reason) => return Verdict::Python(reason),
     };
-    let Needs::Client { service } = &needs;
+    let service = &needs.service;
     if let Some(reason) = endpoint_refusal(config, &globals, ns, service) {
         return Verdict::Python(reason);
     }

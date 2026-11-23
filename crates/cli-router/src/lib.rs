@@ -63,8 +63,8 @@ pub struct Native {
     /// The client settings the handler runs with, resolved once.
     pub client: client_config::ClientConfig,
 }
-/// The dispatch payload of a registry command's verdict: a command a
-/// hand-written spec or a model source bound, admitted by every stage.
+/// The dispatch payload of a registry command's verdict: a model operation
+/// the registry's binder bound, admitted by every stage.
 #[derive(Debug)]
 pub struct Run {
     /// Global overrides shared by every native command.

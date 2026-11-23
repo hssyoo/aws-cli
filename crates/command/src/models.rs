@@ -8,10 +8,9 @@
 //! cross-cutting arguments (`table`).
 use crate::patterns::{CliCustomization, Match, Patterns, Subject, TableOp};
 use crate::registry::OperationSource;
-use crate::spec::{Admission, Invocation, Needs};
+use crate::spec::Needs;
 use awscli_argparse::tables::RequiredOverride;
-use awscli_argparse::{Argument, CliType, DefaultValue, ParseResult};
-use cli_core::cli_error::PythonReason;
+use awscli_argparse::{Argument, CliType, DefaultValue};
 use model::search::SearchSource;
 use model::shapes::Model;
 use model::source::{Kind, LoadError, Source, load_service_model};
@@ -443,15 +442,9 @@ impl OperationSource for ModelSource<'_> {
         let service = self.service(root);
         let metadata = service.map(|service| service.model.metadata());
         let id = metadata.and_then(model::shapes::Metadata::hyphenized_service_id);
-        Needs::Client {
+        Needs {
             service: id.unwrap_or_else(|| root.to_owned()).into(),
         }
-    }
-    /// No model operation binds natively yet: every one meets the
-    /// cross-cutting entries (the session's and the argument table's), and
-    /// no native piece replaces what they do when the command runs.
-    fn bind(&self, _parsed: &ParseResult<'_>) -> Result<Box<dyn Invocation>, Admission> {
-        Err(Admission::Python(PythonReason::UnportedCustomization))
     }
 }
 

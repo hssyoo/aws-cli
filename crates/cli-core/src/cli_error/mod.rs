@@ -33,8 +33,9 @@ pub enum PythonReason {
     /// or a main-parse failure came after such a word was consumed.
     UnsupportedCommand,
     /// A command of a registered root without a native handler, whatever
-    /// its outcome: an `s3` subcommand the enum path does not bind, or a
-    /// hand-written command whose spec has no `bind`.
+    /// its outcome: an `s3` subcommand the enum path does not bind, a model
+    /// operation in a registry without a binder, or a parse failure of a
+    /// table a customization edits.
     UnsupportedSubcommand,
     /// A global option the native handlers do not implement
     /// (`--no-verify-ssl`, `--cli-read-timeout` outside a formatting

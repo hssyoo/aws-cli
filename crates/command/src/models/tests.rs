@@ -200,18 +200,14 @@ fn customized_tables_leave_their_failures_to_python() -> Result<()> {
 }
 
 #[test]
-fn a_model_operation_binds_nothing_yet_and_needs_its_service_s_client() -> Result<()> {
+fn a_model_operation_needs_its_service_s_client() -> Result<()> {
     with_source(None, |source| {
         assert_eq!(
             source.needs("sts"),
-            Needs::Client {
+            Needs {
                 service: "sts".into()
             }
         );
-        assert!(matches!(
-            source.bind(&ParseResult::default()),
-            Err(Admission::Python(PythonReason::UnportedCustomization))
-        ));
     })
 }
 
