@@ -155,3 +155,76 @@ async def test_retries_reuse_the_invocation_id(api: ApiSession) -> None:
     assert [attempt.partition("; ")[0] for attempt in attempts] == ["attempt=1", "attempt=2"]
     assert len(limits) == 1 and limits <= {"max=3", "max=2"}, attempts
     assert json.loads(run.stdout) == IDENTITY
+
+
+def host_of(run) -> str:
+    (call,) = run.calls
+    return call.request.headers.get("host") or ""
+
+
+@pytest.mark.parametrize(
+    "variables,arguments,host",
+    [
+        ({}, [], "sts.us-east-1.amazonaws.com"),
+        ({}, ["--region", "eu-west-1"], "sts.eu-west-1.amazonaws.com"),
+        ({"AWS_USE_FIPS_ENDPOINT": "true"}, [], "sts-fips.us-east-1.amazonaws.com"),
+        ({}, ["--region", "fips-us-east-1"], "sts-fips.us-east-1.amazonaws.com"),
+        ({"AWS_USE_DUALSTACK_ENDPOINT": "true"}, [], "sts.us-east-1.api.aws"),
+        ({}, ["--endpoint-url", "https://sts.example.test"], "sts.example.test"),
+        ({"AWS_ENDPOINT_URL_STS": "https://sts.configured.test"}, [], "sts.configured.test"),
+    ],
+    ids=[
+        "default-region",
+        "region-flag",
+        "fips-setting",
+        "fips-pseudo-region",
+        "dual-stack",
+        "endpoint-url",
+        "service-endpoint-variable",
+    ],
+)
+async def test_the_endpoint_follows_the_settings(
+    api: ApiSession,
+    variables: dict[str, str],
+    arguments: list[str],
+    host: str,
+) -> None:
+    api.env.update(variables)
+    run = await api.run([*COMMAND, *arguments], replies=IDENTITY)
+    assert host_of(run) == host, run.describe()
+
+
+async def test_a_profile_names_the_region(api: ApiSession) -> None:
+    del api.env["AWS_DEFAULT_REGION"]
+    api.config_path.write_text(
+        api.config_path.read_text(encoding="utf-8")
+        # An explicit profile skips the environment's keys
+        # (`ProfileProviderBuilder`), so it carries its own.
+        + "[profile west]\nregion = us-west-2\n"
+        "aws_access_key_id = profile_key\naws_secret_access_key = profile_secret\n",
+        encoding="utf-8",
+    )
+    run = await api.run([*COMMAND, "--profile", "west"], replies=IDENTITY)
+    assert host_of(run) == "sts.us-west-2.amazonaws.com", run.describe()
+
+
+async def test_the_timeout_options_run_the_command(api: ApiSession) -> None:
+    run = await api.run(
+        [*COMMAND, "--cli-read-timeout", "30", "--cli-connect-timeout", "5"],
+        replies=IDENTITY,
+    )
+    assert json.loads(run.stdout) == IDENTITY
+
+
+async def test_a_refused_connection_names_the_endpoint(api: ApiSession) -> None:
+    # A closed loopback port, with the proxy bypassed for it.
+    api.env["NO_PROXY"] = "127.0.0.1"
+    run = await api.run(
+        [*COMMAND, "--endpoint-url", "http://127.0.0.1:9"],
+        replies=[],
+        expected_rc=255,
+    )
+    assert run.calls == ()
+    assert run.stderr == (
+        '\naws: [ERROR]: Could not connect to the endpoint URL: "http://127.0.0.1:9/"\n'
+    ), run.describe()
