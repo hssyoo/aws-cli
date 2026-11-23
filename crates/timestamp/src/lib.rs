@@ -16,6 +16,8 @@
 //! assert_eq!(rfc822.as_deref(), Some("Sun, 30 Aug 2015 12:36:00 GMT"));
 //! ```
 #![forbid(unsafe_code)]
+#[cfg(any(test, feature = "testing"))]
+pub mod fuzz;
 mod parse;
 
 use std::time::{SystemTime, UNIX_EPOCH};

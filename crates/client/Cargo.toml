@@ -16,7 +16,10 @@ model = { path = "../model" }
 timestamp = { path = "../timestamp" }
 
 [dev-dependencies]
+awscli-argparse = { path = "../awscli-argparse", features = ["testing"] }
 format = { path = "../format" }
+model = { path = "../model", features = ["testing"] }
+timestamp = { path = "../timestamp", features = ["testing"] }
 serde_json.workspace = true
 
 [lints]
