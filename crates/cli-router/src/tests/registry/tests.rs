@@ -77,8 +77,10 @@ impl OperationSource for Fake {
     ) -> Cow<'_, [awscli_argparse::tables::RequiredOverride<'_>]> {
         Cow::Borrowed(&[])
     }
-    fn reproduces_failures(&self, _root: &str, _operation: Option<&str>) -> bool {
-        true
+    /// Every table but get-session-token's, which stands for one a
+    /// customization edits.
+    fn reproduces_failures(&self, _root: &str, operation: Option<&str>) -> bool {
+        operation != Some("get-session-token")
     }
     fn needs(&self, root: &str) -> Needs {
         Needs::Client {
@@ -216,6 +218,25 @@ fn parse_failures_of_a_derived_command_render_as_python_does() {
         let category = cli_core::cli_error::Category::from_class(failure.class);
         assert_eq!(cli_core::cli_error::exit_status(category), 252, "{args:?}");
     }
+}
+
+/// The leftover check and the unpack loop run after the parse, as part of
+/// completing it; a failure there of a table a customization edits is
+/// Python's to report, as the parse's own would be.
+#[test]
+fn a_customized_table_s_late_failures_are_python_s() {
+    let verdict = evaluate_with(
+        &["sts", "get-session-token", "--nosuch"],
+        &BTreeMap::new(),
+        &files(""),
+    );
+    assert!(
+        matches!(
+            verdict,
+            Verdict::Python(PythonReason::UnsupportedSubcommand)
+        ),
+        "{verdict:?}"
+    );
 }
 
 #[test]
