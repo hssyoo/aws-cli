@@ -10,6 +10,7 @@ pub mod output;
 #[cfg(unix)]
 mod passwd;
 pub mod proxy;
+pub mod random;
 pub mod region;
 pub mod shared_config;
 #[cfg(any(windows, test))]
