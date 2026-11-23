@@ -138,14 +138,17 @@ pub enum Outcome {
     Interrupted,
 }
 
-/// The pager could not start: the `OSError` `Popen` raises.
+/// The pager could not start because its program is missing
+/// (`FileNotFoundError`), or its command is empty (`IndexError`); any other
+/// `OSError` is no failure (see [`run`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpawnError {
     /// `str()` of the exception, `[Errno N] text: 'name'`.
     pub text: String,
     /// A `FileNotFoundError`, which `LazyPager` turns into
     /// `PagerInitializationException` (`PagerErrorHandler`, exit 253, code
-    /// `Pager`); any other is the general handler's (exit 255).
+    /// `Pager`); an empty command's `IndexError` is the general handler's
+    /// (exit 255).
     pub not_found: bool,
 }
 
@@ -176,11 +179,19 @@ pub fn run(
         .find(|(name, _)| name == "PATH")
         .map(|(_, value)| value.as_os_str());
     let candidates = cli_core::subprocess::candidates(program, path);
-    let mut child = cli_core::subprocess::spawn_piped(&candidates, program, arguments, env)
-        .map_err(|error| spawn_error(&error, program))?;
+    let mut child = match cli_core::subprocess::spawn_piped(&candidates, program, arguments, env) {
+        Ok(child) => child,
+        // `get_pager_stream` passes over any other `OSError`: nothing is
+        // written and the command succeeds.
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Ok(Outcome::Exited),
+        Err(error) => return Err(spawn_error(&error, program)),
+    };
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(output);
     }
+    // Waiting is active work, so the first Ctrl-C cancels it rather than
+    // terminating the process (`interrupt::State::record_interrupt`).
+    let _scope = cli_core::interrupt::Scope::enter(interrupt);
     loop {
         if !matches!(child.try_wait(), Ok(None)) {
             return Ok(Outcome::Exited);

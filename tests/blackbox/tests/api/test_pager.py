@@ -294,16 +294,14 @@ async def test_a_missing_pager_is_the_pager_error(api: ApiSession, pagers: Path)
     assert run.terminal == "", run.describe()
 
 
-async def test_a_pager_that_cannot_run_is_a_general_error(
-    api: ApiSession, pagers: Path
-) -> None:
+async def test_a_pager_that_cannot_run_writes_nothing(api: ApiSession, pagers: Path) -> None:
+    """`get_pager_stream` passes over every `OSError` but the missing
+    program's: a pager that is not executable leaves the output unwritten
+    and the status 0."""
     path = pagers / "not-executable"
     env = pager_environment(api, pagers, {"AWS_PAGER": str(path)})
     run = await run_paged(api, pagers, COMMAND, env)
-    assert run.returncode == 255, run.describe()
-    assert run.stderr == f"\naws: [ERROR]: [Errno 13] Permission denied: '{path}'\n", (
-        run.describe()
-    )
+    assert (run.returncode, run.terminal, run.stderr) == (0, "", ""), run.describe()
 
 
 async def test_a_pager_that_quits_early_is_no_failure(api: ApiSession, pagers: Path) -> None:

@@ -77,7 +77,9 @@ pub fn credentials_failure(error: &credentials::LoadError) -> CommandFailure {
 
 /// `LazyPager`'s failure to start the pager: a missing program is
 /// `PagerInitializationException` (`PagerErrorHandler`, 253, code
-/// `Pager`), and any other `OSError` the general handler's (255).
+/// `Pager`), and an empty command's `IndexError` the general handler's
+/// (255). Any other `OSError` is no failure: `format::pager::run`
+/// reports the pager exited.
 pub fn pager_failure(error: &format::pager::SpawnError) -> CommandFailure {
     if !error.not_found {
         return CommandFailure {
