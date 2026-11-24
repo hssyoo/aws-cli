@@ -11,20 +11,19 @@
 //! (`LazyTransport`), the page in flight is dropped, and the run ends as
 //! `InterruptExceptionHandler` ends it, after the output already written.
 use super::*;
-use crate::admit::Paginated;
 use cli_core::interrupt::{Scope, State};
-use client::paginate::PageIterator;
 use format::pages::{Pages, Stopped};
+use model::paginators::Expression;
 use model::value::Map;
 
 /// The paginator's pages, each checked against a Ctrl-C recorded while it
 /// was fetched.
-struct Fetched<'c> {
-    pages: PageIterator<'c>,
+struct Fetched {
+    pages: PageIterator<Client>,
     interrupt: &'static State,
 }
 
-impl Pages for Fetched<'_> {
+impl Pages for Fetched {
     type Error = CallError;
     fn next_page(&mut self) -> Option<Result<Value, CallError>> {
         let page = self.pages.next()?;
@@ -33,7 +32,7 @@ impl Pages for Fetched<'_> {
         }
         Some(page)
     }
-    fn result_keys(&self) -> &[String] {
+    fn result_keys(&self) -> &[Expression] {
         self.pages.result_keys()
     }
     fn non_aggregate_part(&self) -> &Map {
@@ -44,25 +43,16 @@ impl Pages for Fetched<'_> {
     }
 }
 
-/// The paginated call of `invocation`, printed as `ready.format` says.
+/// The pages of `invocation`'s paginator, which the preflight prepared,
+/// printed as `ready.format` says.
 pub(super) fn run(
     invocation: &ServiceInvocation,
     cx: &mut Context<'_>,
     ready: &Ready,
-    client: &Client,
-    paginated: &Paginated,
+    pages: PageIterator<Client>,
 ) -> Result<u8, CommandFailure> {
     let interrupt = cli_core::interrupt::process_state();
-    let mut fetched = Fetched {
-        pages: PageIterator::new(
-            client,
-            &invocation.admitted.operation,
-            invocation.admitted.input.clone(),
-            paginated.config.clone(),
-            paginated.pagination.clone(),
-        ),
-        interrupt,
-    };
+    let mut fetched = Fetched { pages, interrupt };
     let mut scope = Scope::enter(interrupt);
     let full = match ready.format {
         OutputFormat::Text => {
@@ -92,7 +82,7 @@ pub(super) fn run(
 }
 
 /// `OffFormatter`: every page taken, none printed.
-fn drain(fetched: &mut Fetched<'_>) -> Result<(), CallError> {
+fn drain(fetched: &mut Fetched) -> Result<(), CallError> {
     while let Some(page) = fetched.next_page() {
         page?;
     }
@@ -106,7 +96,7 @@ fn text_to_stdout(
     invocation: &ServiceInvocation,
     cx: &mut Context<'_>,
     line_buffered: bool,
-    fetched: &mut Fetched<'_>,
+    fetched: &mut Fetched,
     mut scope: Scope<'_>,
 ) -> Result<u8, CommandFailure> {
     let stdout = &mut *cx.stdout;
@@ -134,7 +124,7 @@ fn text_to_pager(
     cx: &mut Context<'_>,
     ready: &Ready,
     argv: &[String],
-    fetched: &mut Fetched<'_>,
+    fetched: &mut Fetched,
     mut scope: Scope<'_>,
 ) -> Result<u8, CommandFailure> {
     let mut pager = format::pager::Stream::new(argv, &ready.pager_env);

@@ -92,7 +92,7 @@ pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Binding, PythonRe
     paginate &= !paging.is_some_and(|paging| {
         input
             .keys()
-            .any(|key| paging.tokens.iter().any(|token| &**token == key))
+            .any(|key| paging.tokens.iter().any(|token| &*token.model == key))
     });
     let pagination = paginate.then(|| pagination_config(input.remove(PAGINATION_CONFIG)));
     Ok(Binding::Call(Call {
@@ -125,8 +125,8 @@ fn paginate_global(parsed: &ParseResult<'_>) -> bool {
 /// supplied by its own argument, unless its name is one of the
 /// `normalized_paging_args`, `start_token` and `max_items`.
 fn manual_token(paging: &Paging, raw: &Namespace) -> bool {
-    paging.cli_tokens.iter().any(|token| {
-        let py_name = token.replace('-', "_");
+    paging.tokens.iter().any(|token| {
+        let py_name = token.cli.replace('-', "_");
         !["start_token", "max_items"].contains(&py_name.as_str())
             && raw.value(&py_name).is_some_and(|value| !value.is_null())
     })

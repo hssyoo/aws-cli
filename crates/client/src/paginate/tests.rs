@@ -17,6 +17,9 @@ use std::sync::Arc;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
+/// The paginator over the fixture's client, which it borrows.
+type Pages<'c> = PageIterator<&'c Client>;
+
 const SERVICE: &str = r#"{
     "metadata": {"apiVersion": "2020-01-01", "protocol": "json", "jsonVersion": "1.0",
         "targetPrefix": "ZFake", "endpointPrefix": "zfake", "signingName": "zfake",
@@ -149,7 +152,7 @@ impl Fixture {
         };
         sent.iter().map(body).collect()
     }
-    fn pages(&self, config: &str, pagination: PaginationConfig) -> TestResult<PageIterator<'_>> {
+    fn pages(&self, config: &str, pagination: PaginationConfig) -> TestResult<Pages<'_>> {
         let input = Value::Map(Map::new());
         self.pages_of(config, input, pagination)
     }
@@ -158,7 +161,16 @@ impl Fixture {
         config: &str,
         input: Value,
         pagination: PaginationConfig,
-    ) -> TestResult<PageIterator<'_>> {
+    ) -> TestResult<Pages<'_>> {
+        Ok(self.try_pages(config, input, pagination)??)
+    }
+    /// `paginate`, which can refuse its `PaginationConfig`.
+    fn try_pages(
+        &self,
+        config: &str,
+        input: Value,
+        pagination: PaginationConfig,
+    ) -> TestResult<Result<Pages<'_>, CallError>> {
         let config = Config::from_value(&json(config)?).map_err(|r| format!("{r:?}"))?;
         Ok(PageIterator::new(
             &self.client,
@@ -196,7 +208,7 @@ fn starting(token: &str) -> PaginationConfig {
     }
 }
 
-fn all(pages: PageIterator<'_>) -> Result<Vec<Value>, CallError> {
+fn all(pages: Pages<'_>) -> Result<Vec<Value>, CallError> {
     pages.collect()
 }
 
@@ -226,92 +238,6 @@ const M1: &str = "eyJNYXJrZXIiOiAibTEifQ==";
 const M2: &str = "eyJNYXJrZXIiOiAibTIifQ==";
 const M1_AT_1: &str = "eyJNYXJrZXIiOiAibTEiLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAxfQ==";
 const NONE_AT_1: &str = "eyJNYXJrZXIiOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAxfQ==";
-
-#[test]
-fn an_entry_reads_as_paginator_reads_it() -> TestResult {
-    let read = Config::from_value(&json(
-        r#"{"input_token": "Marker", "output_token": "Inner.Marker", "result_key": "Users",
-            "limit_key": "MaxResults", "more_results": "Inner.More",
-            "non_aggregate_keys": ["Owner", "Inner.Note"]}"#,
-    )?);
-    let names = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
-    assert_eq!(
-        read,
-        Ok(Config {
-            input_token: names(&["Marker"]),
-            output_token: names(&["Inner.Marker"]),
-            more_results: Some("Inner.More".into()),
-            result_key: names(&["Users"]),
-            non_aggregate_keys: names(&["Owner", "Inner.Note"]),
-            limit_key: Some("MaxResults".into()),
-        })
-    );
-    let listed = Config::from_value(&json(TWO_TOKENS)?).map_err(|r| format!("{r:?}"))?;
-    assert_eq!(listed.input_token, names(&["Marker", "Marker2"]));
-    assert_eq!(listed.result_key, names(&["Users", "Groups"]));
-    assert_eq!((listed.more_results, listed.limit_key), (None, None));
-    Ok(())
-}
-
-/// The JMESPath the configurations use beyond names and dotted paths:
-/// s3's `NextMarker || Contents[-1].Key`, importexport's `Jobs[-1].JobId`.
-#[test]
-fn an_expression_beyond_a_dotted_path_is_refused() -> TestResult {
-    let refused = |entry: &str, text: &str| -> TestResult<bool> {
-        Ok(Config::from_value(&json(entry)?) == Err(Refused::Expression(text.into())))
-    };
-    assert!(refused(
-        r#"{"input_token": "M", "output_token": ["NextMarker || Contents[-1].Key"],
-            "result_key": "U"}"#,
-        "NextMarker || Contents[-1].Key"
-    )?);
-    assert!(refused(
-        r#"{"input_token": "M", "output_token": "M", "result_key": "Jobs[-1].JobId"}"#,
-        "Jobs[-1].JobId"
-    )?);
-    assert!(refused(
-        r#"{"input_token": "M", "output_token": "M", "result_key": "U",
-            "more_results": "\"Quoted\""}"#,
-        "\"Quoted\""
-    )?);
-    for key in ["A.b-c", "A.", "1st"] {
-        let entry = format!(
-            r#"{{"input_token": "M", "output_token": "M", "result_key": "U",
-                "non_aggregate_keys": ["{key}"]}}"#
-        );
-        assert!(refused(&entry, key)?, "{key}");
-    }
-    Ok(())
-}
-
-/// What botocore cannot read, or cannot page with.
-#[test]
-fn an_entry_botocore_cannot_read_is_malformed() -> TestResult {
-    let malformed = |entry: &str| {
-        json(entry).map(|entry| matches!(Config::from_value(&entry), Err(Refused::Malformed(_))))
-    };
-    assert!(malformed(r#"["Marker"]"#)?);
-    assert!(malformed(
-        r#"{"input_token": "Marker", "result_key": "Users"}"#
-    )?);
-    assert!(malformed(
-        r#"{"input_token": "Marker", "output_token": "Marker"}"#
-    )?);
-    assert!(malformed(
-        r#"{"input_token": "M", "output_token": "M", "result_key": []}"#
-    )?);
-    assert!(malformed(
-        r#"{"input_token": 5, "output_token": "M", "result_key": "U"}"#
-    )?);
-    assert!(malformed(
-        r#"{"input_token": "M", "output_token": "M", "result_key": "U", "limit_key": 5}"#
-    )?);
-    assert!(malformed(
-        r#"{"input_token": "M", "output_token": "M", "result_key": "U",
-            "non_aggregate_keys": "Owner"}"#
-    )?);
-    Ok(())
-}
 
 /// `test_no_next_token`.
 #[test]
@@ -427,7 +353,7 @@ fn the_page_size_is_sent_as_the_limit_key() -> TestResult {
     Ok(())
 }
 
-/// `test_page_size_incorrectly_provided`: before any request.
+/// `test_page_size_incorrectly_provided`: as `paginate` is called.
 #[test]
 fn a_page_size_without_a_limit_key_is_a_pagination_error() -> TestResult {
     let f = fixture()?;
@@ -435,7 +361,11 @@ fn a_page_size_without_a_limit_key_is_a_pagination_error() -> TestResult {
         page_size: Some(Value::Integer(5)),
         ..PaginationConfig::default()
     };
-    let error = all(f.pages(MARKER, pagination)?).err().ok_or("an error")?;
+    let input = Value::Map(Map::new());
+    let error = f
+        .try_pages(MARKER, input, pagination)?
+        .err()
+        .ok_or("an error")?;
     assert_eq!(
         error.to_string(),
         "Error during pagination: PageSize parameter is not supported for the pagination \
@@ -1271,7 +1201,7 @@ fn a_null_offset_is_python_s_type_error_on_truncation() -> TestResult {
     Ok(())
 }
 
-/// `int(max_items)` and kin, before any request.
+/// `int(max_items)` and kin, as `paginate` is called.
 #[test]
 fn a_max_items_that_is_no_int_is_int_s_value_error() -> TestResult {
     let f = fixture()?;
@@ -1279,7 +1209,11 @@ fn a_max_items_that_is_no_int_is_int_s_value_error() -> TestResult {
         max_items: Some(Value::String("abc".into())),
         ..PaginationConfig::default()
     };
-    let error = all(f.pages(MARKER, pagination)?).err().ok_or("an error")?;
+    let input = Value::Map(Map::new());
+    let error = f
+        .try_pages(MARKER, input, pagination)?
+        .err()
+        .ok_or("an error")?;
     assert_eq!(
         error,
         CallError::Pagination(PaginationError::Value(
@@ -1292,7 +1226,7 @@ fn a_max_items_that_is_no_int_is_int_s_value_error() -> TestResult {
         ..PaginationConfig::default()
     };
     let bare = PageIterator::new(&f.client, "Bare", Value::Null, config, pagination);
-    let error = all(bare).err().ok_or("an error")?;
+    let error = bare.err().ok_or("an error")?;
     assert_eq!(
         error.to_string(),
         "'NoneType' object has no attribute 'members'"
@@ -1301,36 +1235,35 @@ fn a_max_items_that_is_no_int_is_int_s_value_error() -> TestResult {
     Ok(())
 }
 
-/// `first_input`: the first request's input, before and after it is sent,
-/// with what `_inject_starting_params` put in; or the error the first page
-/// fails with before its request. It sends nothing itself.
+/// `prepare`: `__iter__` up to its first request, with what
+/// `_inject_starting_params` put in, and that request prepared, sending
+/// nothing; the first page sends it. A bad starting token fails it before
+/// any request.
 #[test]
-fn the_first_input_is_the_first_request_s() -> TestResult {
+fn the_first_request_is_prepared_then_sent() -> TestResult {
     let f = fixture()?;
     let pagination = PaginationConfig {
         page_size: Some(Value::Integer(2)),
         ..starting(M1_AT_1)
     };
-    let pages = f.pages_of(LIMITED, json(r#"{"Filter": "foo"}"#)?, pagination)?;
-    let expected = json(r#"{"Filter": "foo", "Marker": "m1", "MaxResults": 2}"#)?;
-    assert_eq!(pages.first_input()?, expected);
+    let mut pages = f.pages_of(LIMITED, json(r#"{"Filter": "foo"}"#)?, pagination)?;
+    pages.prepare()?;
     assert!(f.bodies().is_empty());
     f.respond(&[
         r#"{"Users": ["a", "b"], "Marker": "m2"}"#,
         r#"{"Users": ["c"]}"#,
     ]);
-    let mut pages = pages;
     all_of(&mut pages)?;
-    assert_eq!(pages.first_input()?, expected);
     assert_eq!(
-        f.bodies()[0],
-        r#"{"Filter": "foo", "Marker": "m1", "MaxResults": 2}"#
+        f.bodies(),
+        [
+            r#"{"Filter": "foo", "Marker": "m1", "MaxResults": 2}"#,
+            r#"{"Filter": "foo", "Marker": "m2", "MaxResults": 2}"#
+        ]
     );
-    let plain = f.pages(MARKER, PaginationConfig::default())?;
-    assert_eq!(plain.first_input()?, json("{}")?);
-    let bad = f.pages(MARKER, starting("does___not___work"))?;
+    let mut bad = f.pages(MARKER, starting("does___not___work"))?;
     assert_eq!(
-        bad.first_input(),
+        bad.prepare(),
         Err(CallError::Pagination(PaginationError::Value(
             "Bad starting token: does___not___work".into()
         )))
@@ -1339,7 +1272,7 @@ fn the_first_input_is_the_first_request_s() -> TestResult {
     Ok(())
 }
 
-fn all_of(pages: &mut PageIterator<'_>) -> Result<Vec<Value>, CallError> {
+fn all_of(pages: &mut Pages<'_>) -> Result<Vec<Value>, CallError> {
     pages.collect()
 }
 
@@ -1524,9 +1457,9 @@ fn a_token_python_reads_differently_is_read_as_python_does() -> TestResult {
         "slice indices must be integers or None or have an __index__ method"
     );
     assert_eq!(f.bodies(), [r#"{"Marker": "m1"}"#]);
-    let lone = f.pages(MARKER, starting(&b64(r#"{"Marker": "\ud800"}"#)))?;
+    let mut lone = f.pages(MARKER, starting(&b64(r#"{"Marker": "\ud800"}"#)))?;
     assert!(matches!(
-        lone.first_input(),
+        lone.prepare(),
         Err(CallError::Unsupported(
             crate::admission::Unsupported::StartingToken(_)
         ))

@@ -224,11 +224,11 @@ fn listed(case: &Value) -> Option<crate::pages::tests::Listed> {
     let Value::Map(case) = case else {
         return None;
     };
-    let strings = |name: &str| match case.get(name) {
+    let expressions = |name: &str| match case.get(name) {
         Some(Value::List(items)) => items
             .iter()
             .filter_map(|item| match item {
-                Value::String(text) => Some(text.clone()),
+                Value::String(text) => model::paginators::Expression::parse(text),
                 _ => None,
             })
             .collect(),
@@ -243,8 +243,8 @@ fn listed(case: &Value) -> Option<crate::pages::tests::Listed> {
     };
     let mut listed =
         crate::pages::tests::Listed::new(pages.iter().cloned().map(decode).collect(), &[]);
-    listed.result_keys = strings("result_keys");
-    listed.non_aggregate_keys = strings("non_aggregate_keys");
+    listed.result_keys = expressions("result_keys");
+    listed.non_aggregate_keys = expressions("non_aggregate_keys");
     listed.resume_token = text("resume_token");
     listed.fail = text("fail");
     Some(listed)
