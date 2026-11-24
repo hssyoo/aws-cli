@@ -9,7 +9,10 @@
 //!
 //! Every Python operation the paginator applies to a page (`len`, slices,
 //! `+`, `set_value_from_jmespath`) fails here as it fails there, with the
-//! exception's text, as a [`PaginationError`].
+//! exception's text, as a [`PaginationError`]. Pages are worked on as
+//! Python's shared objects ([`object::Object`]), so what the non-aggregate
+//! part and the full result share with the first page changes with it as
+//! it does there; a page is returned as its value then.
 use crate::call::Client;
 use crate::error::{CallError, PaginationError};
 use cli_core::client_config::user_agent::{Feature, Features};
@@ -17,9 +20,12 @@ use model::pyrepr::{py_repr, py_str};
 use model::shapes::ShapeKind;
 use model::value::{Map, Value};
 
+mod object;
 mod path;
 mod py;
 mod token;
+
+use object::Object;
 
 /// One operation's entry in `paginators-1.json`, as `Paginator` reads it:
 /// every token and key a list, as `_get_input_tokens` and kin make them.
@@ -169,6 +175,10 @@ pub struct PageIterator<'c> {
     input: Value,
     config: Config,
     pagination: PaginationConfig,
+    /// `_non_aggregate_part`, which shares its objects with the first page.
+    non_aggregate: Object,
+    /// [`Self::non_aggregate`]'s value once the first page is returned,
+    /// and again once the full result is built.
     non_aggregate_part: Map,
     resume_token: Option<String>,
     state: State,
@@ -226,6 +236,7 @@ impl<'c> PageIterator<'c> {
             input,
             config,
             pagination,
+            non_aggregate: Object::dict(),
             non_aggregate_part: Map::new(),
             resume_token: None,
             state: State::Start,
@@ -238,7 +249,9 @@ impl<'c> PageIterator<'c> {
     }
 
     /// `non_aggregate_part`: the non-aggregate keys' values the first page
-    /// set (`_record_non_aggregate_key_values`), each `None` it lacked.
+    /// set (`_record_non_aggregate_key_values`), each `None` it lacked, as
+    /// they are once that page is returned: botocore keeps the page's own
+    /// objects, so a result key within one is the page's, truncated.
     pub fn non_aggregate_part(&self) -> &Map {
         &self.non_aggregate_part
     }
@@ -267,51 +280,50 @@ impl<'c> PageIterator<'c> {
     /// any other value leaves the first page's; a page lacking a key adds
     /// nothing. It takes the pages not yet taken.
     ///
+    /// As in botocore, the first list of a result key is the page's own,
+    /// extended in place, so a non-aggregate key holding it (devops-guru
+    /// `GetResourceCollection`'s `ResourceCollection`) merges back the
+    /// joined list.
+    ///
     /// # Errors
     /// The first failure of a page's call or of the paginator.
     pub fn build_full_result(&mut self) -> Result<Value, CallError> {
-        let mut complete = Value::Map(Map::new());
-        while let Some(page) = self.next() {
+        let complete = Object::dict();
+        while let Some(page) = self.next_object() {
             let page = page?;
             for key in &self.config.result_key {
                 if let Some(value) = path::search(&page, key) {
-                    merge(&mut complete, key, value).map_err(other)?;
+                    merge(&complete, key, &value).map_err(other)?;
                 }
             }
         }
-        if let Value::Map(map) = &mut complete {
-            path::merge_dicts(map, &self.non_aggregate_part).map_err(other)?;
-            if let Some(token) = &self.resume_token {
-                map.insert("NextToken".into(), Value::String(token.clone()));
-            }
+        path::merge_dicts(&complete, &self.non_aggregate).map_err(other)?;
+        self.non_aggregate_part = self.non_aggregate.map();
+        if let Some(token) = &self.resume_token {
+            let token = Object::Value(Value::String(token.clone()));
+            complete.insert("NextToken", token).map_err(other)?;
         }
-        Ok(complete)
+        Ok(complete.value())
     }
 }
 
-/// One result key's `value` from a page, merged into `complete`.
-fn merge(complete: &mut Value, key: &str, value: &Value) -> Result<(), String> {
+/// One result key's `value` from a page, merged into `complete`: the first
+/// set as it is, a later list added to it, a later scalar added to it.
+fn merge(complete: &Object, key: &str, value: &Object) -> Result<(), String> {
     let Some(existing) = path::search(complete, key) else {
         return path::set(complete, key, value.clone());
     };
     match value {
-        Value::List(items) => match path::search_mut(complete, key) {
-            Some(Value::List(existing)) => {
-                existing.extend(items.iter().cloned());
-                Ok(())
-            }
-            other => Err(format!(
-                "'{}' object has no attribute 'extend'",
-                other.map_or("NoneType", |other| py::type_name(other))
-            )),
-        },
-        Value::Integer(_)
-        | Value::BigInteger(_)
-        | Value::Float(_)
-        | Value::Bool(_)
-        | Value::String(_) => {
-            let sum = py::add(existing, value)?;
-            path::set(complete, key, sum)
+        Object::List(_) => existing.extend(value),
+        Object::Value(
+            scalar @ (Value::Integer(_)
+            | Value::BigInteger(_)
+            | Value::Float(_)
+            | Value::Bool(_)
+            | Value::String(_)),
+        ) => {
+            let sum = py::add(&existing.value(), scalar)?;
+            path::set(complete, key, Object::Value(sum))
         }
         _ => Ok(()),
     }
@@ -332,6 +344,13 @@ impl Iterator for PageIterator<'_> {
 
     /// `PageIterator.__iter__`'s next page.
     fn next(&mut self) -> Option<Self::Item> {
+        self.next_object().map(|page| page.map(|page| page.value()))
+    }
+}
+
+impl PageIterator<'_> {
+    /// The next page, the object itself.
+    fn next_object(&mut self) -> Option<Result<Object, CallError>> {
         let progress = match std::mem::replace(&mut self.state, State::Done) {
             State::Start => self.start(),
             State::Yielded(progress, read) => self.resume(*progress, read),
@@ -432,39 +451,45 @@ impl PageIterator<'_> {
 
     /// `_make_request`, with `PAGINATOR` registered, then the loop's work
     /// on the page up to its `yield`.
-    fn request(&mut self, progress: Progress) -> Result<Value, CallError> {
+    fn request(&mut self, progress: Progress) -> Result<Object, CallError> {
         let features: Features = [Feature::Paginator].into_iter().collect();
         let output =
             self.client
                 .call_with_features(&self.operation, progress.kwargs.clone(), features)?;
-        self.page(progress, output.value)
+        self.page(progress, Object::new(output.value))
     }
 
     /// The loop's body from the response to the `yield`: the first page's
     /// starting offset and non-aggregate keys, then the page truncated to
     /// `MaxItems`, which ends the loop, or read for what follows.
-    fn page(&mut self, mut progress: Progress, mut page: Value) -> Result<Value, CallError> {
+    fn page(&mut self, mut progress: Progress, page: Object) -> Result<Object, CallError> {
         let mut starting_truncation = Value::Integer(0);
-        if progress.first_request {
+        let first = progress.first_request;
+        if first {
             if let Some(index) = progress.starting_index.take() {
-                starting_truncation = self.handle_first_request(&mut page, index)?;
+                starting_truncation = self.handle_first_request(&page, index)?;
             }
             progress.first_request = false;
             self.record_non_aggregate_key_values(&page)?;
         }
         let primary = self.primary();
         let items = path::search(&page, primary)
-            .map_or(Ok(0), py::len)
+            .map_or(Ok(0), |found| found.len())
             .map_err(other)?;
         let truncate_amount = progress
             .max_items
             .map_or(0, |max| (progress.total_items + items).saturating_sub(max));
         if truncate_amount > 0 {
             let next_token = progress.next_token;
-            self.truncate_response(&mut page, truncate_amount, &starting_truncation, next_token)?;
+            self.truncate_response(&page, truncate_amount, &starting_truncation, next_token)?;
         } else {
             let next_token = self.get_next_token(&page);
             self.state = State::Yielded(Box::new(progress), Read { items, next_token });
+        }
+        // Only the first page's objects are in the non-aggregate part, and
+        // only `build_full_result` changes them after its truncation.
+        if first {
+            self.non_aggregate_part = self.non_aggregate.map();
         }
         Ok(page)
     }
@@ -518,63 +543,62 @@ impl PageIterator<'_> {
     /// from the starting token's offset on (anything else `None`), and
     /// the others emptied, as the page they were taken whole from: a list
     /// `[]`, a str `''`, a number kept, anything else `None`.
-    fn handle_first_request(&self, page: &mut Value, index: Value) -> Result<Value, CallError> {
+    fn handle_first_request(&self, page: &Object, index: Value) -> Result<Value, CallError> {
         let Some((primary, secondary)) = self.config.result_key.split_first() else {
             return Ok(index);
         };
         let data = match path::search(page, primary) {
-            Some(all @ (Value::List(_) | Value::String(_))) => {
-                py::slice_from(all, &index).map_err(other)?
+            Some(all @ (Object::List(_) | Object::Value(Value::String(_)))) => {
+                all.slice_from(&index).map_err(other)?
             }
-            _ => Value::Null,
+            _ => Object::NONE,
         };
         path::set(page, primary, data).map_err(other)?;
         for key in secondary {
             let empty = match path::search(page, key) {
-                Some(Value::List(_)) => Value::List(Vec::new()),
-                Some(Value::String(_)) => Value::String(String::new()),
+                Some(Object::List(_)) => Object::list(Vec::new()),
+                Some(Object::Value(Value::String(_))) => {
+                    Object::Value(Value::String(String::new()))
+                }
                 Some(
-                    number @ (Value::Integer(_)
-                    | Value::BigInteger(_)
-                    | Value::Float(_)
-                    | Value::Bool(_)),
-                ) => number.clone(),
-                _ => Value::Null,
+                    number @ Object::Value(
+                        Value::Integer(_) | Value::BigInteger(_) | Value::Float(_) | Value::Bool(_),
+                    ),
+                ) => number,
+                _ => Object::NONE,
             };
             path::set(page, key, empty).map_err(other)?;
         }
         Ok(index)
     }
 
-    /// `_record_non_aggregate_key_values`.
-    fn record_non_aggregate_key_values(&mut self, page: &Value) -> Result<(), CallError> {
-        let mut part = Value::Map(Map::new());
+    /// `_record_non_aggregate_key_values`: each key's object in the page,
+    /// itself, not a copy.
+    fn record_non_aggregate_key_values(&mut self, page: &Object) -> Result<(), CallError> {
+        let part = Object::dict();
         for key in &self.config.non_aggregate_keys {
-            let value = path::search(page, key).cloned().unwrap_or(Value::Null);
-            path::set(&mut part, key, value).map_err(other)?;
+            let value = path::search(page, key).unwrap_or(Object::NONE);
+            path::set(&part, key, value).map_err(other)?;
         }
-        if let Value::Map(part) = part {
-            self.non_aggregate_part = part;
-        }
+        self.non_aggregate = part;
         Ok(())
     }
 
     /// `_truncate_response`: the primary result key cut to what `MaxItems`
-    /// leaves, and the resume token the request's token with the offset
-    /// into the page, counted from the page's start.
+    /// leaves, set in the page's own dict, and the resume token the
+    /// request's token with the offset into the page, counted from the
+    /// page's start.
     fn truncate_response(
         &mut self,
-        page: &mut Value,
+        page: &Object,
         truncate_amount: i128,
         starting_truncation: &Value,
         mut next_token: Map,
     ) -> Result<(), CallError> {
         let primary = self.primary().to_owned();
-        let original = path::search(page, &primary)
-            .cloned()
-            .unwrap_or(Value::List(Vec::new()));
-        let amount_to_keep = py::len(&original).map_err(other)? - truncate_amount;
-        let truncated = py::slice_to(&original, amount_to_keep).map_err(other)?;
+        let original = path::search(page, &primary).unwrap_or_else(|| Object::list(Vec::new()));
+        let amount_to_keep = original.len().map_err(other)? - truncate_amount;
+        let truncated = original.slice_to(amount_to_keep).map_err(other)?;
         path::set(page, &primary, truncated).map_err(other)?;
         let amount = py::int_add(amount_to_keep, starting_truncation).map_err(other)?;
         next_token.insert(token::TRUNCATE_AMOUNT.into(), amount);
@@ -584,9 +608,9 @@ impl PageIterator<'_> {
 
     /// `_get_next_token`: nothing once `more_results` is false, else each
     /// output token under its input token's name, a false one `None`.
-    fn get_next_token(&self, page: &Value) -> Map {
+    fn get_next_token(&self, page: &Object) -> Map {
         if let Some(more) = &self.config.more_results
-            && !py::truthy(path::search(page, more))
+            && !path::search(page, more).is_some_and(|more| more.truthy())
         {
             return Map::new();
         }
@@ -596,8 +620,11 @@ impl PageIterator<'_> {
             .iter()
             .zip(&config.input_token)
             .map(|(output, input)| {
-                let token = path::search(page, output).filter(|token| py::truthy(Some(token)));
-                (input.clone(), token.cloned().unwrap_or(Value::Null))
+                let token = path::search(page, output).filter(Object::truthy);
+                (
+                    input.clone(),
+                    token.map_or(Value::Null, |token| token.value()),
+                )
             })
             .collect()
     }

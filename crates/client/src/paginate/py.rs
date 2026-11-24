@@ -75,35 +75,53 @@ pub(super) fn int_value(number: i128) -> Value {
 
 /// The index a slice bound `index` stands for in a sequence of `len`
 /// (`PySlice_AdjustIndices`).
-fn bound(index: i128, len: i128) -> usize {
+fn bound(index: i128, len: usize) -> usize {
+    let len = i128::try_from(len).unwrap_or(i128::MAX);
     let index = if index < 0 { index + len } else { index };
     usize::try_from(index.clamp(0, len)).unwrap_or(0)
 }
 
-/// `data[start:]` of a `list` or `str`.
-pub(super) fn slice_from(data: &Value, start: &Value) -> Result<Value, String> {
+/// Where `data[start:]` of a sequence of `len` starts.
+pub(super) fn slice_start(start: &Value, len: usize) -> Result<usize, String> {
     let start = match start {
         Value::Null => 0,
         other => int_of(other).ok_or_else(|| {
             "slice indices must be integers or None or have an __index__ method".to_owned()
         })?,
     };
+    Ok(bound(start, len))
+}
+
+/// Where `data[:stop]` of a sequence of `len` ends.
+pub(super) fn slice_stop(stop: i128, len: usize) -> usize {
+    bound(stop, len)
+}
+
+/// `data[start:]` of a `str`; anything else is itself.
+pub(super) fn slice_from(data: &Value, start: &Value) -> Result<Value, String> {
     Ok(match data {
-        Value::List(items) => Value::List(items[bound(start, len(data)?)..].to_vec()),
-        Value::String(text) => Value::String(text.chars().skip(bound(start, len(data)?)).collect()),
+        Value::String(text) => {
+            let start = slice_start(start, text.chars().count())?;
+            Value::String(text.chars().skip(start).collect())
+        }
         other => other.clone(),
     })
 }
 
-/// `data[:stop]`. A `dict`'s lookup of the slice fails: slices hash, so it
-/// is a `KeyError`.
+/// `data[:stop]` of a `str` or `bytes`.
 pub(super) fn slice_to(data: &Value, stop: i128) -> Result<Value, String> {
-    let end = bound(stop, len(data)?);
     Ok(match data {
-        Value::List(items) => Value::List(items[..end].to_vec()),
-        Value::String(text) => Value::String(text.chars().take(end).collect()),
-        Value::Blob(bytes) => Value::Blob(bytes[..end].to_vec()),
-        _ => return Err(format!("slice(None, {stop}, None)")),
+        Value::String(text) => {
+            let end = slice_stop(stop, text.chars().count());
+            Value::String(text.chars().take(end).collect())
+        }
+        Value::Blob(bytes) => Value::Blob(bytes[..slice_stop(stop, bytes.len())].to_vec()),
+        other => {
+            return Err(format!(
+                "'{}' object is not subscriptable",
+                type_name(other)
+            ));
+        }
     })
 }
 

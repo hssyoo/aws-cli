@@ -40,7 +40,12 @@ const SERVICE: &str = r#"{
             "Inner": {"shape": "Inner"}, "Owner": {"shape": "S"}, "Usage": {"shape": "Usage"},
             "Bin": {"shape": "B"}, "Key": {"shape": "Key"}}},
         "Inner": {"type": "structure", "members": {"Items": {"shape": "Ss"},
-            "Marker": {"shape": "S"}, "More": {"shape": "Bool"}, "Note": {"shape": "S"}}},
+            "Marker": {"shape": "S"}, "More": {"shape": "Bool"}, "Note": {"shape": "S"},
+            "Deep": {"shape": "Deep"}, "Tags": {"shape": "Tags"}}},
+        "Deep": {"type": "structure", "members": {"Names": {"shape": "Ss"}}},
+        "Tags": {"type": "list", "member": {"shape": "Tag"}},
+        "Tag": {"type": "structure", "members": {"Key": {"shape": "S"},
+            "Values": {"shape": "Ss"}}},
         "Key": {"type": "structure", "members": {"key": {"shape": "B"}, "key2": {"shape": "B"}}},
         "Usage": {"type": "map", "key": {"shape": "S"}, "value": {"shape": "Ss"}},
         "Ss": {"type": "list", "member": {"shape": "S"}},
@@ -158,6 +163,14 @@ impl Fixture {
             config,
             pagination,
         ))
+    }
+}
+
+/// `value[key]` of a dict.
+fn field<'v>(value: &'v Value, key: &str) -> Option<&'v Value> {
+    match value {
+        Value::Map(map) => map.get(key),
+        _ => None,
     }
 }
 
@@ -606,7 +619,7 @@ fn a_resumed_truncation_counts_from_the_page_s_start() -> TestResult {
         starting_token,
     };
     let first = f.pages(LIMITED, pagination(None))?.build_full_result()?;
-    let Some(Value::String(token)) = path::search(&first, "NextToken") else {
+    let Some(Value::String(token)) = field(&first, "NextToken") else {
         return Err("a NextToken".into());
     };
     let second = f
@@ -988,10 +1001,10 @@ fn resuming_again_and_again_gives_every_item_once() -> TestResult {
     let mut pagination = max_items(2);
     for _ in 0..4 {
         let full = f.pages(MARKER, pagination.clone())?.build_full_result()?;
-        if let Some(Value::List(users)) = path::search(&full, "Users") {
+        if let Some(Value::List(users)) = field(&full, "Users") {
             items.extend(users.iter().cloned());
         }
-        let Some(Value::String(token)) = path::search(&full, "NextToken") else {
+        let Some(Value::String(token)) = field(&full, "NextToken") else {
             break;
         };
         assert!(!tokens.contains(token));
@@ -1324,4 +1337,169 @@ fn the_first_input_is_the_first_request_s() -> TestResult {
 
 fn all_of(pages: &mut PageIterator<'_>) -> Result<Vec<Value>, CallError> {
     pages.collect()
+}
+
+/// devops-guru `GetResourceCollection`'s shape: result keys within the
+/// non-aggregate key.
+const NESTED: &str = r#"{"input_token": "Marker", "output_token": "Marker",
+    "result_key": ["Inner.Deep.Names", "Inner.Tags"], "non_aggregate_keys": ["Inner"]}"#;
+
+const NESTED_PAGES: [&str; 3] = [
+    r#"{"Inner": {"Deep": {"Names": ["s1", "s2"]}, "Tags": [{"Key": "k", "Values": ["t"]}]},
+        "Marker": "n1"}"#,
+    r#"{"Inner": {"Deep": {"Names": ["s3"]}}, "Marker": "n2"}"#,
+    r#"{"Inner": {"Deep": {"Names": ["s4"]}, "Tags": [{"Key": "k", "Values": ["u"]}]}}"#,
+];
+
+/// botocore's non-aggregate part holds the first page's own objects, and
+/// the full result extends that page's lists in place: merging the part
+/// back gives the joined lists, not the first page's.
+#[test]
+fn a_result_key_within_a_non_aggregate_key_keeps_every_page() -> TestResult {
+    let f = fixture()?;
+    f.respond(&NESTED_PAGES);
+    let mut pages = f.pages(NESTED, PaginationConfig::default())?;
+    let full = pages.build_full_result()?;
+    let joined = r#"{"Inner": {"Deep": {"Names": ["s1", "s2", "s3", "s4"]},
+        "Tags": [{"Key": "k", "Values": ["t"]}, {"Key": "k", "Values": ["u"]}]}}"#;
+    assert_eq!(full, json(joined)?);
+    assert_eq!(
+        Value::Map(pages.non_aggregate_part().clone()),
+        json(joined)?
+    );
+    f.respond(&NESTED_PAGES);
+    let full = f.pages(NESTED, max_items(3))?.build_full_result()?;
+    let n2 = "eyJNYXJrZXIiOiAibjIifQ==";
+    let expected = format!(
+        r#"{{"Inner": {{"Deep": {{"Names": ["s1", "s2", "s3"]}},
+            "Tags": [{{"Key": "k", "Values": ["t"]}}]}}, "NextToken": "{n2}"}}"#
+    );
+    assert_eq!(full, json(&expected)?);
+    Ok(())
+}
+
+/// `_truncate_response` sets the cut list in the first page's own dict,
+/// which the non-aggregate part shares: both the full result and the part
+/// the text output reads after the first page see it cut.
+#[test]
+fn a_truncated_first_page_is_cut_within_the_non_aggregate_part() -> TestResult {
+    let f = fixture()?;
+    f.respond(&NESTED_PAGES);
+    let mut pages = f.pages(NESTED, max_items(1))?;
+    assert!(matches!(pages.next(), Some(Ok(_))));
+    let cut = r#"{"Inner": {"Deep": {"Names": ["s1"]}, "Tags": [{"Key": "k", "Values": ["t"]}]}}"#;
+    assert_eq!(Value::Map(pages.non_aggregate_part().clone()), json(cut)?);
+    let f = fixture()?;
+    f.respond(&NESTED_PAGES);
+    let full = f.pages(NESTED, max_items(1))?.build_full_result()?;
+    let expected = format!(
+        r#"{{"Inner": {{"Deep": {{"Names": ["s1"]}}, "Tags": [{{"Key": "k", "Values": ["t"]}}]}},
+            "NextToken": "{NONE_AT_1}"}}"#
+    );
+    assert_eq!(full, json(&expected)?);
+    Ok(())
+}
+
+/// A starting token's offset slices the first page's list in its own dict,
+/// and the secondary key emptied there is the list later pages extend.
+#[test]
+fn a_resumed_first_page_is_sliced_within_the_non_aggregate_part() -> TestResult {
+    let f = fixture()?;
+    let n0_at_1 = "eyJNYXJrZXIiOiAibjAiLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAxfQ==";
+    f.respond(&NESTED_PAGES);
+    let mut pages = f.pages(NESTED, starting(n0_at_1))?;
+    assert!(matches!(pages.next(), Some(Ok(_))));
+    let sliced = r#"{"Inner": {"Deep": {"Names": ["s2"]}, "Tags": []}}"#;
+    assert_eq!(
+        Value::Map(pages.non_aggregate_part().clone()),
+        json(sliced)?
+    );
+    let f = fixture()?;
+    f.respond(&NESTED_PAGES);
+    let full = f.pages(NESTED, starting(n0_at_1))?.build_full_result()?;
+    let expected = r#"{"Inner": {"Deep": {"Names": ["s2", "s3", "s4"]},
+        "Tags": [{"Key": "k", "Values": ["u"]}]}}"#;
+    assert_eq!(full, json(expected)?);
+    // The first page lacks `Tags`: `_handle_first_request` sets it `None`
+    // in the page's dict, which the merge then writes over page 3's.
+    f.respond(&NESTED_PAGES[1..]);
+    let n1_at_1 = "eyJNYXJrZXIiOiAibjEiLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAxfQ==";
+    let full = f.pages(NESTED, starting(n1_at_1))?.build_full_result()?;
+    assert_eq!(
+        full,
+        json(r#"{"Inner": {"Deep": {"Names": ["s4"]}, "Tags": null}}"#)?
+    );
+    Ok(())
+}
+
+/// A non-aggregate key that is a result key holds the first page's list:
+/// joined in place, unless truncation replaced it in the page, which
+/// leaves the part the list as it came.
+#[test]
+fn a_non_aggregate_key_that_is_a_result_key_is_the_first_page_s_list() -> TestResult {
+    let config = r#"{"input_token": "Marker", "output_token": "Marker",
+        "result_key": ["Users", "Groups"], "non_aggregate_keys": ["Users", "Groups"]}"#;
+    let pages = [
+        r#"{"Users": ["a", "b"], "Groups": ["g1"], "Marker": "m1"}"#,
+        r#"{"Users": ["c"], "Groups": ["g2"]}"#,
+    ];
+    let f = fixture()?;
+    f.respond(&pages);
+    let full = f
+        .pages(config, PaginationConfig::default())?
+        .build_full_result()?;
+    assert_eq!(
+        full,
+        json(r#"{"Users": ["a", "b", "c"], "Groups": ["g1", "g2"]}"#)?
+    );
+    f.respond(&pages);
+    let full = f.pages(config, max_items(1))?.build_full_result()?;
+    let expected =
+        format!(r#"{{"Users": ["a", "b"], "Groups": ["g1"], "NextToken": "{NONE_AT_1}"}}"#);
+    assert_eq!(full, json(&expected)?);
+    f.respond(&pages[1..]);
+    let m1_at_0 = "eyJNYXJrZXIiOiAibTEiLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAwfQ==";
+    let full = f.pages(config, starting(m1_at_0))?.build_full_result()?;
+    assert_eq!(full, json(r#"{"Users": ["c"], "Groups": []}"#)?);
+    Ok(())
+}
+
+/// A scalar result key within a non-aggregate key is replaced in the full
+/// result, not in the page, so the merge writes the first page's back.
+#[test]
+fn a_scalar_within_a_non_aggregate_key_is_the_first_page_s() -> TestResult {
+    let config = r#"{"input_token": "Marker", "output_token": "Marker",
+        "result_key": ["Inner.Items", "Inner.Note"], "non_aggregate_keys": ["Inner"]}"#;
+    let f = fixture()?;
+    f.respond(&[
+        r#"{"Inner": {"Items": ["a"], "Note": "x"}, "Marker": "m1"}"#,
+        r#"{"Inner": {"Items": ["b"], "Note": "y"}}"#,
+    ]);
+    let full = f
+        .pages(config, PaginationConfig::default())?
+        .build_full_result()?;
+    assert_eq!(
+        full,
+        json(r#"{"Inner": {"Items": ["a", "b"], "Note": "x"}}"#)?
+    );
+    f.respond(&[
+        r#"{"Inner": {"Note": "x"}, "Marker": "m1"}"#,
+        r#"{"Inner": {"Items": ["b"], "Note": "y"}}"#,
+    ]);
+    let full = f
+        .pages(config, PaginationConfig::default())?
+        .build_full_result()?;
+    assert_eq!(full, json(r#"{"Inner": {"Note": "x", "Items": ["b"]}}"#)?);
+    f.respond(&[r#"{"Inner": {"Note": "x"}, "Marker": "m1"}"#]);
+    let mut pages = f.pages(config, max_items(-1))?;
+    let full = pages.build_full_result()?;
+    let at_minus_1 = "eyJNYXJrZXIiOiBudWxsLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAtMX0=";
+    let expected =
+        format!(r#"{{"Inner": {{"Items": [], "Note": "x"}}, "NextToken": "{at_minus_1}"}}"#);
+    assert_eq!(full, json(&expected)?);
+    assert_eq!(
+        Value::Map(pages.non_aggregate_part().clone()),
+        json(r#"{"Inner": {"Note": "x", "Items": []}}"#)?
+    );
+    Ok(())
 }
