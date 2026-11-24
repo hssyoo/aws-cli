@@ -14,7 +14,10 @@ layer A, the protocol level, against botocore's own pieces:
 layer B, the call level: every prepared request a client of the CLI's own
 session sends (method, URL, ordered headers with Authorization, body) for
 pinned credentials, clock and uuids, and the outcome, captured in a
-before-send handler that returns the canned response to every attempt.
+before-send handler that answers each request with the case's next canned
+response (`responses`, the last repeating) or its one `response`. A case
+with `paginate` (a `PaginationConfig`) pages through the operation's
+paginator and records `build_full_result()`, as the CLI's JSON output does.
 Nothing is sent. Uuids are numbered from 1, as client::testing::FixedRuntime
 numbers them, and SigV4's clock is pinned.
 
@@ -259,7 +262,9 @@ def layer_b(case, models):
         config=config,
     )
     seen = {"requests": []}
-    canned = case.get("response", {"status": 200, "headers": {}, "body": ""})
+    # One canned response per request, in order, the last answering every
+    # request after it.
+    canned = case.get("responses") or [case.get("response", {"status": 200, "headers": {}, "body": ""})]
 
     def capture(request, **kwargs):
         body = request.body or b""
@@ -271,15 +276,25 @@ def layer_b(case, models):
             "headers": [[k, v.decode() if isinstance(v, bytes) else v] for k, v in request.headers.items()],
             "body": base64.b64encode(body).decode(),
         })
+        answer = canned[min(len(seen["requests"]), len(canned)) - 1]
         return AWSResponse(
-            request.url, canned.get("status", 200), canned.get("headers", {}),
-            Raw(canned.get("body", "").encode()),
+            request.url, answer.get("status", 200), answer.get("headers", {}),
+            Raw(answer.get("body", "").encode()),
         )
 
     client.meta.events.register("before-send", capture)
     names = {api: python for python, api in client.meta.method_to_api_mapping.items()}
+    params = decode(case.get("input", {}))
     try:
-        parsed = getattr(client, names[case["operation"]])(**decode(case.get("input", {})))
+        if "paginate" in case:
+            # The CLI's paginated call as its JSON output reads it: every page
+            # through PageIterator, then build_full_result.
+            pages = client.get_paginator(names[case["operation"]]).paginate(
+                **params, PaginationConfig=case["paginate"]
+            )
+            parsed = pages.build_full_result()
+        else:
+            parsed = getattr(client, names[case["operation"]])(**params)
         seen["parsed"] = dump(parsed)
     except Exception as error:
         seen["error"] = {"class": type(error).__name__, "text": str(error)}

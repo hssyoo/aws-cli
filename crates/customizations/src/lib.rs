@@ -32,7 +32,8 @@ pub static TABLE: [&Customization; 8] = [
 /// The botocore handlers registered for every service
 /// (`botocore.handlers.BUILTIN_HANDLERS`, the rows without a service in
 /// their event) that the client's pipeline implements, or whose effect on
-/// a query or json call it reproduces by refusing what they act on:
+/// a query, json or rest-json call it reproduces by refusing what they act
+/// on:
 ///
 /// - `generate_idempotent_uuid`: the call loop fills idempotency tokens;
 /// - `add_retry_headers`: it adds `amz-sdk-invocation-id` and

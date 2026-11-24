@@ -277,5 +277,73 @@
   "input": {
    "Count": "two"
   }
+ },
+ {
+  "name": "zquery-describe-widgets-pages",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "DescribeWidgets",
+  "input": {},
+  "paginate": {
+   "PageSize": 2
+  },
+  "responses": [
+   {
+    "status": 200,
+    "headers": {},
+    "body": "<DescribeWidgetsResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><DescribeWidgetsResult><Widgets><Widget><WidgetId>a</WidgetId><Size>1</Size></Widget><Widget><WidgetId>b</WidgetId></Widget></Widgets><Marker>m1</Marker></DescribeWidgetsResult><ResponseMetadata><RequestId>q-1</RequestId></ResponseMetadata></DescribeWidgetsResponse>"
+   },
+   {
+    "status": 503,
+    "headers": {},
+    "body": "<ErrorResponse><Error><Type>Receiver</Type><Code>ServiceUnavailable</Code><Message>busy</Message></Error><RequestId>q-2</RequestId></ErrorResponse>"
+   },
+   {
+    "status": 200,
+    "headers": {},
+    "body": "<DescribeWidgetsResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><DescribeWidgetsResult><Widgets><Widget><WidgetId>c</WidgetId></Widget></Widgets></DescribeWidgetsResult><ResponseMetadata><RequestId>q-3</RequestId></ResponseMetadata></DescribeWidgetsResponse>"
+   }
+  ]
+ },
+ {
+  "name": "zquery-describe-defaults-nested-token-max-items",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "DescribeDefaults",
+  "input": {
+   "Family": "f"
+  },
+  "paginate": {
+   "MaxItems": 3
+  },
+  "responses": [
+   {
+    "status": 200,
+    "headers": {},
+    "body": "<DescribeDefaultsResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><DescribeDefaultsResult><Defaults><Family>f</Family><Marker>m1</Marker><Parameters><Parameter><Name>a</Name></Parameter><Parameter><Name>b</Name></Parameter></Parameters></Defaults></DescribeDefaultsResult><ResponseMetadata><RequestId>d-1</RequestId></ResponseMetadata></DescribeDefaultsResponse>"
+   },
+   {
+    "status": 200,
+    "headers": {},
+    "body": "<DescribeDefaultsResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><DescribeDefaultsResult><Defaults><Family>f</Family><Marker>m2</Marker><Parameters><Parameter><Name>c</Name></Parameter><Parameter><Name>d</Name></Parameter></Parameters></Defaults></DescribeDefaultsResult><ResponseMetadata><RequestId>d-2</RequestId></ResponseMetadata></DescribeDefaultsResponse>"
+   }
+  ]
+ },
+ {
+  "name": "zquery-list-things-from-a-starting-token",
+  "service": "zquery",
+  "models": "fake",
+  "operation": "ListThings",
+  "input": {},
+  "paginate": {
+   "StartingToken": "eyJOZXh0VG9rZW4iOiAibjEifQ=="
+  },
+  "responses": [
+   {
+    "status": 200,
+    "headers": {},
+    "body": "<ListThingsResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><ListThingsResult><Things><member>c</member></Things></ListThingsResult><ResponseMetadata><RequestId>l-1</RequestId></ResponseMetadata></ListThingsResponse>"
+   }
+  ]
  }
 ]

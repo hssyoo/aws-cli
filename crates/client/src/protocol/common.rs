@@ -58,8 +58,11 @@ pub(super) fn parse(
     if shape.is_some_and(|shape| model.shape(shape).traits.is(Flag::EventStream)) {
         return Ok(Value::Map(parsed));
     }
-    let mut metadata = match parsed.remove("ResponseMetadata") {
-        Some(Value::Map(metadata)) => metadata,
+    // `parsed.get('ResponseMetadata', {})`, updated and set back: a
+    // metadata dict the parser made keeps its place (the REST parsers put
+    // it first), and a new one goes last.
+    let mut metadata = match parsed.get("ResponseMetadata") {
+        Some(Value::Map(metadata)) => metadata.clone(),
         _ => Map::new(),
     };
     metadata.insert(

@@ -265,5 +265,92 @@
     "Number": 1
    }
   }
+ },
+ {
+  "name": "zjson-list-things-pages-with-a-retried-page",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "ListThings",
+  "input": {},
+  "paginate": {
+   "PageSize": 2
+  },
+  "responses": [
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "j-1"
+    },
+    "body": "{\"Things\": [\"a\", \"b\"], \"NextToken\": \"n1\"}"
+   },
+   {
+    "status": 500,
+    "headers": {
+     "x-amzn-RequestId": "j-2"
+    },
+    "body": "{\"__type\": \"InternalFailure\", \"message\": \"retry\"}"
+   },
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "j-3"
+    },
+    "body": "{\"Things\": [\"c\"]}"
+   }
+  ]
+ },
+ {
+  "name": "zjson-list-keys-more-results-and-max-items",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "ListKeys",
+  "input": {},
+  "paginate": {
+   "MaxItems": 3
+  },
+  "responses": [
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "k-1"
+    },
+    "body": "{\"Keys\": [{\"KeyId\": \"1\"}, {\"KeyId\": \"2\"}], \"NextMarker\": \"m1\", \"Truncated\": true}"
+   },
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "k-2"
+    },
+    "body": "{\"Keys\": [{\"KeyId\": \"3\"}, {\"KeyId\": \"4\"}], \"NextMarker\": \"m2\", \"Truncated\": true}"
+   }
+  ]
+ },
+ {
+  "name": "zjson-filter-events-two-result-keys-from-a-truncated-token",
+  "service": "zjson",
+  "models": "fake",
+  "operation": "FilterEvents",
+  "input": {
+   "logGroupName": "g"
+  },
+  "paginate": {
+   "StartingToken": "eyJuZXh0VG9rZW4iOiAibjEiLCAiYm90b190cnVuY2F0ZV9hbW91bnQiOiAxfQ=="
+  },
+  "responses": [
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "f-1"
+    },
+    "body": "{\"events\": [{\"eventId\": \"1\"}, {\"eventId\": \"2\"}], \"searchedLogStreams\": [{\"logStreamName\": \"s\"}], \"nextToken\": \"n2\"}"
+   },
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "f-2"
+    },
+    "body": "{\"events\": [{\"eventId\": \"3\"}], \"searchedLogStreams\": []}"
+   }
+  ]
  }
 ]

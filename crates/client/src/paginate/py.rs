@@ -5,15 +5,8 @@ use crate::error::PaginationError;
 use crate::python::FloatToInt;
 use model::value::{Map, Value};
 
-/// The type's name as CPython's messages print it (`tp_name`):
-/// `str(type(value))` without its `<class '...'>`.
-pub(super) fn type_name(value: &Value) -> &'static str {
-    let class = model::pyrepr::py_type(value);
-    class
-        .strip_prefix("<class '")
-        .and_then(|name| name.strip_suffix("'>"))
-        .unwrap_or(class)
-}
+/// The type's name as CPython's messages print it (`tp_name`).
+pub(super) use model::pyrepr::py_type_name as type_name;
 
 /// `bool(value)`, `None` for a value that is not there.
 pub(super) fn truthy(value: Option<&Value>) -> bool {
