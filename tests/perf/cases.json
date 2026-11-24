@@ -1,0 +1,125 @@
+{
+  "format": 1,
+  "warmup": 2,
+  "runs": 10,
+  "cases": [
+    {
+      "name": "query-single",
+      "argv": [
+        "sts",
+        "get-caller-identity"
+      ],
+      "schemes": [
+        "http",
+        "https"
+      ],
+      "latencies_ms": [
+        0,
+        20,
+        80
+      ],
+      "response": {
+        "content_type": "text/xml",
+        "pages": 1,
+        "page": "<GetCallerIdentityResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\"><GetCallerIdentityResult><Arn>arn:aws:iam::123456789012:user/perf</Arn><UserId>AIDAPERFHARNESS</UserId><Account>123456789012</Account></GetCallerIdentityResult><ResponseMetadata><RequestId>00000000-0000-4000-8000-000000000000</RequestId></ResponseMetadata></GetCallerIdentityResponse>"
+      }
+    },
+    {
+      "name": "json-single",
+      "argv": [
+        "zjson",
+        "get-thing",
+        "--thing-id",
+        "thing-0"
+      ],
+      "fake_models": true,
+      "schemes": [
+        "http",
+        "https"
+      ],
+      "latencies_ms": [
+        0,
+        20,
+        80
+      ],
+      "response": {
+        "content_type": "application/x-amz-json-1.0",
+        "pages": 1,
+        "page": "{\"ThingId\": \"thing-0\", \"Count\": 3}"
+      }
+    },
+    {
+      "name": "rest-json-single",
+      "argv": [
+        "zrestjson",
+        "get-thing",
+        "--thing-id",
+        "thing-0"
+      ],
+      "fake_models": true,
+      "schemes": [
+        "http",
+        "https"
+      ],
+      "latencies_ms": [
+        0,
+        20,
+        80
+      ],
+      "response": {
+        "content_type": "application/json",
+        "pages": 1,
+        "page": "{\"ThingId\": \"thing-0\", \"Count\": 3}"
+      }
+    },
+    {
+      "name": "rest-json-large-page",
+      "argv": [
+        "zrestjson",
+        "list-versions",
+        "--id",
+        "thing-0"
+      ],
+      "fake_models": true,
+      "schemes": [
+        "https"
+      ],
+      "latencies_ms": [
+        0
+      ],
+      "response": {
+        "content_type": "application/json",
+        "pages": 1,
+        "items_per_page": 100000,
+        "separator": ", ",
+        "page": "{\"Versions\": [$items]}",
+        "item": "\"version-$index-abcdefghijklmnopqrstuvwxyz\""
+      }
+    },
+    {
+      "name": "s3-ls",
+      "argv": [
+        "s3",
+        "ls",
+        "s3://perf-bucket"
+      ],
+      "schemes": [
+        "http",
+        "https"
+      ],
+      "latencies_ms": [
+        0,
+        20,
+        80
+      ],
+      "response": {
+        "content_type": "application/xml",
+        "pages": 1,
+        "items_per_page": 100,
+        "page": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Name>perf-bucket</Name><Prefix></Prefix><MaxKeys>1000</MaxKeys><Delimiter>/</Delimiter>$marker$items</ListBucketResult>",
+        "item": "<Contents><Key>object-$index</Key><LastModified>2026-01-01T00:00:00.000Z</LastModified><ETag>&quot;0123456789abcdef&quot;</ETag><Size>1024</Size><StorageClass>STANDARD</StorageClass></Contents>",
+        "marker": "<IsTruncated>true</IsTruncated><NextContinuationToken>token-$next</NextContinuationToken>"
+      }
+    }
+  ]
+}
