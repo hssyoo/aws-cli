@@ -6,10 +6,11 @@ python3:
     python3 tests/perf/prove.py regression [--per-page-us N ...]
     python3 tests/perf/prove.py load [--busy N]
 
-`regression` builds `HEAD` with `planted/paging-cost.patch` applied, which
-makes the paginator busy-wait N microseconds per page (N set when
-building), and checks that build against the unpatched default artifact,
-in the same rounds. The proof holds when the check fails, and fails only
+`regression` builds `HEAD` with `planted/paging-cost.patch` applied, its
+`@PER_PAGE_US@` set to N, which makes the paginator busy-wait N
+microseconds per page, and checks that build against the unpatched
+default artifact, in the same rounds, once the load average has settled
+after the build. The proof holds when the check fails, and fails only
 on paged native series: the planted cost is in the native paginator, so
 the Python route and the single calls must not move. Each size is a
 separate build (incremental after the first) under `target/perf/proof/`.
@@ -40,6 +41,9 @@ PATCH: Final = Path(__file__).resolve().parent / "planted" / "paging-cost.patch"
 # The series the planted cost is in: the native route of paged cases.
 PAGED_NATIVE: Final = ("-pages-", " native ")
 SETTLE_SECONDS: Final = 30
+# After a build, a check waits until the one-minute load average is under
+# a quarter of the CPUs, for at most this long.
+QUIET_SECONDS: Final = 300
 
 
 def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -83,9 +87,12 @@ def planted_build(commit: str, per_page_us: int) -> Path:
     unpacked = subprocess.run(["tar", "-x", "-C", str(source)], stdin=archive.stdout, check=False)
     if archive.wait() != 0 or unpacked.returncode != 0:
         raise SystemExit(f"cannot export {commit}")
-    checked(["git", "apply", str(PATCH)], cwd=source)
+    patch = PATCH.read_text(encoding="utf-8").replace("@PER_PAGE_US@", str(per_page_us))
+    applied = run(["git", "apply", "-"], cwd=source, input=patch)
+    if applied.returncode != 0:
+        raise SystemExit(f"{PATCH} does not apply to {commit}; refresh it")
     target = PROOF / "target"
-    env = {**os.environ, "CARGO_TARGET_DIR": str(target), "AWS_CLI_PERF_PLANTED_US": str(per_page_us)}
+    env = {**os.environ, "CARGO_TARGET_DIR": str(target)}
     if run(["cargo", "xtask", "build"], cwd=source, env=env).returncode != 0:
         raise SystemExit("the planted build failed")
     built = sorted(target.glob("*/release-safe/aws"))
@@ -93,6 +100,16 @@ def planted_build(commit: str, per_page_us: int) -> Path:
         raise SystemExit(f"expected one planted artifact, found {built}")
     shutil.rmtree(source)
     return kept_copy(built[0], f"aws-planted-{per_page_us}us")
+
+
+def settle() -> None:
+    """Wait for the load average a build left to fall under a quarter of
+    the CPUs, or `QUIET_SECONDS`."""
+    quiet = (os.cpu_count() or 4) / 4
+    deadline = time.monotonic() + QUIET_SECONDS
+    while os.getloadavg()[0] > quiet and time.monotonic() < deadline:
+        time.sleep(5)
+    print(f"prove: load average {os.getloadavg()[0]:.2f} before the check", file=sys.stderr)
 
 
 def check(arguments: list[str], out: Path) -> tuple[int, str]:
@@ -109,8 +126,12 @@ def regression(per_page_us: list[int]) -> bool:
     commit = checked(["git", "rev-parse", "HEAD"], cwd=ROOT)
     base = kept_copy(default_artifact(), "aws-base")
     holds = True
-    for size in per_page_us:
-        planted = planted_build(commit, size)
+    builds = {size: planted_build(commit, size) for size in per_page_us}
+    contents = {path.read_bytes() for path in [base, *builds.values()]}
+    if len(contents) != len(builds) + 1:
+        raise SystemExit("a planted build is the same binary as another: the plant did not apply")
+    for size, planted in builds.items():
+        settle()
         status, output = check(
             [
                 "--aws-binary", str(planted), "--commit", f"{commit} with {size} us per page planted",
