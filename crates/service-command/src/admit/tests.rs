@@ -6,12 +6,24 @@ use super::*;
 use crate::ServiceSource;
 use crate::testing::{Result, parsed, replacing_all, with_models};
 
+fn outcome(
+    source: &ServiceSource<'_>,
+    customizations: &[&'static Customization],
+    argv: &[&str],
+) -> std::result::Result<Outcome, PythonReason> {
+    admit(source.models(), customizations, &parsed(source, argv))
+}
+
+/// The admitted call of `argv`, which no handler raises on.
 fn admitted(
     source: &ServiceSource<'_>,
     customizations: &[&'static Customization],
     argv: &[&str],
 ) -> std::result::Result<Admitted, PythonReason> {
-    admit(source.models(), customizations, &parsed(source, argv))
+    match outcome(source, customizations, argv)? {
+        Outcome::Call(admitted) => Ok(*admitted),
+        Outcome::Raised { failure, .. } => panic!("raised: {failure:?}"),
+    }
 }
 
 /// A covered operation of an implemented protocol is admitted with its
@@ -59,7 +71,8 @@ fn each_stage_names_its_refusal() -> Result<()> {
 }
 
 /// A paginated operation is admitted with its paginator when paging is on,
-/// and as one call under `--no-paginate`.
+/// and as one call under `--no-paginate`; a page option beside
+/// `--no-paginate` is what its handler raised, with no call.
 #[test]
 fn a_paginated_operation_is_admitted_with_its_paginator() -> Result<()> {
     with_models(|models| {
@@ -75,7 +88,7 @@ fn a_paginated_operation_is_admitted_with_its_paginator() -> Result<()> {
         assert_eq!(paginated.config.result_key, ["Things"]);
         assert_eq!(paginated.config.limit_key.as_deref(), Some("MaxResults"));
         assert_eq!(paginated.pagination.max_items, Some(Value::Integer(2)));
-        assert_eq!((found.raised, found.warned), (None, false));
+        assert!(!found.warned);
         let single = admitted(
             &source,
             everything,
@@ -83,13 +96,15 @@ fn a_paginated_operation_is_admitted_with_its_paginator() -> Result<()> {
         )
         .unwrap_or_else(|reason| panic!("{reason:?}"));
         assert_eq!(single.paginated, None);
-        let raised = admitted(
+        let raised = outcome(
             &source,
             everything,
             &["zjson", "list-things", "--no-paginate", "--max-items", "2"],
-        )
-        .unwrap_or_else(|reason| panic!("{reason:?}"));
-        assert!(raised.raised.is_some());
+        );
+        assert!(
+            matches!(&raised, Ok(Outcome::Raised { command, .. }) if command == "zjson"),
+            "{raised:?}"
+        );
     })
 }
 
