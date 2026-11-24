@@ -131,8 +131,11 @@ pub enum Delivered {
     Paged(Outcome),
 }
 
-/// Writes `output` where `destination` says: to `stdout`, or to a pager
-/// started with `env` ([`pager::environment`]) only when there is output.
+/// Writes `output` where `destination` says: to `stdout` ([`write_stdout`],
+/// line-buffered on a terminal), or to a pager started with `env`
+/// ([`pager::environment`]) only when there is output. Stdout is then
+/// flushed as the formatter's `_flush_stream` flushes it, which passes over
+/// an `OSError`: what that leaves unwritten, the exit-time flush reports.
 ///
 /// # Errors
 /// The pager could not start.
@@ -141,14 +144,15 @@ pub fn deliver(
     env: &[(std::ffi::OsString, std::ffi::OsString)],
     output: &str,
     stdout: &mut dyn std::io::Write,
+    line_buffered: bool,
     interrupt: &cli_core::interrupt::State,
 ) -> Result<Delivered, SpawnError> {
     match destination {
-        Destination::Stdout => Ok(Delivered::Stdout(
-            stdout
-                .write_all(output.as_bytes())
-                .and_then(|()| stdout.flush()),
-        )),
+        Destination::Stdout => {
+            let written = write_stdout(stdout, output, line_buffered);
+            let _ = stdout.flush();
+            Ok(Delivered::Stdout(written))
+        }
         Destination::Pager(_) if output.is_empty() => Ok(Delivered::Paged(Outcome::Exited)),
         Destination::Pager(argv) => {
             pager::run(argv, env, output.as_bytes(), interrupt).map(Delivered::Paged)

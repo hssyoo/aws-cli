@@ -242,13 +242,14 @@ impl ServiceInvocation {
             &ready.pager_env,
             &text,
             cx.stdout,
+            ready.line_buffered,
             interrupt,
         ) {
             Ok(Delivered::Paged(Outcome::Interrupted)) => Ok(interrupted(cx)),
             // JSONFormatter swallows a failed write; the exit-time flush then
             // reports the closed stream as the s3 commands' does.
             Ok(Delivered::Stdout(Err(_))) if ready.format.swallows_write_errors() => Ok(0),
-            Ok(Delivered::Stdout(Err(error))) => Err(general(error.to_string().into_bytes())),
+            Ok(Delivered::Stdout(Err(error))) => Err(write_failure(&error)),
             Ok(Delivered::Stdout(Ok(())) | Delivered::Paged(Outcome::Exited)) => Ok(0),
             Err(error) => Err(service_errors::pager_failure(&error)),
         }
@@ -262,6 +263,12 @@ impl ServiceInvocation {
             error => Err(service_errors::call_failure(&error, &self.model)),
         }
     }
+}
+
+/// `GeneralExceptionHandler`'s failure for the `OSError` a write to stdout
+/// raised, as `str()` of it reads.
+fn write_failure(error: &std::io::Error) -> CommandFailure {
+    general(cli_core::cli_error::stdout_write_failure_message(error).into_bytes())
 }
 
 /// `GeneralExceptionHandler`'s failure with `str()` of the exception.

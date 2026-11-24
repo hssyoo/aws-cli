@@ -113,10 +113,10 @@ fn text_to_stdout(
     let written = format::pages::text(fetched, &mut |text| {
         format::write_stdout(stdout, text, line_buffered)
     });
-    // TextFormatter flushes the stream however the pages ended; only a
-    // failure it raised before then is passed over.
-    let flushed = stdout.flush();
-    let written = written.and_then(|()| flushed.map_err(Stopped::Write));
+    // TextFormatter flushes the stream however the pages ended, passing
+    // over an OSError (`_flush_stream`); the exit-time flush reports what
+    // that leaves unwritten.
+    let _ = stdout.flush();
     scope.leave();
     match written {
         Ok(()) => Ok(0),
@@ -171,7 +171,8 @@ fn text_to_pager(
 }
 
 /// What the text formatter's early end comes to: the page's failure, the
-/// formatter's exception, or the failed write (`GeneralExceptionHandler`).
+/// formatter's exception, or the `OSError` of a failed write
+/// (`GeneralExceptionHandler`).
 fn ended(
     invocation: &ServiceInvocation,
     cx: &mut Context<'_>,
@@ -180,6 +181,6 @@ fn ended(
     match stopped {
         Stopped::Page(error) => invocation.call_failed(cx, error),
         Stopped::Format(error) => Err(general(error.message.into_bytes())),
-        Stopped::Write(error) => Err(general(error.to_string().into_bytes())),
+        Stopped::Write(error) => Err(write_failure(&error)),
     }
 }
