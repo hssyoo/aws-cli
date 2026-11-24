@@ -107,7 +107,7 @@ fn paginators_of_names_and_dotted_paths_are_run() -> Result<()> {
             let found = service
                 .operation(operation)
                 .unwrap_or_else(|| panic!("{operation}"));
-            paginator(service, found)
+            paginator_entry(service, found).map(|entry| Config::from_value(&entry))
         };
         assert!(matches!(entry("zjson", "list-things"), Some(Ok(_))));
         let dotted = entry("elasticache", "describe-engine-default-parameters");
@@ -169,6 +169,9 @@ fn each_client_refusal_names_its_own_reason() {
         Unsupported::Validation(model::validate::Undecided::Comparison),
         Unsupported::Hook("declined".into()),
         Unsupported::StartingToken("a float"),
+        Unsupported::Paginator(client::paginate::Refused::Expression(
+            "Jobs[-1].JobId".into(),
+        )),
     ];
     let reasons: Vec<&str> = refusals.iter().map(|one| reason(one).name()).collect();
     let mut distinct = reasons.clone();
@@ -203,6 +206,7 @@ fn a_blob_payload_at_either_end_is_streaming() -> Result<()> {
                 &endpoints,
                 &service.name,
                 &[],
+                None,
             );
             assert_eq!(
                 refused == Some(Unsupported::Trait("streaming".into())),

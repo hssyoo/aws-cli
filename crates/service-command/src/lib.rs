@@ -3,8 +3,10 @@
 //! route runs it, and the request it binds.
 //!
 //! Admission runs in [`admit::admit`]'s order: the protocol, the traits,
-//! the customizations that touch the invocation ([`coverage`]), the
-//! supplied arguments ([`bind`]), then validation. Settings, the output
+//! a paginator the native one does not run, the customizations that touch
+//! the invocation ([`coverage`]), the supplied arguments and the paging
+//! options ([`bind`]), then validation. A paginated call pages natively
+//! ([`invoke`]). Settings, the output
 //! format and the endpoint are the router's stages, after binding.
 #![forbid(unsafe_code)]
 

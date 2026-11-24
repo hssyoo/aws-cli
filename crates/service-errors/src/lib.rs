@@ -71,10 +71,6 @@ pub fn call_failure(error: &CallError, model: &Model) -> CommandFailure {
         },
         CallError::Service(service) => client_error(service, model),
         CallError::Interrupted => CommandFailure::new(Category::Interrupt),
-        CallError::Pagination(error) => CommandFailure {
-            message: error.to_string().into_bytes(),
-            ..CommandFailure::new(Category::General)
-        },
         other => CommandFailure {
             message: other.to_string().into_bytes(),
             ..CommandFailure::new(Category::General)

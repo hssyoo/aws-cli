@@ -109,6 +109,16 @@ fn type_names_are_python_class_strings() {
     ] {
         assert_eq!(py_type(&value), name);
     }
+    let at = Value::Timestamp(Timestamp::MIN);
+    assert_eq!(
+        (py_type_name(&at), py_short_type_name(&at)),
+        ("datetime.datetime", "datetime")
+    );
+    let list = Value::List(Vec::new());
+    assert_eq!(
+        (py_type_name(&list), py_short_type_name(&list)),
+        ("list", "list")
+    );
 }
 
 /// `float(text)` in CPython: whitespace, signs, underscores between digits,

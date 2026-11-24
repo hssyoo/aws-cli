@@ -310,11 +310,7 @@ pub(super) fn special_float(value: &Value) -> Value {
 }
 
 /// `type(value).__name__`.
-pub(super) fn short_type(value: &Value) -> &'static str {
-    let class = model::pyrepr::py_type(value);
-    let name = class.trim_start_matches("<class '").trim_end_matches("'>");
-    name.rsplit('.').next().unwrap_or(name)
-}
+pub(super) use model::pyrepr::py_short_type_name as short_type;
 
 /// `Serializer._expand_host_prefix`: `endpoint.hostPrefix` with each
 /// `hostLabel` member's value put in its `{name}`.

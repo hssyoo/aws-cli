@@ -1,6 +1,6 @@
 //! `awscli.text.format_text`: tab-separated rows, scalar keys sorted, each
 //! nested structure or list on rows of its own named by its key.
-use model::pyrepr::{py_str, py_type};
+use model::pyrepr::{py_short_type_name, py_str};
 use model::value::{Map, Value};
 
 /// An exception `format_text` raises, with Python's `str()` of it.
@@ -116,13 +116,7 @@ fn all_scalar_keys(items: &[Value]) -> Result<Vec<&str>, PythonError> {
 }
 
 fn no_items(value: &Value) -> PythonError {
-    let class = py_type(value);
-    let name = class
-        .trim_start_matches("<class '")
-        .trim_end_matches("'>")
-        .rsplit('.')
-        .next()
-        .unwrap_or(class);
+    let name = py_short_type_name(value);
     PythonError {
         message: format!("'{name}' object has no attribute 'items'"),
     }

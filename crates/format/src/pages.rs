@@ -4,7 +4,7 @@
 //! dotted paths of them, which [`search`] reads as `jmespath` searches
 //! them and [`set`] writes as `set_value_from_jmespath` does.
 use crate::text::{PythonError, format_text};
-use model::pyrepr::py_type;
+use model::pyrepr::py_type_name;
 use model::value::{Map, Value};
 
 /// A paginated response as the text formatter reads a `PageIterator`.
@@ -107,7 +107,7 @@ fn formatted(value: &Value) -> (String, Option<PythonError>) {
 /// `jmespath.search(expression, value)` for a member name or a dotted
 /// path: each name looked up in an object; `None` once one is missing or
 /// the value it is looked up in is no object.
-pub fn search<'v>(value: &'v Value, expression: &str) -> Option<&'v Value> {
+fn search<'v>(value: &'v Value, expression: &str) -> Option<&'v Value> {
     expression
         .split('.')
         .try_fold(value, |found, name| match found {
@@ -123,7 +123,7 @@ pub fn search<'v>(value: &'v Value, expression: &str) -> Option<&'v Value> {
 ///
 /// # Errors
 /// That `TypeError`, as `str()` gives it.
-pub fn set(source: &mut Map, expression: &str, value: Value) -> Result<(), PythonError> {
+fn set(source: &mut Map, expression: &str, value: Value) -> Result<(), PythonError> {
     let Some((name, rest)) = expression.split_once('.') else {
         source.insert(expression.to_owned(), value);
         return Ok(());
@@ -142,9 +142,7 @@ pub fn set(source: &mut Map, expression: &str, value: Value) -> Result<(), Pytho
 /// no dict: with more of the path, `name in found` and then `found[name]`
 /// read or assigned; at its end, `found[name] = value`.
 fn not_an_object(found: &Value, rest: &str) -> PythonError {
-    let class = py_type(found)
-        .trim_start_matches("<class '")
-        .trim_end_matches("'>");
+    let class = py_type_name(found);
     let (name, more) = rest
         .split_once('.')
         .map_or((rest, false), |(name, _)| (name, true));

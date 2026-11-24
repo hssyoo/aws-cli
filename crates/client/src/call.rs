@@ -225,6 +225,8 @@ impl Client {
             &parts.endpoints,
             &parts.service,
             parts.customizations,
+            // The paginator's entry was judged where the call was admitted.
+            None,
         ) {
             return Err(CallError::Unsupported(unsupported));
         }

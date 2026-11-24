@@ -57,6 +57,20 @@ pub fn py_str(value: &Value) -> String {
     }
 }
 
+/// The type's name as Python's own messages spell it (`tp_name`):
+/// `datetime.datetime` for a timestamp, the builtin's name otherwise.
+pub fn py_type_name(value: &Value) -> &'static str {
+    py_type(value)
+        .trim_start_matches("<class '")
+        .trim_end_matches("'>")
+}
+
+/// `type(value).__name__`: [`py_type_name`] without its module.
+pub fn py_short_type_name(value: &Value) -> &'static str {
+    let name = py_type_name(value);
+    name.rsplit('.').next().unwrap_or(name)
+}
+
 /// `str(type(value))`.
 pub fn py_type(value: &Value) -> &'static str {
     match value {
