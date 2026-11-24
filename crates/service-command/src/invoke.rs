@@ -25,6 +25,7 @@ use client::endpoint::{EndpointConfig, EndpointInputs};
 use client::error::{CallError, ParseError};
 use client::hooks::Customization;
 use client::http::{HttpRequest, HttpResponse};
+use client::paginate::PageIterator;
 use client::transport::{Timeouts, Transport, TransportError};
 use command::{Context, Invocation, Preflight};
 use format::{Delivered, Destination, Outcome, OutputFormat, TimestampParser};
@@ -54,8 +55,9 @@ pub struct ServiceInvocation {
 #[derive(Debug)]
 struct Ready {
     /// The client and its call, or the failure botocore raises as it
-    /// creates the client or prepares the call, which the run reports.
-    call: Result<Call, CommandFailure>,
+    /// creates the client or prepares the call, which the run reports;
+    /// taken by the one run.
+    call: RefCell<Option<Result<Call, CommandFailure>>>,
     /// The client's credentials, which the run walks before it reports a
     /// failure.
     credentials: Arc<dyn CredentialSource>,
@@ -67,14 +69,13 @@ struct Ready {
     pager_env: Vec<(OsString, OsString)>,
 }
 
-/// A client and the call it prepared once, in the preflight, which the run
-/// sends.
+/// What the preflight prepared, once, which the run sends.
 #[derive(Debug)]
-struct Call {
-    client: Client,
-    /// The call's request, which the run sends; a paginated call's first
-    /// page's, which the run's pages prepare again.
-    prepared: RefCell<Option<Prepared>>,
+enum Call {
+    /// One request.
+    Single { client: Client, prepared: Prepared },
+    /// The paginator, its first request prepared, which owns the client.
+    Paged(PageIterator<Client>),
 }
 
 impl ServiceInvocation {
@@ -125,18 +126,10 @@ impl Invocation for ServiceInvocation {
         };
         let credentials = credentials(cx)?;
         let call = match self.client(cx, Arc::clone(&credentials))? {
-            Ok(client) => {
-                let prepared = self
-                    .first_request(&client)
-                    .and_then(|input| client.prepare(&self.admitted.operation, input));
-                match prepared {
-                    Ok(prepared) => Ok(Call {
-                        client,
-                        prepared: RefCell::new(Some(prepared)),
-                    }),
-                    Err(error) => Err(failure(error)?),
-                }
-            }
+            Ok(client) => match self.prepare(client) {
+                Ok(call) => Ok(call),
+                Err(error) => Err(failure(error)?),
+            },
             Err(error) => Err(failure(error)?),
         };
         let pager_env = format::pager::environment(
@@ -145,7 +138,7 @@ impl Invocation for ServiceInvocation {
                 .map(|(name, value)| (OsString::from(name), value.clone())),
         );
         let _ = self.ready.set(Ready {
-            call,
+            call: RefCell::new(Some(call)),
             credentials,
             format,
             destination,
@@ -175,15 +168,12 @@ impl Invocation for ServiceInvocation {
                 .write_all(warning)
                 .and_then(|()| cx.stderr.flush());
         }
-        let call = match &ready.call {
-            Ok(call) => call,
-            Err(failure) => return Err(self.after_the_chain(&*ready.credentials, failure)),
-        };
-        if let Some(paginated) = &self.admitted.paginated {
-            return paged::run(self, cx, ready, &call.client, paginated);
-        }
-        let Some(prepared) = call.prepared.borrow_mut().take() else {
-            return Err(general(b"the prepared call was already sent".to_vec()));
+        let taken = ready.call.borrow_mut().take();
+        let (client, prepared) = match taken {
+            Some(Ok(Call::Single { client, prepared })) => (client, prepared),
+            Some(Ok(Call::Paged(pages))) => return paged::run(self, cx, ready, pages),
+            Some(Err(failure)) => return Err(self.after_the_chain(&*ready.credentials, &failure)),
+            None => return Err(general(b"the prepared call was already sent".to_vec())),
         };
         // KeyboardInterrupt ends the call wherever it lands: the call is
         // active work, so a Ctrl-C is recorded rather than ending the
@@ -192,7 +182,7 @@ impl Invocation for ServiceInvocation {
         // same for each page).
         let interrupt = cli_core::interrupt::process_state();
         let mut scope = cli_core::interrupt::Scope::enter(interrupt);
-        let called = call.client.send(prepared);
+        let called = client.send(prepared);
         let called = if interrupt.is_requested() {
             Err(CallError::Interrupted)
         } else {
@@ -207,26 +197,30 @@ impl Invocation for ServiceInvocation {
 }
 
 impl ServiceInvocation {
-    /// The input of the first request: the call's, or the paginator's first
-    /// page's (`_inject_starting_params`).
+    /// The call `client` makes, prepared: the request, or the paginator
+    /// with its first request prepared (`_make_client_call`).
     ///
     /// # Errors
-    /// What the paginator raises before that request, after botocore has
-    /// created the client: a bad starting token, or a `MaxItems` or
-    /// `PageSize` it refuses; [`CallError::Unsupported`] for a starting
-    /// token only the Python route reads.
-    fn first_request(&self, client: &Client) -> Result<Value, CallError> {
-        let Some(paginated) = &self.admitted.paginated else {
-            return Ok(self.admitted.input.clone());
+    /// What botocore raises before it sends, after it created the client:
+    /// what `prepare` raises, and what the paginator raises before its
+    /// first request (a bad starting token, a `MaxItems` or `PageSize` it
+    /// refuses); [`CallError::Unsupported`] for a call, or a starting
+    /// token, only the Python route takes.
+    fn prepare(&self, client: Client) -> Result<Call, CallError> {
+        let admitted = &self.admitted;
+        let Some(paginated) = &admitted.paginated else {
+            let prepared = client.prepare(&admitted.operation, admitted.input.clone())?;
+            return Ok(Call::Single { client, prepared });
         };
-        client::paginate::PageIterator::new(
+        let mut pages = PageIterator::new(
             client,
-            &self.admitted.operation,
-            self.admitted.input.clone(),
+            &admitted.operation,
+            admitted.input.clone(),
             paginated.config.clone(),
             paginated.pagination.clone(),
-        )
-        .first_input()
+        )?;
+        pages.prepare()?;
+        Ok(Call::Paged(pages))
     }
 
     /// What the formatter writes for `response`, delivered where

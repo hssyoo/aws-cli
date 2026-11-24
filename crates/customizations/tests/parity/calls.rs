@@ -298,5 +298,8 @@ fn paginated(
         page_size: option("PageSize"),
         starting_token: pagination["StartingToken"].as_str().map(str::to_owned),
     };
-    Ok(PageIterator::new(client, operation, input, config, pagination).build_full_result())
+    Ok(
+        PageIterator::new(client, operation, input, config, pagination)
+            .and_then(|mut pages| pages.build_full_result()),
+    )
 }

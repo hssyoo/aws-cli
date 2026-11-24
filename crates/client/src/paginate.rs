@@ -14,13 +14,14 @@
 //! Python's shared objects ([`object::Object`]), so what the non-aggregate
 //! part and the full result share with the first page changes with it as
 //! it does there; a page is returned as its value then.
-use crate::call::Client;
+use crate::call::{Client, Prepared};
 use crate::error::{CallError, PaginationError};
 use cli_core::client_config::user_agent::{Feature, Features};
 use model::paginators::{Config, Expression};
 use model::pyrepr::{py_repr, py_str};
 use model::shapes::ShapeKind;
 use model::value::{Map, Value};
+use std::borrow::Borrow;
 
 mod loads;
 mod object;
@@ -44,22 +45,28 @@ pub struct PaginationConfig {
 }
 
 /// `PageIterator`: the pages of `operation` called with `input`, each
-/// the parsed output of one call.
+/// the parsed output of one call, through `client`: a [`Client`] it owns
+/// or borrows.
 ///
-/// Like botocore's generator, it does its work as pages are taken: what
-/// `paginate` checks of the pagination config, and what `__iter__` does
-/// before its first request, happen as the first page is asked for, and
-/// what follows a page's `yield` as the next one is. Once a page's call or
-/// the paginator fails, iteration ends with that error; the pages already
-/// returned stay returned.
+/// It splits its work as botocore does: [`Self::new`] checks `MaxItems`
+/// and `PageSize` as `paginate` does (`_extract_paging_params`), and what
+/// `__iter__` does before its first request happens as the first page is
+/// asked for, or earlier through [`Self::prepare`]; what follows a page's
+/// `yield` happens as the next one is. Once a page's call or the paginator
+/// fails, iteration ends with that error; the pages already returned stay
+/// returned.
 #[derive(Debug)]
-pub struct PageIterator<'c> {
-    client: &'c Client,
+pub struct PageIterator<C> {
+    client: C,
     operation: String,
     /// `paginate`'s keyword arguments, as given.
     input: Value,
     config: Config,
-    pagination: PaginationConfig,
+    /// `MaxItems`, as `int()` read it.
+    max_items: Option<i128>,
+    /// `PageSize`, as the limit key's member takes it.
+    page_size: Option<Value>,
+    starting_token: Option<String>,
     /// `_non_aggregate_part`, which shares its objects with the first page.
     non_aggregate: Object,
     /// [`Self::non_aggregate`]'s value once the first page is returned,
@@ -74,6 +81,8 @@ pub struct PageIterator<'c> {
 enum State {
     /// `paginate` returned; nothing has run yet.
     Start,
+    /// `__iter__` ran up to its first request, which is prepared.
+    Prepared(Box<Progress>, Box<Prepared>),
     /// A page was yielded whole; the loop goes on with what it read of it.
     Yielded(Box<Progress>, Read),
     /// The loop ended.
@@ -83,8 +92,6 @@ enum State {
 /// `__iter__`'s locals across its loop.
 #[derive(Debug)]
 struct Progress {
-    /// `MaxItems`, as `int()` read it.
-    max_items: Option<i128>,
     /// The starting token's `boto_truncate_amount`, until the first page
     /// takes it.
     starting_index: Option<Value>,
@@ -106,26 +113,60 @@ struct Read {
     next_token: Map,
 }
 
-impl<'c> PageIterator<'c> {
-    /// `Paginator.paginate(**input, PaginationConfig=pagination)`.
+impl<C: Borrow<Client>> PageIterator<C> {
+    /// `Paginator.paginate(**input, PaginationConfig=pagination)`, which
+    /// reads `MaxItems` and `PageSize` as it is called.
+    ///
+    /// # Errors
+    /// A `MaxItems` or `PageSize` `_extract_paging_params` refuses.
     pub fn new(
-        client: &'c Client,
+        client: C,
         operation: &str,
         input: Value,
         config: Config,
         pagination: PaginationConfig,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, CallError> {
+        let max_items = match given(pagination.max_items.as_ref()) {
+            Some(value) => Some(py::int_number(&py::int(value)?)),
+            None => None,
+        };
+        let page_size = page_size(client.borrow(), operation, &config, &pagination)?;
+        Ok(Self {
             client,
             operation: operation.to_owned(),
             input,
             config,
-            pagination,
+            max_items,
+            page_size,
+            starting_token: pagination.starting_token,
             non_aggregate: Object::dict(),
             non_aggregate_part: Map::new(),
             resume_token: None,
             state: State::Start,
+        })
+    }
+
+    /// `__iter__` up to its first request, and that request prepared as
+    /// [`Client::prepare`] prepares a call, so a caller learns before
+    /// anything is sent what the first page would fail with or leave to
+    /// Python; the first page then sends it. Once a page was asked for, it
+    /// does nothing.
+    ///
+    /// # Errors
+    /// A bad starting token, anything `prepare` raises, and
+    /// [`CallError::Unsupported`] for a starting token only Python reads.
+    pub fn prepare(&mut self) -> Result<(), CallError> {
+        if !matches!(self.state, State::Start) {
+            return Ok(());
         }
+        let progress = self.prologue()?;
+        let prepared = self.client.borrow().prepare_with_features(
+            &self.operation,
+            progress.kwargs.clone(),
+            paginator_feature(),
+        )?;
+        self.state = State::Prepared(Box::new(progress), Box::new(prepared));
+        Ok(())
     }
 
     /// `result_keys`: the configured result keys, as expressions.
@@ -139,18 +180,6 @@ impl<'c> PageIterator<'c> {
     /// objects, so a result key within one is the page's, truncated.
     pub fn non_aggregate_part(&self) -> &Map {
         &self.non_aggregate_part
-    }
-
-    /// The input the first page's request sends, or sent: `paginate`'s
-    /// with the starting token's input tokens and the page size put in
-    /// (`_inject_starting_params`), as a caller would `prepare` it.
-    ///
-    /// # Errors
-    /// What the first page would fail with before its request: a
-    /// `MaxItems` or `PageSize` botocore's `paginate` refuses, or a bad
-    /// starting token.
-    pub fn first_input(&self) -> Result<Value, CallError> {
-        self.prologue().map(|progress| progress.kwargs)
     }
 
     /// `resume_token`: the encoded token to resume from, once iteration
@@ -224,7 +253,54 @@ fn given(value: Option<&Value>) -> Option<&Value> {
     value.filter(|value| !matches!(value, Value::Null))
 }
 
-impl Iterator for PageIterator<'_> {
+/// The feature id `PageIterator._make_request` registers for each page's
+/// call (`with_current_context(partial(register_feature_id, ...))`).
+fn paginator_feature() -> Features {
+    [Feature::Paginator].into_iter().collect()
+}
+
+/// `_extract_paging_params`' page size: refused without a limit key, and
+/// as the limit key's member takes it, a string `str()`, anything else
+/// `int()`.
+fn page_size(
+    client: &Client,
+    operation: &str,
+    config: &Config,
+    pagination: &PaginationConfig,
+) -> Result<Option<Value>, CallError> {
+    let Some(size) = given(pagination.page_size.as_ref()) else {
+        return Ok(None);
+    };
+    let Some(limit_key) = &config.limit_key else {
+        return Err(PaginationError::Pagination(
+            "PageSize parameter is not supported for the pagination interface for this \
+             operation."
+                .into(),
+        )
+        .into());
+    };
+    let model = client.model();
+    let found = model
+        .operation(operation)
+        .ok_or_else(|| CallError::UnknownOperation(operation.to_owned()))?;
+    let input = found
+        .input
+        .ok_or_else(|| other("'NoneType' object has no attribute 'members'".into()))?;
+    let member = model
+        .members(input)
+        .iter()
+        .find(|member| *member.name == **limit_key)
+        .ok_or_else(|| other("'NoneType' object has no attribute 'type_name'".into()))?;
+    if model.shape(member.shape).kind != ShapeKind::String {
+        return Ok(Some(py::int(size)?));
+    }
+    Ok(Some(match size {
+        Value::String(_) => size.clone(),
+        size => Value::String(py_str(size)),
+    }))
+}
+
+impl<C: Borrow<Client>> Iterator for PageIterator<C> {
     type Item = Result<Value, CallError>;
 
     /// `PageIterator.__iter__`'s next page.
@@ -233,11 +309,14 @@ impl Iterator for PageIterator<'_> {
     }
 }
 
-impl PageIterator<'_> {
+impl<C: Borrow<Client>> PageIterator<C> {
     /// The next page, the object itself.
     fn next_object(&mut self) -> Option<Result<Object, CallError>> {
         let progress = match std::mem::replace(&mut self.state, State::Done) {
-            State::Start => self.start(),
+            State::Start => self.prologue().map(Some),
+            State::Prepared(progress, prepared) => {
+                return Some(self.send(*progress, *prepared));
+            }
             State::Yielded(progress, read) => self.resume(*progress, read),
             State::Done => Ok(None),
         };
@@ -247,23 +326,11 @@ impl PageIterator<'_> {
             Err(error) => Some(Err(error)),
         }
     }
-}
 
-impl PageIterator<'_> {
-    fn start(&mut self) -> Result<Option<Progress>, CallError> {
-        self.prologue().map(Some)
-    }
-
-    /// `paginate`'s `_extract_paging_params`, then `__iter__` up to its
-    /// loop: the starting token read and, with the page size, put into the
-    /// input (`_inject_starting_params`).
+    /// `__iter__` up to its loop: the starting token read and, with the
+    /// page size, put into the input (`_inject_starting_params`).
     fn prologue(&self) -> Result<Progress, CallError> {
-        let max_items = match given(self.pagination.max_items.as_ref()) {
-            Some(value) => Some(py::int_number(&py::int(value)?)),
-            None => None,
-        };
-        let page_size = self.page_size()?;
-        let starting = match &self.pagination.starting_token {
+        let starting = match &self.starting_token {
             Some(raw) => Some(token::parse_starting_token(raw, &self.config.input_token)?),
             None => None,
         };
@@ -284,11 +351,10 @@ impl PageIterator<'_> {
         if let Some(starting) = &starting {
             inject(&mut kwargs, &starting.token);
         }
-        if let (Some(size), Some(limit_key)) = (page_size, &self.config.limit_key) {
-            insert(&mut kwargs, limit_key, size);
+        if let (Some(size), Some(limit_key)) = (&self.page_size, &self.config.limit_key) {
+            insert(&mut kwargs, limit_key, size.clone());
         }
         Ok(Progress {
-            max_items,
             starting_index: starting.map(|starting| starting.index),
             first_request: true,
             next_token,
@@ -298,49 +364,21 @@ impl PageIterator<'_> {
         })
     }
 
-    /// `_extract_paging_params`' page size: refused without a limit key,
-    /// and as the limit key's member takes it, a string `str()`, anything
-    /// else `int()`.
-    fn page_size(&self) -> Result<Option<Value>, CallError> {
-        let Some(size) = given(self.pagination.page_size.as_ref()) else {
-            return Ok(None);
-        };
-        let Some(limit_key) = &self.config.limit_key else {
-            return Err(PaginationError::Pagination(
-                "PageSize parameter is not supported for the pagination interface for this \
-                 operation."
-                    .into(),
-            )
-            .into());
-        };
-        let model = self.client.model();
-        let operation = model
-            .operation(&self.operation)
-            .ok_or_else(|| CallError::UnknownOperation(self.operation.clone()))?;
-        let input = operation
-            .input
-            .ok_or_else(|| other("'NoneType' object has no attribute 'members'".into()))?;
-        let member = model
-            .members(input)
-            .iter()
-            .find(|member| *member.name == **limit_key)
-            .ok_or_else(|| other("'NoneType' object has no attribute 'type_name'".into()))?;
-        if model.shape(member.shape).kind != ShapeKind::String {
-            return Ok(Some(py::int(size)?));
-        }
-        Ok(Some(match size {
-            Value::String(_) => size.clone(),
-            size => Value::String(py_str(size)),
-        }))
-    }
-
     /// `_make_request`, with `PAGINATOR` registered, then the loop's work
     /// on the page up to its `yield`.
     fn request(&mut self, progress: Progress) -> Result<Object, CallError> {
-        let features: Features = [Feature::Paginator].into_iter().collect();
-        let output =
-            self.client
-                .call_with_features(&self.operation, progress.kwargs.clone(), features)?;
+        let output = self.client.borrow().call_with_features(
+            &self.operation,
+            progress.kwargs.clone(),
+            paginator_feature(),
+        )?;
+        self.page(progress, Object::new(output.value))
+    }
+
+    /// The first request, which [`Self::prepare`] prepared, sent, then the
+    /// loop's work on its page.
+    fn send(&mut self, progress: Progress, prepared: Prepared) -> Result<Object, CallError> {
+        let output = self.client.borrow().send(prepared)?;
         self.page(progress, Object::new(output.value))
     }
 
@@ -362,7 +400,7 @@ impl PageIterator<'_> {
             .and_then(|primary| primary.search(page.clone()))
             .map_or(Ok(0), |found| found.len())
             .map_err(other)?;
-        let truncate_amount = progress
+        let truncate_amount = self
             .max_items
             .map_or(0, |max| (progress.total_items + items).saturating_sub(max));
         if truncate_amount > 0 {
@@ -396,7 +434,7 @@ impl PageIterator<'_> {
         {
             return Ok(None);
         }
-        if progress.max_items == Some(progress.total_items) {
+        if self.max_items == Some(progress.total_items) {
             self.resume_token = Some(token::resume_token(&next_token, &self.config.input_token)?);
             return Ok(None);
         }
@@ -424,7 +462,7 @@ impl PageIterator<'_> {
     }
 }
 
-impl PageIterator<'_> {
+impl<C: Borrow<Client>> PageIterator<C> {
     /// `_handle_first_request`: the primary result key, a list or a str,
     /// from the starting token's offset on (anything else `None`), and
     /// the others emptied, as the page they were taken whole from: a list
