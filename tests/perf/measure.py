@@ -1,7 +1,10 @@
 """Measure the AWS CLI's commands against the loopback stub.
 
 `cargo xtask perf` runs this through run.py, which provides the venv;
-xtask reads the samples it writes and does every statistic. A series is a
+xtask reads the samples it writes and does every statistic. It measures
+one or more binaries side by side (`--binary NAME=PATH`): in each round
+every binary runs every series, their order reversed on alternate rounds,
+so a comparison of two binaries sees the same machine. A series is a
 case of the case file at one of its schemes and latencies, on one route.
 The full tier runs every scheme and latency of every case; the quick tier
 runs only the pairs each case's `quick` entry names, a subset of those.
@@ -16,8 +19,12 @@ credential files, a scratch HOME, the instance metadata service off, the
 stub as `--endpoint-url` and `AWS_ENDPOINT_URL`), with stdout and stderr
 going to files, and waits for it with `wait4`, whose resource usage gives
 the child's peak RSS and CPU user and system time. Wall time runs from
-just before the spawn to the reap. A run fails the measurement unless the
-CLI exits 0 and asked for exactly the case's pages.
+just before the spawn to the reap; the one-minute load average just
+before the spawn is recorded with each run, and so is each binary's first
+run, which warm-up absorbs. A run fails the measurement unless the CLI
+exits 0 and asked for exactly the case's pages, except that a binary named
+`--optional` (the base of a comparison) may refuse a series in its first
+round: the series is then recorded as refused on it.
 """
 
 from __future__ import annotations
@@ -32,7 +39,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from string import Template
 from typing import Any, Final
@@ -41,7 +48,9 @@ import trustme
 
 from stub import Script, Stub, frame
 
-FORMAT: Final = 1
+# The layout of the case file, and of the samples this writes.
+CASES_FORMAT: Final = 1
+FORMAT: Final = 2
 RUN_TIMEOUT_SECONDS: Final = 120
 ACCESS_KEY: Final = "AKIDPERFHARNESS00000"
 SECRET_KEY: Final = "perf-harness-secret-key-not-a-real-one"
@@ -78,7 +87,20 @@ class Environment:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--aws-binary", type=Path, required=True)
+    parser.add_argument(
+        "--binary",
+        action="append",
+        type=labelled,
+        required=True,
+        help="NAME=PATH, repeatable: the binaries measured side by side",
+    )
+    parser.add_argument(
+        "--optional",
+        action="append",
+        default=[],
+        help="a binary NAME whose refusal of a series in warm-up marks the "
+        "series unavailable on it instead of failing",
+    )
     parser.add_argument("--cases", type=Path, required=True)
     parser.add_argument("--models", type=Path, required=True)
     parser.add_argument("--scratch", type=Path, required=True)
@@ -91,10 +113,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def labelled(argument: str) -> tuple[str, Path]:
+    name, separator, path = argument.partition("=")
+    if not separator or not name:
+        raise argparse.ArgumentTypeError(f"expected NAME=PATH, not {argument!r}")
+    return name, Path(path)
+
+
+class RunFailed(Exception):
+    """A run that did not exit 0 or asked for other than the case's pages."""
+
+
 def load_cases(path: Path, selected: list[str]) -> tuple[dict[str, Any], list[Case]]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("format") != FORMAT:
-        raise SystemExit(f"{path}: expected format {FORMAT}")
+    if data.get("format") != CASES_FORMAT:
+        raise SystemExit(f"{path}: expected format {CASES_FORMAT}")
     cases = [case(entry) for entry in data["cases"]]
     names = {case.name for case in cases}
     unknown = [name for name in selected if name not in names]
@@ -185,6 +218,7 @@ def run_once(
     stdout_path = env.scratch / "stdout"
     stderr_path = env.scratch / "stderr"
     stub.reset()
+    load = os.getloadavg()[0]
     with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
         started = time.perf_counter()
         child = subprocess.Popen(
@@ -212,6 +246,7 @@ def run_once(
         "requests": counts.requests,
         "response_bytes": counts.response_bytes,
         "stdout_bytes": stdout_path.stat().st_size,
+        "load_average": load,
     }
     problem = None
     if child.returncode != 0:
@@ -220,7 +255,7 @@ def run_once(
         problem = f"made {counts.requests} requests for {case.pages} pages"
     if problem is not None:
         tail = stderr_path.read_text(encoding="utf-8", errors="replace")[-2000:]
-        raise SystemExit(
+        raise RunFailed(
             f"perf case {case.name} ({scheme}, {route} route) {problem}: "
             f"{' '.join(argv)}\n{tail}"
         )
@@ -255,42 +290,84 @@ def settings(cases: list[Case], tier: str) -> list[Setting]:
     ]
 
 
-def measure(
-    binary: Path,
-    plan: list[Setting],
-    routes: list[str],
-    counts: tuple[int, int],
-    env: Environment,
-) -> list[dict[str, Any]]:
-    """Every series, measured round-robin; each records the least and
-    greatest one-minute load average seen before its runs."""
+@dataclass
+class Plan:
+    """What a measurement runs: the settings, the routes, the binaries in
+    their labels' order, and the binaries allowed to refuse a series."""
+
+    settings: list[Setting]
+    routes: list[str]
+    binaries: list[tuple[str, Path]]
+    optional: set[str]
+
+
+@dataclass
+class Tally:
+    """The measurement so far: each series' recorded runs, the series a
+    binary refused, and each binary's first run."""
+
+    runs: dict[tuple[str, int, str], list[dict[str, Any]]] = field(default_factory=dict)
+    refused: dict[tuple[str, int, str], str] = field(default_factory=dict)
+    first_run_s: dict[str, float] = field(default_factory=dict)
+
+
+def run_round(plan: Plan, number: int, recorded: bool, env: Environment, tally: Tally) -> None:
+    """One round: every setting once, each route in turn, and each binary
+    in turn, the binaries' order reversed on every other round so neither
+    always runs first."""
+    order = plan.binaries if number % 2 == 0 else plan.binaries[::-1]
+    for index, setting in enumerate(plan.settings):
+        env.stubs[setting.scheme].load(setting.script)
+        for route in plan.routes:
+            for name, binary in order:
+                key = (name, index, route)
+                if key in tally.refused:
+                    continue
+                try:
+                    sample = run_once(binary, setting.case, setting.scheme, route, env)
+                except RunFailed as failure:
+                    if number > 0 or name not in plan.optional:
+                        raise SystemExit(f"{name} binary: {failure}") from failure
+                    tally.refused[key] = str(failure).splitlines()[0]
+                    continue
+                tally.first_run_s.setdefault(name, sample["wall_s"])
+                if recorded:
+                    tally.runs.setdefault(key, []).append(sample)
+
+
+def measure(plan: Plan, counts: tuple[int, int], env: Environment) -> dict[str, Any]:
+    """Every series, measured round-robin, and the series refused."""
     warmup, runs = counts
-    samples: dict[tuple[int, str], list[dict[str, Any]]] = {
-        (index, route): [] for index in range(len(plan)) for route in routes
-    }
-    loads: dict[int, list[float]] = {index: [] for index in range(len(plan))}
-    for round_number in range(warmup + runs):
-        for index, setting in enumerate(plan):
-            env.stubs[setting.scheme].load(setting.script)
-            loads[index].append(os.getloadavg()[0])
-            for route in routes:
-                sample = run_once(binary, setting.case, setting.scheme, route, env)
-                if round_number >= warmup:
-                    samples[(index, route)].append(sample)
-        print(f"perf: round {round_number + 1} of {warmup + runs}", file=sys.stderr)
-    return [
-        {
-            "case": setting.case.name,
-            "scheme": setting.scheme,
-            "latency_ms": setting.latency_ms,
-            "route": route,
-            "pages": setting.case.pages,
-            "load_average": [min(loads[index]), max(loads[index])],
-            "runs": samples[(index, route)],
-        }
-        for index, setting in enumerate(plan)
-        for route in routes
-    ]
+    tally = Tally()
+    for number in range(warmup + runs):
+        run_round(plan, number, number >= warmup, env, tally)
+        print(f"perf: round {number + 1} of {warmup + runs}", file=sys.stderr)
+    series = []
+    refused = []
+    for index, setting in enumerate(plan.settings):
+        for route in plan.routes:
+            for name, _ in plan.binaries:
+                identity = {
+                    "binary": name,
+                    "case": setting.case.name,
+                    "scheme": setting.scheme,
+                    "latency_ms": setting.latency_ms,
+                    "route": route,
+                }
+                key = (name, index, route)
+                if key in tally.refused:
+                    refused.append({**identity, "reason": tally.refused[key]})
+                    continue
+                loads = [run["load_average"] for run in tally.runs[key]]
+                series.append(
+                    {
+                        **identity,
+                        "pages": setting.case.pages,
+                        "load_average": [min(loads), max(loads)],
+                        "runs": tally.runs[key],
+                    }
+                )
+    return {"series": series, "refused": refused, "first_run_s": tally.first_run_s}
 
 
 def cpu_model() -> str:
@@ -346,10 +423,14 @@ def main() -> None:
         raise SystemExit("--runs must be at least 1 and --warmup at least 0")
     env = prepare(args.scratch, args.models.resolve())
     started = time.time()
-    plan = settings(cases, args.tier)
-    if not plan:
+    chosen = settings(cases, args.tier)
+    if not chosen:
         raise SystemExit(f"the {args.tier} tier selects no series from these cases")
-    series = measure(args.aws_binary, plan, routes, (warmup, runs), env)
+    names = [name for name, _ in args.binary]
+    if len(set(names)) != len(names) or not set(args.optional) <= set(names):
+        raise SystemExit("binary names must differ, and --optional must name one")
+    plan = Plan(chosen, routes, args.binary, set(args.optional))
+    measured = measure(plan, (warmup, runs), env)
     samples = {
         "format": FORMAT,
         "tier": args.tier,
@@ -357,7 +438,7 @@ def main() -> None:
         "started_unix_s": started,
         "warmup": warmup,
         "runs": runs,
-        "series": series,
+        **measured,
     }
     args.out.write_text(json.dumps(samples, indent=1) + "\n", encoding="utf-8")
 

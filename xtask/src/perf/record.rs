@@ -1,16 +1,16 @@
 //! The performance record: what `tests/perf/measure.py` measured, and the
 //! result file `cargo xtask perf` writes from it.
 //!
-//! measure.py writes raw [`Samples`]: one series of runs per case, scheme,
-//! latency and route, each run with its wall time, CPU user and system
-//! time and peak RSS (from `wait4`), and the stub's counts. [`Record::new`]
-//! summarises each series ([`Summary`]) and adds what the harness knows:
-//! the platform key the baselines are filed under and the binary's
-//! commit. The result file is a `Record` with its runs. A platform's
-//! baseline file ([`Baseline`]) holds one record of each tier without its
-//! runs, each measured in its own tier: a series' median depends on the
-//! other series it runs among, so a quick run is judged only against
-//! quick medians.
+//! measure.py writes raw [`Samples`]: for each binary it measured, one
+//! series of runs per case, scheme, latency and route, each run with its
+//! wall time, CPU user and system time and peak RSS (from `wait4`), the
+//! load average before it, and the stub's counts. [`Record::new`] takes
+//! one binary's series and summarises each ([`Summary`]), adding what the
+//! harness knows: the platform key baselines are filed under and the
+//! binary's commit. A result file holds one `Record` with its runs, or two
+//! for a comparison (`ab`).
+
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -18,9 +18,9 @@ use super::stats::Spread;
 use crate::{TaskError, deps};
 
 /// The version of the result file's layout; a reader refuses any other.
-pub(super) const FORMAT: u32 = 2;
+pub(super) const FORMAT: u32 = 3;
 /// The version of measure.py's samples.
-pub(super) const SAMPLES_FORMAT: u32 = 1;
+pub(super) const SAMPLES_FORMAT: u32 = 2;
 
 /// Which matrix a run measured: the quick tier, a subset of the cases'
 /// series that the default check runs, or the full tier, every series,
@@ -54,6 +54,8 @@ pub(super) struct Run {
     pub(super) requests: u32,
     pub(super) response_bytes: f64,
     pub(super) stdout_bytes: f64,
+    /// The one-minute load average just before the run.
+    pub(super) load_average: f64,
 }
 
 /// The machine the runs were on.
@@ -92,6 +94,8 @@ impl std::fmt::Display for Key {
 /// One series as measure.py reports it.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub(super) struct SampleSeries {
+    /// The name measure.py's `--binary` gave the binary it ran.
+    pub(super) binary: String,
     #[serde(flatten)]
     pub(super) key: Key,
     pub(super) pages: u32,
@@ -101,15 +105,37 @@ pub(super) struct SampleSeries {
     pub(super) runs: Vec<Run>,
 }
 
+/// A series a binary refused in its first round, which a comparison
+/// reports and does not judge.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Refusal {
+    #[serde(flatten)]
+    pub(super) key: Key,
+    /// The refused run's first line of diagnosis.
+    pub(super) reason: String,
+}
+
+/// A refusal as measure.py reports it, with its binary's name.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(super) struct SampleRefusal {
+    pub(super) binary: String,
+    #[serde(flatten)]
+    pub(super) refusal: Refusal,
+}
+
 /// measure.py's output file.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub(super) struct Samples {
     pub(super) format: u32,
+    pub(super) tier: Tier,
     pub(super) host: Host,
     pub(super) started_unix_s: f64,
     pub(super) warmup: u32,
     pub(super) runs: u32,
     pub(super) series: Vec<SampleSeries>,
+    pub(super) refused: Vec<SampleRefusal>,
+    /// Each binary's first run, which the warm-up rounds absorb.
+    pub(super) first_run_s: BTreeMap<String, f64>,
 }
 
 /// A count that must not vary: its least and greatest value over the runs.
@@ -209,14 +235,20 @@ pub(super) struct Record {
     pub(super) started_unix_s: f64,
     pub(super) warmup: u32,
     pub(super) runs: u32,
+    /// The binary's first run, before the warm-up rounds ended.
+    pub(super) first_run_s: Option<f64>,
     pub(super) series: Vec<Series>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) refused: Vec<Refusal>,
 }
 
 impl Record {
-    /// The record of `samples`, which must be measure.py's current format
-    /// and hold at least one run in every series.
+    /// The record of the binary measure.py named `name` in `samples`,
+    /// which must be measure.py's current format, of `tier`, and hold at
+    /// least one run in every series.
     pub(super) fn new(
-        samples: Samples,
+        samples: &Samples,
+        name: &str,
         platform: &str,
         binary: Binary,
         tier: Tier,
@@ -227,9 +259,18 @@ impl Record {
                 samples.format
             )));
         }
+        if samples.tier != tier {
+            return Err(deps::error(format!(
+                "perf samples are of the {} tier, not the {} tier",
+                samples.tier.name(),
+                tier.name()
+            )));
+        }
         let series = samples
             .series
-            .into_iter()
+            .iter()
+            .filter(|series| series.binary == name)
+            .cloned()
             .map(|series| {
                 let summary = Summary::of(&series.runs, series.pages).ok_or_else(|| {
                     deps::error(format!("perf series {} has no runs", series.key))
@@ -243,16 +284,24 @@ impl Record {
                 })
             })
             .collect::<Result<_, TaskError>>()?;
+        let refused = samples
+            .refused
+            .iter()
+            .filter(|refusal| refusal.binary == name)
+            .map(|refusal| refusal.refusal.clone())
+            .collect();
         Ok(Self {
             format: FORMAT,
             platform: platform.to_owned(),
-            host: samples.host,
+            host: samples.host.clone(),
             binary,
             tier,
             started_unix_s: samples.started_unix_s,
             warmup: samples.warmup,
             runs: samples.runs,
+            first_run_s: samples.first_run_s.get(name).copied(),
             series,
+            refused,
         })
     }
 
@@ -273,58 +322,29 @@ impl Record {
     }
 }
 
-/// A platform's baseline file: a record of each tier, without runs.
+/// A comparison's result file: the base's and the head's records, with
+/// their runs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(super) struct Baseline {
+pub(super) struct Comparison {
     pub(super) format: u32,
-    pub(super) quick: Record,
-    pub(super) full: Record,
+    pub(super) base: Record,
+    pub(super) head: Record,
 }
 
-impl Baseline {
-    pub(super) fn new(quick: &Record, full: &Record) -> Self {
+impl Comparison {
+    pub(super) fn new(base: Record, head: Record) -> Self {
         Self {
             format: FORMAT,
-            quick: quick.without_runs(),
-            full: full.without_runs(),
+            base,
+            head,
         }
     }
 
-    /// The baseline file read from `text`, refusing another format or a
-    /// section of the other tier.
-    pub(super) fn parse(text: &str, origin: &str) -> Result<Self, TaskError> {
-        let baseline: Self = serde_json::from_str(text)
-            .map_err(|error| deps::error(format!("{origin} is not a perf baseline: {error}")))?;
-        if baseline.format != FORMAT {
-            return Err(deps::error(format!(
-                "{origin} has format {}, expected {FORMAT}",
-                baseline.format
-            )));
-        }
-        for (tier, record) in [(Tier::Quick, &baseline.quick), (Tier::Full, &baseline.full)] {
-            if record.format != FORMAT || record.tier != tier {
-                return Err(deps::error(format!(
-                    "{origin}: its {} section is not a format {FORMAT} {} record",
-                    tier.name(),
-                    tier.name()
-                )));
-            }
-        }
-        Ok(baseline)
-    }
-
-    /// The section a result of `tier` is judged against.
-    pub(super) fn section(&self, tier: Tier) -> &Record {
-        match tier {
-            Tier::Quick => &self.quick,
-            Tier::Full => &self.full,
-        }
-    }
-
+    /// The comparison as pretty JSON.
     pub(super) fn to_json(&self) -> Result<String, TaskError> {
         serde_json::to_string_pretty(self)
             .map(|text| text + "\n")
-            .map_err(|error| deps::error(format!("perf baseline: {error}")))
+            .map_err(|error| deps::error(format!("perf comparison: {error}")))
     }
 }
 
