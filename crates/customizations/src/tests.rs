@@ -216,6 +216,7 @@ fn every_basis_holds() -> TestResult {
                         &endpoints,
                         "zjson",
                         &[],
+                        None,
                     );
                     assert_eq!(
                         refused,

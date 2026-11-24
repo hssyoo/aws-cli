@@ -115,7 +115,10 @@ fn type_names_are_python_class_strings() {
         ("datetime.datetime", "datetime")
     );
     let list = Value::List(Vec::new());
-    assert_eq!((py_type_name(&list), py_short_type_name(&list)), ("list", "list"));
+    assert_eq!(
+        (py_type_name(&list), py_short_type_name(&list)),
+        ("list", "list")
+    );
 }
 
 /// `float(text)` in CPython: whitespace, signs, underscores between digits,

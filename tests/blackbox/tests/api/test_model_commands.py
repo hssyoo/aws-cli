@@ -481,7 +481,7 @@ async def test_a_starting_token_only_python_reads_runs_the_process_once(
     command = ["zjson", "list-things", "--starting-token", token]
     if FORCED_NATIVE:
         run = await models.run(command, expected_rc=255)
-        assert "(paginator)" in run.stderr, run.describe()
+        assert "(starting_token)" in run.stderr, run.describe()
         assert runs_of(runs) == 0, run.describe()
         return
     run = await models.run(command, replies={"Things": ["a"]})

@@ -145,8 +145,8 @@ fn a_failing_credential_chain_is_reported_before_invalid_input() -> crate::testi
     Ok(())
 }
 
-/// A starting token only Python reads is refused as a paginator before
-/// any provider runs: `{"NextToken": "\ud800"}`, whose lone surrogate no
+/// A starting token only Python reads is refused before any provider
+/// runs: `{"NextToken": "\ud800"}`, whose lone surrogate no
 /// native string holds.
 #[test]
 #[cfg(unix)]
@@ -164,7 +164,7 @@ fn a_starting_token_only_python_reads_runs_no_provider() -> crate::testing::Resu
     };
     assert_eq!(
         process.preflight_of(&run),
-        Err(PythonReason::Paginator),
+        Err(PythonReason::StartingToken),
         "the preflight admitted it"
     );
     assert_eq!(process.runs()?, 0, "the preflight ran the process");

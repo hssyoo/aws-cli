@@ -147,7 +147,9 @@ fn the_editor_rows_are_the_recorded_editors_listed_under_root_tables() -> Result
         let editors = CLI.iter().filter(|row| row.reached == Reached::RootTable);
         for recorded in &patterns.table_editors {
             assert!(
-                editors.clone().any(|row| row.entry == recorded.entry.name()),
+                editors
+                    .clone()
+                    .any(|row| row.entry == recorded.entry.name()),
                 "{} has no row",
                 recorded.entry.name()
             );
@@ -449,12 +451,14 @@ fn static_refusal(command: &str, operation: &str) -> Result<Option<Unsupported>>
         let found = service.operation(operation)?;
         let endpoints =
             EndpointData::load(models.search(), &service.name, service.model.metadata()).ok()?;
+        let entry = crate::admit::paginator_entry(service, found);
         Some(client::admission::static_refusal(
             &service.model,
             found,
             &endpoints,
             &service.name,
             &customizations::TABLE,
+            entry.as_ref(),
         ))
     })
     .map(Option::flatten)
