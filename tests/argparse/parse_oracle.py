@@ -280,6 +280,8 @@ DERIVED_CASES = [
     "zjson list-things --max-items abc",
     "zjson list-things --max-items 5 --page-size 10",
     "zjson list-things --max-items 5 --starting-token t",
+    "zjson list-things --starting-token file://paramfile/text.txt --max-items 0",
+    "zjson list-things --max-items -1 --no-paginate --next-token n",
     "zjson list-things --page-size",
     "zquery get-thing",
     "zquery get-thing --thing-id a --count x --enabled",
