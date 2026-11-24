@@ -14,41 +14,17 @@ input runs. A run forcing the native route skips the expectations of what
 it refuses, which those tests check.
 """
 
-import json
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 import pytest
 import pytest_asyncio
 
-from apihelpers import ApiSession, CommandRun, Reply, api_session
-from harness_plugin import COMMAND_ENVIRONMENT
+from apihelpers import ApiSession, CommandRun, Reply, api_session, printed
+from harness_plugin import FORCED_NATIVE, MAIN_USAGE, ROUTER, refusal
 
 pytestmark = pytest.mark.asyncio
-
-ROUTER: Final = "AWS_CLI_NATIVE_ROUTER"
-# The run forces the native route, which refuses what only Python runs.
-FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get(ROUTER) == "native"
-# MainArgParser's usage (awscli/argparser.py:25-28), which ends a parse
-# failure's report.
-MAIN_USAGE: Final = (
-    "usage: aws [options] <command> <subcommand> [<subcommand> ...] "
-    "[parameters]\n"
-    "To see help text, you can run:\n"
-    "\n"
-    "  aws help\n"
-    "  aws <command> help\n"
-    "  aws <command> <subcommand> help\n"
-)
-
-
-def refusal(reason: str) -> str:
-    """The line forced native routing prints for `reason`."""
-    return (
-        f"aws: {ROUTER}=native: native implementation unavailable "
-        f"({reason}); Python fallback disabled\n"
-    )
 
 
 def invalid_choice(value: str, maybe: list[str]) -> str:
@@ -75,11 +51,6 @@ def failed(run: CommandRun) -> tuple[str, str, int]:
     """A run's output and request count, for a command that fails before
     any request."""
     return run.stdout, run.stderr, len(run.calls)
-
-
-def printed(value: dict[str, Any]) -> str:
-    """The JSON output of `value`, as the CLI indents it."""
-    return json.dumps(value, indent=4) + "\n"
 
 
 # Operations of services whose tables the editors alone touched, which

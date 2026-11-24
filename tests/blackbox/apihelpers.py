@@ -18,6 +18,7 @@ CLI under test sees the wire.
 """
 
 import functools
+import json
 import traceback
 from collections import deque
 from collections.abc import AsyncIterator, Mapping, Sequence
@@ -117,6 +118,11 @@ class CommandRun:
             f"rc: {self.rc}\nrequests: {operations}\n"
             f"stdout:\n{self.stdout}\nstderr:\n{self.stderr}"
         )
+
+
+def printed(value: Mapping[str, Any]) -> str:
+    """The JSON output of `value`, as the CLI indents it."""
+    return json.dumps(value, indent=4) + "\n"
 
 
 def argv(template: str, **values: object) -> list[str]:

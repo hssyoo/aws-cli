@@ -72,10 +72,7 @@ pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Binding, PythonRe
         .iter()
         .map(|argument| restored(argument, shadowed))
     {
-        let dest = argument
-            .dest
-            .as_deref()
-            .map_or_else(|| argument.name.replace('-', "_"), str::to_owned);
+        let dest = dest_of(argument);
         let Some(value) = parsed.values.value(&dest).filter(|value| !value.is_null()) else {
             continue;
         };
@@ -249,17 +246,49 @@ fn scalar(value: &Parsed) -> Result<Value, PythonReason> {
 }
 
 /// Whether a paging handler raises or writes before `_build_call_parameters`
-/// unpacks a value that fails: `ensure_paging_params_not_set`'s error, or
-/// `--max-items`, whose warning can precede a later argument's failure.
-/// Such a failure is Python's to report.
+/// unpacks the value that failed (`parsed.stopped_dest`), which is then
+/// Python's to report: `ensure_paging_params_not_set`'s error on
+/// `operation-args-parsed`, before every argument; or, with paging on,
+/// `--max-items`' `add_to_params`, which warns when `int()` of its value is
+/// not positive and raises when `int()` does, only when it comes before
+/// the failing argument in the table.
 pub fn precedes_unpack_failure(table: &Table, parsed: &ParseResult<'_>) -> bool {
     let Some(paging) = table.paging.as_ref() else {
         return false;
     };
     let raw = &parsed.args.namespace;
     let paginate = paginate_global(parsed) && !manual_token(paging, raw);
-    (!paginate && paging_params_set(paging, raw).is_some())
-        || raw.value("max_items").is_some_and(|value| !value.is_null())
+    if !paginate {
+        return paging_params_set(paging, raw).is_some();
+    }
+    let Some(max_items) = raw.value("max_items").filter(|value| !value.is_null()) else {
+        return false;
+    };
+    let acts = !scalar(max_items)
+        .and_then(|value| positive(&value))
+        .is_ok_and(|positive| positive);
+    acts && parsed
+        .stopped_dest
+        .as_deref()
+        .is_some_and(|failed| before(table, "max-items", failed))
+}
+
+/// Whether the argument named `name` comes before the one whose dest is
+/// `dest` in the table, the order `_build_call_parameters` walks.
+fn before(table: &Table, name: &str, dest: &str) -> bool {
+    let position =
+        |found: &dyn Fn(&DerivedArgument) -> bool| table.arguments.iter().position(found);
+    let named = position(&|argument| &*argument.name == name);
+    let failed = position(&|argument| dest_of(argument) == dest);
+    matches!((named, failed), (Some(named), Some(failed)) if named < failed)
+}
+
+/// The argument's dest, as argparse names it.
+fn dest_of(argument: &DerivedArgument) -> String {
+    argument
+        .dest
+        .as_deref()
+        .map_or_else(|| argument.name.replace('-', "_"), str::to_owned)
 }
 
 #[cfg(test)]

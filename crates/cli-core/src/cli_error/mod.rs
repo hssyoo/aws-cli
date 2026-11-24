@@ -173,6 +173,11 @@ pub enum PythonReason {
     /// values cannot hold, such as a lone surrogate, or nests deeper than
     /// the native reader follows.
     StartingToken,
+    /// A paging handler raises or warns before the unpack failure the
+    /// native route would report: `ensure_paging_params_not_set` on
+    /// `operation-args-parsed`, or `--max-items`' `add_to_params` ahead of
+    /// the failing argument.
+    PagingHandler,
     /// The operation's auth is one the native client cannot sign with:
     /// anything but SigV4 and none, by the name botocore resolves.
     UnsupportedAuth,
@@ -267,6 +272,7 @@ impl PythonReason {
             Self::UnsupportedTrait => "unsupported_trait",
             Self::Paginator => "paginator",
             Self::StartingToken => "starting_token",
+            Self::PagingHandler => "paging_handler",
             Self::UnportedCustomization => "unported_customization",
             Self::UnsupportedAuth => "unsupported_auth",
             Self::UnsignedPayload => "unsigned_payload",

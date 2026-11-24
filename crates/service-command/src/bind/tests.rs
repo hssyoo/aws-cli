@@ -6,6 +6,7 @@ use super::*;
 use crate::ServiceSource;
 use crate::testing::{Result, parsed, with_models};
 use cli_core::cli_error::Category;
+use cli_router::Verdict;
 
 fn bound(source: &ServiceSource<'_>, argv: &[&str]) -> std::result::Result<Binding, PythonReason> {
     let result = parsed(source, argv);
@@ -323,29 +324,51 @@ fn a_limit_key_named_page_size_is_manual_paging() -> Result<()> {
     })
 }
 
-/// An unpack failure is Python's when a paging handler would raise or warn
-/// before `_build_call_parameters` reached it.
+/// An unpack failure is Python's when a paging handler raises or warns
+/// before `_build_call_parameters` reaches it, under its own reason:
+/// `ensure_paging_params_not_set` on `operation-args-parsed`, before every
+/// argument, or `--max-items`' `add_to_params` when paging stays on, its
+/// `int()` is not positive or raises, and it comes before the failing
+/// argument in the table. Otherwise the failure is the native one.
 #[test]
-fn a_paging_handler_ahead_of_an_unpack_failure_is_noted() -> Result<()> {
+fn a_paging_handler_ahead_of_an_unpack_failure_has_its_reason() -> Result<()> {
+    let route = |argv: &[&str]| crate::testing::route(argv, &[], &crate::testing::files("", ""));
+    let family = ["zquery", "describe-defaults", "--family", "file://missing"];
+    let with = |extra: &[&'static str]| [&family[..], extra].concat();
+    let raised = route(&with(&["--no-paginate", "--page-size", "1"]))?;
+    assert!(
+        matches!(raised, Verdict::Python(PythonReason::PagingHandler)),
+        "{raised:?}"
+    );
+    for extra in [&["--max-items", "1"][..], &["--max-items", "0"], &[]] {
+        let verdict = route(&with(extra))?;
+        assert!(
+            matches!(&verdict, Verdict::Failure(failure) if failure.kind == "paramfile_load"),
+            "{extra:?}: {verdict:?}"
+        );
+    }
+    Ok(())
+}
+
+/// `--max-items`' warning, or its `int()` raising, precedes a failure only
+/// at an argument after it in the table: `--generate-cli-skeleton` comes
+/// after the page options, every member before them.
+#[test]
+fn max_items_precedes_only_a_later_argument_s_failure() -> Result<()> {
     with_models(|models| {
         let source = crate::testing::source(models, &[]);
-        let precedes = |argv: &[&str]| {
-            let table = source
-                .models()
-                .table(argv[0], argv[1])
-                .unwrap_or_else(|| panic!("no table"));
-            precedes_unpack_failure(table, &parsed(&source, argv))
+        let table = source
+            .models()
+            .table("zjson", "list-things")
+            .unwrap_or_else(|| panic!("no table"));
+        let precedes = |max_items: &str, failed: &str| {
+            let mut result = parsed(&source, &["zjson", "list-things", "--max-items", max_items]);
+            result.stopped_dest = Some(failed.to_owned());
+            precedes_unpack_failure(table, &result)
         };
-        assert!(precedes(&[
-            "zjson",
-            "list-things",
-            "--no-paginate",
-            "--page-size",
-            "1"
-        ]));
-        assert!(precedes(&["zjson", "list-things", "--max-items", "1"]));
-        assert!(!precedes(&["zjson", "list-things", "--page-size", "1"]));
-        assert!(!precedes(&["zjson", "list-things", "--no-paginate"]));
-        assert!(!precedes(&["zquery", "get-thing", "--thing-id", "a"]));
+        assert!(precedes("0", "generate_cli_skeleton"));
+        assert!(precedes("-3", "generate_cli_skeleton"));
+        assert!(!precedes("1", "generate_cli_skeleton"));
+        assert!(!precedes("0", "max_results"));
     })
 }
