@@ -82,22 +82,18 @@ fn a_series_is_summarised_over_its_runs() -> Result<(), TaskError> {
 #[test]
 fn the_result_file_reads_back_as_written_and_a_baseline_drops_the_runs() -> Result<(), TaskError> {
     let record = record()?;
-    let text = record.to_json().unwrap_or_default();
-    assert_eq!(Record::parse(&text, "result").ok(), Some(record.clone()));
-    let baseline = record.without_runs();
-    let text = baseline.to_json().unwrap_or_default();
+    let read: Record = serde_json::from_str(&record.to_json()?).map_err(json_error)?;
+    assert_eq!(read, record);
+    let text = record.without_runs().to_json()?;
     assert!(!text.contains("\"runs\": ["), "{text}");
-    let read = Record::parse(&text, "baseline").ok();
-    assert_eq!(
-        read.as_ref().map(|read| &read.series[0].summary),
-        Some(&record.series[0].summary)
-    );
-    assert!(read.is_some_and(|read| read.series[0].runs.is_empty()));
+    let read: Record = serde_json::from_str(&text).map_err(json_error)?;
+    assert_eq!(read.series[0].summary, record.series[0].summary);
+    assert!(read.series[0].runs.is_empty());
     Ok(())
 }
 
 #[test]
-fn another_format_is_refused_in_samples_and_records() -> Result<(), TaskError> {
+fn another_format_is_refused_in_samples_and_baselines() -> Result<(), TaskError> {
     let error = Record::new(
         samples(2, &[run(0.5, 1)])?,
         "linux-x86_64",
@@ -108,18 +104,18 @@ fn another_format_is_refused_in_samples_and_records() -> Result<(), TaskError> {
         error.err().map(|error| error.to_string()),
         Some("perf samples have format 2, expected 1".to_owned())
     );
+    let record = record()?;
     let text =
-        record()?
-            .to_json()
-            .unwrap_or_default()
+        Baseline::new(&record, &record)
+            .to_json()?
             .replacen("\"format\": 2", "\"format\": 9", 1);
     assert_eq!(
-        Record::parse(&text, "the baseline")
+        Baseline::parse(&text, "the baseline")
             .err()
             .map(|error| error.to_string()),
         Some("the baseline has format 9, expected 2".to_owned())
     );
-    assert!(Record::parse("{}", "the baseline").is_err());
+    assert!(Baseline::parse("{}", "the baseline").is_err());
     Ok(())
 }
 
@@ -135,5 +131,34 @@ fn a_series_without_runs_is_refused() -> Result<(), TaskError> {
         error.err().map(|error| error.to_string()),
         Some("perf series json-pages-4 https 20 ms native has no runs".to_owned())
     );
+    Ok(())
+}
+
+#[test]
+fn a_baseline_holds_a_record_of_each_tier_and_reads_back() -> Result<(), TaskError> {
+    let full = record()?;
+    let mut quick = record()?;
+    quick.tier = Tier::Quick;
+    let baseline = Baseline::new(&quick, &full);
+    let text = baseline.to_json()?;
+    let read = Baseline::parse(&text, "baseline")?;
+    assert_eq!(read, baseline);
+    assert_eq!(read.section(Tier::Quick).tier, Tier::Quick);
+    assert_eq!(read.section(Tier::Full).tier, Tier::Full);
+    assert!(read.section(Tier::Full).series[0].runs.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_baseline_with_a_section_of_the_wrong_tier_is_refused() -> Result<(), TaskError> {
+    let full = record()?;
+    let text = Baseline::new(&full, &full).to_json()?;
+    assert_eq!(
+        Baseline::parse(&text, "the baseline")
+            .err()
+            .map(|error| error.to_string()),
+        Some("the baseline: its quick section is not a format 2 quick record".to_owned())
+    );
+    assert!(Baseline::parse(&full.to_json()?, "a result").is_err());
     Ok(())
 }

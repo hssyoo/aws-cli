@@ -6,8 +6,11 @@
 //! time and peak RSS (from `wait4`), and the stub's counts. [`Record::new`]
 //! summarises each series ([`Summary`]) and adds what the harness knows:
 //! the platform key the baselines are filed under and the binary's
-//! commit. The result file is a `Record` with its runs; a baseline is one
-//! without ([`Record::without_runs`]).
+//! commit. The result file is a `Record` with its runs. A platform's
+//! baseline file ([`Baseline`]) holds one record of each tier without its
+//! runs, each measured in its own tier: a series' median depends on the
+//! other series it runs among, so a quick run is judged only against
+//! quick medians.
 
 use serde::{Deserialize, Serialize};
 
@@ -253,19 +256,6 @@ impl Record {
         })
     }
 
-    /// The record read from `text`, refusing another format.
-    pub(super) fn parse(text: &str, origin: &str) -> Result<Self, TaskError> {
-        let record: Self = serde_json::from_str(text)
-            .map_err(|error| deps::error(format!("{origin} is not a perf record: {error}")))?;
-        if record.format != FORMAT {
-            return Err(deps::error(format!(
-                "{origin} has format {}, expected {FORMAT}",
-                record.format
-            )));
-        }
-        Ok(record)
-    }
-
     /// The record as a baseline: the summaries, without the runs.
     pub(super) fn without_runs(&self) -> Self {
         let mut baseline = self.clone();
@@ -280,6 +270,61 @@ impl Record {
         serde_json::to_string_pretty(self)
             .map(|text| text + "\n")
             .map_err(|error| deps::error(format!("perf record: {error}")))
+    }
+}
+
+/// A platform's baseline file: a record of each tier, without runs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(super) struct Baseline {
+    pub(super) format: u32,
+    pub(super) quick: Record,
+    pub(super) full: Record,
+}
+
+impl Baseline {
+    pub(super) fn new(quick: &Record, full: &Record) -> Self {
+        Self {
+            format: FORMAT,
+            quick: quick.without_runs(),
+            full: full.without_runs(),
+        }
+    }
+
+    /// The baseline file read from `text`, refusing another format or a
+    /// section of the other tier.
+    pub(super) fn parse(text: &str, origin: &str) -> Result<Self, TaskError> {
+        let baseline: Self = serde_json::from_str(text)
+            .map_err(|error| deps::error(format!("{origin} is not a perf baseline: {error}")))?;
+        if baseline.format != FORMAT {
+            return Err(deps::error(format!(
+                "{origin} has format {}, expected {FORMAT}",
+                baseline.format
+            )));
+        }
+        for (tier, record) in [(Tier::Quick, &baseline.quick), (Tier::Full, &baseline.full)] {
+            if record.format != FORMAT || record.tier != tier {
+                return Err(deps::error(format!(
+                    "{origin}: its {} section is not a format {FORMAT} {} record",
+                    tier.name(),
+                    tier.name()
+                )));
+            }
+        }
+        Ok(baseline)
+    }
+
+    /// The section a result of `tier` is judged against.
+    pub(super) fn section(&self, tier: Tier) -> &Record {
+        match tier {
+            Tier::Quick => &self.quick,
+            Tier::Full => &self.full,
+        }
+    }
+
+    pub(super) fn to_json(&self) -> Result<String, TaskError> {
+        serde_json::to_string_pretty(self)
+            .map(|text| text + "\n")
+            .map_err(|error| deps::error(format!("perf baseline: {error}")))
     }
 }
 

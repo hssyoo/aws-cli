@@ -20,8 +20,8 @@ pub(super) enum Mode {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Options {
     pub(super) mode: Mode,
-    /// `--full`: every series; without it, the quick tier. A baseline is
-    /// always the full tier.
+    /// `--full`: every series; without it, the quick tier. A baseline
+    /// measures both, whatever this says.
     pub(super) tier: Tier,
     /// `--aws-binary PATH`: measure this binary instead of the default
     /// artifact.
@@ -89,9 +89,6 @@ pub(super) fn parse(args: &[String]) -> Result<Options, TaskError> {
                 ));
             }
             options.mode = mode;
-            if mode == Mode::WriteBaseline {
-                options.tier = Tier::Full;
-            }
             continue;
         }
         if !VALUED.contains(&flag.as_str()) {

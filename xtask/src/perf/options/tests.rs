@@ -98,9 +98,8 @@ fn bad_options_are_refused_by_name() {
 }
 
 #[test]
-fn the_check_is_quick_unless_full_and_a_baseline_is_always_full() -> Result<(), TaskError> {
+fn the_check_is_quick_unless_full() -> Result<(), TaskError> {
     assert_eq!(parse(&args(&["--check"]))?.tier, Tier::Quick);
-    assert_eq!(parse(&args(&["--full"]))?.tier, Tier::Full);
-    assert_eq!(parse(&args(&["--write-baseline"]))?.tier, Tier::Full);
+    assert_eq!(parse(&args(&["--check", "--full"]))?.tier, Tier::Full);
     Ok(())
 }

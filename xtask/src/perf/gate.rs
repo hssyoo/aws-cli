@@ -50,35 +50,40 @@ pub(super) struct Tolerances {
 
 const MIB: f64 = 1024.0 * 1024.0;
 
-/// The quick tier's tolerances, sized to its measured noise.
+/// The quick tier's tolerances: three times the largest spread of a
+/// median across five quick runs of one binary (wall 3.0%, CPU 1.1%, RSS
+/// 0.5%; at least 0.64 ms, 0.35 ms and 0.11 MiB on the smallest series),
+/// rounded up to the next 5% and the next millisecond or MiB.
 pub(super) const QUICK: Tolerances = Tolerances {
     wall: Tolerance {
-        relative: 0.20,
-        absolute: 0.005,
+        relative: 0.10,
+        absolute: 0.002,
     },
     cpu: Tolerance {
-        relative: 0.20,
-        absolute: 0.005,
+        relative: 0.05,
+        absolute: 0.002,
     },
     rss: Tolerance {
-        relative: 0.10,
-        absolute: 4.0 * MIB,
+        relative: 0.05,
+        absolute: MIB,
     },
 };
 
-/// The full tier's tolerances, sized to its measured noise.
+/// The full tier's tolerances, by the same rule over three full runs
+/// (wall 2.9%, CPU 3.2%, RSS 0.7%; at least 0.81 ms, 0.73 ms and
+/// 0.18 MiB).
 pub(super) const FULL: Tolerances = Tolerances {
     wall: Tolerance {
-        relative: 0.20,
-        absolute: 0.005,
+        relative: 0.10,
+        absolute: 0.003,
     },
     cpu: Tolerance {
-        relative: 0.20,
-        absolute: 0.005,
+        relative: 0.10,
+        absolute: 0.003,
     },
     rss: Tolerance {
-        relative: 0.10,
-        absolute: 4.0 * MIB,
+        relative: 0.05,
+        absolute: MIB,
     },
 };
 

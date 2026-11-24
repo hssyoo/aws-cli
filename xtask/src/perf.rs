@@ -37,7 +37,7 @@ use std::process::Command;
 
 use crate::{TaskError, deps, harness, process};
 use options::{Mode, Options};
-use record::{Binary, Record, Samples};
+use record::{Baseline, Binary, Record, Samples, Tier};
 
 pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
     let options = options::parse(args)?;
@@ -57,28 +57,24 @@ pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
              with no uncommitted changes",
         ));
     }
-    let samples = measure(root, &binary, &options)?;
-    let record = Record::new(samples, &platform(), identity, options.tier)?;
     let out = options.out.as_ref().map_or_else(
         || root.join("target/perf/result.json"),
         |path| root.join(path),
     );
-    fs::write(&out, record.to_json()?)?;
-    let mut stdout = io::stdout().lock();
-    write!(stdout, "{}", table::render(&record))?;
-    writeln!(stdout, "perf: result in {}", out.display())?;
-    drop(stdout);
     let baseline = root
         .join("tests/perf/baselines")
-        .join(format!("{}.json", record.platform));
+        .join(format!("{}.json", platform()));
+    let take = |tier, out: &Path| take(root, &binary, &options, &identity, tier, out);
     match options.mode {
-        Mode::Report => Ok(()),
-        Mode::Check => check(&baseline, &record),
+        Mode::Report => take(options.tier, &out).map(drop),
+        Mode::Check => check(&baseline, &take(options.tier, &out)?),
         Mode::WriteBaseline => {
+            let full = take(Tier::Full, &out)?;
+            let quick = take(Tier::Quick, &out.with_extension("quick.json"))?;
             if let Some(directory) = baseline.parent() {
                 fs::create_dir_all(directory)?;
             }
-            fs::write(&baseline, record.without_runs().to_json()?)?;
+            fs::write(&baseline, Baseline::new(&quick, &full).to_json()?)?;
             writeln!(
                 io::stdout(),
                 "perf: baseline written to {}",
@@ -87,6 +83,25 @@ pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
             Ok(())
         }
     }
+}
+
+/// One measurement of `binary` at `tier`: the record, written to `out`
+/// and printed as a table.
+fn take(
+    root: &Path,
+    binary: &Path,
+    options: &Options,
+    identity: &Binary,
+    tier: Tier,
+    out: &Path,
+) -> Result<Record, TaskError> {
+    let samples = measure(root, binary, options, tier)?;
+    let record = Record::new(samples, &platform(), identity.clone(), tier)?;
+    fs::write(out, record.to_json()?)?;
+    let mut stdout = io::stdout().lock();
+    write!(stdout, "{}", table::render(&record))?;
+    writeln!(stdout, "perf: result in {}", out.display())?;
+    Ok(record)
 }
 
 /// `<os>-<arch>` as Rust names them: the key a baseline is filed under.
@@ -138,7 +153,12 @@ fn git(root: &Path, args: &[&str]) -> Result<String, TaskError> {
 /// The samples measure.py takes of `binary`. The runs hold the local CLI
 /// test lock, so no other CLI suite of this worktree loads the machine or
 /// contends for the CRT's process lock meanwhile.
-fn measure(root: &Path, binary: &Path, options: &Options) -> Result<Samples, TaskError> {
+fn measure(
+    root: &Path,
+    binary: &Path,
+    options: &Options,
+    tier: Tier,
+) -> Result<Samples, TaskError> {
     let directory = root.join("target/perf");
     fs::create_dir_all(&directory)?;
     let samples = directory.join("samples.json");
@@ -147,9 +167,8 @@ fn measure(root: &Path, binary: &Path, options: &Options) -> Result<Samples, Tas
         _ => {}
     }
     let _cli_test_guard = process::cli_test_guard(root)?;
-    process::run(&mut measure_command(
-        root, binary, &directory, &samples, options,
-    ))?;
+    let paths = [binary, &directory, &samples];
+    process::run(&mut measure_command(root, paths, options, tier))?;
     let text = fs::read_to_string(&samples)?;
     serde_json::from_str(&text).map_err(|error| {
         deps::error(format!(
@@ -159,12 +178,13 @@ fn measure(root: &Path, binary: &Path, options: &Options) -> Result<Samples, Tas
     })
 }
 
+/// measure.py's command: `binary` measured at `tier`, with its venv and
+/// scratch under `directory` and its samples written to `samples`.
 fn measure_command(
     root: &Path,
-    binary: &Path,
-    directory: &Path,
-    samples: &Path,
+    [binary, directory, samples]: [&Path; 3],
     options: &Options,
+    tier: Tier,
 ) -> Command {
     let mut command = Command::new("python3");
     // `-B` keeps the runner's imports from writing bytecode under `tests/`.
@@ -185,7 +205,7 @@ fn measure_command(
         .arg("--out")
         .arg(samples)
         .arg("--tier")
-        .arg(options.tier.name());
+        .arg(tier.name());
     for (flag, value) in [("--runs", options.runs), ("--warmup", options.warmup)] {
         if let Some(value) = value {
             command.arg(flag).arg(value.to_string());
@@ -216,8 +236,9 @@ fn check(path: &Path, record: &Record) -> Result<(), TaskError> {
         }
         Err(error) => return Err(error.into()),
     };
-    let baseline = Record::parse(&text, &path.display().to_string())?;
-    let findings = gate::judge(&baseline, record);
+    let baselines = Baseline::parse(&text, &path.display().to_string())?;
+    let baseline = baselines.section(record.tier);
+    let findings = gate::judge(baseline, record);
     write!(stdout, "{}", table::findings(&findings))?;
     let failed = findings
         .iter()
@@ -225,8 +246,9 @@ fn check(path: &Path, record: &Record) -> Result<(), TaskError> {
         .count();
     writeln!(
         stdout,
-        "perf check: {} series against the baseline of {} at {}; {failed} findings fail",
+        "perf check: {} series against the {} baseline of {} at {}; {failed} findings fail",
         record.series.len(),
+        record.tier.name(),
         baseline.platform,
         baseline
             .binary

@@ -4,6 +4,15 @@
 services, on the native route and on the Python route, and
 `cargo xtask perf --check` holds the result to a committed baseline.
 
+There are two tiers:
+
+| Tier | Runs | Series | Time on the reference machine | Use |
+|---|---|---|---|---|
+| quick (default) | each case's `quick` series: a single call per protocol at 0 ms, a 10-page and a 100-page json case at 20 ms, the 4.4 MB page and `s3 ls`, all over HTTPS | 14 | 71 s of measuring, about 1.5 min with startup | the gate on every change: `cargo xtask perf --check` |
+| full (`--full`) | every scheme and latency of every case | 98 | 473 s, about 8 min | perf-focused changes, and the baseline |
+
+The reference machine is an Apple M4 Pro (12 CPUs) on macOS 27.
+
 Nothing leaves the machine. Every command runs with the stub as
 `--endpoint-url` and as `AWS_ENDPOINT_URL`, fake keys, empty credential
 files, a scratch `HOME` and the instance metadata service off.
@@ -12,20 +21,22 @@ files, a scratch `HOME` and the instance metadata service off.
 
 ```sh
 cargo xtask build                    # perf refuses a missing or stale binary
-cargo xtask perf                     # every case; table on stdout
+cargo xtask perf                     # the quick tier; table on stdout
 cargo xtask perf --check             # ... and judge it against the baseline
+cargo xtask perf --check --full      # the whole matrix, judged
 cargo xtask perf --case query-single --route native --runs 20
 cargo xtask perf --aws-binary path/to/aws --commit abc1234 --out before.json
 ```
 
 | Option | Meaning |
 |---|---|
-| `--check` | Judge the result against `baselines/<os>-<arch>.json`. A platform without a baseline is reported and not judged. |
-| `--write-baseline` | Write the result as its platform's baseline (see below). |
+| `--check` | Judge the result against its tier's section of `baselines/<os>-<arch>.json`. A platform without a baseline is reported and not judged. |
+| `--full` | The full tier instead of the quick one. |
+| `--write-baseline` | Measure the full tier and then the quick tier, and write both as the platform's baseline (see below). |
 | `--aws-binary PATH`, `--commit REV` | Measure another binary, such as a build of an earlier commit, and record the commit it came from. Without it the default artifact is measured, as `blackbox` selects it: it must exist and be no older than any source Cargo built it from. |
 | `--case NAME`, `--route native\|python` | Only these cases or routes (repeatable). |
 | `--runs N`, `--warmup N` | Recorded and unrecorded runs per series, over the case file's (10 and 2). |
-| `--out PATH` | The result file; `target/perf/result.json` by default. |
+| `--out PATH` | The result file; `target/perf/result.json` by default. `--write-baseline` writes the quick tier's beside it, as `<name>.quick.json`. |
 
 The runs take the worktree's CLI test lock. Across worktrees, run perf as
 the other CLI suites run (`serial.sh`), or the CRT's machine-wide process
@@ -36,8 +47,9 @@ lock and the extra load both distort the numbers.
 `run.py` provisions a venv from the blackbox harness's hash-pinned lock
 (for `trustme`, which makes the stub's test CA) and runs `measure.py`. That
 starts two stubs (`stub.py`), one HTTP and one HTTPS. A series is a case
-of `cases.json` at one of its schemes and latencies, on one route. The
-runs go round-robin: each round runs every series once, the two routes
+of `cases.json` at one of its schemes and latencies, on one route; the full
+tier runs every one, the quick tier the pairs each case's `quick` entry
+names. The runs go round-robin: each round runs every series once, the two routes
 taking turns, and the first `warmup` rounds are not recorded. A passing
 load on the machine (a build, another suite) then falls on every series
 alike and shows as spread, which the gate's noise rule sees, instead of
@@ -86,24 +98,75 @@ open for further requests until the client closes it or asks for
 
 ## The result file
 
-`target/perf/result.json` (format 1) records the platform key, the host
-(OS, release, CPU model, CPU count), the binary's path and commit (and
-whether the worktree had uncommitted changes to tracked files), the run
-counts, and every series with its summary and its raw runs. A baseline is
-the same file without the raw runs.
+`target/perf/result.json` (format 2) records the platform key, the host
+(OS, release, CPU model, CPU count), the binary's path (relative to the
+checkout when it lies inside it) and commit (and whether the worktree had
+uncommitted changes to tracked files), the tier, the run counts, and every
+series with its summary and its raw runs.
+
+A platform's baseline, `baselines/<os>-<arch>.json`, is one file with two
+sections, `quick` and `full`: a record of each tier, without the raw runs.
+The quick series are a subset of the full ones, with the same ids and run
+counts, but each tier is measured on its own, because a series' median
+depends on the series it runs among. In the full tier's rounds, dominated
+by long runs that idle through injected round trips, the short native
+calls (about 14 ms) ran 15 to 17% slower, in wall and CPU time alike, than
+in the quick tier's, most likely because a short burst after idle time
+lands on a slower core or a lower clock. The Python calls (about 100 ms) differed by 1%, and the paged and
+large cases by 2% or less. Judging a quick run against full-tier medians would
+therefore report false improvements past the quick tier's tolerances.
 
 ## The gate
 
-`--check` judges each series of the result against the baseline series of
-the same case, scheme, latency and route:
+`--check` judges each series of the result against the series of the same
+case, scheme, latency and route in its tier's section of the baseline:
 
-| Measurement | Gate | Why |
-|---|---|---|
-| connections opened, requests made | equal to the baseline's, in every run | Counts have no noise. A change is a behaviour change (a lost connection pool shows here first), so it fails even when the time is within bounds. |
-| wall time p50 | may grow by 20%, and at least 5 ms | Two complete runs half an hour apart on the reference machine (an M4 Pro shared with other builds, load average 3 to 9) moved zero-latency medians by 8% typically and 17% at most. A 10% bound failed 2 to 4 series of each run against the other; 20% failed none. The 5 ms floor is several times the spread of a 13 to 20 ms native call (MAD 0.1 to 0.3 ms), so small cases do not fail on a few milliseconds of scheduling. |
-| CPU (user + system) p50 | may grow by 20%, and at least 5 ms, on series without injected latency | The same two runs moved zero-latency CPU medians by up to 14%. With injected latency the CPU time of the same command moved by up to 69% between the runs, on both routes: a process that idles through a round trip is rescheduled onto a slower core or a lower clock, so its CPU time follows the machine, not the code. It is reported there, not gated. |
-| peak RSS p50 | may grow by 10%, and at least 4 MiB | Peak RSS moved by under 2% between the runs; 10% (about 2 MiB native, 7 to 9 MiB on Python) is past any noise seen, and the floor keeps allocator rounding from failing a small case. |
-| p95, throughputs, output size | reported, not gated | The tail of ten runs is a single run; throughputs follow from the median wall time. |
+| Measurement | Gate |
+|---|---|
+| connections opened, requests made | equal to the baseline's, in every run: counts have no noise, and a change is a behaviour change (a lost connection pool shows here first), so it fails even when the time is within bounds |
+| wall time p50 | may grow by the tier's bound below |
+| CPU (user + system) p50 | may grow by the tier's bound, on series without injected latency only |
+| peak RSS p50 | may grow by the tier's bound |
+| p95, throughputs, output size | reported, not gated: the tail of ten runs is a single run, and throughputs follow from the median wall time |
+
+| Tier | wall p50 | CPU p50 (0 ms series) | peak RSS p50 |
+|---|---|---|---|
+| quick | 10%, and at least 2 ms | 5%, and at least 2 ms | 5%, and at least 1 MiB |
+| full | 10%, and at least 3 ms | 10%, and at least 3 ms | 5%, and at least 1 MiB |
+
+**Where the bounds come from.** One binary (d2769be4f) was measured five
+times in the quick tier and three times in the full tier, interleaved over
+forty minutes on the reference machine with nothing else running (load
+average 1.1 to 1.6 at each start, after 6.9 at the first from the runs
+before it). For each series and metric, the spread of its median is
+the largest minus the smallest across those runs:
+
+| Tier | Metric | Series | Spread of the median: p50, p90, max | Largest absolute spread on a series under 50 ms |
+|---|---|---|---|---|
+| quick | wall | 14 | 0.7%, 1.9%, 3.0% | 0.64 ms |
+| quick | CPU (0 ms) | 10 | 0.5%, 1.1%, 1.1% | 0.35 ms |
+| quick | RSS | 14 | 0.2%, 0.3%, 0.5% | 0.11 MiB (any size) |
+| full | wall | 98 | 0.4%, 1.6%, 2.9% | 0.81 ms |
+| full | CPU (0 ms) | 36 | 0.7%, 2.7%, 3.2% | 0.73 ms |
+| full | RSS | 98 | 0.1%, 0.3%, 0.7% | 0.18 MiB (any size) |
+
+Each bound is three times the largest spread, rounded up to the next 5%,
+and each floor three times the largest absolute spread, rounded up to the
+next millisecond or MiB. Three times covers a check comparing two medians
+that each carry this error, and the few repeats understating the spread.
+Replayed with these bounds, every quick run judged against every other
+passes, the closest finding at 35% of its limit, and both later full runs
+pass against the first, the closest at 34%.
+
+**CPU time with injected latency** is not gated. In earlier runs the same
+command's CPU time moved by up to 69% between runs on both routes: a
+process that idles through a round trip is rescheduled onto a slower core
+or a lower clock, so its CPU time follows the machine, not the code.
+
+**The machine must be quiet.** The bounds hold only on a machine doing
+nothing else. On this machine under other builds (load average 3 to 9),
+earlier runs moved medians by 8% typically and 17% at most between runs, and
+the gate would fail. The recorded load average says when that was so.
 
 A growth past both bounds fails. A shrinkage past them is reported as an
 improvement, which asks for the baseline to be refreshed.
@@ -122,16 +185,17 @@ is reported as new.
 
 ## Refreshing a baseline
 
-A baseline is the result of a complete run (every case, both routes, the
+A baseline is a complete run of both tiers (every case, both routes, the
 case file's run counts) of the default artifact of a committed head with no
 uncommitted changes to tracked files; `--write-baseline` refuses anything
-else. On an idle machine of the platform:
+else. It takes about 10 minutes. On an idle machine of the platform:
 
 ```sh
 git status --short                   # clean
 cargo xtask build
-cargo xtask perf --write-baseline    # writes baselines/<os>-<arch>.json
-cargo xtask perf --check             # a second run must pass against it
+cargo xtask perf --write-baseline    # full then quick: baselines/<os>-<arch>.json
+cargo xtask perf --check             # a second quick run must pass against it
+cargo xtask perf --check --full      # and a second full run
 git add tests/perf/baselines && git commit
 ```
 
@@ -146,7 +210,8 @@ reported as CHANGED (they are judged exactly), and the times it improves as
 improved. That failing check is the before-and-after judgement, so keep it:
 
 1. On the change's head, before refreshing anything, run
-   `cargo xtask perf --check --out target/perf/after.json`. Every CHANGED
+   `cargo xtask perf --check --full --out target/perf/after.json` (and the
+   quick `cargo xtask perf --check`). Every CHANGED
    and improved line must be one the change intends (for connection reuse:
    one connection where there were one per page, and shorter times on the
    paged and latency cases), and nothing may be REGRESSED.
@@ -164,7 +229,9 @@ pages of `content_type`, each built from `page` with `$items` (the page's
 `items_per_page` copies of `item`, joined by `separator`, with `$index`
 numbering the items from 0 across pages) and `$marker` (`marker` with
 `$next` the next page's number, on every page but the last). The case runs
-on both routes, so the native route must be able to run it.
+on both routes, so the native route must be able to run it. A `quick`
+entry (`schemes` and `latencies_ms`, among the case's own) puts those
+series in the quick tier too; keep that tier to a couple of minutes.
 
 ## Linux and CI
 
@@ -172,9 +239,11 @@ The harness runs on macOS and Linux (`ru_maxrss` is read in the unit each
 reports). Each platform has its own baseline, `<os>-<arch>` as Rust names
 it; one without a baseline is reported and not judged.
 
-CI should run it as a job of its own, not inside `cargo xtask test`: a
-full run takes several minutes, and timing needs a machine that is doing
-nothing else. On a dedicated runner of each platform that has a baseline,
-after `cargo xtask build`, run `cargo xtask perf --check` and keep
-`target/perf/result.json` as an artifact. A shared or virtualised runner
-will often be too noisy to judge; the check says so rather than passing.
+CI should run it as a job of its own, not inside `cargo xtask test`:
+timing needs a machine that is doing nothing else. On a dedicated runner of
+each platform that has a baseline, after `cargo xtask build`, run
+`cargo xtask perf --check` (quick) on every change and
+`cargo xtask perf --check --full` for changes to the client, the transport
+or the paginator, and keep `target/perf/result.json` as an artifact. A
+shared or virtualised runner will often be too noisy to judge; the check
+says so rather than passing.
