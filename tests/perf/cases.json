@@ -225,6 +225,7 @@
           "https"
         ],
         "latencies_ms": [
+          0,
           20
         ]
       },
