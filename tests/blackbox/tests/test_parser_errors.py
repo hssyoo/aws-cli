@@ -10,6 +10,7 @@ import pytest_asyncio
 from localstub import AsyncHTTPTestServer
 
 from credhelpers import credential_env
+from harness_plugin import MAIN_USAGE
 from s3helpers import failing_stream, run_cli_with_streams
 from tests.blackbox.utils import mock_server, run_cli
 
@@ -20,17 +21,6 @@ PARAM_VALIDATION_PREFIX: Final = (
 )
 
 
-# MainArgParser's usage (awscli/argparser.py:18-28), which names the program
-# `aws` whatever the binary's file name, `aws.exe` on Windows included.
-MAIN_USAGE: Final = (
-    "usage: aws [options] <command> <subcommand> [<subcommand> ...] "
-    "[parameters]\n"
-    "To see help text, you can run:\n"
-    "\n"
-    "  aws help\n"
-    "  aws <command> help\n"
-    "  aws <command> <subcommand> help\n"
-)
 
 
 @pytest_asyncio.fixture
