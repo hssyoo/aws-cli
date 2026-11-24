@@ -136,14 +136,22 @@ fn dynamodb_is_uncovered_only_by_its_cli_customizations() -> Result<()> {
 const REMOVALS: &str = "awscli.customizations.removals.register_removals";
 const WIZARDS: &str = "awscli.customizations.wizard.commands.register_wizard_commands";
 
-/// Every row reached through root table events names an initializer the
-/// pack recorded as a table editor, listed under root table events alone:
-/// the rows describe the AWS CLI the fallback runs.
+/// The rows reached through root table events are the initializers the
+/// pack recorded as table editors, each listed under root table events
+/// alone: the rows describe the AWS CLI the fallback runs, and the pack's
+/// list of editors and the table's cannot drift apart.
 #[test]
-fn every_editor_row_is_a_recorded_editor_listed_under_root_tables() -> Result<()> {
+fn the_editor_rows_are_the_recorded_editors_listed_under_root_tables() -> Result<()> {
     with_models(|models| {
         let patterns = models.patterns();
         let editors = CLI.iter().filter(|row| row.reached == Reached::RootTable);
+        for recorded in &patterns.table_editors {
+            assert!(
+                editors.clone().any(|row| row.entry == recorded.entry.name()),
+                "{} has no row",
+                recorded.entry.name()
+            );
+        }
         for row in editors {
             assert!(
                 patterns
