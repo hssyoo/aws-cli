@@ -136,6 +136,19 @@
       "output": {
         "shape": "SearchUsersResponse"
       }
+    },
+    "GetDocument": {
+      "name": "GetDocument",
+      "http": {
+        "method": "GET",
+        "requestUri": "/documents/{Id}"
+      },
+      "input": {
+        "shape": "GetDocumentRequest"
+      },
+      "output": {
+        "shape": "GetDocumentResult"
+      }
     }
   },
   "shapes": {
@@ -568,6 +581,41 @@
           "shape": "String"
         }
       }
+    },
+    "GetDocumentRequest": {
+      "type": "structure",
+      "required": [
+        "Id"
+      ],
+      "members": {
+        "Id": {
+          "shape": "String",
+          "location": "uri",
+          "locationName": "Id"
+        }
+      }
+    },
+    "GetDocumentResult": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "String"
+        },
+        "Ratio": {
+          "shape": "Double"
+        },
+        "Doc": {
+          "shape": "Document"
+        }
+      }
+    },
+    "Double": {
+      "type": "double"
+    },
+    "Document": {
+      "type": "structure",
+      "members": {},
+      "document": true
     }
   }
 }
