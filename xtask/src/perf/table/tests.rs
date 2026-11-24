@@ -18,7 +18,7 @@ fn samples() -> Result<Samples, TaskError> {
                "route": "native", "pages": 1, "load_average": [1.0, 1.0], "runs": [run(wall)]})
     };
     serde_json::from_value(json!({
-        "format": 2,
+        "format": 3,
         "tier": "quick",
         "host": {"system": "Darwin", "release": "27", "machine": "arm64",
                  "os": "macOS", "cpu": "Apple M4 Pro", "cpus": 12},

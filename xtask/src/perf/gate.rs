@@ -14,8 +14,9 @@
 //!   slower core or a lower clock, so its CPU time follows the machine).
 //!   A comparison pairs each head run with the base run of the same
 //!   round, so drift on the machine, which moves both, cancels, and
-//!   judges the median of the runs' log ratios. A baseline check judges
-//!   the median against the stored one. Either way, an estimate whose 95%
+//!   judges the crossover estimate of their log ratios ([`crossover`]),
+//!   which cancels what running first or second in a round does. A
+//!   baseline check judges the median against the stored one. Either way, an estimate whose 95%
 //!   resolution (twice its standard error, from the deviation) is wider
 //!   than the tolerance cannot tell a regression from noise and is
 //!   reported as too noisy to judge.
@@ -416,32 +417,83 @@ pub(super) fn common_shift(least: f64, greatest: f64) -> f64 {
     }
 }
 
-/// The verdict on the head's runs paired with the base's runs of the same
-/// rounds: the median of their log ratios, scaled to the base's median,
-/// under `tolerance`.
+/// The head against the base on one measurement: the estimated log
+/// ratio, its standard error, and the base's median it scales.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Crossover {
+    pub(super) log_ratio: f64,
+    pub(super) error: f64,
+    pub(super) reference: f64,
+}
+
+impl Crossover {
+    /// The head's value the estimate gives.
+    pub(super) fn head(self) -> f64 {
+        self.reference * self.log_ratio.exp()
+    }
+
+    /// The width, in the measurement's unit, the estimate resolves at
+    /// 95%: twice its standard error.
+    pub(super) fn resolution(self) -> f64 {
+        self.reference * (2.0 * self.error).exp_m1()
+    }
+}
+
+/// The crossover estimate of `head` against `base`, runs of the same
+/// rounds whose two binaries ran back to back, in an order that alternates
+/// from round to round. The first of the two runs of a round can cost more
+/// than the second (5 to 6 ms, 15 to 20%, on a 14 to 35 ms native call
+/// measured on macOS) whichever binary it is, so a round's log ratio
+/// carries that cost with one sign and the next round's with the other.
+/// The mean of each pair of rounds' log ratios cancels it exactly, as a
+/// crossover trial cancels its period effect; the estimate is the median
+/// of those means, and its error comes from their deviation. `None` when
+/// the runs do not pair up ([`super::record::alternates`]).
+pub(super) fn crossover(base: &[Run], head: &[Run], measure: fn(&Run) -> f64) -> Option<Crossover> {
+    if !super::record::alternates(base, head) {
+        return None;
+    }
+    let ratios: Vec<f64> = base
+        .iter()
+        .zip(head)
+        .map(|(base, head)| (measure(head) / measure(base)).ln())
+        .collect();
+    let pairs: Vec<f64> = ratios
+        .chunks_exact(2)
+        .map(|pair| f64::midpoint(pair[0], pair[1]))
+        .collect();
+    let spread = Spread::of(&pairs)?;
+    let base_values: Vec<f64> = base.iter().map(measure).collect();
+    Some(Crossover {
+        log_ratio: spread.p50,
+        error: spread.median_error(),
+        reference: percentile(&base_values, 0.5)?,
+    })
+}
+
+/// The verdict on the head's runs against the base's runs of the same
+/// rounds, by their [`crossover`] estimate, under `tolerance`.
 pub(super) fn paired(
     base: &[Run],
     head: &[Run],
     measure: fn(&Run) -> f64,
     tolerance: Tolerance,
 ) -> Verdict {
-    let ratios: Vec<f64> = base
-        .iter()
-        .zip(head)
-        .map(|(base, head)| (measure(head) / measure(base)).ln())
-        .collect();
-    let base_values: Vec<f64> = base.iter().map(measure).collect();
-    let (Some(spread), Some(reference)) = (Spread::of(&ratios), percentile(&base_values, 0.5))
-    else {
-        // No pair of runs: nothing resolves the limit.
+    let Some(estimate) = crossover(base, head, measure) else {
+        // Runs that do not pair up resolve nothing; `check_pairs` refuses
+        // them before any verdict.
         return Verdict::Noisy {
             resolution: f64::INFINITY,
             limit: tolerance.absolute,
         };
     };
-    let now = reference * spread.p50.exp();
-    let resolution = reference * ((2.0 * spread.median_error()).exp() - 1.0);
-    growth(reference, now, tolerance.limit(reference), resolution)
+    let reference = estimate.reference;
+    growth(
+        reference,
+        estimate.head(),
+        tolerance.limit(reference),
+        estimate.resolution(),
+    )
 }
 
 #[cfg(test)]

@@ -42,7 +42,20 @@ fn run(wall: f64, rss_mib: f64, load: f64) -> Run {
         response_bytes: 1.0e6,
         stdout_bytes: 1.0e5,
         load_average: load,
+        position: 0,
     }
+}
+
+/// `runs` placed as a comparison places them: the base first in even
+/// rounds and second in odd ones, the head the other way round.
+fn placed(runs: Vec<Run>, head: bool) -> Vec<Run> {
+    runs.into_iter()
+        .enumerate()
+        .map(|(round, run)| Run {
+            position: u32::from((round % 2 == 1) != head),
+            ..run
+        })
+        .collect()
 }
 
 fn spread(values: &[f64]) -> Spread {
@@ -131,8 +144,8 @@ fn verdicts(findings: &[Finding]) -> Vec<(Metric, Verdict)> {
 }
 
 fn comparison(base: Vec<Run>, head: Vec<Run>, limit: Option<f64>) -> Vec<Finding> {
-    let base = record("M4", vec![series(0, base, ONE)]);
-    let head = record("M4", vec![series(0, head, ONE)]);
+    let base = record("M4", vec![series(0, placed(base, false), ONE)]);
+    let head = record("M4", vec![series(0, placed(head, true), ONE)]);
     judge_comparison(&base, &head, Some(TOLERANCES), limit)
 }
 
@@ -188,7 +201,9 @@ fn scattered_ratios_are_too_noisy_to_judge() {
         .iter()
         .enumerate()
         .map(|(round, run)| {
-            let scale = if round % 2 == 0 { 1.4 } else { 0.7 };
+            // A different change in each pair of rounds: no position effect,
+            // which the crossover would cancel, but scatter.
+            let scale = [1.4, 0.7, 1.2, 0.8, 1.0][round / 2];
             Run {
                 wall_s: run.wall_s * scale,
                 ..run.clone()
@@ -240,9 +255,15 @@ fn ends_share_the_smaller_change_when_they_move_the_same_way() {
 
 #[test]
 fn a_loaded_machine_is_not_judged_but_its_counts_are() {
-    let base = record("M4", vec![series(0, drifting(1.0, &[50.0], 9.0), ONE)]);
+    let base = record(
+        "M4",
+        vec![series(0, placed(drifting(1.0, &[50.0], 9.0), false), ONE)],
+    );
     let more = Exact { min: 100, max: 100 };
-    let head = record("M4", vec![series(0, drifting(2.0, &[50.0], 9.0), more)]);
+    let head = record(
+        "M4",
+        vec![series(0, placed(drifting(2.0, &[50.0], 9.0), true), more)],
+    );
     let findings = judge_comparison(&base, &head, Some(TOLERANCES), Some(4.0));
     let load = Verdict::Loaded {
         load: 9.0,
@@ -291,8 +312,14 @@ fn without_a_calibration_only_the_counts_are_judged() {
 
 #[test]
 fn cpu_time_is_not_judged_on_a_series_with_injected_latency() {
-    let base = record("M4", vec![series(20, drifting(1.0, &[50.0], 1.0), ONE)]);
-    let head = record("M4", vec![series(20, drifting(1.0, &[50.0], 1.0), ONE)]);
+    let base = record(
+        "M4",
+        vec![series(20, placed(drifting(1.0, &[50.0], 1.0), false), ONE)],
+    );
+    let head = record(
+        "M4",
+        vec![series(20, placed(drifting(1.0, &[50.0], 1.0), true), ONE)],
+    );
     let metrics: Vec<Metric> = judge_comparison(&base, &head, Some(TOLERANCES), None)
         .iter()
         .map(|finding| finding.metric)
@@ -385,4 +412,73 @@ fn the_load_limit_adds_its_headroom_per_cpu() {
         ..limit
     };
     assert!((limit.value() - 4.6).abs() < 1e-9);
+}
+
+/// The native `json-pages-100` series at 0 ms of a comparison of two
+/// builds on an idle machine, wall times in ms: whichever binary ran first
+/// in a round ran about 6 ms slower.
+const FIRST_SLOWER_BASE: [f64; 10] = [34.8, 28.8, 33.7, 28.8, 36.2, 28.7, 35.2, 28.4, 34.4, 29.3];
+const FIRST_SLOWER_HEAD: [f64; 10] = [28.8, 34.6, 28.3, 34.4, 28.9, 35.4, 28.7, 34.3, 28.3, 33.3];
+
+fn walls(milliseconds: &[f64], scale: f64) -> Vec<Run> {
+    milliseconds
+        .iter()
+        .map(|ms| run(ms * scale / 1e3, 50.0, 1.0))
+        .collect()
+}
+
+/// 10% and at least 4.5 ms: the quick comparison's wall tolerance the
+/// series above was judged with.
+const MEASURED: Tolerance = Tolerance {
+    relative: 0.10,
+    absolute: 0.0045,
+};
+
+#[test]
+fn the_crossover_cancels_the_cost_of_running_first_in_a_round() {
+    let base = placed(walls(&FIRST_SLOWER_BASE, 1.0), false);
+    let head = placed(walls(&FIRST_SLOWER_HEAD, 1.0), true);
+    // Each round's ratio alone swings by about 20% either way.
+    let estimate = crossover(&base, &head, wall);
+    assert!(
+        estimate.is_some_and(|estimate| estimate.resolution() < 0.001),
+        "{estimate:?}"
+    );
+    assert_eq!(paired(&base, &head, wall, MEASURED), Verdict::Within);
+    let slower = placed(walls(&FIRST_SLOWER_HEAD, 1.25), true);
+    assert!(matches!(
+        paired(&base, &slower, wall, MEASURED),
+        Verdict::Regressed { .. }
+    ));
+}
+
+#[test]
+fn runs_that_do_not_pair_up_are_not_estimated() {
+    let base = placed(walls(&FIRST_SLOWER_BASE, 1.0), false);
+    let head = placed(walls(&FIRST_SLOWER_HEAD, 1.0), true);
+    // An odd number of rounds.
+    assert_eq!(crossover(&base[..9], &head[..9], wall), None);
+    // Both binaries first in the same round.
+    let same = placed(walls(&FIRST_SLOWER_HEAD, 1.0), false);
+    assert_eq!(crossover(&base, &same, wall), None);
+    // An order that does not alternate from round to round.
+    let unalternated: Vec<Run> = base
+        .iter()
+        .map(|run| Run {
+            position: 0,
+            ..run.clone()
+        })
+        .collect();
+    let opposite: Vec<Run> = head
+        .iter()
+        .map(|run| Run {
+            position: 1,
+            ..run.clone()
+        })
+        .collect();
+    assert_eq!(crossover(&unalternated, &opposite, wall), None);
+    assert!(matches!(
+        paired(&base[..9], &head[..9], wall, MEASURED),
+        Verdict::Noisy { .. }
+    ));
 }

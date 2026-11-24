@@ -1,27 +1,31 @@
 //! `cargo xtask perf --calibrate`: a tier's tolerances, derived from
-//! repeated comparisons of one binary with itself.
+//! repeated comparisons of one binary with a byte-identical copy of it.
 //!
-//! Each repeat measures the binary twice in the same rounds, as a base and
-//! as a head. For each series and metric it gives two kinds of deviation,
-//! where any is noise, since the code is the same:
+//! Each repeat measures the binary and its copy, which lies at another
+//! path, as base and head in the same rounds, exactly as a check measures
+//! two builds. For each series and metric it gives two kinds of
+//! deviation, where any is noise, since the code is the same:
 //!
 //! - **comparison:** what the gate's estimate of the head against the base
-//!   comes to (the median log ratio of paired runs for wall and CPU time,
-//!   the difference of the least peaks for RSS);
-//! - **baseline:** how far the medians (least peaks for RSS) of every
-//!   measurement of the series, both labels of every repeat, spread.
+//!   comes to (the [`gate::crossover`] estimate for wall and CPU time, the
+//!   shift both ends of the peaks share for RSS), and how wide that
+//!   estimate's resolution is;
+//! - **baseline:** how far the medians (both ends of the peaks for RSS) of
+//!   every measurement of the series, both labels of every repeat, spread.
 //!
-//! Each tolerance is three times the largest deviation: three, because a
-//! check sets one estimate against another that each carry the error, and
-//! a few repeats understate the spread. The absolute floor is three times
-//! the largest deviation on a small series (under 50 ms; for RSS any),
-//! rounded up to the next half millisecond or half MiB; the relative bound
-//! is three times the largest relative deviation among the series the
-//! floor does not cover, rounded up to the next 1%, and at least 1%.
+//! Each tolerance covers three times the largest deviation and one and a
+//! half times the widest resolution: three, because a check sets one
+//! estimate against another that each carry the error, and a few repeats
+//! understate the spread; one and a half, so that a check of as many runs
+//! on as quiet a machine resolves its tolerance rather than reporting the
+//! runs too noisy to judge. The absolute floor covers the deviations and
+//! resolutions of small series (under 50 ms; for RSS any), rounded up to
+//! the next half millisecond or half MiB; the relative bound covers those
+//! the floor does not, rounded up to the next 1%, and at least 1%.
 
 use super::gate::{self, Metric, Tolerance, Tolerances};
 use super::record::{Record, Run, Series};
-use super::stats::{Spread, percentile};
+use super::stats::Spread;
 
 /// The series a time's floor is drawn from: those under 50 ms.
 const SMALL_SECONDS: f64 = 0.05;
@@ -29,6 +33,8 @@ const TIME_STEP: f64 = 0.0005;
 const RSS_STEP: f64 = 512.0 * 1024.0;
 /// The tolerance's multiple of the largest deviation seen.
 const MARGIN: f64 = 3.0;
+/// The tolerance's multiple of the widest resolution seen.
+const RESOLUTION_MARGIN: f64 = 1.5;
 
 /// One comparison of a binary with itself: the base's record and the head's.
 pub(super) type Repeat = (Record, Record);
@@ -36,11 +42,20 @@ pub(super) type Repeat = (Record, Record);
 /// The deviations of one kind in `metric` over the repeats.
 type Deviations = fn(&[Repeat], Metric) -> Vec<Deviation>;
 
-/// One series' deviation in one metric, and what it deviated from.
+/// One series' deviation in one metric, what it deviated from, and how
+/// wide the estimate it came from resolves (zero where none is estimated).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Deviation {
     pub(super) amount: f64,
     pub(super) reference: f64,
+    pub(super) resolution: f64,
+}
+
+impl Deviation {
+    /// What a tolerance must cover for this deviation.
+    fn covered(self) -> f64 {
+        (MARGIN * self.amount).max(RESOLUTION_MARGIN * self.resolution)
+    }
 }
 
 /// The comparison's and the baseline check's tolerances from `repeats`,
@@ -57,20 +72,20 @@ pub(super) fn derive(repeats: &[Repeat]) -> (Tolerances, Tolerances) {
     )
 }
 
-/// The tolerance that covers `MARGIN` times every deviation: a floor from
-/// the deviations of references under `small`, and a relative bound for
-/// the rest.
+/// The tolerance that covers every deviation ([`Deviation::covered`]): a
+/// floor from the deviations of references under `small`, and a relative
+/// bound for the rest.
 pub(super) fn tolerance(deviations: &[Deviation], small: f64, step: f64) -> Tolerance {
     let floor = deviations
         .iter()
         .filter(|deviation| deviation.reference < small)
-        .map(|deviation| MARGIN * deviation.amount)
+        .map(|deviation| deviation.covered())
         .fold(0.0, f64::max);
     let absolute = (up(floor / step) * step).max(step);
     let relative = deviations
         .iter()
-        .filter(|deviation| MARGIN * deviation.amount > absolute && deviation.reference > 0.0)
-        .map(|deviation| MARGIN * deviation.amount / deviation.reference)
+        .filter(|deviation| deviation.covered() > absolute && deviation.reference > 0.0)
+        .map(|deviation| deviation.covered() / deviation.reference)
         .fold(0.0, f64::max);
     Tolerance {
         relative: (up(relative * 100.0) / 100.0).max(0.01),
@@ -110,22 +125,17 @@ fn estimate(base: &Series, head: &Series, metric: Metric) -> Option<Deviation> {
             return Some(Deviation {
                 amount: shift.abs(),
                 reference: base.min,
+                resolution: 0.0,
             });
         }
         Metric::Cpu => gate::cpu,
         _ => gate::wall,
     };
-    let ratios: Vec<f64> = base
-        .runs
-        .iter()
-        .zip(&head.runs)
-        .map(|(b, h)| (measure(h) / measure(b)).ln())
-        .collect();
-    let reference = percentile(&base.runs.iter().map(measure).collect::<Vec<_>>(), 0.5)?;
-    let ratio = Spread::of(&ratios)?.p50;
+    let estimate = gate::crossover(&base.runs, &head.runs, measure)?;
     Some(Deviation {
-        amount: (reference * ratio.exp_m1()).abs(),
-        reference,
+        amount: (estimate.head() - estimate.reference).abs(),
+        reference: estimate.reference,
+        resolution: estimate.resolution(),
     })
 }
 
@@ -173,7 +183,11 @@ fn spread_deviation(measurements: &[&Spread], metric: Metric) -> Option<Deviatio
     } else {
         range(|spread| spread.p50)?
     };
-    Some(Deviation { amount, reference })
+    Some(Deviation {
+        amount,
+        reference,
+        resolution: 0.0,
+    })
 }
 
 /// The least and greatest load average before any run of `repeats`.

@@ -26,7 +26,7 @@
 //! - `--write-baseline`: the full tier and then the quick tier stored as
 //!   that record; it takes a complete run of a committed head.
 //! - `--calibrate`: the tier's tolerances derived from comparisons of the
-//!   binary with itself ([`calibrate`]).
+//!   binary with a byte-identical copy of it ([`calibrate`]).
 //!
 //! The stored records and the tolerances live in the platform's baseline
 //! file, `tests/perf/baselines/<os>-<arch>.json` ([`baseline`]).
@@ -198,6 +198,7 @@ fn compare(
         tier,
     )?;
     let comparison = Comparison::new(base, head);
+    comparison.check_pairs()?;
     fs::write(out, comparison.to_json()?)?;
     let mut stdout = io::stdout().lock();
     write!(
@@ -426,17 +427,23 @@ fn default_repeats(tier: Tier) -> u32 {
     }
 }
 
-/// `--calibrate`: comparisons of the binary with itself, and the tier's
-/// tolerances derived from them, stored.
+/// `--calibrate`: comparisons of the binary with a copy of itself, and the
+/// tier's tolerances derived from them, stored.
 fn calibration(context: &Context) -> Result<(), TaskError> {
     let tier = context.options.tier;
     let repeats = context.options.repeats.unwrap_or(default_repeats(tier));
-    let itself = Base {
-        binary: context.binary.clone(),
-        commit: context.identity.commit.clone(),
-    };
     let directory = context.root.join("target/perf/calibration");
     fs::create_dir_all(&directory)?;
+    // A byte-identical copy at another path, as base: a calibration then
+    // measures two binaries as a check does, not one file run twice.
+    let copy = directory
+        .join("aws")
+        .with_extension(std::env::consts::EXE_EXTENSION);
+    fs::copy(&context.binary, &copy)?;
+    let itself = Base {
+        binary: copy,
+        commit: context.identity.commit.clone(),
+    };
     let mut pairs = Vec::new();
     for repeat in 1..=repeats {
         let out = directory.join(format!("{}-{repeat}.json", tier.name()));

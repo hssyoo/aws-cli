@@ -4,7 +4,9 @@
 xtask reads the samples it writes and does every statistic. It measures
 one or more binaries side by side (`--binary NAME=PATH`): in each round
 every binary runs every series, their order reversed on alternate rounds,
-so a comparison of two binaries sees the same machine. A series is a
+so a comparison of two binaries sees the same machine. Each run records
+its position in its round's pair (0 first, 1 second); a comparison needs
+an even number of recorded rounds, so they pair up one of each order. A series is a
 case of the case file at one of its schemes and latencies, on one route.
 The full tier runs every scheme and latency of every case; the quick tier
 runs only the pairs each case's `quick` entry names, a subset of those.
@@ -50,7 +52,7 @@ from stub import Script, Stub, frame
 
 # The layout of the case file, and of the samples this writes.
 CASES_FORMAT: Final = 1
-FORMAT: Final = 2
+FORMAT: Final = 3
 RUN_TIMEOUT_SECONDS: Final = 120
 ACCESS_KEY: Final = "AKIDPERFHARNESS00000"
 SECRET_KEY: Final = "perf-harness-secret-key-not-a-real-one"
@@ -319,7 +321,7 @@ def run_round(plan: Plan, number: int, recorded: bool, env: Environment, tally: 
     for index, setting in enumerate(plan.settings):
         env.stubs[setting.scheme].load(setting.script)
         for route in plan.routes:
-            for name, binary in order:
+            for position, (name, binary) in enumerate(order):
                 key = (name, index, route)
                 if key in tally.refused:
                     continue
@@ -330,6 +332,7 @@ def run_round(plan: Plan, number: int, recorded: bool, env: Environment, tally: 
                         raise SystemExit(f"{name} binary: {failure}") from failure
                     tally.refused[key] = str(failure).splitlines()[0]
                     continue
+                sample["position"] = position
                 tally.first_run_s.setdefault(name, sample["wall_s"])
                 if recorded:
                     tally.runs.setdefault(key, []).append(sample)
@@ -429,6 +432,10 @@ def main() -> None:
     names = [name for name, _ in args.binary]
     if len(set(names)) != len(names) or not set(args.optional) <= set(names):
         raise SystemExit("binary names must differ, and --optional must name one")
+    if len(args.binary) > 1 and runs % 2:
+        raise SystemExit(
+            f"a comparison pairs its rounds, one of each order: --runs must be even, not {runs}"
+        )
     plan = Plan(chosen, routes, args.binary, set(args.optional))
     measured = measure(plan, (warmup, runs), env)
     samples = {

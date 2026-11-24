@@ -20,7 +20,7 @@ use crate::{TaskError, deps};
 /// The version of the result file's layout; a reader refuses any other.
 pub(super) const FORMAT: u32 = 3;
 /// The version of measure.py's samples.
-pub(super) const SAMPLES_FORMAT: u32 = 2;
+pub(super) const SAMPLES_FORMAT: u32 = 3;
 
 /// Which matrix a run measured: the quick tier, a subset of the cases'
 /// series that the default check runs, or the full tier, every series,
@@ -56,6 +56,10 @@ pub(super) struct Run {
     pub(super) stdout_bytes: f64,
     /// The one-minute load average just before the run.
     pub(super) load_average: f64,
+    /// Its place in its round's pair in a comparison: 0 first, 1 second;
+    /// 0 when one binary ran alone.
+    #[serde(default)]
+    pub(super) position: u32,
 }
 
 /// The machine the runs were on.
@@ -340,12 +344,51 @@ impl Comparison {
         }
     }
 
+    /// Fails unless every series both binaries ran has an even number of
+    /// runs on each, paired round by round with one binary first in one
+    /// round of a pair and the other first in the other, as the crossover
+    /// estimate ([`super::gate::crossover`]) needs.
+    pub(super) fn check_pairs(&self) -> Result<(), TaskError> {
+        for head in &self.head.series {
+            let Some(base) = self.base.series.iter().find(|base| base.key == head.key) else {
+                continue;
+            };
+            if !alternates(&base.runs, &head.runs) {
+                return Err(deps::error(format!(
+                    "perf series {}: its {} base and {} head runs do not pair up round by \
+                     round, one of each order, so the comparison cannot judge them",
+                    head.key,
+                    base.runs.len(),
+                    head.runs.len()
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// The comparison as pretty JSON.
     pub(super) fn to_json(&self) -> Result<String, TaskError> {
         serde_json::to_string_pretty(self)
             .map(|text| text + "\n")
             .map_err(|error| deps::error(format!("perf comparison: {error}")))
     }
+}
+
+/// Whether `base` and `head` hold an even number of runs each, the same
+/// number, every round's two runs in opposite positions, and each pair of
+/// rounds in opposite orders.
+pub(super) fn alternates(base: &[Run], head: &[Run]) -> bool {
+    let opposite = |a: &Run, b: &Run| a.position + b.position == 1;
+    base.len() == head.len()
+        && base.len().is_multiple_of(2)
+        && !base.is_empty()
+        && base
+            .iter()
+            .zip(head)
+            .all(|(base, head)| opposite(base, head))
+        && base
+            .chunks_exact(2)
+            .all(|pair| opposite(&pair[0], &pair[1]))
 }
 
 #[cfg(test)]

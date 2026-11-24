@@ -14,6 +14,7 @@ fn run(wall: f64, rss_mib: f64, load: f64) -> Run {
         response_bytes: 1.0,
         stdout_bytes: 1.0,
         load_average: load,
+        position: 0,
     }
 }
 
@@ -85,10 +86,17 @@ fn record(series: Vec<Series>) -> Record {
 /// A repeat whose head runs `head` times the base's 14 ms wall time, with
 /// least peaks of 20 MiB and `head_rss` MiB.
 fn repeat(head: f64, head_rss: f64, load: f64) -> (Record, Record) {
-    let runs = |scale: f64, rss: f64| (0..3).map(|_| run(0.014 * scale, rss, load)).collect();
+    let runs = |scale: f64, rss: f64, first: u32| {
+        (0..4)
+            .map(|round| Run {
+                position: (round + first) % 2,
+                ..run(0.014 * scale, rss, load)
+            })
+            .collect()
+    };
     (
-        record(vec![series(0, runs(1.0, 20.0))]),
-        record(vec![series(0, runs(head, head_rss))]),
+        record(vec![series(0, runs(1.0, 20.0, 0))]),
+        record(vec![series(0, runs(head, head_rss, 1))]),
     )
 }
 
@@ -122,11 +130,13 @@ fn a_tolerance_covers_three_times_every_deviation() {
         Deviation {
             amount: 0.0004,
             reference: 0.014,
+            resolution: 0.0,
         },
         // A 2 s series off by 20 ms: 3% of it.
         Deviation {
             amount: 0.02,
             reference: 2.0,
+            resolution: 0.0,
         },
     ];
     let tolerance = tolerance(&deviations, SMALL_SECONDS, TIME_STEP);
@@ -156,4 +166,26 @@ fn derived_tolerances_and_the_load_range_come_from_every_repeat() {
     // The second head is 1.4 ms off a 14 ms base: under 50 ms, so the floor.
     assert!(close(comparison.wall.absolute, 0.0045));
     assert_eq!(load_range(&repeats), [1.2, 1.6]);
+}
+
+#[test]
+fn a_tolerance_also_covers_one_and_a_half_times_the_widest_resolution() {
+    // No deviation at all, but the estimate resolved only 2 ms: a check
+    // must be allowed 3 ms to resolve its bound.
+    let deviations = [Deviation {
+        amount: 0.0,
+        reference: 0.03,
+        resolution: 0.002,
+    }];
+    let tolerance = tolerance(&deviations, SMALL_SECONDS, TIME_STEP);
+    assert!(close(tolerance.absolute, 0.003));
+}
+
+#[test]
+fn a_comparison_deviation_carries_its_estimate_s_resolution() {
+    let repeats = [repeat(1.0, 20.0, 1.0)];
+    let wall = comparison_deviations(&repeats, Metric::Wall);
+    // Identical runs: no deviation, and nothing unresolved.
+    assert_eq!(wall[0].amount, 0.0);
+    assert_eq!(wall[0].resolution, 0.0);
 }

@@ -128,7 +128,7 @@ fn samples_of_another_tier_or_format_are_refused() -> Result<(), TaskError> {
     let error = Record::new(&old, "head", "linux-x86_64", binary(), Tier::Quick);
     assert_eq!(
         error.err().map(|error| error.to_string()),
-        Some("perf samples have format 1, expected 2".to_owned())
+        Some("perf samples have format 1, expected 3".to_owned())
     );
     Ok(())
 }
@@ -157,5 +157,44 @@ fn a_series_without_runs_is_refused() -> Result<(), TaskError> {
         error.err().map(|error| error.to_string()),
         Some("perf series json-pages-4 https 20 ms native has no runs".to_owned())
     );
+    Ok(())
+}
+
+fn placed(position: u32) -> Run {
+    Run {
+        wall_s: 0.1,
+        user_s: 0.0,
+        sys_s: 0.0,
+        max_rss_bytes: 1.0,
+        connections: 1,
+        requests: 1,
+        response_bytes: 1.0,
+        stdout_bytes: 1.0,
+        load_average: 1.0,
+        position,
+    }
+}
+
+#[test]
+fn a_comparison_s_runs_must_pair_up_one_of_each_order() -> Result<(), TaskError> {
+    let record = record()?;
+    let with_runs = |positions: &[u32]| {
+        let mut record = record.clone();
+        record.series[0].runs = positions.iter().copied().map(placed).collect();
+        record
+    };
+    let paired = Comparison::new(with_runs(&[0, 1, 0, 1]), with_runs(&[1, 0, 1, 0]));
+    assert!(paired.check_pairs().is_ok());
+    let odd = Comparison::new(with_runs(&[0, 1, 0]), with_runs(&[1, 0, 1]));
+    assert_eq!(
+        odd.check_pairs().err().map(|error| error.to_string()),
+        Some(
+            "perf series json-pages-4 https 20 ms native: its 3 base and 3 head runs do not \
+             pair up round by round, one of each order, so the comparison cannot judge them"
+                .to_owned()
+        )
+    );
+    let unalternated = Comparison::new(with_runs(&[0, 0, 1, 1]), with_runs(&[1, 1, 0, 0]));
+    assert!(unalternated.check_pairs().is_err());
     Ok(())
 }
