@@ -191,7 +191,21 @@ impl Invocation for ServiceInvocation {
         if let Some(paginated) = &self.admitted.paginated {
             return paged::run(self, cx, ready, client, paginated);
         }
-        match client.call(&self.admitted.operation, self.admitted.input.clone()) {
+        // KeyboardInterrupt ends the call wherever it lands: the call is
+        // active work, so a Ctrl-C is recorded rather than ending the
+        // process, and the call ends interrupted once its request in flight,
+        // which the transport cannot cut short, returns (`paged` does the
+        // same for each page).
+        let interrupt = cli_core::interrupt::process_state();
+        let mut scope = cli_core::interrupt::Scope::enter(interrupt);
+        let called = client.call(&self.admitted.operation, self.admitted.input.clone());
+        let called = if interrupt.is_requested() {
+            Err(CallError::Interrupted)
+        } else {
+            called
+        };
+        scope.leave();
+        match called {
             Ok(output) => self.print(cx, ready, &output.value),
             Err(error) => self.call_failed(cx, error),
         }
@@ -504,9 +518,9 @@ impl Transport for LazyTransport {
         request: &HttpRequest,
         timeouts: Timeouts,
     ) -> Result<HttpResponse, TransportError> {
-        // A Ctrl-C recorded while a paginated call fetches its pages: no
-        // further request starts, as KeyboardInterrupt ends Python's
-        // iteration (`paged`).
+        // A Ctrl-C recorded while a call or a paginated call's pages are
+        // fetched: no further request starts, as KeyboardInterrupt ends
+        // Python's call or iteration (`run`, `paged`).
         if cli_core::interrupt::process_state().is_requested() {
             return Err(TransportError::Interrupted);
         }
