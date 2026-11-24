@@ -546,20 +546,35 @@ static void s_release_client(struct zaws_runtime *r) {
     aws_s3_client_release(r->client); r->client = NULL;
     s_proxy_clean_up(&r->proxy);
 }
-/* A zaws_http_pool: the manager and what its connections' setup borrows. The caller's reference
- * and the manager's shutdown each hold one; the TLS options' callback reads the pool for as long
- * as a connection of the manager can be made. */
+/* A zaws_http_pool: the one way the shim makes connections. A pool is aws-c-http's connection
+ * manager for one server, with what its connections' setup borrows: the TLS options with the
+ * server's name and the handshake callback, the tunnel's timed CONNECT, and the socket options.
+ * A call takes its connection from a pool and gives it back as its stream completes; a call with
+ * no pool of its caller's gets one of its own, which keeps no connection (`single_use`).
+ *
+ * The caller's reference and the manager's shutdown each hold the pool; the TLS options' callback
+ * reads it for as long as the manager can make a connection. `lock` guards `idle`. */
 struct zaws_http_pool {
     struct aws_allocator *allocator;
     struct aws_atomic_var refs;
     struct aws_http_connection_manager *manager;
     uint32_t max_connections;
+    /* Closes each connection after its response instead of keeping it. */
+    bool single_use;
     bool tls;
     struct aws_tls_connection_options tls_options;
     struct aws_http_proxy_strategy *tunnel_strategy;
-    /* The last failed handshake's error, which the manager reports as the shutdown that ended it
-     * (s_http_on_negotiated). */
+    /* The failed handshake of the connection being made, which the manager reports as the
+     * shutdown that ended it (s_pool_on_negotiated). One acquisition at a time reads it: the
+     * caller sends on a pool one request at a time (crt::http enforces it), and a single-use pool
+     * makes one connection. Cleared as each acquisition starts and taken by its outcome. */
     struct aws_atomic_var handshake_error;
+    /* The connections given back to be reused, which are the ones to check before reuse; a
+     * connection made for an acquisition is used unchecked, as urllib3 checks only the
+     * connections its pool hands out. At most `max_connections`, the manager keeping no more. */
+    struct aws_mutex lock;
+    struct aws_http_connection **idle;
+    size_t idle_count;
     /* Set by the manager's shutdown callback, which runs inside aws_http_connection_manager_new
      * when that fails late. */
     bool manager_done;
@@ -568,6 +583,8 @@ static void s_pool_unref(struct zaws_http_pool *pool) {
     if (!pool || aws_atomic_fetch_sub(&pool->refs, 1) != 1) return;
     if (pool->tls) aws_tls_connection_options_clean_up(&pool->tls_options);
     aws_http_proxy_strategy_release(pool->tunnel_strategy);
+    aws_mutex_clean_up(&pool->lock);
+    aws_mem_release(pool->allocator, pool->idle);
     aws_mem_release(pool->allocator, pool);
 }
 static void s_pool_on_manager_shutdown(void *data) {
@@ -575,7 +592,17 @@ static void s_pool_on_manager_shutdown(void *data) {
     pool->manager_done = true;
     s_pool_unref(pool);
 }
-/* As s_http_on_negotiated, for a pooled connection, whose setup reports to the manager. */
+/* Runs on the connection's thread as the handshake ends, before the bootstrap shuts a failed
+ * channel down with the failure's code. s2n's handler then holds the channel open for s2n's
+ * blinding delay, ten to thirty seconds, unless the shutdown's code is AWS_IO_SOCKET_CLOSED
+ * (aws-c-io's s2n channel handler). The CRT reports the failed setup only after that, and the
+ * runtime's bootstrap stage waits for the channel, so neither the call's timeout nor the runtime's
+ * release would bound a certificate that does not verify. A channel takes its first shutdown's
+ * code, so this shuts it down first, with the code that is not delayed, and keeps the failure's
+ * own for the acquisition that fails with it.
+ *
+ * What is given up is the delay's cover for how long this client took to fail a handshake. It
+ * has no certificate of its own, and a handshake that failed carried no request. */
 static void s_pool_on_negotiated(struct aws_channel_handler *handler, struct aws_channel_slot *slot, int error, void *data) {
     (void)handler;
     struct zaws_http_pool *pool = data;
@@ -583,6 +610,9 @@ static void s_pool_on_negotiated(struct aws_channel_handler *handler, struct aws
     aws_atomic_store_int(&pool->handshake_error, (size_t)error);
     aws_channel_shutdown(slot->channel, AWS_IO_SOCKET_CLOSED);
 }
+/* The runtime's trust and peer verification, for a server named as the pool's host. The CRT's
+ * handshake timer (`timeout_ms`, ten seconds when it is zero) gets the connect's own bound: a
+ * handshake, like a connect, has no handle to cancel it by. */
 static int s_pool_init_tls(struct zaws_http_pool *pool, struct zaws_runtime *r, const struct zaws_http_pool_options *o) {
     if (!r->tls) return aws_raise_error(AWS_ERROR_INVALID_STATE);
     if (aws_tls_connection_options_copy(&pool->tls_options, &r->tls_options)) return AWS_OP_ERR;
@@ -592,7 +622,11 @@ static int s_pool_init_tls(struct zaws_http_pool *pool, struct zaws_runtime *r, 
     pool->tls_options.user_data = pool;
     return aws_tls_connection_options_set_server_name(&pool->tls_options, pool->allocator, &o->host);
 }
-struct zaws_http_pool *zaws_http_pool_new(struct zaws_runtime *r, const struct zaws_http_pool_options *o) {
+/* Connects on the runtime's bootstrap, in plaintext or with TLS, directly or through the tunnel.
+ * The environment's proxies are never read: a caller with a forwarding proxy connects to it and
+ * sends an absolute target. Keepalive's zero interval and timeout leave the system's timings:
+ * SO_KEEPALIVE alone. The manager copies the options it is given. */
+static struct zaws_http_pool *s_pool_new(struct zaws_runtime *r, const struct zaws_http_pool_options *o, bool single_use) {
     struct aws_allocator *allocator = rust_crt_allocator();
     if (!o->max_connections) {
         aws_raise_error(AWS_ERROR_INVALID_ARGUMENT);
@@ -602,8 +636,15 @@ struct zaws_http_pool *zaws_http_pool_new(struct zaws_runtime *r, const struct z
     if (!pool) return NULL;
     pool->allocator = allocator;
     pool->max_connections = o->max_connections;
+    pool->single_use = single_use;
     aws_atomic_init_int(&pool->refs, 1);
     aws_atomic_init_int(&pool->handshake_error, 0);
+    pool->idle = aws_mem_calloc(allocator, o->max_connections, sizeof(pool->idle[0]));
+    if (!pool->idle || aws_mutex_init(&pool->lock)) {
+        aws_mem_release(allocator, pool->idle);
+        aws_mem_release(allocator, pool);
+        return NULL;
+    }
     if (o->tls && s_pool_init_tls(pool, r, o)) goto fail;
     struct aws_http_proxy_options tunnel = { .connection_type = AWS_HPCT_HTTP_TUNNEL, .host = o->tunnel_host, .port = o->tunnel_port };
     if (o->tunnel_host.len) {
@@ -634,10 +675,39 @@ fail:
     s_pool_unref(pool);
     return NULL;
 }
+struct zaws_http_pool *zaws_http_pool_new(struct zaws_runtime *r, const struct zaws_http_pool_options *o) {
+    return s_pool_new(r, o, false);
+}
 void zaws_http_pool_release(struct zaws_http_pool *pool) {
     if (!pool) return;
     aws_http_connection_manager_release(pool->manager);
     s_pool_unref(pool);
+}
+/* Records `connection` as given back idle, the oldest record giving way to it when full. */
+static void s_pool_mark_idle(struct zaws_http_pool *pool, struct aws_http_connection *connection) {
+    aws_mutex_lock(&pool->lock);
+    if (pool->idle_count == pool->max_connections) {
+        memmove(pool->idle, pool->idle + 1, (pool->idle_count - 1) * sizeof(pool->idle[0]));
+        pool->idle_count--;
+    }
+    pool->idle[pool->idle_count++] = connection;
+    aws_mutex_unlock(&pool->lock);
+}
+/* Whether `connection` was given back idle, forgetting it: it is the caller's now. A record left
+ * by an idle connection the manager closed and freed can name a new one at the same address, which
+ * is then checked as an idle one would be. */
+static bool s_pool_take_idle(struct zaws_http_pool *pool, struct aws_http_connection *connection) {
+    bool found = false;
+    aws_mutex_lock(&pool->lock);
+    for (size_t i = 0; i < pool->idle_count; i++) {
+        if (pool->idle[i] != connection) continue;
+        memmove(pool->idle + i, pool->idle + i + 1, (pool->idle_count - i - 1) * sizeof(pool->idle[0]));
+        pool->idle_count--;
+        found = true;
+        break;
+    }
+    aws_mutex_unlock(&pool->lock);
+    return found;
 }
 /* Whether `connection`, idle in a pool, is no longer fit to carry a request: it is closing, or its
  * socket is readable with nothing asked of it, which is the server's close (urllib3's
@@ -658,36 +728,24 @@ static bool s_connection_dropped(struct aws_http_connection *connection) {
 #endif
 }
 
-/* One zaws_http_request, from signing to the connection's shutdown. The caller and the CRT each
- * hold a reference. `lock` guards `connection` and `cancelled`, which zaws_http_cancel reads on
- * the caller's thread while the CRT's threads write them. */
+/* One zaws_http_request, from signing to its stream's completion. The caller and the CRT each hold
+ * a reference. `lock` guards `connection` and `cancelled`, which zaws_http_cancel reads on the
+ * caller's thread while the CRT's threads write them. */
 struct zaws_http_call {
     struct aws_atomic_var refs;
     struct aws_allocator *allocator;
-    /* Live until `finish`: the runtime's bootstrap stage waits for the connection's shutdown. */
     struct zaws_runtime *runtime;
     struct aws_http_message *message;
     /* The copy of the body the message's stream reads, released after the message. */
     struct aws_byte_buf body;
     struct aws_signable *signable;
-    struct aws_string *host, *tunnel_host;
-    uint32_t port, connect_timeout_ms, tunnel_port;
-    bool keep_alive;
-    /* The tunnel's timed CONNECT, which aws-c-http's copy of the tunnel's options shares. */
-    struct aws_http_proxy_strategy *tunnel_strategy;
-    /* For a call over TLS: the runtime's connection options with this call's server name and
-     * negotiation timeout, copied while the caller holds the runtime's TLS stage in place. */
-    bool tls;
-    struct aws_tls_connection_options tls_options;
-    /* Why the handshake failed, written and read on the connection's thread. */
-    int handshake_error;
-    /* The pool the connection comes from and goes back to, held for the call; NULL for a
-     * connection of the call's own. A pooled call finishes as its stream completes. */
+    /* The pool the connection comes from and goes back to, held for the call. The runtime's
+     * bootstrap stage waits for the pool's connections. */
     struct zaws_http_pool *pool;
-    /* How many connections the call took from its pool. */
-    uint32_t taken;
+    /* How many hand-overs failed because the connection closed first. */
+    uint32_t retakes;
     struct aws_mutex lock;
-    /* The reference `s_http_on_setup` received, until the stream completes or fails to start. */
+    /* The connection the pool handed over, until the stream completes or fails to start. */
     struct aws_http_connection *connection;
     bool cancelled;
     zaws_http_event_fn *event;
@@ -700,14 +758,7 @@ void zaws_http_release(struct zaws_http_call *call) {
     aws_signable_destroy(call->signable);
     aws_http_message_release(call->message);
     aws_byte_buf_clean_up(&call->body);
-    aws_string_destroy(call->host);
-    aws_string_destroy(call->tunnel_host);
-    aws_http_proxy_strategy_release(call->tunnel_strategy);
-    if (call->tls) aws_tls_connection_options_clean_up(&call->tls_options);
-    if (call->pool) {
-        aws_http_connection_manager_release(call->pool->manager);
-        s_pool_unref(call->pool);
-    }
+    if (call->pool) zaws_http_pool_release(call->pool);
     aws_mutex_clean_up(&call->lock);
     aws_mem_release(call->allocator, call);
 }
@@ -715,21 +766,21 @@ static void s_http_call_finish(struct zaws_http_call *call) {
     call->finish(call->error, call->status, call->data);
     zaws_http_release(call);
 }
-/* Gives up the connection's reference, once. Its shutdown follows and finishes the call. A pooled
- * connection goes back to its pool instead, closed first unless the response was read whole, and
- * the call finishes now. */
+/* Gives the connection back to its pool, once, then finishes the call. It goes back to be reused
+ * only when the response was read whole and the pool keeps connections; otherwise it is closed
+ * first, and the manager drops it. */
 static void s_http_release_connection(struct zaws_http_call *call) {
     aws_mutex_lock(&call->lock);
     struct aws_http_connection *connection = call->connection;
     call->connection = NULL;
-    bool reusable = !call->error && !call->cancelled;
+    bool reusable = !call->error && !call->cancelled && !call->pool->single_use;
     aws_mutex_unlock(&call->lock);
-    if (!call->pool) {
-        aws_http_connection_release(connection);
-        return;
-    }
     if (connection) {
-        if (!reusable) aws_http_connection_close(connection);
+        if (reusable) {
+            s_pool_mark_idle(call->pool, connection);
+        } else {
+            aws_http_connection_close(connection);
+        }
         aws_http_connection_manager_release_connection(call->pool->manager, connection);
     }
     s_http_call_finish(call);
@@ -740,11 +791,6 @@ void zaws_http_cancel(struct zaws_http_call *call) {
     /* Safe from any thread while the reference is held, which the lock ensures. */
     if (call->connection) aws_http_connection_close(call->connection);
     aws_mutex_unlock(&call->lock);
-}
-/* Runs once the connection a successful setup returned has shut down. */
-static void s_http_on_shutdown(struct aws_http_connection *connection, int error, void *data) {
-    (void)connection; (void)error;
-    s_http_call_finish(data);
 }
 /* Reports each header of the final response, in order and as received, and an informational
  * response's block, or an empty one, as one event without a header. */
@@ -803,113 +849,53 @@ static bool s_http_hold(struct zaws_http_call *call, struct aws_http_connection 
     s_http_release_connection(call);
     return false;
 }
-static void s_http_on_setup(struct aws_http_connection *connection, int error, void *data) {
-    struct zaws_http_call *call = data;
-    if (!connection) {
-        call->error = call->handshake_error ? call->handshake_error : error;
-        s_http_call_finish(call);
-        return;
-    }
-    if (s_http_hold(call, connection)) s_http_send(call, connection);
-}
-/* A pooled connection, or the manager's failure to hand one over. The manager hands each over on
- * the connection's own thread, and fails the hand-over with AWS_ERROR_HTTP_CONNECTION_CLOSED when
- * the connection closed first. Either way a connection the server dropped while it sat in the pool
- * is put back closed and another taken, or opened, without an error. One taken more times than the
- * pool keeps connections can only be a new one, which is used as it is. */
+static void s_http_acquire(struct zaws_http_call *call);
+/* A connection the pool handed over, or its failure to hand one over. The manager hands each over
+ * on the connection's own thread, and fails the hand-over with AWS_ERROR_HTTP_CONNECTION_CLOSED
+ * when the connection closed first. A connection given back idle that the server dropped meanwhile
+ * is put back closed and another taken, or opened, without an error; so is a hand-over that failed
+ * that way, at most `max_connections` times, past which the failure is the call's. A connection
+ * made for this acquisition is used as it is. */
 static void s_http_on_acquired(struct aws_http_connection *connection, int error, void *data) {
     struct zaws_http_call *call = data;
-    struct aws_http_connection_manager *manager = call->pool->manager;
-    bool retake = ++call->taken <= call->pool->max_connections;
+    struct zaws_http_pool *pool = call->pool;
+    int handshake = (int)aws_atomic_exchange_int(&pool->handshake_error, 0);
     if (!connection) {
-        if (error == AWS_ERROR_HTTP_CONNECTION_CLOSED && retake) {
-            aws_http_connection_manager_acquire_connection(manager, s_http_on_acquired, call);
+        if (error == AWS_ERROR_HTTP_CONNECTION_CLOSED && call->retakes++ < pool->max_connections) {
+            s_http_acquire(call);
             return;
         }
-        int handshake = (int)aws_atomic_exchange_int(&call->pool->handshake_error, 0);
         call->error = handshake ? handshake : error;
         s_http_call_finish(call);
         return;
     }
+    bool was_idle = s_pool_take_idle(pool, connection);
     if (!s_http_hold(call, connection)) return;
-    if (retake && s_connection_dropped(connection)) {
+    if (was_idle && s_connection_dropped(connection)) {
         aws_mutex_lock(&call->lock);
         call->connection = NULL;
         aws_mutex_unlock(&call->lock);
         aws_http_connection_close(connection);
-        aws_http_connection_manager_release_connection(manager, connection);
-        aws_http_connection_manager_acquire_connection(manager, s_http_on_acquired, call);
+        aws_http_connection_manager_release_connection(pool->manager, connection);
+        s_http_acquire(call);
         return;
     }
     s_http_send(call, connection);
 }
-/* Connects on the runtime's bootstrap, in plaintext or with the call's TLS options, directly or
- * through the call's tunnel. The environment's proxies are never read: a caller with a forwarding
- * proxy connects to it and sends an absolute target. aws-c-http copies the tunnel's options. */
-static int s_http_connect(struct zaws_http_call *call) {
-    if (call->pool) {
-        aws_http_connection_manager_acquire_connection(call->pool->manager, s_http_on_acquired, call);
-        return AWS_OP_SUCCESS;
-    }
-    /* Keepalive's zero interval and timeout leave the system's timings: SO_KEEPALIVE alone. */
-    struct aws_socket_options socket = { .type = AWS_SOCKET_STREAM, .domain = AWS_SOCKET_IPV4, .connect_timeout_ms = call->connect_timeout_ms, .keepalive = call->keep_alive };
-    struct proxy_env_var_settings proxy = { .env_var_type = AWS_HPEV_DISABLE };
-    struct aws_http_proxy_options tunnel = { .connection_type = AWS_HPCT_HTTP_TUNNEL, .port = call->tunnel_port, .proxy_strategy = call->tunnel_strategy };
-    if (call->tunnel_host) tunnel.host = aws_byte_cursor_from_string(call->tunnel_host);
-    struct aws_http_client_connection_options options = AWS_HTTP_CLIENT_CONNECTION_OPTIONS_INIT;
-    options.allocator = call->allocator;
-    options.bootstrap = call->runtime->bootstrap;
-    options.host_name = aws_byte_cursor_from_string(call->host);
-    options.port = call->port;
-    options.socket_options = &socket;
-    options.tls_options = call->tls ? &call->tls_options : NULL;
-    options.proxy_ev_settings = &proxy;
-    options.proxy_options = call->tunnel_host ? &tunnel : NULL;
-    options.user_data = call;
-    options.on_setup = s_http_on_setup;
-    options.on_shutdown = s_http_on_shutdown;
-    return aws_http_client_connect(&options);
+static void s_http_acquire(struct zaws_http_call *call) {
+    aws_atomic_store_int(&call->pool->handshake_error, 0);
+    aws_http_connection_manager_acquire_connection(call->pool->manager, s_http_on_acquired, call);
 }
 /* Runs on the thread that answered the credentials query: the caller's for an answer during the
  * delegate's call, else the delegate's own. */
 static void s_http_on_signed(struct aws_signing_result *result, int error, void *data) {
     struct zaws_http_call *call = data;
-    if (error || aws_apply_signing_result_to_http_request(call->message, call->allocator, result) || s_http_connect(call)) {
+    if (error || aws_apply_signing_result_to_http_request(call->message, call->allocator, result)) {
         call->error = error ? error : aws_last_error();
         s_http_call_finish(call);
+        return;
     }
-}
-/* Runs on the connection's thread as the handshake ends, before the bootstrap shuts a failed
- * channel down with the failure's code. s2n's handler then holds the channel open for s2n's
- * blinding delay, ten to thirty seconds, unless the shutdown's code is AWS_IO_SOCKET_CLOSED
- * (aws-c-io's s2n channel handler). The CRT reports the failed setup only
- * after that, and the runtime's bootstrap stage waits for the channel, so neither this call's
- * timeout nor the runtime's release would bound a certificate that does not verify. A channel
- * takes its first shutdown's code, so this shuts it down first, with the code that is not
- * delayed, and keeps the failure's own for `finish`.
- *
- * What is given up is the delay's cover for how long this client took to fail a handshake. It
- * has no certificate of its own, and a handshake that failed carried no request. */
-static void s_http_on_negotiated(struct aws_channel_handler *handler, struct aws_channel_slot *slot, int error, void *data) {
-    (void)handler;
-    struct zaws_http_call *call = data;
-    if (!error) return;
-    call->handshake_error = error;
-    aws_channel_shutdown(slot->channel, AWS_IO_SOCKET_CLOSED);
-}
-/* The runtime's trust and peer verification, for a server named as the call's host. The CRT's
- * handshake timer (`timeout_ms`, ten seconds when it is zero) gets the connect's own bound: a
- * handshake, like a connect, has no handle to cancel it by. */
-static int s_http_init_tls(struct zaws_http_call *call) {
-    struct zaws_runtime *r = call->runtime;
-    if (!r->tls) return aws_raise_error(AWS_ERROR_INVALID_STATE);
-    if (aws_tls_connection_options_copy(&call->tls_options, &r->tls_options)) return AWS_OP_ERR;
-    call->tls = true;
-    call->tls_options.timeout_ms = call->connect_timeout_ms;
-    call->tls_options.on_negotiation_result = s_http_on_negotiated;
-    call->tls_options.user_data = call;
-    struct aws_byte_cursor host = aws_byte_cursor_from_string(call->host);
-    return aws_tls_connection_options_set_server_name(&call->tls_options, call->allocator, &host);
+    s_http_acquire(call);
 }
 /* Attaches the request's body to the message as a stream that reads the caller's bytes in place. */
 static int s_message_body_stream(struct aws_http_message *message, struct aws_byte_cursor body) {
@@ -921,17 +907,8 @@ static int s_message_body_stream(struct aws_http_message *message, struct aws_by
     return AWS_OP_SUCCESS;
 }
 static int s_http_init_message(struct zaws_http_call *call, const struct zaws_http_options *o) {
-    call->host = aws_string_new_from_cursor(call->allocator, &o->host);
     call->message = aws_http_message_new_request(call->allocator);
-    if (!call->host || !call->message) return AWS_OP_ERR;
-    if (o->tunnel_host.len) {
-        call->tunnel_host = aws_string_new_from_cursor(call->allocator, &o->tunnel_host);
-        if (!call->tunnel_host) return AWS_OP_ERR;
-        call->tunnel_port = o->tunnel_port;
-        /* The proxy answers CONNECT within the connect's own bound. */
-        call->tunnel_strategy = s_tunnel_strategy_new(call->allocator, NULL, o->connect_timeout_ms);
-        if (!call->tunnel_strategy) return AWS_OP_ERR;
-    }
+    if (!call->message) return AWS_OP_ERR;
     if (aws_http_message_set_request_method(call->message, o->method) || aws_http_message_set_request_path(call->message, o->target)) return AWS_OP_ERR;
     for (size_t i = 0; i < o->header_count; i++) {
         struct aws_http_header header = { .name = o->headers[i].name, .value = o->headers[i].value };
@@ -942,9 +919,24 @@ static int s_http_init_message(struct zaws_http_call *call, const struct zaws_ht
     if (aws_byte_buf_init_copy_from_cursor(&call->body, call->allocator, o->body)) return AWS_OP_ERR;
     return s_message_body_stream(call->message, aws_byte_cursor_from_buf(&call->body));
 }
+/* The call's pool: its caller's, held, or one of its own that keeps no connection. */
+static int s_http_init_pool(struct zaws_http_call *call, const struct zaws_http_options *o) {
+    if (o->pool) {
+        call->pool = o->pool;
+        aws_atomic_fetch_add(&o->pool->refs, 1);
+        aws_http_connection_manager_acquire(o->pool->manager);
+        return AWS_OP_SUCCESS;
+    }
+    struct zaws_http_pool_options options = {
+        .host = o->host, .tunnel_host = o->tunnel_host, .port = o->port, .tunnel_port = o->tunnel_port,
+        .connect_timeout_ms = o->connect_timeout_ms, .max_connections = 1, .tls = o->tls, .keep_alive = o->keep_alive,
+    };
+    call->pool = s_pool_new(call->runtime, &options, true);
+    return call->pool ? AWS_OP_SUCCESS : AWS_OP_ERR;
+}
 /* Signs the request with SigV4 for `service` in `region`, through the provider the runtime's
- * credentials stage built or with its anonymous credentials, then connects. The signer copies the
- * region and the service before it returns. */
+ * credentials stage built or with its anonymous credentials, then takes a connection. The signer
+ * copies the region and the service before it returns. */
 static int s_http_sign(struct zaws_http_call *call, const struct zaws_http_options *o) {
     struct zaws_runtime *r = call->runtime;
     call->signable = aws_signable_new_http_request(call->allocator, call->message);
@@ -966,16 +958,13 @@ struct zaws_http_call *zaws_http_request(struct zaws_runtime *r, const struct za
     aws_atomic_init_int(&call->refs, 2);
     call->allocator = allocator; call->runtime = r;
     call->event = event; call->finish = finish; call->data = data;
-    call->port = o->port; call->connect_timeout_ms = o->connect_timeout_ms; call->keep_alive = o->keep_alive;
     if (aws_mutex_init(&call->lock)) { aws_mem_release(allocator, call); return NULL; }
-    if (o->pool) {
-        call->pool = o->pool;
-        aws_atomic_fetch_add(&o->pool->refs, 1);
-        aws_http_connection_manager_acquire(o->pool->manager);
+    if (s_http_init_message(call, o) || s_http_init_pool(call, o)) goto fail;
+    if (o->service.len) {
+        if (s_http_sign(call, o)) goto fail;
+    } else {
+        s_http_acquire(call);
     }
-    if (s_http_init_message(call, o)) goto fail;
-    if (o->tls && !o->pool && s_http_init_tls(call)) goto fail;
-    if (o->service.len ? s_http_sign(call, o) : s_http_connect(call)) goto fail;
     return call;
 fail:
     /* Nothing started, so no callback holds the second reference. */

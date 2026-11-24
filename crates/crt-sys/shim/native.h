@@ -131,17 +131,17 @@ struct zaws_http_options {
     /* Sets SO_KEEPALIVE on the connection's socket, at the system's timings. */
     bool keep_alive;
     /* Takes a connection from this pool, which must be the server's, and gives it back once the
-     * response has been read whole; NULL connects anew and closes the connection after. The call
-     * holds the pool until it finishes. */
+     * response has been read whole; NULL takes it from a pool of the call's own that keeps no
+     * connection, so it is closed after. Either way the call holds its pool until it finishes. */
     struct zaws_http_pool *pool;
 };
 /* Keep-alive connections to one server, directly or through one tunnel, made on the runtime's
  * bootstrap with the options a call would connect with: aws-c-http's connection manager, which
- * keeps at most `max_connections` and never closes an idle one itself. A connection the server
- * closed, or that has data waiting nobody asked for, is not reused: each call checks the one it
- * takes, on the connection's own thread, and takes another, or opens one, at most
- * `max_connections` times. The runtime's bootstrap stage waits for the pool's
- * connections, so a pool is released before it. */
+ * keeps at most `max_connections` and never closes an idle one itself. A kept connection the
+ * server closed, or that has data waiting nobody asked for, is not reused: a call checks one that
+ * was given back idle, on the connection's own thread, and takes another or opens one; a
+ * connection opened for the call is used unchecked. Calls on one pool go one at a time. The
+ * runtime's bootstrap stage waits for the pool's connections, so a pool is released before it. */
 struct zaws_http_pool_options {
     struct aws_byte_cursor host, tunnel_host;
     uint32_t port, tunnel_port, connect_timeout_ms, max_connections;

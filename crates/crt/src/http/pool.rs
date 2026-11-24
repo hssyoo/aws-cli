@@ -7,8 +7,19 @@ use std::ptr::NonNull;
 
 /// How many pools a client keeps, urllib3's `PoolManager` default
 /// (`num_pools`): a request to an eleventh server closes the least recently
-/// used pool's idle connections.
-const POOLS: usize = 10;
+/// used pool's idle connections. botocore never sets it.
+pub const POOLS: usize = 10;
+
+/// How many connections a pool keeps unless the caller says otherwise:
+/// urllib3's pool `maxsize` as botocore sets it, `max_pool_connections`,
+/// whose default is `MAX_POOL_CONNECTIONS` in botocore/endpoint.py. No CLI
+/// option, variable or profile setting reaches the client's `Config`, so
+/// the Python route always runs with this.
+#[allow(
+    clippy::expect_used,
+    reason = "evaluated at compile time, so a zero fails the build"
+)]
+pub const POOL_CONNECTIONS: NonZeroU32 = NonZeroU32::new(10).expect("a pool keeps a connection");
 
 /// What makes two requests' connections interchangeable: urllib3 keys its
 /// pools by scheme, host and port (`PoolManager._new_pool`), a forwarding
