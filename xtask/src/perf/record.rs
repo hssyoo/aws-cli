@@ -69,7 +69,8 @@ pub(super) struct SampleSeries {
     #[serde(flatten)]
     pub(super) key: Key,
     pub(super) pages: u32,
-    /// The one-minute load average before and after the series.
+    /// The least and greatest one-minute load average seen before the
+    /// series' runs.
     pub(super) load_average: [f64; 2],
     pub(super) runs: Vec<Run>,
 }

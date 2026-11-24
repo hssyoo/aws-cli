@@ -1,10 +1,13 @@
 """Measure the AWS CLI's commands against the loopback stub.
 
 `cargo xtask perf` runs this through run.py, which provides the venv;
-xtask reads the samples it writes and does every statistic. For each case
-of the case file, each of its schemes and latencies, and each route, it
-runs the command `warmup` times unrecorded and then `runs` times recorded,
-the routes taking turns so that drift on the machine falls on both alike.
+xtask reads the samples it writes and does every statistic. A series is a
+case of the case file at one of its schemes and latencies, on one route.
+The runs go round-robin: each round runs every series once, the routes
+taking turns, and the first `warmup` rounds are not recorded. So a passing
+load on the machine falls on every series alike, widening each one's
+spread, which the gate's noise rule sees, rather than shifting the median
+of the few series that happened to run through it.
 
 Each run starts the CLI from a scratch environment (fake keys, empty
 credential files, a scratch HOME, the instance metadata service off, the
@@ -202,38 +205,62 @@ def run_once(
     return sample
 
 
+@dataclass(frozen=True)
+class Setting:
+    """One case at one scheme and latency, with its pages framed."""
+
+    case: Case
+    scheme: str
+    latency_ms: int
+    script: Script
+
+
+def settings(cases: list[Case]) -> list[Setting]:
+    return [
+        Setting(case, scheme, latency, Script(pages(case.script), latency / 1000))
+        for case in cases
+        for scheme in case.schemes
+        for latency in case.latencies_ms
+    ]
+
+
 def measure(
-    binary: Path, case: Case, routes: list[str], counts: tuple[int, int], env: Environment
+    binary: Path,
+    cases: list[Case],
+    routes: list[str],
+    counts: tuple[int, int],
+    env: Environment,
 ) -> list[dict[str, Any]]:
-    """Every series of one case: one per scheme, latency and route."""
+    """Every series, measured round-robin; each records the least and
+    greatest one-minute load average seen before its runs."""
     warmup, runs = counts
-    framed = pages(case.script)
-    series = []
-    for scheme in case.schemes:
-        for latency in case.latencies_ms:
-            env.stubs[scheme].load(Script(pages=framed, rtt=latency / 1000))
-            load_before = os.getloadavg()
-            samples: dict[str, list[dict[str, Any]]] = {route: [] for route in routes}
-            for index in range(warmup + runs):
-                for route in routes:
-                    sample = run_once(binary, case, scheme, route, env)
-                    if index >= warmup:
-                        samples[route].append(sample)
-            load_after = os.getloadavg()
+    plan = settings(cases)
+    samples: dict[tuple[int, str], list[dict[str, Any]]] = {
+        (index, route): [] for index in range(len(plan)) for route in routes
+    }
+    loads: dict[int, list[float]] = {index: [] for index in range(len(plan))}
+    for round_number in range(warmup + runs):
+        for index, setting in enumerate(plan):
+            env.stubs[setting.scheme].load(setting.script)
+            loads[index].append(os.getloadavg()[0])
             for route in routes:
-                print(f"perf: {case.name} {scheme} {latency} ms {route}", file=sys.stderr)
-                series.append(
-                    {
-                        "case": case.name,
-                        "scheme": scheme,
-                        "latency_ms": latency,
-                        "route": route,
-                        "pages": case.pages,
-                        "load_average": [load_before[0], load_after[0]],
-                        "runs": samples[route],
-                    }
-                )
-    return series
+                sample = run_once(binary, setting.case, setting.scheme, route, env)
+                if round_number >= warmup:
+                    samples[(index, route)].append(sample)
+        print(f"perf: round {round_number + 1} of {warmup + runs}", file=sys.stderr)
+    return [
+        {
+            "case": setting.case.name,
+            "scheme": setting.scheme,
+            "latency_ms": setting.latency_ms,
+            "route": route,
+            "pages": setting.case.pages,
+            "load_average": [min(loads[index]), max(loads[index])],
+            "runs": samples[(index, route)],
+        }
+        for index, setting in enumerate(plan)
+        for route in routes
+    ]
 
 
 def cpu_model() -> str:
@@ -289,9 +316,7 @@ def main() -> None:
         raise SystemExit("--runs must be at least 1 and --warmup at least 0")
     env = prepare(args.scratch, args.models.resolve())
     started = time.time()
-    series = []
-    for case in cases:
-        series.extend(measure(args.aws_binary, case, routes, (warmup, runs), env))
+    series = measure(args.aws_binary, cases, routes, (warmup, runs), env)
     samples = {
         "format": FORMAT,
         "host": host(),

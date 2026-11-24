@@ -35,10 +35,13 @@ lock and the extra load both distort the numbers.
 
 `run.py` provisions a venv from the blackbox harness's hash-pinned lock
 (for `trustme`, which makes the stub's test CA) and runs `measure.py`. That
-starts two stubs (`stub.py`), one HTTP and one HTTPS, and for each case of
-`cases.json`, each of its schemes and latencies, it runs the command
-`warmup` times unrecorded and then `runs` times recorded, the two routes
-taking turns run by run so that drift on the machine falls on both alike.
+starts two stubs (`stub.py`), one HTTP and one HTTPS. A series is a case
+of `cases.json` at one of its schemes and latencies, on one route. The
+runs go round-robin: each round runs every series once, the two routes
+taking turns, and the first `warmup` rounds are not recorded. A passing
+load on the machine (a build, another suite) then falls on every series
+alike and shows as spread, which the gate's noise rule sees, instead of
+shifting the medians of the few series that happened to run through it.
 The route is forced with `AWS_CLI_NATIVE_ROUTER` (`native` or `python`): a
 case the native route cannot run fails the measurement; it is never
 silently measured on Python.
@@ -61,8 +64,8 @@ system time apart, and peak RSS, each with its median absolute deviation;
 requests/s and pages/s over the median wall time; MB/s (10^6 bytes of
 response) over the median wall time; and the least and greatest
 connection and request counts. Percentiles interpolate linearly between
-ranks (numpy's default). The one-minute load average before and after
-each series is recorded with it.
+ranks (numpy's default). The least and greatest one-minute load
+average seen before a series' runs are recorded with it.
 
 ### Injected latency
 

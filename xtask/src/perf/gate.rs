@@ -103,7 +103,8 @@ pub(super) struct Finding {
     pub(super) key: Key,
     pub(super) metric: Metric,
     pub(super) verdict: Verdict,
-    /// The series' one-minute load average before and after it ran.
+    /// The least and greatest one-minute load average seen before the
+    /// series' runs.
     pub(super) load_average: [f64; 2],
 }
 
