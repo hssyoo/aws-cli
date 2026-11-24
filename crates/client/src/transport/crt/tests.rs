@@ -334,3 +334,76 @@ fn a_model_accept_encoding_is_sent_once_and_its_answer_is_not_decoded() -> TestR
     assert_eq!(response.body, GZIPPED);
     Ok(())
 }
+
+/// A loopback server that answers every request on a connection until the
+/// connection has been idle for `idle`, then closes it, and counts the
+/// connections it accepted.
+fn keep_alive_server(
+    idle: Duration,
+) -> TestResult<(u16, std::sync::Arc<std::sync::atomic::AtomicUsize>)> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    let accepted = std::sync::Arc::new(AtomicUsize::new(0));
+    let counted = accepted.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { return };
+            counted.fetch_add(1, Ordering::SeqCst);
+            std::thread::spawn(move || -> std::io::Result<()> {
+                stream.set_read_timeout(Some(idle))?;
+                let mut raw = Vec::new();
+                let mut chunk = [0; 4096];
+                loop {
+                    if let Some(split) = raw.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let length = String::from_utf8_lossy(&raw[..split])
+                            .to_ascii_lowercase()
+                            .lines()
+                            .find_map(|line| {
+                                line.strip_prefix("content-length:")?.trim().parse().ok()
+                            })
+                            .unwrap_or(0usize);
+                        if raw.len() >= split + 4 + length {
+                            raw.drain(..split + 4 + length);
+                            stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")?;
+                            continue;
+                        }
+                    }
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => return stream.shutdown(std::net::Shutdown::Both),
+                        Ok(count) => raw.extend_from_slice(&chunk[..count]),
+                    }
+                }
+            });
+        }
+    });
+    Ok((port, accepted))
+}
+
+/// The pages of a paginated call reuse one connection, as botocore's pool
+/// gives them. A server that closes the connection while it is idle
+/// between two pages costs a new connection and nothing else: the next
+/// request succeeds, so no error reaches the retry handler and no retry
+/// quota is spent, as urllib3's check of a pooled connection before reuse
+/// gives on the Python route.
+#[test]
+fn pages_share_a_connection_and_an_idle_close_costs_only_a_new_one() -> TestResult {
+    use std::sync::atomic::Ordering;
+    let idle = Duration::from_millis(100);
+    let (port, accepted) = keep_alive_server(idle)?;
+    let transport = transport(::crt::runtime::Trust::Platform, env(&[]))?;
+    let url = format!("http://127.0.0.1:{port}/");
+    for _ in 0..5 {
+        let response = transport.send(&signed_post(&url)?, TIMEOUTS)?;
+        assert_eq!(
+            (response.status, response.body.as_slice()),
+            (200, &b"{}"[..])
+        );
+    }
+    assert_eq!(accepted.load(Ordering::SeqCst), 1);
+    std::thread::sleep(idle * 4);
+    let response = transport.send(&signed_post(&url)?, TIMEOUTS)?;
+    assert_eq!(response.status, 200);
+    assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    Ok(())
+}

@@ -14,7 +14,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const TARGETS: [&str; 17] = [
+const TARGETS: [&str; 18] = [
     "pool_reservations",
     "pool_ownership",
     "pool_operations",
@@ -28,6 +28,7 @@ const TARGETS: [&str; 17] = [
     "error_body",
     "client_xml",
     "protocol_responses",
+    "paginator_token",
     "model_json",
     "model_validate",
     "timestamp_text",

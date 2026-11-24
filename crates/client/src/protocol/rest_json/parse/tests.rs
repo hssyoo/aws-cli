@@ -382,29 +382,6 @@ fn body_scalars_fail_as_python_conversions_do() {
     }
 }
 
-/// `int()` of floats beyond `i64` gives every digit.
-#[test]
-fn large_floats_truncate_to_every_digit() {
-    for (number, digits) in [
-        (9_223_372_036_854_775_808.0, "9223372036854775808"),
-        (-1e19, "-10000000000000000000"),
-        (
-            1.5e300,
-            "1500000000000000078757140382806630373056702871662238732373781173267703\
-             6869833622936795570626206717960655566657493258172654137848530406458634\
-             6718827718006047427258080138986370560674535069218213508905342985245619\
-             9917621678558451461320111979114170213741868888183230085264257173504208\
-             294580298189100810240",
-        ),
-    ] {
-        assert_eq!(whole_digits(number), digits);
-    }
-    assert_eq!(
-        truncated(-9_223_372_036_854_775_808.0),
-        Ok(Value::Integer(i64::MIN))
-    );
-}
-
 /// `_parse_header_map`: a prefix in any case, keys as the header came
 /// without it, values as they are.
 #[test]

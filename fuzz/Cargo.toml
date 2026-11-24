@@ -102,6 +102,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "paginator_token"
+path = "fuzz_targets/paginator_token.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "protocol_responses"
 path = "fuzz_targets/protocol_responses.rs"
 test = false

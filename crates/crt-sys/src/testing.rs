@@ -21,8 +21,10 @@ c_functions! {
     pub fn zaws_test_tls_ca(tls: *const TestTls) -> AwsByteCursor;
     /// Serves one connection on the connected socket `fd`, blocking: the
     /// handshake, one request read into `out`, `response` written, then
-    /// reads until the client closes. True when the request was read and
-    /// answered whole, and then `length` is its length.
+    /// each later request on the connection answered the same until the
+    /// client closes. True when the first request was read and answered
+    /// whole, and then `length` is its length; `answered` is how many
+    /// requests were answered.
     pub fn zaws_test_tls_serve(
         tls: *mut TestTls,
         fd: c_int,
@@ -30,6 +32,7 @@ c_functions! {
         out: *mut u8,
         capacity: usize,
         length: *mut usize,
+        answered: *mut usize,
     ) -> bool;
     pub fn zaws_test_tls_destroy(tls: *mut TestTls);
 }

@@ -130,7 +130,28 @@ struct zaws_http_options {
     bool tls;
     /* Sets SO_KEEPALIVE on the connection's socket, at the system's timings. */
     bool keep_alive;
+    /* Takes a connection from this pool, which must be the server's, and gives it back once the
+     * response has been read whole; NULL connects anew and closes the connection after. The call
+     * holds the pool until it finishes. */
+    struct zaws_http_pool *pool;
 };
+/* Keep-alive connections to one server, directly or through one tunnel, made on the runtime's
+ * bootstrap with the options a call would connect with: aws-c-http's connection manager, which
+ * keeps at most `max_connections` and never closes an idle one itself. A connection the server
+ * closed, or that has data waiting nobody asked for, is not reused: each call checks the one it
+ * takes, on the connection's own thread, and takes another, or opens one, at most
+ * `max_connections` times. The runtime's bootstrap stage waits for the pool's
+ * connections, so a pool is released before it. */
+struct zaws_http_pool_options {
+    struct aws_byte_cursor host, tunnel_host;
+    uint32_t port, tunnel_port, connect_timeout_ms, max_connections;
+    bool tls, keep_alive;
+};
+struct zaws_http_pool;
+/* NULL, with the CRT's error raised, when the pool could not be made. */
+struct zaws_http_pool *zaws_http_pool_new(struct zaws_runtime *, const struct zaws_http_pool_options *);
+/* Gives up the caller's reference. Idle connections close once no call holds the pool. */
+void zaws_http_pool_release(struct zaws_http_pool *);
 /* What a call reports before it finishes, each on a CRT thread, which must not wait. */
 enum zaws_http_event {
     /* The connection is up and aws-c-http has taken the request to send. */

@@ -134,7 +134,11 @@ impl Form {
                 Ok(())
             }
             ShapeKind::Boolean => {
-                let text = if truthy(value) { "true" } else { "false" };
+                let text = if crate::python::truthy(value) {
+                    "true"
+                } else {
+                    "false"
+                };
                 self.set(prefix, text.into());
                 Ok(())
             }
@@ -258,21 +262,6 @@ impl Form {
             )?;
         }
         Ok(())
-    }
-}
-
-/// Python truthiness, as `if value:` reads it.
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Integer(number) => *number != 0,
-        Value::BigInteger(_) | Value::Timestamp(_) => true,
-        Value::Float(number) => *number != 0.0,
-        Value::String(text) => !text.is_empty(),
-        Value::Blob(bytes) => !bytes.is_empty(),
-        Value::List(items) => !items.is_empty(),
-        Value::Map(map) => !map.is_empty(),
     }
 }
 

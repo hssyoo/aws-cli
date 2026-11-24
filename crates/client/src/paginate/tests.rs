@@ -1534,3 +1534,26 @@ fn a_token_python_reads_differently_is_read_as_python_does() -> TestResult {
     assert_eq!(f.bodies().len(), 1);
     Ok(())
 }
+
+/// `int()` as `_extract_paging_params` applies it to `MaxItems` and
+/// `PageSize`: text with any Unicode decimal digits and spaces, as
+/// CPython's `PyLong_FromUnicodeObject` reads it, and a float of any size
+/// truncated exactly.
+#[test]
+fn paging_params_are_read_as_python_s_int_reads_them() {
+    use super::py::int;
+    assert_eq!(
+        int(&Value::String("\u{661}\u{662}".into())),
+        Ok(Value::Integer(12))
+    );
+    assert_eq!(
+        int(&Value::String("\u{a0}7 ".into())),
+        Ok(Value::Integer(7))
+    );
+    assert_eq!(
+        int(&Value::Float(-2.5e38)),
+        Ok(Value::BigInteger(
+            "-249999999999999984927291592900794646528".into()
+        ))
+    );
+}
