@@ -204,9 +204,9 @@ fn scattered_ratios_are_too_noisy_to_judge() {
 }
 
 #[test]
-fn a_bimodal_peak_is_judged_on_its_least_run() {
+fn a_bimodal_peak_regresses_only_when_both_ends_grow() {
     let base = drifting(1.0, &[51.4], 1.0);
-    // Most runs of the head land in the upper mode; the least does not move.
+    // Most runs of the head land in an upper mode; its least peak holds.
     let bimodal = comparison(base.clone(), drifting(1.0, &[56.0, 56.0, 51.5], 1.0), None);
     assert_eq!(metric(&bimodal, Metric::Rss), Some(Verdict::Within));
     let grown = comparison(base, drifting(1.0, &[56.0], 1.0), None);
@@ -214,6 +214,28 @@ fn a_bimodal_peak_is_judged_on_its_least_run() {
         metric(&grown, Metric::Rss),
         Some(Verdict::Regressed { .. })
     ));
+}
+
+#[test]
+fn a_rare_low_mode_in_one_of_two_builds_of_one_source_is_no_change() {
+    // Two builds of one commit, measured: every run of one peaked at 56.0
+    // MiB, and one run of the other reached a lower mode, 51.4 MiB.
+    let mut rare = vec![56.0; 10];
+    rare[3] = 51.4;
+    let without = drifting(1.0, &[56.0], 1.0);
+    let with = drifting(1.0, &rare, 1.0);
+    for (base, head) in [(without.clone(), with.clone()), (with, without)] {
+        let findings = comparison(base, head, None);
+        assert_eq!(metric(&findings, Metric::Rss), Some(Verdict::Within));
+    }
+}
+
+#[test]
+fn ends_share_the_smaller_change_when_they_move_the_same_way() {
+    assert_eq!(common_shift(4.0, 1.0), 1.0);
+    assert_eq!(common_shift(-1.0, -3.0), -1.0);
+    assert_eq!(common_shift(-4.6, 0.0), 0.0);
+    assert_eq!(common_shift(4.6, -0.1), 0.0);
 }
 
 #[test]

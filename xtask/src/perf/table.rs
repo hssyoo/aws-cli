@@ -93,7 +93,7 @@ pub(super) fn render(record: &Record) -> String {
 }
 
 /// A comparison as a table: one row per series of the head, with the
-/// base's medians beside its own, and the least peak RSS of each.
+/// base's medians beside its own, and the least peak RSS of each run set.
 pub(super) fn render_comparison(base: &Record, head: &Record) -> String {
     let rows = head.series.iter().map(|now| {
         let reference = base.series.iter().find(|series| series.key == now.key);
@@ -170,7 +170,7 @@ fn time(tolerance: Tolerance) -> String {
 
 fn mode_line(mode: &str, tolerances: &Tolerances) -> String {
     format!(
-        "  {mode}: wall {}; cpu {}; least peak RSS {:.0}%, at least {:.1} MiB\n",
+        "  {mode}: wall {}; cpu {}; peak RSS {:.0}%, at least {:.1} MiB\n",
         time(tolerances.wall),
         time(tolerances.cpu),
         tolerances.rss.relative * 100.0,

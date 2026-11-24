@@ -3,16 +3,20 @@
 Run from the repository root, after `cargo xtask build`, on the host's
 python3:
 
-    python3 tests/perf/prove.py regression [--per-page-us N ...]
+    python3 tests/perf/prove.py regression [--per-page-us N ...] [--under-us N ...]
     python3 tests/perf/prove.py load [--busy N]
 
 `regression` builds `HEAD` with `planted/paging-cost.patch` applied, its
 `@PER_PAGE_US@` set to N, which makes the paginator busy-wait N
 microseconds per page, and checks that build against the unpatched
 default artifact, in the same rounds, once the load average has settled
-after the build. The proof holds when the check fails, and fails only
-on paged native series: the planted cost is in the native paginator, so
-the Python route and the single calls must not move. Each size is a
+after the build. A size given with `--per-page-us` must fail the check,
+and only on paged native series: the planted cost is in the native
+paginator, so the Python route and the single calls must not move. A size
+given with `--under-us` must not fail it. Without either, the sizes are
+1.5 and 0.5 times the smallest cost the quick calibration claims to catch
+on json-pages-100 at 0 ms, from the platform's baseline file and the
+calibration's first repeat under target/perf/calibration/. Each size is a
 separate build (incremental after the first) under `target/perf/proof/`.
 
 `load` checks the default artifact against a copy of itself while N busy
@@ -27,7 +31,10 @@ the proof holds.
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -42,6 +49,9 @@ PATCH: Final = Path(__file__).resolve().parent / "planted" / "paging-cost.patch"
 PLANTED_FILE: Final = Path("crates/client/src/paginate.rs")
 # The series the planted cost is in: the native route of paged cases.
 PAGED_NATIVE: Final = ("-pages-", " native ")
+# The quick series the default sizes are claimed against: 100 pages with
+# no injected latency, so the paginator's own cost dominates.
+PLANTED_SERIES: Final = ("json-pages-100", 0, "native")
 SETTLE_SECONDS: Final = 30
 # After a build, a check waits until the one-minute load average is under
 # a quarter of the CPUs, for at most this long.
@@ -128,14 +138,45 @@ def check(arguments: list[str], out: Path) -> tuple[int, str]:
     return result.returncode, result.stdout
 
 
-def regression(per_page_us: list[int]) -> bool:
+def platform_key() -> str:
+    """The platform key Rust names the baseline file by: `<os>-<arch>`."""
+    system = {"darwin": "macos"}.get(sys.platform, sys.platform)
+    machine = {"arm64": "aarch64", "amd64": "x86_64"}.get(platform.machine().lower(), platform.machine())
+    return f"{system}-{machine}"
+
+
+def claimed_us() -> float:
+    """The smallest per-page cost the quick comparison claims to catch on
+    the series the plant is in: its calibrated wall or CPU limit,
+    whichever is larger, over the series' 100 pages."""
+    baseline = ROOT / "tests" / "perf" / "baselines" / f"{platform_key()}.json"
+    calibration = json.loads(baseline.read_text(encoding="utf-8"))["quick"].get("calibration")
+    if calibration is None:
+        raise SystemExit(f"{baseline} has no quick calibration: run cargo xtask perf --calibrate")
+    repeat = ROOT / "target" / "perf" / "calibration" / "quick-1.json"
+    if not repeat.exists():
+        raise SystemExit(f"{repeat} is absent: pass --per-page-us and --under-us")
+    measured = json.loads(repeat.read_text(encoding="utf-8"))["base"]["series"]
+    series = next(s for s in measured if (s["case"], s["latency_ms"], s["route"]) == PLANTED_SERIES)
+    summary, tolerances = series["summary"], calibration["comparison"]
+    limit = max(
+        max(tolerances[metric]["relative"] * summary[field]["p50"], tolerances[metric]["absolute"])
+        for metric, field in (("wall", "wall_s"), ("cpu", "cpu_s"))
+    )
+    return limit / 100 * 1e6
+
+
+def regression(caught_sizes: list[int], passed_sizes: list[int]) -> bool:
+    """Whether every size in `caught_sizes` fails the check, on paged
+    native series only, and every size in `passed_sizes` does not."""
     commit = checked(["git", "rev-parse", "HEAD"], cwd=ROOT)
     base = kept_copy(default_artifact(), "aws-base")
-    holds = True
-    builds = {size: planted_build(commit, size) for size in per_page_us}
+    sizes = sorted({*caught_sizes, *passed_sizes})
+    builds = {size: planted_build(commit, size) for size in sizes}
     contents = {path.read_bytes() for path in [base, *builds.values()]}
     if len(contents) != len(builds) + 1:
         raise SystemExit("a planted build is the same binary as another: the plant did not apply")
+    holds = True
     for size, planted in builds.items():
         settle()
         status, output = check(
@@ -148,12 +189,13 @@ def regression(per_page_us: list[int]) -> bool:
         regressed = [line for line in output.splitlines() if "REGRESSED" in line]
         elsewhere = [line for line in regressed if not all(part in line for part in PAGED_NATIVE)]
         caught = status == 1 and bool(regressed) and not elsewhere
-        print(f"prove: {size} us per page planted: exit {status}; "
-              f"{len(regressed)} regressed, {len(elsewhere)} outside paged native series: "
-              f"{'caught' if caught else 'NOT caught'}")
+        expected = size in caught_sizes
+        print(f"prove: {size} us per page planted, expected {'caught' if expected else 'to pass'}: "
+              f"exit {status}; {len(regressed)} regressed, {len(elsewhere)} outside paged native "
+              f"series: {'caught' if caught else 'not caught'}")
         for line in regressed:
             print(f"prove:   {line}")
-        holds = holds and caught
+        holds = holds and (caught if expected else status != 1)
     return holds
 
 
@@ -185,12 +227,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     proofs = parser.add_subparsers(dest="proof", required=True)
     planted = proofs.add_parser("regression")
-    planted.add_argument("--per-page-us", type=int, action="append")
+    planted.add_argument("--per-page-us", type=int, action="append", default=[],
+                         help="a planted cost the check must catch (repeatable)")
+    planted.add_argument("--under-us", type=int, action="append", default=[],
+                         help="a planted cost the check must let pass (repeatable)")
     loaded = proofs.add_parser("load")
     loaded.add_argument("--busy", type=int, default=os.cpu_count() or 1)
     args = parser.parse_args()
     if args.proof == "regression":
-        holds = regression(args.per_page_us or [15])
+        caught, passed = args.per_page_us, args.under_us
+        if not caught and not passed:
+            claim = claimed_us()
+            caught, passed = [math.ceil(1.5 * claim)], [max(1, math.floor(0.5 * claim))]
+            print(f"prove: the gate claims to catch {claim:.0f} us per page on "
+                  f"{' '.join(map(str, PLANTED_SERIES))}; planting {caught[0]} and {passed[0]}")
+        holds = regression(caught, passed)
     else:
         holds = load(args.busy)
     print(f"prove: the proof {'holds' if holds else 'DOES NOT HOLD'}")

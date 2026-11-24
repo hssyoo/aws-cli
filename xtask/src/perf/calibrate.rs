@@ -105,13 +105,11 @@ pub(super) fn comparison_deviations(repeats: &[Repeat], metric: Metric) -> Vec<D
 fn estimate(base: &Series, head: &Series, metric: Metric) -> Option<Deviation> {
     let measure: fn(&Run) -> f64 = match metric {
         Metric::Rss => {
-            let (base, head) = (
-                base.summary.max_rss_bytes.min,
-                head.summary.max_rss_bytes.min,
-            );
+            let (base, head) = (base.summary.max_rss_bytes, head.summary.max_rss_bytes);
+            let shift = gate::common_shift(head.min - base.min, head.max - base.max);
             return Some(Deviation {
-                amount: (head - base).abs(),
-                reference: base,
+                amount: shift.abs(),
+                reference: base.min,
             });
         }
         Metric::Cpu => gate::cpu,
@@ -131,8 +129,9 @@ fn estimate(base: &Series, head: &Series, metric: Metric) -> Option<Deviation> {
     })
 }
 
-/// How far each series' medians (least peaks for RSS) spread over every
-/// record of every repeat.
+/// How far each series' medians spread over every record of every repeat;
+/// for RSS, the smaller of how far its least and its greatest peaks
+/// spread, since a check needs both to move.
 pub(super) fn baseline_deviations(repeats: &[Repeat], metric: Metric) -> Vec<Deviation> {
     let records: Vec<&Record> = repeats
         .iter()
@@ -146,23 +145,35 @@ pub(super) fn baseline_deviations(repeats: &[Repeat], metric: Metric) -> Vec<Dev
         .iter()
         .filter(|series| judged(series, metric))
         .filter_map(|series| {
-            let values: Vec<f64> = records
+            let measurements: Vec<&Spread> = records
                 .iter()
                 .filter_map(|record| record.series.iter().find(|other| other.key == series.key))
                 .map(|other| match metric {
-                    Metric::Rss => other.summary.max_rss_bytes.min,
-                    Metric::Cpu => other.summary.cpu_s.p50,
-                    _ => other.summary.wall_s.p50,
+                    Metric::Rss => &other.summary.max_rss_bytes,
+                    Metric::Cpu => &other.summary.cpu_s,
+                    _ => &other.summary.wall_s,
                 })
                 .collect();
-            let spread = Spread::of(&values)?;
-            Some(Deviation {
-                amount: spread.max - spread.min,
-                reference: values.iter().sum::<f64>()
-                    / f64::from(u32::try_from(values.len()).ok()?),
-            })
+            spread_deviation(&measurements, metric)
         })
         .collect()
+}
+
+/// The spread over `measurements` of their medians, or, for RSS, of
+/// their least and greatest values, whichever spreads less.
+fn spread_deviation(measurements: &[&Spread], metric: Metric) -> Option<Deviation> {
+    let range = |end: fn(&Spread) -> f64| {
+        let values: Vec<f64> = measurements.iter().map(|spread| end(spread)).collect();
+        Spread::of(&values).map(|spread| (spread.max - spread.min, spread.p50))
+    };
+    let (amount, reference) = if metric == Metric::Rss {
+        let (least, reference) = range(|spread| spread.min)?;
+        let (greatest, _) = range(|spread| spread.max)?;
+        (least.min(greatest), reference)
+    } else {
+        range(|spread| spread.p50)?
+    };
+    Some(Deviation { amount, reference })
 }
 
 /// The least and greatest load average before any run of `repeats`.

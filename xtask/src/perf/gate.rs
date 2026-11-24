@@ -19,14 +19,18 @@
 //!   resolution (twice its standard error, from the deviation) is wider
 //!   than the tolerance cannot tell a regression from noise and is
 //!   reported as too noisy to judge.
-//! - **Peak RSS** on the least peak of the runs. A regression in peak
-//!   memory (a larger buffer, pages kept alive, a leak) adds to every run's
-//!   peak, so it raises the least one; memory that depends on timing (a
-//!   buffer that grows while its reader lags, a reallocation that cannot
-//!   grow in place) adds to some runs only, and moves the median or p95
-//!   between modes without the code changing. The least peak keeps the
-//!   first and ignores the second. It misses a regression that occurs in
-//!   only some runs.
+//! - **Peak RSS** on the least and the greatest peak of the runs together.
+//!   A regression in peak memory (a larger buffer, pages kept alive, a
+//!   leak) adds to every run's peak, so it raises every mode the runs fall
+//!   into, the lowest and the highest alike. Memory that depends on timing
+//!   (a buffer that grows while its reader lags, a reallocation that cannot
+//!   grow in place) splits the runs between modes without the code
+//!   changing: the share of runs in each mode moves the median and the
+//!   p95, and a mode a few runs reach appears in one run set and not in
+//!   another, moving the least or the greatest peak, but not both. So the
+//!   peak regresses only when both grow past the bound, and improves only
+//!   when both shrink past it. It misses a regression that occurs in only
+//!   some runs.
 //!
 //! **Load.** A series whose runs saw a median load average above the
 //! calibrated limit ([`LoadLimit`]) has its times and memory reported as
@@ -55,7 +59,7 @@ impl Tolerance {
 }
 
 /// One mode's tolerances for a tier: wall time and CPU user plus system
-/// time (seconds), and the least peak RSS (bytes).
+/// time (seconds), and peak RSS (bytes), judged on its least and greatest.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub(super) struct Tolerances {
     pub(super) wall: Tolerance,
@@ -180,7 +184,7 @@ impl Metric {
             Self::Requests => "requests",
             Self::Wall => "wall p50",
             Self::Cpu => "cpu p50",
-            Self::Rss => "least peak RSS",
+            Self::Rss => "peak RSS",
         }
     }
 }
@@ -335,7 +339,7 @@ fn measured(
 ) -> Verdict {
     let (b, n) = (&base.summary, &now.summary);
     match (metric, reference) {
-        (Metric::Rss, _) => least(b.max_rss_bytes, n.max_rss_bytes, tolerances.rss),
+        (Metric::Rss, _) => peaks(b.max_rss_bytes, n.max_rss_bytes, tolerances.rss),
         (Metric::Cpu, Reference::Runs) => paired(&base.runs, &now.runs, cpu, tolerances.cpu),
         (Metric::Cpu, Reference::Summary) => median(b.cpu_s, n.cpu_s, tolerances.cpu),
         (_, Reference::Runs) => paired(&base.runs, &now.runs, wall, tolerances.wall),
@@ -393,11 +397,23 @@ pub(super) fn median(base: Spread, now: Spread, tolerance: Tolerance) -> Verdict
     growth(base.p50, now.p50, tolerance.limit(base.p50), resolution)
 }
 
-/// The least peak's verdict, under `tolerance`. No resolution is
-/// estimated: the least of the runs does not move with the modes timing
-/// gives the rest.
-pub(super) fn least(base: Spread, now: Spread, tolerance: Tolerance) -> Verdict {
-    growth(base.min, now.min, tolerance.limit(base.min), 0.0)
+/// The peaks' verdict, under `tolerance`: a change both the least and the
+/// greatest peak make, by the smaller of their two changes. No resolution
+/// is estimated: neither end moves with the share of runs in each mode.
+pub(super) fn peaks(base: Spread, now: Spread, tolerance: Tolerance) -> Verdict {
+    let limit = tolerance.limit(base.min);
+    let shift = common_shift(now.min - base.min, now.max - base.max);
+    growth(base.min, base.min + shift, limit, 0.0)
+}
+
+/// The change two ends share: the smaller of the two when they move the
+/// same way, none when they move apart.
+pub(super) fn common_shift(least: f64, greatest: f64) -> f64 {
+    if least.signum() == greatest.signum() {
+        least.signum() * least.abs().min(greatest.abs())
+    } else {
+        0.0
+    }
 }
 
 /// The verdict on the head's runs paired with the base's runs of the same

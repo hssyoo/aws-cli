@@ -139,9 +139,9 @@ fn a_calibration_lists_each_mode_s_tolerances() -> Result<(), TaskError> {
         [
             "perf: quick calibration over 5 repeats on Apple M4 Pro (12 CPUs), load average \
              1.10 to 1.60:",
-            "  comparison: wall 3%, at least 1.5 ms; cpu 3%, at least 1.5 ms; least peak RSS 1%, \
+            "  comparison: wall 3%, at least 1.5 ms; cpu 3%, at least 1.5 ms; peak RSS 1%, \
              at least 0.5 MiB",
-            "  baseline: wall 3%, at least 1.5 ms; cpu 3%, at least 1.5 ms; least peak RSS 1%, \
+            "  baseline: wall 3%, at least 1.5 ms; cpu 3%, at least 1.5 ms; peak RSS 1%, \
              at least 0.5 MiB",
         ]
     );
@@ -194,7 +194,7 @@ fn only_findings_outside_their_bounds_are_listed() {
         [
             "query-single https 20 ms native wall p50: REGRESSED: 120.0 ms against 100.0 ms, \
              past the 10.0 ms allowed",
-            "query-single https 20 ms native least peak RSS: MACHINE LOADED, not judged: median \
+            "query-single https 20 ms native peak RSS: MACHINE LOADED, not judged: median \
              load average 9.50, above the 4.60 this check tolerates; rerun on a quieter machine",
             "query-single https 20 ms native connections: CHANGED: 10 against 1 (counts must \
              match in every run)",
