@@ -6,6 +6,7 @@
 //! interpret is refused with that key's name.
 use client::admission::{Unsupported, static_refusal};
 use client::endpoint::EndpointData;
+use model::paginators::{Paginators, Refused};
 use model::shapes::Model;
 use model::source::{DirSource, Kind, Source};
 use std::collections::BTreeMap;
@@ -34,12 +35,8 @@ fn row(refusal: &Unsupported) -> (String, String) {
         Unsupported::EndpointData => named("endpointData", "-"),
         Unsupported::Validation(undecided) => named("validation", &format!("{undecided:?}")),
         Unsupported::StartingToken(why) => named("startingToken", why),
-        Unsupported::Paginator(client::paginate::Refused::Expression(expression)) => {
-            named("paginator", expression)
-        }
-        Unsupported::Paginator(client::paginate::Refused::Malformed(why)) => {
-            named("paginator", why)
-        }
+        Unsupported::Paginator(Refused::Expression(expression)) => named("paginator", expression),
+        Unsupported::Paginator(Refused::Malformed(why)) => named("paginator", why),
     }
 }
 
@@ -48,25 +45,13 @@ fn refusals(source: &impl Source, service: &str) -> Result<Vec<Option<Unsupporte
     let model = Model::load(source, service)?;
     let endpoints = EndpointData::load(source, service, model.metadata())?;
     let table = &customizations::TABLE[..];
-    let pages = model::source::load_service_model(source, service, Kind::Paginators)
-        .ok()
-        .and_then(|document| document.json.get("pagination").cloned());
+    let pages = Paginators::load(source, service)?;
     Ok(model
         .operations()
         .iter()
         .map(|operation| {
-            let entry = pages
-                .as_ref()
-                .and_then(|pages| pages.get(&*operation.name))
-                .map(model::value::Value::from_serde);
-            static_refusal(
-                &model,
-                operation,
-                &endpoints,
-                service,
-                table,
-                entry.as_ref(),
-            )
+            let entry = pages.get(&operation.name).map(|entry| &entry.config);
+            static_refusal(&model, operation, &endpoints, service, table, entry)
         })
         .collect())
 }

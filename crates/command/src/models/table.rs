@@ -101,15 +101,22 @@ pub struct Table {
 /// options shadowed, which the first puts back when paging is off.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paging {
-    /// `_get_all_input_tokens`: the input tokens, then the limit key, as
-    /// the model names them.
-    pub tokens: Vec<Box<str>>,
-    /// `_get_all_cli_input_tokens`: the same through `xform_name`.
-    pub cli_tokens: Vec<Box<str>>,
+    /// `_get_all_input_tokens` and `_get_all_cli_input_tokens`: the input
+    /// tokens, then the limit key.
+    pub tokens: Vec<PagingToken>,
     /// `shadowed_args`: each argument a page option replaced
     /// (`add_paging_argument`), named as the option is, in the order they
     /// were replaced.
     pub shadowed: Vec<DerivedArgument>,
+}
+
+/// One of the paginator's input tokens or its limit key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PagingToken {
+    /// As the model names it.
+    pub model: Box<str>,
+    /// Through `xform_name`, as its argument is named.
+    pub cli: Box<str>,
 }
 
 impl Table {
@@ -269,7 +276,7 @@ fn cross_cutting(
     table: &mut Table,
     model: &Model,
     operation: &Operation,
-    pages: Option<&Json>,
+    entry: Option<&Entry>,
     special: &SpecialCases,
 ) {
     if let Some(response_key) = streaming_output(model, operation) {
@@ -286,8 +293,8 @@ fn cross_cutting(
             table.overrides.push((override_option(name), None));
         }
     }
-    if let Some(config) = pages {
-        paging(table, model, operation, config, special);
+    if let Some(entry) = entry {
+        paging(table, model, operation, entry, special);
     }
     if !table.has("outfile") {
         let mut skeleton = plain(
@@ -325,19 +332,14 @@ fn paging(
     table: &mut Table,
     model: &Model,
     operation: &Operation,
-    config: &Json,
+    entry: &Entry,
     special: &SpecialCases,
 ) {
-    let mut tokens: Vec<&str> = match config.get("input_token") {
-        Some(Json::String(token)) => vec![token.as_str()],
-        Some(Json::Array(tokens)) => tokens.iter().filter_map(Json::as_str).collect(),
-        _ => Vec::new(),
-    };
-    let limit_key = config.get("limit_key").and_then(Json::as_str);
+    let mut tokens: Vec<&str> = entry.input_token.iter().map(String::as_str).collect();
+    let limit_key = entry.limit_key.as_deref();
     tokens.extend(limit_key);
     let mut paging = Paging {
-        tokens: tokens.iter().map(|&token| token.into()).collect(),
-        cli_tokens: Vec::new(),
+        tokens: Vec::new(),
         shadowed: Vec::new(),
     };
     for name in tokens {
@@ -350,7 +352,10 @@ fn paging(
             Some(argument) => argument.hidden = true,
             None => table.customized = true,
         }
-        paging.cli_tokens.push(cli_name.into());
+        paging.tokens.push(PagingToken {
+            model: name.into(),
+            cli: cli_name.into(),
+        });
     }
     let mut starting_token = plain("starting-token", "string", Origin::StartingToken);
     starting_token.unpack = Unpack::AsIs;
@@ -410,11 +415,11 @@ fn limit_type<'m>(model: &'m Model, operation: &Operation, key: &str) -> Option<
 pub fn derive(
     model: &Model,
     operation: &Operation,
-    pages: Option<&Json>,
+    entry: Option<&Entry>,
     special: &SpecialCases,
 ) -> Table {
     let mut table = members_table(model, operation, special);
-    cross_cutting(&mut table, model, operation, pages, special);
+    cross_cutting(&mut table, model, operation, entry, special);
     table
 }
 

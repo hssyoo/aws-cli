@@ -208,7 +208,7 @@ impl Client {
         self.prepare_with_features(operation, input, Features::default())
     }
     /// [`Self::prepare`], with `extra` among the call's feature ids.
-    fn prepare_with_features(
+    pub(crate) fn prepare_with_features(
         &self,
         operation: &str,
         input: Value,
