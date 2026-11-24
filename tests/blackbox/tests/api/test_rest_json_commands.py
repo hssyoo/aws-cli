@@ -9,7 +9,9 @@ integers, longs and booleans) down the native route once rest-json is
 among the protocols it implements; a list, map or structure argument is
 Python's on either run (`Unpack::Deferred`). `test_each_command_s_route`
 names the route of every command here, so a native run shows which of
-these tests the native route answered.
+these tests the native route answered. A run forcing the native route
+refuses a command with such an argument, which that test checks; the
+other tests sending one skip that run.
 """
 
 import json
@@ -19,6 +21,7 @@ from typing import Any, Final
 
 import pytest
 import pytest_asyncio
+from harness_plugin import COMMAND_ENVIRONMENT
 from localstub import HTTPResponse
 
 from apihelpers import (
@@ -32,6 +35,13 @@ from apihelpers import (
 )
 
 pytestmark = pytest.mark.asyncio
+
+# The run forces the native route, which refuses what it cannot run.
+FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get("AWS_CLI_NATIVE_ROUTER") == "native"
+COLLECTIONS_REFUSED: Final = (
+    "forced native refuses a collection argument (unsupported_option), "
+    "as test_each_command_s_route checks"
+)
 
 MODELS: Final = Path(__file__).resolve().parents[3] / "models"
 HOST: Final = "zrestjson.us-east-1.amazonaws.com"
@@ -165,6 +175,7 @@ async def test_a_false_query_boolean_is_sent(restjson: ApiSession) -> None:
     assert (method, path) == ("GET", "/items/i/k?verbose=false"), run.describe()
 
 
+@pytest.mark.skipif(FORCED_NATIVE, reason=COLLECTIONS_REFUSED)
 async def test_lists_and_a_header_map_are_spread(restjson: ApiSession) -> None:
     # A query list repeats its key; a header list joins its items with
     # commas, quoting one that holds a comma or a quote
@@ -269,6 +280,7 @@ async def test_a_body_with_no_member_given_is_an_empty_object(
     assert run.stdout == printed({"Status": 201}), run.describe()
 
 
+@pytest.mark.skipif(FORCED_NATIVE, reason=COLLECTIONS_REFUSED)
 async def test_collections_in_the_body_keep_their_order(
     restjson: ApiSession,
 ) -> None:
@@ -536,6 +548,14 @@ ROUTES: Final = {
 @pytest.mark.parametrize("case", ROUTES)
 async def test_each_command_s_route(restjson: ApiSession, case: str) -> None:
     command, fallback = ROUTES[case]
+    if FORCED_NATIVE and fallback is not None:
+        run = await restjson.run(f"zrestjson {command}", expected_rc=None)
+        refusal = (
+            "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable "
+            f"({fallback}); Python fallback disabled\n"
+        )
+        assert (run.rc, run.stderr, run.calls) == (255, refusal, ()), run.describe()
+        return
     run = await restjson.run(f"zrestjson {command}", replies=reply(200, b"{}"))
     user_agent = only_call(run).request.headers.get("user-agent") or ""
     tokens = user_agent.split()
