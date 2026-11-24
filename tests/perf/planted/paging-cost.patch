@@ -1,0 +1,16 @@
+diff --git a/crates/client/src/paginate.rs b/crates/client/src/paginate.rs
+index 5d9c59f7a..2970c0e5c 100644
+--- a/crates/client/src/paginate.rs
++++ b/crates/client/src/paginate.rs
+@@ -355,6 +355,11 @@ impl Iterator for PageIterator<'_> {
+ impl PageIterator<'_> {
+     /// The next page, the object itself.
+     fn next_object(&mut self) -> Option<Result<Object, CallError>> {
++        // Planted by tests/perf/prove.py, never committed: a busy wait of
++        // AWS_CLI_PERF_PLANTED_US microseconds (set when building) per page.
++        let planted = option_env!("AWS_CLI_PERF_PLANTED_US").and_then(|us| us.parse().ok());
++        let until = std::time::Instant::now() + std::time::Duration::from_micros(planted.unwrap_or(0));
++        while std::time::Instant::now() < until {}
+         let progress = match std::mem::replace(&mut self.state, State::Done) {
+             State::Start => self.start(),
+             State::Yielded(progress, read) => self.resume(*progress, read),
