@@ -103,6 +103,24 @@ fn not_iterable(value: &Value) -> Option<&'static str> {
     }
 }
 
+/// `text` written to stdout as CPython's `sys.stdout` takes it: buffered,
+/// and line-buffered on a terminal, which flushes each line as it is
+/// written, so a failure to flush there is the write's.
+///
+/// # Errors
+/// The write failed.
+pub fn write_stdout(
+    stdout: &mut dyn std::io::Write,
+    text: &str,
+    line_buffered: bool,
+) -> std::io::Result<()> {
+    stdout.write_all(text.as_bytes())?;
+    if line_buffered {
+        stdout.flush()?;
+    }
+    Ok(())
+}
+
 /// Where delivered output went.
 #[derive(Debug)]
 pub enum Delivered {

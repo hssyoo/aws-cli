@@ -57,6 +57,9 @@ struct Ready {
     client: Result<Client, CommandFailure>,
     format: OutputFormat,
     destination: Destination,
+    /// Stdout is a terminal, on which CPython's `sys.stdout` is
+    /// line-buffered.
+    line_buffered: bool,
     pager_env: Vec<(OsString, OsString)>,
 }
 
@@ -161,6 +164,7 @@ impl Invocation for ServiceInvocation {
             client,
             format,
             destination,
+            line_buffered: cx.stdout_is_tty,
             pager_env,
         });
         Ok(())
