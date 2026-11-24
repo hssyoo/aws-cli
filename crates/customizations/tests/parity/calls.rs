@@ -3,7 +3,7 @@
 //! every attempt with the case's canned response, a runtime with the
 //! oracle's pinned clock and uuids numbered from 1, and the case's keys,
 //! as `oracle.py`'s `layer_b` makes it through the CLI's own session.
-use super::{Result, decode, repository, response};
+use super::{Result, canned, decode, repository, response};
 use cli_core::client_config::user_agent::{Host, Versions};
 use cli_core::client_config::{ClientSettings, Resolved, Source as SettingSource};
 use client::call::{Client, ClientParts, UserAgentContext};
@@ -116,8 +116,9 @@ fn user_agent() -> UserAgentContext {
     }
 }
 
-/// More attempts than any service's default makes.
-const RESPONSES: usize = 10;
+/// More requests than any single call's attempts, or a paginated case's
+/// pages and their attempts, make.
+const RESPONSES: usize = 30;
 
 /// The client `oracle.py`'s `layer_b` makes for `case`, and its transport.
 fn client(case: &Json) -> Result<(Client, Arc<InMemoryTransport>)> {
@@ -126,13 +127,19 @@ fn client(case: &Json) -> Result<(Client, Arc<InMemoryTransport>)> {
     let source = locations(case);
     let model = Model::load(&source, service)?;
     let endpoints = EndpointData::load(&source, service, model.metadata())?;
-    let canned = response(case).unwrap_or_else(|| HttpResponse {
-        status: 200,
-        ..HttpResponse::default()
-    });
+    // One canned response per request, in order, the last answering every
+    // request after it, as the oracle's capture answers.
+    let answers: Vec<HttpResponse> = match case["responses"].as_array() {
+        Some(responses) if !responses.is_empty() => responses.iter().map(canned).collect(),
+        _ => vec![response(case).unwrap_or_else(|| HttpResponse {
+            status: 200,
+            ..HttpResponse::default()
+        })],
+    };
     let transport = Arc::new(InMemoryTransport::new());
-    for _ in 0..RESPONSES {
-        transport.respond(canned.clone());
+    for index in 0..RESPONSES.max(answers.len()) {
+        let answer = answers.get(index).or(answers.last());
+        transport.respond(answer.cloned().unwrap_or_default());
     }
     let endpoint_url = settings["endpoint_url"].as_str();
     let mut client_settings = ClientSettings::new(format!("{service}.call"));
@@ -233,15 +240,9 @@ pub fn layer_b(case: &Json) -> Result<Json> {
     let (client, transport) = client(case)?;
     let operation = case["operation"].as_str().ok_or("operation")?;
     let input = decode(Value::from_serde(&case["input"]))?;
-    let outcome = client.call(operation, input);
-    let requests: Vec<Json> = transport
-        .sent()
-        .iter()
-        .map(|(request, _)| request_json(request))
-        .collect();
-    let mut vector = json!({ "requests": requests });
-    match outcome {
-        Ok(output) => {
+    let outcome = match case.get("paginate") {
+        Some(pagination) => paginated(case, &client, operation, input, pagination)?,
+        None => client.call(operation, input).map(|output| {
             let mut value = output.value;
             if let Value::Map(map) = &mut value
                 && let Some(Value::Map(metadata)) = map.get_mut("ResponseMetadata")
@@ -250,6 +251,17 @@ pub fn layer_b(case: &Json) -> Result<Json> {
                 let attempts = i64::from(output.retry_attempts);
                 metadata.insert("RetryAttempts".into(), Value::Integer(attempts));
             }
+            value
+        }),
+    };
+    let requests: Vec<Json> = transport
+        .sent()
+        .iter()
+        .map(|(request, _)| request_json(request))
+        .collect();
+    let mut vector = json!({ "requests": requests });
+    match outcome {
+        Ok(value) => {
             vector["parsed"] = Json::String(format::json::dump(&value));
         }
         Err(error) => {
@@ -258,4 +270,33 @@ pub fn layer_b(case: &Json) -> Result<Json> {
         }
     }
     Ok(vector)
+}
+
+/// A case with `paginate`: every page of `operation` through
+/// `client::paginate::PageIterator` with the operation's paginator entry,
+/// then `build_full_result`, as the oracle's paginator gives it.
+fn paginated(
+    case: &Json,
+    client: &Client,
+    operation: &str,
+    input: Value,
+    pagination: &Json,
+) -> Result<std::result::Result<Value, CallError>> {
+    use client::paginate::{Config, PageIterator, PaginationConfig};
+    let service = case["service"].as_str().ok_or("service")?;
+    let pages = model::source::load_service_model(&locations(case), service, Kind::Paginators)?;
+    let entry = pages
+        .json
+        .get("pagination")
+        .and_then(|pages| pages.get(operation))
+        .ok_or("the operation has no paginator")?;
+    let config =
+        Config::from_value(&Value::from_serde(entry)).map_err(|refused| format!("{refused:?}"))?;
+    let option = |key: &str| pagination.get(key).map(Value::from_serde);
+    let pagination = PaginationConfig {
+        max_items: option("MaxItems"),
+        page_size: option("PageSize"),
+        starting_token: pagination["StartingToken"].as_str().map(str::to_owned),
+    };
+    Ok(PageIterator::new(client, operation, input, config, pagination).build_full_result())
 }

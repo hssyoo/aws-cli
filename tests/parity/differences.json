@@ -33,5 +33,15 @@
   "case": "dynamodb-idempotency-token",
   "path": "b",
   "reason": "TransactWriteItems has operationContextParams, which the client's admission leaves to the Python route (CallError::Unsupported before any request), so the native call is never made: layer B records the Python route's call only."
+ },
+ {
+  "case": "zrestjson-uri-query-and-limit",
+  "path": "a.request.path",
+  "reason": "botocore's serializer leaves a requestUri's own query (?versions) in url_path and prepare_request_dict appends the query string with '&'; the native Serialized keeps the path and the query apart, the requestUri's query first. The URL sent is the same: layer B's request is identical."
+ },
+ {
+  "case": "zrestjson-uri-query-and-limit",
+  "path": "a.request.query",
+  "reason": "As a.request.path for this case."
  }
 ]

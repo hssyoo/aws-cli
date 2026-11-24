@@ -84,7 +84,11 @@ fn request_json(request: &Serialized) -> Json {
 }
 
 fn response(case: &Json) -> Option<HttpResponse> {
-    let canned = case.get("response")?;
+    case.get("response").map(canned)
+}
+
+/// One canned response of a case, as `oracle.py` builds it.
+fn canned(canned: &Json) -> HttpResponse {
     let headers = canned["headers"].as_object().map(|headers| {
         Headers::from_pairs(
             headers
@@ -92,7 +96,7 @@ fn response(case: &Json) -> Option<HttpResponse> {
                 .map(|(k, v)| (k.as_str(), v.as_str().unwrap_or_default())),
         )
     });
-    Some(HttpResponse {
+    HttpResponse {
         status: canned["status"]
             .as_u64()
             .and_then(|s| u16::try_from(s).ok())
@@ -103,7 +107,7 @@ fn response(case: &Json) -> Option<HttpResponse> {
             .unwrap_or_default()
             .as_bytes()
             .to_vec(),
-    })
+    }
 }
 
 /// `outcome` in `oracle.py`: the parsed output with `format`'s renderings,

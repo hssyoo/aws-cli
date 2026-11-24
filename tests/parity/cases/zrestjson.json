@@ -1,0 +1,254 @@
+[
+ {
+  "name": "zrestjson-get-item-every-location",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "GetItem",
+  "input": {
+   "Id": "a b/c",
+   "Key": "x/y z~",
+   "Filter": "f&g=h",
+   "Tags": [
+    "t1",
+    "t 2"
+   ],
+   "Limit": 5,
+   "Verbose": true,
+   "Trace": "tr",
+   "Depth": 2,
+   "Accepts": [
+    "a",
+    "b"
+   ],
+   "Meta": {
+    "color": "blue"
+   }
+  },
+  "response": {
+   "status": 200,
+   "headers": {
+    "ETag": "\"e1\"",
+    "x-zrj-revision": "7",
+    "x-zrj-fresh": "true",
+    "Last-Modified": "Sun, 30 Aug 2015 12:36:00 GMT",
+    "x-zrj-meta-color": "blue",
+    "x-amzn-RequestId": "rj-1"
+   },
+   "body": "{\"Name\": \"n\", \"Size\": 12345678901, \"Labels\": [\"l1\", \"l2\"], \"Created\": 1440938160.5}"
+  }
+ },
+ {
+  "name": "zrestjson-put-item-body-and-201",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "PutItem",
+  "input": {
+   "Id": "i1",
+   "Mode": "m",
+   "Name": "nm",
+   "Count": 3,
+   "Enabled": false,
+   "Labels": [
+    "a"
+   ],
+   "Attributes": {
+    "b": "2",
+    "a": "1"
+   }
+  },
+  "response": {
+   "status": 201,
+   "headers": {
+    "Location": "/items/i1",
+    "x-amzn-RequestId": "rj-2"
+   },
+   "body": "{\"Id\": \"i1\"}"
+  }
+ },
+ {
+  "name": "zrestjson-delete-item-204",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "DeleteItem",
+  "input": {
+   "Id": "i1",
+   "Force": true
+  },
+  "response": {
+   "status": 204,
+   "headers": {
+    "x-amzn-RequestId": "rj-3"
+   },
+   "body": ""
+  }
+ },
+ {
+  "name": "zrestjson-modelled-error-with-header-member",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "GetItem",
+  "input": {
+   "Id": "i",
+   "Key": "k"
+  },
+  "response": {
+   "status": 409,
+   "headers": {
+    "x-amzn-errortype": "ItemLocked:http://internal.amazon.com/",
+    "x-zrj-owner": "o",
+    "x-amzn-RequestId": "rj-4"
+   },
+   "body": "{\"Message\": \"locked\", \"Attempts\": 2}"
+  }
+ },
+ {
+  "name": "zrestjson-unmodelled-error-in-body",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "GetThing",
+  "input": {
+   "ThingId": "t"
+  },
+  "response": {
+   "status": 400,
+   "headers": {
+    "x-amzn-RequestId": "rj-5"
+   },
+   "body": "{\"code\": \"SomethingElse\", \"message\": \"no\"}"
+  }
+ },
+ {
+  "name": "zrestjson-ping-without-input",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "Ping",
+  "input": {},
+  "response": {
+   "status": 200,
+   "headers": {
+    "x-zrj-region": "us-west-2",
+    "x-amzn-RequestId": "rj-6"
+   },
+   "body": "{\"Healthy\": true}"
+  }
+ },
+ {
+  "name": "zrestjson-uri-query-and-limit",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "ListVersions",
+  "input": {
+   "Id": "i",
+   "Limit": 2
+  },
+  "response": {
+   "status": 200,
+   "headers": {
+    "x-amzn-RequestId": "rj-7"
+   },
+   "body": "{\"Versions\": [\"v1\", \"v2\"]}"
+  }
+ },
+ {
+  "name": "zrestjson-validation-missing-label",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "GetItem",
+  "input": {
+   "Id": "i"
+  }
+ },
+ {
+  "name": "zrestjson-list-functions-three-pages",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "ListFunctions",
+  "input": {},
+  "paginate": {},
+  "responses": [
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "p-1"
+    },
+    "body": "{\"Functions\": [{\"FunctionName\": \"a\"}, {\"FunctionName\": \"b\", \"Runtime\": \"r\"}], \"NextMarker\": \"m1\"}"
+   },
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "p-2"
+    },
+    "body": "{\"Functions\": [{\"FunctionName\": \"c\"}], \"NextMarker\": \"m2\"}"
+   },
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "p-3"
+    },
+    "body": "{\"Functions\": [{\"FunctionName\": \"d\"}]}"
+   }
+  ]
+ },
+ {
+  "name": "zrestjson-search-users-max-items-truncates",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "SearchUsers",
+  "input": {
+   "InstanceId": "in"
+  },
+  "paginate": {
+   "MaxItems": 3,
+   "PageSize": 2
+  },
+  "responses": [
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "s-1"
+    },
+    "body": "{\"Users\": [{\"Id\": \"1\"}, {\"Id\": \"2\"}], \"NextToken\": \"t1\", \"ApproximateTotalCount\": 9}"
+   },
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "s-2"
+    },
+    "body": "{\"Users\": [{\"Id\": \"3\"}, {\"Id\": \"4\"}], \"NextToken\": \"t2\", \"ApproximateTotalCount\": 9}"
+   }
+  ]
+ },
+ {
+  "name": "zrestjson-list-functions-starting-token-and-retry",
+  "service": "zrestjson",
+  "models": "fake",
+  "operation": "ListFunctions",
+  "input": {},
+  "paginate": {
+   "StartingToken": "eyJNYXJrZXIiOiAibTEifQ=="
+  },
+  "responses": [
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "r-1"
+    },
+    "body": "{\"Functions\": [{\"FunctionName\": \"c\"}], \"NextMarker\": \"m2\"}"
+   },
+   {
+    "status": 500,
+    "headers": {
+     "x-amzn-RequestId": "r-2"
+    },
+    "body": "{\"message\": \"try again\"}"
+   },
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "r-3"
+    },
+    "body": "{\"Functions\": [{\"FunctionName\": \"d\"}]}"
+   }
+  ]
+ }
+]

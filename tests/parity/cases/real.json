@@ -424,5 +424,89 @@
    "headers": {},
    "body": "{\"TableNames\": []}"
   }
+ },
+ {
+  "name": "lambda-get-account-settings",
+  "service": "lambda",
+  "models": "builtin",
+  "operation": "GetAccountSettings",
+  "input": {},
+  "response": {
+   "status": 200,
+   "headers": {
+    "x-amzn-RequestId": "l-1"
+   },
+   "body": "{\"AccountLimit\": {\"TotalCodeSize\": 80530636800, \"CodeSizeUnzipped\": 262144000, \"ConcurrentExecutions\": 1000}, \"AccountUsage\": {\"TotalCodeSize\": 1234, \"FunctionCount\": 2}}"
+  }
+ },
+ {
+  "name": "lambda-list-functions-pages",
+  "service": "lambda",
+  "models": "builtin",
+  "operation": "ListFunctions",
+  "input": {
+   "FunctionVersion": "ALL"
+  },
+  "paginate": {
+   "PageSize": 1,
+   "MaxItems": 2
+  },
+  "responses": [
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "l-2"
+    },
+    "body": "{\"Functions\": [{\"FunctionName\": \"f1\", \"Runtime\": \"python3.13\", \"LastModified\": \"2024-01-01T00:00:00.000+0000\"}], \"NextMarker\": \"m1\"}"
+   },
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "l-3"
+    },
+    "body": "{\"Functions\": [{\"FunctionName\": \"f2\", \"MemorySize\": 128}], \"NextMarker\": \"m2\"}"
+   }
+  ]
+ },
+ {
+  "name": "efs-describe-file-systems-not-found",
+  "service": "efs",
+  "models": "builtin",
+  "operation": "DescribeFileSystems",
+  "input": {
+   "FileSystemId": "fs-1"
+  },
+  "response": {
+   "status": 404,
+   "headers": {
+    "x-amzn-ErrorType": "FileSystemNotFound",
+    "x-amzn-RequestId": "e-1"
+   },
+   "body": "{\"ErrorCode\": \"FileSystemNotFound\", \"Message\": \"File system 'fs-1' does not exist.\"}"
+  }
+ },
+ {
+  "name": "efs-describe-file-systems-pages",
+  "service": "efs",
+  "models": "builtin",
+  "operation": "DescribeFileSystems",
+  "input": {},
+  "paginate": {},
+  "responses": [
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "e-2"
+    },
+    "body": "{\"FileSystems\": [{\"FileSystemId\": \"fs-1\", \"CreationTime\": 1440938160, \"SizeInBytes\": {\"Value\": 6144}}], \"NextMarker\": \"m1\"}"
+   },
+   {
+    "status": 200,
+    "headers": {
+     "x-amzn-RequestId": "e-3"
+    },
+    "body": "{\"FileSystems\": [{\"FileSystemId\": \"fs-2\", \"CreationTime\": 1440938161.5}]}"
+   }
+  ]
  }
 ]
