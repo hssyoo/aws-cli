@@ -104,7 +104,7 @@ counts are still judged. The paired ratios cancel what load does to both
 binaries alike, which the load proof below shows.
 
 **What it catches.** Each check prints the tolerances it judges with.
-The quick calibration taken at 6b982f76b on the reference machine, an Apple
+The quick calibration taken at 5286fd237 on the reference machine, an Apple
 M4 Pro (12 CPUs), ran under a load average of 1.4 to 16.7 (other work was
 running), and gave:
 
@@ -171,7 +171,7 @@ artifact. By default it plants 1.5 times and 0.5 times the smallest
 per-page cost the quick calibration claims to catch on `json-pages-100` at
 0 ms; `--per-page-us N` (must be caught) and `--under-us N` (must pass)
 choose others. The larger must fail the check on paged native series
-only, and the smaller must not fail it. At 6b982f76b's calibration:
+only, and the smaller must not fail it. At 5286fd237's calibration:
 
 | Planted | Result |
 |---|---|
