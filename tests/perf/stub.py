@@ -37,8 +37,7 @@ from typing import Final
 MAX_REQUEST_BYTES: Final = 1024 * 1024
 RECEIVE_BYTES: Final = 64 * 1024
 LISTEN_BACKLOG: Final = 128
-# A delay sleeps until this long before its deadline and spins the rest,
-# so a busy scheduler's late wake-up does not stretch the round trip.
+# A delay spins this last stretch before its deadline (see `wait`).
 SPIN_SECONDS: Final = 0.002
 
 
@@ -208,12 +207,13 @@ class Reader:
 
 
 def wait(seconds: float) -> None:
-    """Wait `seconds` precisely: sleep most of it, spin the end."""
-    if seconds <= 0:
-        return
+    """Wait `seconds` precisely. A timer may fire late by about half its
+    interval (macOS's timer leeway, up to about 10 ms), so the wait sleeps
+    in steps of half the time left before the last `SPIN_SECONDS`, which no
+    late wake-up can carry past the deadline, and spins those."""
     deadline = time.perf_counter() + seconds
-    if seconds > SPIN_SECONDS:
-        time.sleep(seconds - SPIN_SECONDS)
+    while (left := deadline - time.perf_counter()) > SPIN_SECONDS:
+        time.sleep((left - SPIN_SECONDS) / 2)
     while time.perf_counter() < deadline:
         pass
 
