@@ -28,6 +28,7 @@ campaign.
 | `error_body` | `crt::s3::error_body::fuzz_read` | Fields of any body the reader accepts decode to UTF-8 |
 | `client_xml` | `client::testing::fuzz::xml` | `client::xml::parse` of any bytes gives a tree or expat's error, the same twice |
 | `protocol_responses` | `client::testing::fuzz::responses` | Any response (status, headers, body) to any operation of the fake query, json 1.0, json 1.1 and rest-json models parses, or fails as `ResponseParserError`, under botocore's and the CLI's parser defaults |
+| `paginator_token` | `client::testing::fuzz::starting_token` | `_parse_starting_token` of any text, under none, one or two input tokens: the same result twice, and a token that decodes to exactly the input tokens re-encodes (the `resume_token` setter) to one that decodes the same |
 | `model_json` | `model::fuzz::model_json` | `Model::from_json` of any bytes; a model it builds validates an empty input for each operation |
 | `model_validate` | `model::fuzz::validate` | `ParamValidator` of any JSON against every operation of the fake query and json models; a report prints |
 | `timestamp_text` | `timestamp::fuzz::parse` | Every timestamp reader over any text; each value read prints in its form and reads back as itself |

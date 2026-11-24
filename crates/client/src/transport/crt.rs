@@ -21,12 +21,26 @@
 //!   `decode_content=False`).
 //! - **Keep-alive**: `tcp_keepalive` sets SO_KEEPALIVE at the system's
 //!   timings, as botocore adds it to urllib3's socket options
-//!   (`_compute_socket_options`). Each request connects anew.
+//!   (`_compute_socket_options`).
+//! - **Connection reuse**: a connection is kept for the next request to the
+//!   same server, the pages of a paginated call among them, in pools of
+//!   [`MAX_POOL_CONNECTIONS`]: urllib3's pools as botocore sizes them (see
+//!   `crt::http`'s notes on pooling for what is kept, and when a kept
+//!   connection is dropped).
 use super::{Timeouts, Transport, TransportError};
 use crate::http::{Headers, HttpRequest, HttpResponse};
 use cli_core::proxy::{Environment, Forward, ForwardProxy};
 use credentials::Location;
 use std::sync::Arc;
+
+/// How many connections each server's pool keeps: botocore's
+/// `max_pool_connections`, which the Python route always leaves at its
+/// default, `MAX_POOL_CONNECTIONS` in botocore/endpoint.py (10), since no
+/// CLI option, variable or profile setting reaches the client's `Config`.
+pub const MAX_POOL_CONNECTIONS: std::num::NonZeroU32 = match std::num::NonZeroU32::new(10) {
+    Some(size) => size,
+    None => std::num::NonZeroU32::MIN,
+};
 
 /// What [`CrtTransport::new`] takes: the TLS trust and the CRT's logger,
 /// named here so a caller of the transport needs no `crt` dependency.
@@ -153,7 +167,7 @@ impl Transport for CrtTransport {
         };
         let response = self
             .client
-            .send(&sent)
+            .send_pooled(&sent, MAX_POOL_CONNECTIONS)
             .map_err(|error| transport_error(error, route.forward.or(route.tunnel)))?;
         Ok(HttpResponse {
             status: response.status,

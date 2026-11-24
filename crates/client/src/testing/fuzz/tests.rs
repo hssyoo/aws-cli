@@ -1,7 +1,7 @@
 //! The stable replay of the parser fuzz targets: each target's curated
 //! inputs under `fuzz/corpus/<target>`, every prefix of each, then a seeded
 //! sweep, through the same bodies the targets run.
-use super::{responses, xml};
+use super::{responses, starting_token, xml};
 use model::shapes::Model;
 use std::path::Path;
 
@@ -72,6 +72,11 @@ fn the_response_target_replays() -> std::io::Result<()> {
     let models = models();
     assert_eq!(models.len(), 4);
     replay("protocol_responses", |bytes| responses(&models, bytes))
+}
+
+#[test]
+fn the_starting_token_target_replays() -> std::io::Result<()> {
+    replay("paginator_token", starting_token)
 }
 
 #[test]

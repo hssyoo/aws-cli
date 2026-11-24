@@ -125,65 +125,15 @@ fn int(value: &Value) -> Result<Value, ParseError> {
     match value {
         Value::Integer(_) | Value::BigInteger(_) => Ok(value.clone()),
         Value::Bool(flag) => Ok(Value::Integer(i64::from(*flag))),
-        Value::Float(number) => truncated(*number),
+        Value::Float(number) => {
+            crate::python::int_of_float(*number).map_err(|error| ParseError::new(error.to_string()))
+        }
         Value::String(text) => int_from_text(text).map_err(ParseError::new),
         other => Err(ParseError::new(format!(
             "int() argument must be a string, a bytes-like object or a real number, not '{}'",
             short_type(other)
         ))),
     }
-}
-
-/// `int(number)` of a float: toward zero, of any size.
-fn truncated(number: f64) -> Result<Value, ParseError> {
-    if number.is_nan() {
-        return Err(ParseError::new("cannot convert float NaN to integer"));
-    }
-    if number.is_infinite() {
-        return Err(ParseError::new("cannot convert float infinity to integer"));
-    }
-    let whole = number.trunc();
-    // -2**63 and 2**63, which are exact as floats.
-    if (-9_223_372_036_854_775_808.0..9_223_372_036_854_775_808.0).contains(&whole) {
-        return Ok(Value::Integer(whole as i64));
-    }
-    Ok(Value::BigInteger(whole_digits(whole).into()))
-}
-
-/// The decimal digits of a whole float beyond `i64`: its 53-bit mantissa
-/// doubled once per binary exponent, in base 10**9.
-fn whole_digits(whole: f64) -> String {
-    const BASE: u64 = 1_000_000_000;
-    let bits = whole.to_bits();
-    let exponent = ((bits >> 52) & 0x7ff).saturating_sub(1075);
-    let mantissa = (bits & ((1 << 52) - 1)) | (1 << 52);
-    let mut limbs = vec![
-        mantissa % BASE,
-        mantissa / BASE % BASE,
-        mantissa / BASE / BASE,
-    ];
-    for _ in 0..exponent {
-        let mut carry = 0;
-        for limb in &mut limbs {
-            let doubled = *limb * 2 + carry;
-            (*limb, carry) = (doubled % BASE, doubled / BASE);
-        }
-        if carry > 0 {
-            limbs.push(carry);
-        }
-    }
-    while limbs.len() > 1 && limbs.last() == Some(&0) {
-        limbs.pop();
-    }
-    let mut digits = String::from(if whole < 0.0 { "-" } else { "" });
-    for (index, limb) in limbs.iter().rev().enumerate() {
-        digits.push_str(&if index == 0 {
-            limb.to_string()
-        } else {
-            format!("{limb:09}")
-        });
-    }
-    digits
 }
 
 /// `float(value)`: an int as the nearest float, a bool as 0.0 or 1.0, text
