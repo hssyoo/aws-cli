@@ -136,6 +136,22 @@ Refresh it when a change makes the CLI faster (the check says so), when a
 case is added or changed, and when the reference machine changes. Say in
 the commit why the numbers moved.
 
+**A change meant to move the numbers.** A change that alters what the CLI
+does on the wire, such as reusing connections across pages, fails the
+check against the old baseline: the connection counts it changes are
+reported as CHANGED (they are judged exactly), and the times it improves as
+improved. That failing check is the before-and-after judgement, so keep it:
+
+1. On the change's head, before refreshing anything, run
+   `cargo xtask perf --check --out target/perf/after.json`. Every CHANGED
+   and improved line must be one the change intends (for connection reuse:
+   one connection where there were one per page, and shorter times on the
+   paged and latency cases), and nothing may be REGRESSED.
+2. Keep that output (it names both commits) for the change's record.
+3. Then refresh the baseline on that same head as above, and commit it with
+   the counts that changed and why in the message. From then on `--check`
+   holds the new behaviour.
+
 ## Adding a case
 
 A case in `cases.json` is data: the command, whether it needs the fake
