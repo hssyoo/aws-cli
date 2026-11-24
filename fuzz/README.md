@@ -1,10 +1,11 @@
 # Transfer fuzz models
 
-Seventeen targets drive the source pool, the download writer, the recursive
+Eighteen targets drive the source pool, the download writer, the recursive
 scheduler, a recursive download's local paths, the S3 error-body reader, and
-the dynamic client's readers: the XML reader, the query and json response
-and error parsers, the model reader and validator, the timestamp readers
-and argparse's number conversion. Each checks its code against an
+the dynamic client's readers: the XML reader, the query, json and rest-json
+response and error parsers, the paginator's starting-token codec, the model
+reader and validator, the timestamp readers and argparse's number
+conversion. Each checks its code against an
 independent model, except `pool_operations`, which checks the pool's
 invariants after every operation. A target passes libFuzzer's bytes straight to its model. The models use
 fake allocation, request and disk operations; they make no AWS calls. A
