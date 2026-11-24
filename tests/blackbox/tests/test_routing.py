@@ -25,11 +25,11 @@ import pytest_asyncio
 from localstub import AsyncHTTPTestServer
 
 from credhelpers import credential_runtime, run_command
+from harness_plugin import ROUTER, refusal
 from tests.blackbox.utils import run_cli
 
 pytestmark = pytest.mark.asyncio
 
-ROUTER: Final = "AWS_CLI_NATIVE_ROUTER"
 # The repository's fake service models (tests/models).
 MODELS: Final = Path(__file__).resolve().parents[2] / "models"
 # The name the AWS CLI's TransferManagerFactory locks while it runs the
@@ -37,14 +37,6 @@ MODELS: Final = Path(__file__).resolve().parents[2] / "models"
 CRT_PROCESS_LOCK: Final = "aws-cli"
 # A longer app id than the native user-agent header holds.
 LONG_APP_ID: Final = "a" * 3000
-
-
-def refusal(reason: str) -> bytes:
-    """The line forced native routing prints for `reason`."""
-    return (
-        f"aws: {ROUTER}=native: native implementation unavailable "
-        f"({reason}); Python fallback disabled\n"
-    ).encode()
 
 
 @pytest_asyncio.fixture
@@ -67,7 +59,7 @@ async def assert_refused(
 ) -> None:
     env[ROUTER] = "native"
     result = await run_command([aws_cli, *arguments], env, cwd=cwd)
-    assert result == (b"", refusal(reason), 255), result[1].decode()
+    assert result == (b"", refusal(reason).encode(), 255), result[1].decode()
     assert not server.requests
 
 

@@ -15,13 +15,13 @@ other tests sending one skip that run.
 """
 
 import json
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 import pytest
 import pytest_asyncio
-from harness_plugin import COMMAND_ENVIRONMENT
+from harness_plugin import FORCED_NATIVE, refusal
 from localstub import HTTPResponse
 
 from apihelpers import (
@@ -31,13 +31,12 @@ from apihelpers import (
     api_session,
     attempt_limit,
     fake_model_protocol,
+    printed,
     retries_clause,
 )
 
 pytestmark = pytest.mark.asyncio
 
-# The run forces the native route, which refuses what it cannot run.
-FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get("AWS_CLI_NATIVE_ROUTER") == "native"
 COLLECTIONS_REFUSED: Final = (
     "forced native refuses a collection argument (unsupported_option), "
     "as test_each_command_s_route checks"
@@ -100,11 +99,6 @@ def signed_headers(call: Call) -> list[str]:
 def only_call(run: CommandRun) -> Call:
     (call,) = run.calls
     return call
-
-
-def printed(value: Mapping[str, Any]) -> str:
-    """The JSON output of `value`, as the CLI indents it."""
-    return json.dumps(value, indent=4) + "\n"
 
 
 def reply(
@@ -550,11 +544,7 @@ async def test_each_command_s_route(restjson: ApiSession, case: str) -> None:
     command, fallback = ROUTES[case]
     if FORCED_NATIVE and fallback is not None:
         run = await restjson.run(f"zrestjson {command}", expected_rc=None)
-        refusal = (
-            "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable "
-            f"({fallback}); Python fallback disabled\n"
-        )
-        assert (run.rc, run.stderr, run.calls) == (255, refusal, ()), run.describe()
+        assert (run.rc, run.stderr, run.calls) == (255, refusal(fallback), ()), run.describe()
         return
     run = await restjson.run(f"zrestjson {command}", replies=reply(200, b"{}"))
     user_agent = only_call(run).request.headers.get("user-agent") or ""

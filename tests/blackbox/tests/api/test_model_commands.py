@@ -23,21 +23,15 @@ from apihelpers import (
     fake_model_protocol,
     retries_clause,
 )
-from harness_plugin import COMMAND_ENVIRONMENT
+from harness_plugin import FORCED_NATIVE, MAIN_USAGE
 from localstub import HTTPResponse
 
 pytestmark = pytest.mark.asyncio
 
 MODELS: Final = Path(__file__).resolve().parents[3] / "models"
 SERVICES: Final = ("zjson", "zjson11", "zquery", "zglobal", "zrestjson")
-USAGE: Final = (
-    "\nusage: aws [options] <command> <subcommand> [<subcommand> ...] "
-    "[parameters]\nTo see help text, you can run:\n\n  aws help\n  "
-    "aws <command> help\n  aws <command> <subcommand> help\n"
-)
+USAGE: Final = "\n" + MAIN_USAGE
 
-# The run forces the native route, which refuses what it cannot run.
-FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get("AWS_CLI_NATIVE_ROUTER") == "native"
 
 
 @pytest_asyncio.fixture

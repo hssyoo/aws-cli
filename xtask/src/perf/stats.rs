@@ -15,6 +15,9 @@ pub(super) struct Spread {
     pub(super) p95: f64,
     /// The median absolute deviation from `p50`.
     pub(super) mad: f64,
+    /// The least and the greatest value.
+    pub(super) min: f64,
+    pub(super) max: f64,
     /// How many runs the spread is over.
     pub(super) n: usize,
 }
@@ -28,6 +31,8 @@ impl Spread {
             p50,
             p95: percentile(values, 0.95)?,
             mad: percentile(&deviations, 0.5)?,
+            min: percentile(values, 0.0)?,
+            max: percentile(values, 1.0)?,
             n: values.len(),
         })
     }

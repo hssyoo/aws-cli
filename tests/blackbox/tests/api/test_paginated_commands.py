@@ -31,7 +31,7 @@ native route, which the other tests of ListJobs skip.
 
 import base64
 import json
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Final
 
@@ -45,25 +45,20 @@ from apihelpers import (
     Reply,
     api_session,
     fake_model_protocol,
+    printed,
     retries_clause,
 )
-from harness_plugin import COMMAND_ENVIRONMENT
+from harness_plugin import FORCED_NATIVE, MAIN_USAGE, refusal
 
 pytestmark = pytest.mark.asyncio
 
-# The run forces the native route, which refuses what it cannot run.
-FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get("AWS_CLI_NATIVE_ROUTER") == "native"
 # The case whose paginator only Python runs, which a forced-native run
 # refuses as test_each_paginated_command_s_route checks.
 PYTHON_PAGINATOR: Final = "query-expression-token"
 
 MODELS: Final = Path(__file__).resolve().parents[3] / "models"
 SERVICES: Final = ("zjson", "zquery", "zrestjson")
-USAGE: Final = (
-    "\nusage: aws [options] <command> <subcommand> [<subcommand> ...] "
-    "[parameters]\nTo see help text, you can run:\n\n  aws help\n  "
-    "aws <command> help\n  aws <command> <subcommand> help\n"
-)
+USAGE: Final = "\n" + MAIN_USAGE
 
 
 @pytest_asyncio.fixture
@@ -73,11 +68,6 @@ async def paged(aws_cli: str, tmp_path: Path) -> AsyncIterator[ApiSession]:
         session.env["TZ"] = "UTC"
         session.protocol = fake_model_protocol(MODELS, SERVICES)
         yield session
-
-
-def printed(value: Mapping[str, Any]) -> str:
-    """The JSON output of `value`, as the CLI indents it."""
-    return json.dumps(value, indent=4) + "\n"
 
 
 def token(**keys: Any) -> str:
@@ -900,11 +890,7 @@ async def test_each_paginated_command_s_route(paged: ApiSession, case: str) -> N
     command, fallback = ROUTES[case]
     if FORCED_NATIVE and fallback is not None:
         run = await paged.run(command, expected_rc=None)
-        refusal = (
-            "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable "
-            f"({fallback}); Python fallback disabled\n"
-        )
-        assert (run.rc, run.stderr, run.calls) == (255, refusal, ()), run.describe()
+        assert (run.rc, run.stderr, run.calls) == (255, refusal(fallback), ()), run.describe()
         return
     run = await paged.run(command, replies={})
     agent = run.calls[0].request.headers.get("user-agent") or ""

@@ -130,9 +130,11 @@ class Stub:
         while (request := reader.request()) is not None:
             wait(rtt)
             response = self._next_page(request.keep_alive)
-            stream.sendall(response)
+            # Counted before it is sent, as the request was, so the count is
+            # complete by the time the client has read the response.
             with self._lock:
                 self._counts.response_bytes += len(response)
+            stream.sendall(response)
             if not request.keep_alive:
                 return
 

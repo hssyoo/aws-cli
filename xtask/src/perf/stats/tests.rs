@@ -33,8 +33,8 @@ fn a_single_value_is_every_percentile_and_no_values_have_none() {
 #[test]
 fn the_spread_ignores_an_outlier_in_its_median_and_deviation() {
     let spread = Spread::of(&[10.0, 11.0, 9.0, 10.0, 100.0]);
-    let fields = spread.map(|spread| (spread.p50, spread.mad, spread.n));
-    assert_eq!(fields, Some((10.0, 1.0, 5)));
+    let fields = spread.map(|spread| (spread.p50, spread.mad, spread.n, spread.min, spread.max));
+    assert_eq!(fields, Some((10.0, 1.0, 5, 9.0, 100.0)));
     // The rank is 3.8: 11 + 0.8 * (100 - 11).
     assert!(spread.is_some_and(|spread| close(spread.p95, 82.2)));
 }
@@ -45,6 +45,8 @@ fn the_median_error_shrinks_with_the_square_root_of_the_runs() {
         p50: 0.0,
         p95: 0.0,
         mad: 1.0,
+        min: 0.0,
+        max: 0.0,
         n: 4,
     };
     let sixteen = Spread { n: 16, ..four };

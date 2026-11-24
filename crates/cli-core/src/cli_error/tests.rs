@@ -981,6 +981,7 @@ fn the_registry_s_reasons_have_their_refusal_names() {
         (PythonReason::UnsupportedTrait, "unsupported_trait"),
         (PythonReason::Paginator, "paginator"),
         (PythonReason::StartingToken, "starting_token"),
+        (PythonReason::PagingHandler, "paging_handler"),
         (
             PythonReason::UnportedCustomization,
             "unported_customization",

@@ -1,52 +1,104 @@
-use super::super::record::{Binary, Host, Summary, Tier};
+use super::super::record::{Binary, FORMAT, Host, Refusal, Summary, Tier};
 use super::*;
 
-fn spread(p50: f64, mad: f64) -> Spread {
-    Spread {
-        p50,
-        p95: p50,
-        mad,
-        n: 10,
-    }
-}
+const MIB: f64 = 1024.0 * 1024.0;
+const ONE: Exact = Exact { min: 1, max: 1 };
 
-fn key(route: &str) -> Key {
+/// 5% and at least 1 ms for times, 5% and at least 1 MiB for the least
+/// peak: tolerances fixed for these tests.
+const TOLERANCES: Tolerances = Tolerances {
+    wall: Tolerance {
+        relative: 0.05,
+        absolute: 0.001,
+    },
+    cpu: Tolerance {
+        relative: 0.05,
+        absolute: 0.001,
+    },
+    rss: Tolerance {
+        relative: 0.05,
+        absolute: MIB,
+    },
+};
+
+fn key(latency_ms: u32) -> Key {
     Key {
-        case: "query-single".into(),
+        case: "json-pages-100".into(),
         scheme: "https".into(),
-        latency_ms: 0,
-        route: route.into(),
+        latency_ms,
+        route: "native".into(),
     }
 }
 
-/// A series with a 100 ms wall time, 20 ms of CPU and 20 MiB of RSS, each
-/// with a deviation of `mad` of its median, on `connections` connections.
-fn series(route: &str, scale: f64, mad: f64, connections: Exact) -> Series {
+/// A run of `wall` seconds, a fifth of it CPU, peaking at `rss_mib`.
+fn run(wall: f64, rss_mib: f64, load: f64) -> Run {
+    Run {
+        wall_s: wall,
+        user_s: wall * 0.15,
+        sys_s: wall * 0.05,
+        max_rss_bytes: rss_mib * MIB,
+        connections: 1,
+        requests: 100,
+        response_bytes: 1.0e6,
+        stdout_bytes: 1.0e5,
+        load_average: load,
+    }
+}
+
+fn spread(values: &[f64]) -> Spread {
+    Spread::of(values).unwrap_or(Spread {
+        p50: 0.0,
+        p95: 0.0,
+        mad: 0.0,
+        min: 0.0,
+        max: 0.0,
+        n: 0,
+    })
+}
+
+fn series(latency_ms: u32, runs: Vec<Run>, connections: Exact) -> Series {
+    let of = |measure: fn(&Run) -> f64| spread(&runs.iter().map(measure).collect::<Vec<_>>());
     Series {
-        key: key(route),
-        pages: 1,
+        key: key(latency_ms),
+        pages: 100,
         load_average: [1.0, 1.0],
         summary: Summary {
-            wall_s: spread(0.1 * scale, 0.1 * mad),
-            cpu_s: spread(0.02 * scale, 0.02 * mad),
-            user_s: spread(0.015, 0.0),
-            sys_s: spread(0.005, 0.0),
-            max_rss_bytes: spread(20.0 * 1024.0 * 1024.0 * scale, 0.0),
+            wall_s: of(wall),
+            cpu_s: of(cpu),
+            user_s: of(|run| run.user_s),
+            sys_s: of(|run| run.sys_s),
+            max_rss_bytes: of(|run| run.max_rss_bytes),
             connections,
-            requests: Exact { min: 1, max: 1 },
-            response_bytes: 100.0,
-            stdout_bytes: 10.0,
-            requests_per_s: 10.0,
-            pages_per_s: 10.0,
-            mb_per_s: 0.001,
+            requests: Exact { min: 100, max: 100 },
+            response_bytes: 1.0e6,
+            stdout_bytes: 1.0e5,
+            requests_per_s: 1.0,
+            pages_per_s: 1.0,
+            mb_per_s: 1.0,
         },
-        runs: Vec::new(),
+        runs,
     }
+}
+
+/// Ten runs whose wall times drift up by 3% a round, scaled by `scale`.
+fn drifting(scale: f64, rss_mib: &[f64], load: f64) -> Vec<Run> {
+    (0..10)
+        .map(|round| {
+            let drift = 1.0 + 0.03 * f64::from(round);
+            let rss = rss_mib[usize::try_from(round).unwrap_or(0) % rss_mib.len()];
+            run(0.035 * drift * scale, rss, load)
+        })
+        .collect()
+}
+
+/// Ten runs of the same wall time, scaled by `scale`.
+fn steady(scale: f64) -> Vec<Run> {
+    (0..10).map(|_| run(0.035 * scale, 50.0, 1.0)).collect()
 }
 
 fn record(cpu: &str, series: Vec<Series>) -> Record {
     Record {
-        format: super::super::record::FORMAT,
+        format: FORMAT,
         platform: "macos-aarch64".into(),
         host: Host {
             system: "Darwin".into(),
@@ -65,18 +117,11 @@ fn record(cpu: &str, series: Vec<Series>) -> Record {
         started_unix_s: 0.0,
         warmup: 2,
         runs: 10,
+        first_run_s: None,
         series,
+        refused: Vec::new(),
     }
 }
-
-const ONE: Exact = Exact { min: 1, max: 1 };
-
-/// 20%, and at least 5 ms: a tolerance fixed for these tests, whatever the
-/// tiers' tuned ones are.
-const WALL: Tolerance = Tolerance {
-    relative: 0.20,
-    absolute: 0.005,
-};
 
 fn verdicts(findings: &[Finding]) -> Vec<(Metric, Verdict)> {
     findings
@@ -85,108 +130,170 @@ fn verdicts(findings: &[Finding]) -> Vec<(Metric, Verdict)> {
         .collect()
 }
 
+fn comparison(base: Vec<Run>, head: Vec<Run>, limit: Option<f64>) -> Vec<Finding> {
+    let base = record("M4", vec![series(0, base, ONE)]);
+    let head = record("M4", vec![series(0, head, ONE)]);
+    judge_comparison(&base, &head, Some(TOLERANCES), limit)
+}
+
+fn metric(findings: &[Finding], metric: Metric) -> Option<Verdict> {
+    findings
+        .iter()
+        .find(|finding| finding.metric == metric)
+        .map(|finding| finding.verdict.clone())
+}
+
 #[test]
-fn a_series_like_its_baseline_is_within_every_bound() {
-    let base = record("M4", vec![series("native", 1.0, 0.01, ONE)]);
-    let now = record("M4", vec![series("native", 1.05, 0.01, ONE)]);
-    let findings = judge(&base, &now);
-    assert_eq!(findings.len(), 5);
+fn drift_that_moves_both_binaries_cancels_in_a_comparison() {
+    // Both drift by 27% across the rounds; a stored median would not.
+    let findings = comparison(
+        drifting(1.0, &[50.0], 1.0),
+        drifting(1.0, &[50.0], 1.0),
+        None,
+    );
     assert!(
         findings
             .iter()
-            .all(|finding| finding.verdict == Verdict::Within)
+            .all(|finding| finding.verdict == Verdict::Within),
+        "{findings:?}"
     );
 }
 
 #[test]
-fn growth_past_both_bounds_regresses_and_shrinkage_improves() {
-    let wall = |p50| spread(p50, 0.0);
-    assert_eq!(
-        median(wall(0.1), wall(0.125), WALL),
-        Verdict::Regressed {
-            baseline: 0.1,
-            now: 0.125,
-            limit: 0.020000000000000004
-        }
-    );
-    assert_eq!(median(wall(0.1), wall(0.118), WALL), Verdict::Within);
+fn a_head_slower_in_every_round_regresses_and_a_faster_one_improves() {
+    let base = drifting(1.0, &[50.0], 1.0);
+    let slower = comparison(base.clone(), drifting(1.2, &[50.0], 1.0), None);
     assert!(matches!(
-        median(wall(0.1), wall(0.075), WALL),
-        Verdict::Improved { .. }
+        metric(&slower, Metric::Wall),
+        Some(Verdict::Regressed { .. })
     ));
-    // 20% of 20 ms is under the 5 ms floor: a 4 ms growth is within it.
-    assert_eq!(median(wall(0.02), wall(0.024), WALL), Verdict::Within);
-    assert!(median(wall(0.02), wall(0.026), WALL).fails());
+    assert!(matches!(
+        metric(&slower, Metric::Cpu),
+        Some(Verdict::Regressed { .. })
+    ));
+    let faster = comparison(base.clone(), drifting(0.9, &[50.0], 1.0), None);
+    assert!(matches!(
+        metric(&faster, Metric::Wall),
+        Some(Verdict::Improved { .. })
+    ));
+    // 3% is within the 5% bound.
+    let within = comparison(base, drifting(1.03, &[50.0], 1.0), None);
+    assert_eq!(metric(&within, Metric::Wall), Some(Verdict::Within));
 }
 
 #[test]
-fn runs_too_spread_to_resolve_the_bound_are_too_noisy_to_judge() {
-    // A 4 ms deviation over 10 runs: each median is good to about 2.35 ms,
-    // the difference to 6.65 ms at 95%, past the 5 ms floor.
-    let verdict = median(spread(0.02, 0.004), spread(0.02, 0.004), WALL);
-    assert!(matches!(verdict, Verdict::Noisy { limit, .. } if limit == 0.005));
-    assert!(verdict.fails());
-    assert_eq!(
-        median(spread(0.02, 0.001), spread(0.02, 0.001), WALL),
-        Verdict::Within
+fn scattered_ratios_are_too_noisy_to_judge() {
+    let base = drifting(1.0, &[50.0], 1.0);
+    let head: Vec<Run> = base
+        .iter()
+        .enumerate()
+        .map(|(round, run)| {
+            let scale = if round % 2 == 0 { 1.4 } else { 0.7 };
+            Run {
+                wall_s: run.wall_s * scale,
+                ..run.clone()
+            }
+        })
+        .collect();
+    let verdict = metric(&comparison(base, head, None), Metric::Wall);
+    assert!(
+        matches!(verdict, Some(Verdict::Noisy { .. })),
+        "{verdict:?}"
     );
+    assert!(verdict.is_some_and(|verdict| verdict.inconclusive() && !verdict.fails()));
 }
 
 #[test]
-fn counts_must_equal_the_baseline_and_not_vary() {
-    let base = record("M4", vec![series("native", 1.0, 0.0, ONE)]);
-    let more = record(
-        "M4",
-        vec![series("native", 1.0, 0.0, Exact { min: 2, max: 2 })],
-    );
-    let varied = record(
-        "M4",
-        vec![series("native", 1.0, 0.0, Exact { min: 1, max: 2 })],
-    );
-    for now in [more, varied] {
-        let findings = judge(&base, &now);
-        let (metric, verdict) = &verdicts(&findings)[0];
-        assert_eq!(*metric, Metric::Connections);
-        assert!(matches!(verdict, Verdict::Changed { baseline, .. } if *baseline == ONE));
-        assert!(verdict.fails());
+fn a_bimodal_peak_regresses_only_when_both_ends_grow() {
+    let base = drifting(1.0, &[51.4], 1.0);
+    // Most runs of the head land in an upper mode; its least peak holds.
+    let bimodal = comparison(base.clone(), drifting(1.0, &[56.0, 56.0, 51.5], 1.0), None);
+    assert_eq!(metric(&bimodal, Metric::Rss), Some(Verdict::Within));
+    let grown = comparison(base, drifting(1.0, &[56.0], 1.0), None);
+    assert!(matches!(
+        metric(&grown, Metric::Rss),
+        Some(Verdict::Regressed { .. })
+    ));
+}
+
+#[test]
+fn a_rare_low_mode_in_one_of_two_builds_of_one_source_is_no_change() {
+    // Two builds of one commit, measured: every run of one peaked at 56.0
+    // MiB, and one run of the other reached a lower mode, 51.4 MiB.
+    let mut rare = vec![56.0; 10];
+    rare[3] = 51.4;
+    let without = drifting(1.0, &[56.0], 1.0);
+    let with = drifting(1.0, &rare, 1.0);
+    for (base, head) in [(without.clone(), with.clone()), (with, without)] {
+        let findings = comparison(base, head, None);
+        assert_eq!(metric(&findings, Metric::Rss), Some(Verdict::Within));
     }
 }
 
 #[test]
-fn another_cpu_judges_only_the_counts() {
-    let base = record("M1", vec![series("native", 1.0, 0.0, ONE)]);
-    let now = record("M4", vec![series("native", 3.0, 0.0, ONE)]);
+fn ends_share_the_smaller_change_when_they_move_the_same_way() {
+    assert_eq!(common_shift(4.0, 1.0), 1.0);
+    assert_eq!(common_shift(-1.0, -3.0), -1.0);
+    assert_eq!(common_shift(-4.6, 0.0), 0.0);
+    assert_eq!(common_shift(4.6, -0.1), 0.0);
+}
+
+#[test]
+fn a_loaded_machine_is_not_judged_but_its_counts_are() {
+    let base = record("M4", vec![series(0, drifting(1.0, &[50.0], 9.0), ONE)]);
+    let more = Exact { min: 100, max: 100 };
+    let head = record("M4", vec![series(0, drifting(2.0, &[50.0], 9.0), more)]);
+    let findings = judge_comparison(&base, &head, Some(TOLERANCES), Some(4.0));
+    let load = Verdict::Loaded {
+        load: 9.0,
+        limit: 4.0,
+    };
+    assert_eq!(metric(&findings, Metric::Wall), Some(load.clone()));
+    assert_eq!(metric(&findings, Metric::Rss), Some(load.clone()));
+    assert!(load.inconclusive() && !load.fails());
+    let connections = metric(&findings, Metric::Connections);
+    assert!(connections.is_some_and(|verdict| verdict.fails()));
+}
+
+#[test]
+fn a_series_the_base_refused_is_reported_and_not_judged() {
+    let mut base = record("M4", Vec::new());
+    base.refused.push(Refusal {
+        key: key(0),
+        reason: "exited 255".into(),
+    });
+    let head = record("M4", vec![series(0, drifting(1.0, &[50.0], 1.0), ONE)]);
+    let findings = judge_comparison(&base, &head, Some(TOLERANCES), None);
     assert_eq!(
-        verdicts(&judge(&base, &now)),
+        verdicts(&findings),
+        [(Metric::Series, Verdict::RefusedByBase("exited 255".into()))]
+    );
+    assert!(!findings[0].verdict.fails() && !findings[0].verdict.inconclusive());
+}
+
+#[test]
+fn without_a_calibration_only_the_counts_are_judged() {
+    let base = record("M4", vec![series(0, drifting(1.0, &[50.0], 1.0), ONE)]);
+    let head = record("M4", vec![series(0, drifting(3.0, &[90.0], 1.0), ONE)]);
+    let findings = judge_comparison(&base, &head, None, None);
+    let uncalibrated = Verdict::NotJudged(Unjudged::Uncalibrated);
+    assert_eq!(
+        verdicts(&findings),
         [
             (Metric::Connections, Verdict::Within),
             (Metric::Requests, Verdict::Within),
-            (Metric::Wall, Verdict::OtherCpu),
-            (Metric::Cpu, Verdict::OtherCpu),
-            (Metric::Rss, Verdict::OtherCpu),
+            (Metric::Wall, uncalibrated.clone()),
+            (Metric::Cpu, uncalibrated.clone()),
+            (Metric::Rss, uncalibrated),
         ]
     );
 }
 
 #[test]
-fn a_series_missing_from_the_baseline_is_new_and_does_not_fail() {
-    let base = record("M4", vec![series("native", 1.0, 0.0, ONE)]);
-    let now = record("M4", vec![series("python", 1.0, 0.0, ONE)]);
-    let findings = judge(&base, &now);
-    assert_eq!(verdicts(&findings), [(Metric::Series, Verdict::New)]);
-    assert!(!findings[0].verdict.fails());
-}
-
-#[test]
-fn cpu_time_is_not_gated_on_a_series_with_injected_latency() {
-    let with_latency = |scale| {
-        let mut series = series("native", scale, 0.0, ONE);
-        series.key.latency_ms = 80;
-        series
-    };
-    let base = record("M4", vec![with_latency(1.0)]);
-    let now = record("M4", vec![with_latency(1.0)]);
-    let metrics: Vec<Metric> = judge(&base, &now)
+fn cpu_time_is_not_judged_on_a_series_with_injected_latency() {
+    let base = record("M4", vec![series(20, drifting(1.0, &[50.0], 1.0), ONE)]);
+    let head = record("M4", vec![series(20, drifting(1.0, &[50.0], 1.0), ONE)]);
+    let metrics: Vec<Metric> = judge_comparison(&base, &head, Some(TOLERANCES), None)
         .iter()
         .map(|finding| finding.metric)
         .collect();
@@ -202,22 +309,80 @@ fn cpu_time_is_not_gated_on_a_series_with_injected_latency() {
 }
 
 #[test]
-fn a_result_is_judged_with_its_own_tier_s_tolerances() {
-    assert_eq!(tolerances(Tier::Quick), QUICK);
-    assert_eq!(tolerances(Tier::Full), FULL);
-    let base = record("M4", vec![series("native", 1.0, 0.0, ONE)]);
-    for (tier, bounds) in [(Tier::Quick, QUICK), (Tier::Full, FULL)] {
-        // Just past the tier's wall bound on the 100 ms series.
-        let growth = 1.0 + bounds.wall.relative.max(bounds.wall.absolute / 0.1) + 0.01;
-        let mut now = record("M4", vec![series("native", growth, 0.0, ONE)]);
-        now.tier = tier;
-        let wall = judge(&base, &now)
-            .into_iter()
-            .find(|finding| finding.metric == Metric::Wall)
-            .map(|finding| finding.verdict);
-        assert!(
-            matches!(wall, Some(Verdict::Regressed { .. })),
-            "{tier:?}: {wall:?}"
-        );
-    }
+fn a_baseline_check_judges_medians_and_reports_missing_series() {
+    let stored = record(
+        "M4",
+        vec![series(0, steady(1.0), ONE), series(20, steady(1.0), ONE)],
+    );
+    let now = record("M4", vec![series(0, steady(1.2), ONE)]);
+    let findings = judge_baseline(&stored, &now, Some(TOLERANCES), None, true);
+    assert!(matches!(
+        metric(&findings, Metric::Wall),
+        Some(Verdict::Regressed { .. })
+    ));
+    let missing = findings
+        .iter()
+        .find(|finding| finding.verdict == Verdict::Missing);
+    assert!(missing.is_some_and(|finding| finding.key == key(20) && finding.verdict.fails()));
+    let partial = judge_baseline(&stored, &now, Some(TOLERANCES), None, false);
+    assert!(
+        partial
+            .iter()
+            .all(|finding| finding.verdict != Verdict::Missing)
+    );
+}
+
+#[test]
+fn a_baseline_from_another_cpu_judges_only_the_counts() {
+    let stored = record("M1", vec![series(0, steady(1.0), ONE)]);
+    let now = record("M4", vec![series(0, steady(3.0), ONE)]);
+    let findings = judge_baseline(&stored, &now, Some(TOLERANCES), None, true);
+    assert_eq!(
+        metric(&findings, Metric::Wall),
+        Some(Verdict::NotJudged(Unjudged::OtherCpu))
+    );
+    assert_eq!(
+        metric(&findings, Metric::Connections),
+        Some(Verdict::Within)
+    );
+}
+
+#[test]
+fn a_stored_median_needs_runs_that_resolve_its_bound() {
+    let tight = |p50: f64, mad: f64| Spread {
+        p50,
+        p95: p50,
+        mad,
+        min: p50,
+        max: p50,
+        n: 10,
+    };
+    let bound = Tolerance {
+        relative: 0.2,
+        absolute: 0.005,
+    };
+    assert!(matches!(
+        median(tight(0.02, 0.004), tight(0.02, 0.004), bound),
+        Verdict::Noisy { .. }
+    ));
+    assert_eq!(
+        median(tight(0.02, 0.001), tight(0.024, 0.001), bound),
+        Verdict::Within
+    );
+    assert!(median(tight(0.02, 0.0), tight(0.026, 0.0), bound).fails());
+}
+
+#[test]
+fn the_load_limit_adds_its_headroom_per_cpu() {
+    let limit = LoadLimit {
+        calibrated: 1.6,
+        cpus: 12,
+        headroom: COMPARISON_HEADROOM,
+    };
+    assert!((limit.value() - 13.6).abs() < 1e-9);
+    let limit = LoadLimit {
+        headroom: BASELINE_HEADROOM,
+        ..limit
+    };
+    assert!((limit.value() - 4.6).abs() < 1e-9);
 }

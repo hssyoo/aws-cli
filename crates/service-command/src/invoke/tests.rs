@@ -194,6 +194,24 @@ fn a_failing_chain_is_reported_before_a_bad_starting_token() -> crate::testing::
     Ok(())
 }
 
+/// A page option beside `--no-paginate` is what
+/// `ensure_paging_params_not_set` raises before botocore creates a client:
+/// the run reports it, and no provider runs.
+#[test]
+#[cfg(unix)]
+fn a_raised_paging_handler_is_reported_without_a_client() -> crate::testing::Result<()> {
+    let process = FailingProcess::new("raised")?;
+    let argv = ["zjson", "list-things", "--no-paginate", "--max-items", "2"];
+    let run = process.preflight(&argv)?;
+    let message = process.run_failure(&run)?;
+    assert_eq!(
+        message,
+        "Cannot specify --no-paginate along with pagination arguments: --max-items"
+    );
+    assert_eq!(process.runs()?, 0, "a provider ran");
+    Ok(())
+}
+
 /// Each client's parse hooks keep the timestamp parser they were built
 /// with: a second client with another format does not get the first's,
 /// as it did from a process-global parser set once.

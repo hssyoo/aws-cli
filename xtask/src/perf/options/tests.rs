@@ -9,9 +9,10 @@ fn error(values: &[&str]) -> Option<String> {
 }
 
 #[test]
-fn no_options_report_on_every_case_with_the_default_binary() -> Result<(), TaskError> {
+fn no_options_report_on_the_quick_tier_with_the_default_binary() -> Result<(), TaskError> {
     let options = parse(&[])?;
     assert_eq!(options, Options::default());
+    assert_eq!((options.mode, options.tier), (Mode::Report, Tier::Quick));
     assert!(options.is_complete());
     assert!(options.binary_args().is_empty());
     Ok(())
@@ -23,38 +24,104 @@ fn every_option_is_read() -> Result<(), TaskError> {
         "--check",
         "--full",
         "--aws-binary",
-        "before/aws",
+        "after/aws",
         "--commit",
+        "def",
+        "--base-binary",
+        "before/aws",
+        "--base-commit",
         "abc",
         "--case",
         "query-single",
-        "--case",
-        "s3-ls",
         "--route",
         "native",
         "--runs",
         "20",
         "--warmup",
-        "0",
+        "1",
         "--out",
-        "before.json",
+        "ab.json",
     ]))?;
     assert_eq!(
         options,
         Options {
             mode: Mode::Check,
             tier: Tier::Full,
-            binary: Some("before/aws".into()),
-            commit: Some("abc".into()),
-            cases: vec!["query-single".into(), "s3-ls".into()],
+            binary: Some("after/aws".into()),
+            commit: Some("def".into()),
+            base_binary: Some("before/aws".into()),
+            base_commit: Some("abc".into()),
+            cases: vec!["query-single".into()],
             routes: vec!["native".into()],
             runs: Some(20),
-            warmup: Some(0),
-            out: Some(PathBuf::from("before.json")),
+            warmup: Some(1),
+            out: Some(PathBuf::from("ab.json")),
+            ..Options::default()
         }
     );
-    assert_eq!(options.binary_args(), ["--aws-binary", "before/aws"]);
+    assert_eq!(options.binary_args(), ["--aws-binary", "after/aws"]);
     assert!(!options.is_complete());
+    Ok(())
+}
+
+#[test]
+fn each_mode_has_its_flag_and_they_exclude_each_other() -> Result<(), TaskError> {
+    for (flag, mode) in [
+        ("--check", Mode::Check),
+        ("--check-baseline", Mode::CheckBaseline),
+        ("--write-baseline", Mode::WriteBaseline),
+        ("--calibrate", Mode::Calibrate),
+    ] {
+        assert_eq!(parse(&args(&[flag]))?.mode, mode);
+    }
+    assert_eq!(
+        parse(&args(&["--calibrate", "--repeats", "7", "--full"]))?.repeats,
+        Some(7)
+    );
+    assert_eq!(
+        error(&["--check", "--calibrate"]),
+        Some(
+            "--check, --check-baseline, --write-baseline and --calibrate exclude each other".into()
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn a_base_is_chosen_only_for_a_check_and_only_one_way() -> Result<(), TaskError> {
+    assert_eq!(
+        parse(&args(&["--check", "--base", "abc"]))?.base,
+        Some("abc".into())
+    );
+    assert_eq!(
+        parse(&args(&["--check", "--mainline", "main"]))?.mainline,
+        Some("main".into())
+    );
+    let refusals = [
+        (
+            &["--base", "abc"][..],
+            "--base, --base-binary and --mainline choose the base of --check",
+        ),
+        (
+            &["--check", "--base-binary", "a", "--base", "b"],
+            "--base-binary is the base itself: drop --base and --mainline",
+        ),
+        (
+            &["--check", "--base-commit", "abc"],
+            "--base-commit names the commit of a --base-binary",
+        ),
+        (
+            &["--repeats", "3"],
+            "--repeats sets the repeats of --calibrate",
+        ),
+        (
+            &["--check", "--warmup", "0"],
+            "a judged run needs a warm-up round: the first run of a new binary is slow",
+        ),
+    ];
+    for (values, message) in refusals {
+        assert_eq!(error(values), Some(message.to_owned()), "{values:?}");
+    }
     Ok(())
 }
 
@@ -68,7 +135,6 @@ fn a_selection_or_another_run_count_is_not_complete() -> Result<(), TaskError> {
     ] {
         assert!(!parse(&args(selection))?.is_complete(), "{selection:?}");
     }
-    assert!(parse(&args(&["--write-baseline", "--out", "x.json"]))?.is_complete());
     Ok(())
 }
 
@@ -84,22 +150,11 @@ fn bad_options_are_refused_by_name() {
         Some("--runs takes a whole number of at least 1".into())
     );
     assert_eq!(
-        error(&["--warmup", "-1"]),
-        Some("--warmup takes a whole number of at least 0".into())
+        error(&["--calibrate", "--repeats", "1"]),
+        Some("--repeats takes a whole number of at least 2".into())
     );
     assert_eq!(
         error(&["--route", "auto"]),
         Some("--route is native or python, not auto".into())
     );
-    assert_eq!(
-        error(&["--check", "--write-baseline"]),
-        Some("--check and --write-baseline exclude each other".into())
-    );
-}
-
-#[test]
-fn the_check_is_quick_unless_full() -> Result<(), TaskError> {
-    assert_eq!(parse(&args(&["--check"]))?.tier, Tier::Quick);
-    assert_eq!(parse(&args(&["--check", "--full"]))?.tier, Tier::Full);
-    Ok(())
 }

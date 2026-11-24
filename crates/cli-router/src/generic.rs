@@ -41,7 +41,7 @@ pub(super) fn route<E: EnvMap>(
         if result.stage == awscli_argparse::chain::Stage::Unpack
             && operation.precedes_unpack_failure(result)
         {
-            return Verdict::Python(PythonReason::UnsupportedValue);
+            return Verdict::Python(PythonReason::PagingHandler);
         }
         return session_start(result, config).unwrap_or(Verdict::Failure(failure.clone()));
     }

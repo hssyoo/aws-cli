@@ -16,7 +16,7 @@ use command::models::ModelSource;
 use model::paginators::Config;
 use model::shapes::{Model, ShapeId, ShapeKind};
 use model::validate::{Validation, validate_input};
-use model::value::{Map, Value};
+use model::value::Value;
 
 /// An admitted invocation: what it calls, with what.
 #[derive(Debug, Clone)]
@@ -40,9 +40,21 @@ pub struct Admitted {
     /// `PageArgument.add_to_params` warns that `--max-items` is not
     /// positive, before the call.
     pub warned: bool,
-    /// What an `operation-args-parsed` handler raised before the request
-    /// was built, which the invocation reports in place of any call.
-    pub raised: Option<CommandFailure>,
+}
+
+/// What admission comes to for a parse it does not leave to Python.
+#[derive(Debug, Clone)]
+pub enum Outcome {
+    /// The call to make.
+    Call(Box<Admitted>),
+    /// What an `operation-args-parsed` handler of `command` raised
+    /// (`ensure_paging_params_not_set`), before botocore builds the
+    /// request or creates a client: the invocation reports it and makes
+    /// neither.
+    Raised {
+        command: String,
+        failure: CommandFailure,
+    },
 }
 
 /// `Paginator.paginate(**input, PaginationConfig=pagination)`'s paginator
@@ -60,7 +72,7 @@ pub fn admit(
     source: &ModelSource<'_>,
     customizations: &[&'static Customization],
     parsed: &ParseResult<'_>,
-) -> Result<Admitted, PythonReason> {
+) -> Result<Outcome, PythonReason> {
     let [command, cli_operation] = parsed.lineage.as_slice() else {
         return Err(PythonReason::UnsupportedSubcommand);
     };
@@ -74,36 +86,33 @@ pub fn admit(
     let Some((service, operation, table)) = lookup() else {
         return Err(PythonReason::UnsupportedSubcommand);
     };
-    let mut admitted = Admitted {
-        command: command.to_owned(),
-        service: service.name.clone(),
-        operation: operation.name.to_string(),
-        input: Value::Map(Map::new()),
-        validation: Validation::Valid,
-        endpoints: decided.endpoints,
-        paginated: None,
-        warned: false,
-        raised: None,
-    };
     let call = match crate::bind::bind(table, parsed)? {
         Binding::Call(call) => call,
         Binding::Raised(failure) => {
-            admitted.raised = Some(failure);
-            return Ok(admitted);
+            return Ok(Outcome::Raised {
+                command: command.to_owned(),
+                failure,
+            });
         }
     };
     let validation = validate_input(&service.model, operation, &call.input);
     if matches!(validation, Validation::Undecided(_)) {
         return Err(PythonReason::UnsupportedValue);
     }
-    admitted.paginated = decided
+    let paginated = decided
         .paginator
         .zip(call.pagination)
         .map(|(config, pagination)| Paginated { config, pagination });
-    admitted.input = call.input;
-    admitted.validation = validation;
-    admitted.warned = call.warned;
-    Ok(admitted)
+    Ok(Outcome::Call(Box::new(Admitted {
+        command: command.to_owned(),
+        service: service.name.clone(),
+        operation: operation.name.to_string(),
+        input: call.input,
+        validation,
+        endpoints: decided.endpoints,
+        paginated,
+        warned: call.warned,
+    })))
 }
 
 /// The stages decided by the model, its endpoint data and the patterns

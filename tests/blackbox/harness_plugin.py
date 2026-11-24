@@ -127,6 +127,31 @@ COMMAND_ENVIRONMENT: Final[dict[str, str]] = json.loads(
 PYTHON_ROUTE: Final = python_router_forced(
     COMMAND_ENVIRONMENT.get(_ROUTER_ENV_VAR)
 )
+# The router variable, and whether `--env` forces the native route, which
+# refuses what it cannot run instead of handing it to Python.
+ROUTER: Final = _ROUTER_ENV_VAR
+FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get(_ROUTER_ENV_VAR) == "native"
+# MainArgParser's usage (awscli/argparser.py:18-28), which ends a parse
+# failure's report, naming the program `aws` whatever the binary's file
+# name, `aws.exe` on Windows included.
+MAIN_USAGE: Final = (
+    "usage: aws [options] <command> <subcommand> [<subcommand> ...] "
+    "[parameters]\n"
+    "To see help text, you can run:\n"
+    "\n"
+    "  aws help\n"
+    "  aws <command> help\n"
+    "  aws <command> <subcommand> help\n"
+)
+
+
+def refusal(reason: str) -> str:
+    """The line a forced-native run prints for a command it refuses for
+    `reason`."""
+    return (
+        f"aws: {ROUTER}=native: native implementation unavailable "
+        f"({reason}); Python fallback disabled\n"
+    )
 
 
 @dataclass(frozen=True)

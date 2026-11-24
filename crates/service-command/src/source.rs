@@ -1,6 +1,7 @@
 //! The registry's binder for the derived commands of a [`ModelSource`],
 //! which supplies their tables: admission ([`crate::admit`]), then the
 //! invocation.
+use crate::admit::Outcome;
 use awscli_argparse::ParseResult;
 use cli_core::cli_error::PythonReason;
 use cli_core::client_config::user_agent::Versions;
@@ -49,20 +50,39 @@ impl Binder for ServiceSource<'_> {
             .table(&command.name, &operation.name)
             .is_some_and(|table| crate::bind::precedes_unpack_failure(table, parsed))
     }
-    /// Admission, then the invocation.
+    /// Admission, then the invocation: the call's, or one that reports what
+    /// a paging handler raised, which makes no client and so reads no
+    /// client settings.
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission> {
-        let admitted = crate::admit::admit(&self.models, self.customizations, parsed)
+        let outcome = crate::admit::admit(&self.models, self.customizations, parsed)
             .map_err(Admission::Python)?;
+        let command = match &outcome {
+            Outcome::Call(admitted) => &admitted.command,
+            Outcome::Raised { command, .. } => command,
+        };
         let service = self
             .models
-            .service(&admitted.command)
+            .service(command)
             .ok_or(Admission::Python(PythonReason::UnsupportedSubcommand))?;
-        let metadata = service.model.metadata();
+        let service_id = service
+            .model
+            .metadata()
+            .hyphenized_service_id()
+            .unwrap_or_else(|| command.clone());
+        let admitted = match outcome {
+            Outcome::Call(admitted) => *admitted,
+            Outcome::Raised { failure, .. } => {
+                return Ok(Bound {
+                    invocation: Box::new(crate::invoke::Raised(failure)),
+                    needs: Needs {
+                        service: service_id.into(),
+                        reads_s3_settings: false,
+                    },
+                });
+            }
+        };
         let needs = Needs {
-            service: metadata
-                .hyphenized_service_id()
-                .unwrap_or_else(|| admitted.command.clone())
-                .into(),
+            service: service_id.into(),
             reads_s3_settings: reads_s3_settings(&admitted.endpoints),
         };
         let invocation = crate::invoke::ServiceInvocation::new(

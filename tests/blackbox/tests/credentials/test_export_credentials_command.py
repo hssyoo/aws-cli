@@ -30,6 +30,7 @@ from credhelpers import (
     unexpected_request,
     write_login_token,
 )
+from harness_plugin import MAIN_USAGE
 from tests.blackbox.utils import mock_server
 
 pytestmark = [
@@ -82,18 +83,6 @@ ERROR_PREFIX: Final = "\naws: [ERROR]: "
 PARAM_VALIDATION_PREFIX: Final = (
     f"{ERROR_PREFIX}An error occurred (ParamValidation): "
 )
-# MainArgParser's usage (awscli/argparser.py:18-28), which CLIArgParser.
-# error appends after two newlines (argparser.py:104-116).
-MAIN_USAGE: Final = (
-    "usage: aws [options] <command> <subcommand> [<subcommand> ...] "
-    "[parameters]\n"
-    "To see help text, you can run:\n"
-    "\n"
-    "  aws help\n"
-    "  aws <command> help\n"
-    "  aws <command> <subcommand> help\n"
-)
-
 # SSOProvider's load error for a profile with only sso_account_id
 # (botocore credentials.py:2401-2433), wrapped by
 # exportcreds.py:268-275 with the trailing newline. The error-format table

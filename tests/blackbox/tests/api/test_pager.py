@@ -23,7 +23,7 @@ from typing import Final
 import pytest
 
 from apihelpers import ApiSession, _protocol, _Responder
-from harness_plugin import COMMAND_ENVIRONMENT, command_environment
+from harness_plugin import FORCED_NATIVE, command_environment, refusal
 
 pytestmark = [
     pytest.mark.asyncio,
@@ -44,8 +44,6 @@ OUTPUT: Final = (
     "}\n"
 )
 TIMEOUT_SECONDS: Final = 30.0
-# Every forced-native run refuses what routing gives to Python.
-FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get("AWS_CLI_NATIVE_ROUTER") == "native"
 
 # A pager that records what it was started with, then copies its input to
 # the terminal. `$0` names the copy, so one script serves every name.
@@ -208,13 +206,6 @@ async def run_paged(*args: object, **kwargs: object) -> PagedRun:
     """`run_paged_blocking` on a thread: the stub and its proxy serve on
     this test's event loop, which must keep running meanwhile."""
     return await asyncio.to_thread(run_paged_blocking, *args, **kwargs)  # type: ignore[arg-type]
-
-
-def refusal(reason: str) -> str:
-    return (
-        "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable "
-        f"({reason}); Python fallback disabled\n"
-    )
 
 
 async def test_default_less_gets_frx(api: ApiSession, pagers: Path) -> None:

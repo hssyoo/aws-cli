@@ -154,12 +154,8 @@ impl Invocation for ServiceInvocation {
                 b"the invocation ran without its preflight".to_vec(),
             ));
         };
-        // An `operation-args-parsed` handler raises, and `--max-items`
-        // warns, as the call's parameters are built, before botocore creates
-        // the client.
-        if let Some(raised) = &self.admitted.raised {
-            return Err(raised.clone());
-        }
+        // `--max-items` warns as the call's parameters are built, before
+        // botocore creates the client.
         if self.admitted.warned {
             // uni_print writes to sys.stderr, which Python writes at once.
             let warning = crate::bind::MAX_ITEMS_WARNING.as_bytes();
@@ -268,6 +264,19 @@ impl ServiceInvocation {
             CallError::Interrupted => Ok(interrupted(cx)),
             error => Err(service_errors::call_failure(&error, &self.model)),
         }
+    }
+}
+
+/// The invocation of a parse an `operation-args-parsed` handler raised on
+/// (`ensure_paging_params_not_set`): Python reports the failure before it
+/// builds the request or creates a client, so this reports it and makes
+/// neither.
+#[derive(Debug)]
+pub struct Raised(pub CommandFailure);
+
+impl Invocation for Raised {
+    fn run(&self, _cx: &mut Context<'_>) -> Result<u8, CommandFailure> {
+        Err(self.0.clone())
     }
 }
 
