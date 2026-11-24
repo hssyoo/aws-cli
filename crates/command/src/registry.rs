@@ -35,6 +35,11 @@ pub trait OperationSource: std::fmt::Debug {
 /// invocation, and says what it needs, or names why Python runs it.
 pub trait Binder: std::fmt::Debug {
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission>;
+    /// Whether, for a parse the unpack loop failed, a handler of the
+    /// operation raises or writes first: one on `operation-args-parsed`, or
+    /// an argument's `add_to_params` ahead of the failing one in
+    /// `_build_call_parameters`. Python then reports what comes first.
+    fn precedes_unpack_failure(&self, parsed: &ParseResult<'_>) -> bool;
 }
 
 /// The root table: pinned grammars, then a model source, in that
@@ -82,6 +87,12 @@ impl Operation<'_> {
             Some(binder) => binder.bind(parsed),
             None => Err(Admission::Python(PythonReason::UnsupportedSubcommand)),
         }
+    }
+    /// See [`Binder::precedes_unpack_failure`]; a registry without a
+    /// binder binds nothing, so nothing of its precedes a failure.
+    pub fn precedes_unpack_failure(&self, parsed: &ParseResult<'_>) -> bool {
+        self.binder
+            .is_some_and(|binder| binder.precedes_unpack_failure(parsed))
     }
 }
 

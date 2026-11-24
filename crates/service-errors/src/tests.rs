@@ -129,3 +129,44 @@ fn hook_failures_are_validation_or_general() -> Result<(), model::shapes::ModelE
     assert_eq!(failed.message, b"boom");
     Ok(())
 }
+
+/// What the paginator raises prints as `GeneralExceptionHandler` prints
+/// `str(exception)`, with 255; each text is the Python route's.
+#[test]
+fn a_pagination_failure_is_the_general_handler_s() -> Result<(), Box<dyn std::error::Error>> {
+    use client::error::PaginationError;
+    let model = Model::from_json(br#"{"metadata": {}, "operations": {}, "shapes": {}}"#)?;
+    let cases = [
+        (
+            PaginationError::Pagination(
+                "The same next token was received twice: {'ExclusiveStartTableName': 'tok2'}"
+                    .into(),
+            ),
+            "Error during pagination: The same next token was received twice: \
+             {'ExclusiveStartTableName': 'tok2'}",
+        ),
+        (
+            PaginationError::Value("Bad starting token: a___b___c".into()),
+            "Bad starting token: a___b___c",
+        ),
+        (
+            PaginationError::Other("slice(None, 1, None)".into()),
+            "slice(None, 1, None)",
+        ),
+    ];
+    for (error, text) in cases {
+        let failure = call_failure(&CallError::Pagination(error), &model);
+        let mut rendered = Vec::new();
+        cli_core::cli_error::render_command_failure(
+            &mut rendered,
+            &failure,
+            cli_core::cli_error::ErrorFormat::Enhanced,
+        )?;
+        assert_eq!(
+            String::from_utf8(rendered)?,
+            format!("\naws: [ERROR]: {text}\n")
+        );
+        assert_eq!(cli_core::cli_error::exit_status(failure.category), 255);
+    }
+    Ok(())
+}

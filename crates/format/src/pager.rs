@@ -7,6 +7,7 @@
 //! Python route fails in ways this module does not reproduce. The pager
 //! starts only when output is written, as `LazyPager` starts it, and the
 //! CLI waits for it to exit (`process.communicate()`); its status is ignored.
+//! A paginated response's text reaches it page by page ([`Stream`]).
 use cli_core::interrupt::State;
 use std::ffi::{OsStr, OsString};
 use std::io::Write;
@@ -164,44 +165,124 @@ impl std::error::Error for SpawnError {}
 /// its input and waits for it. A failed write, such as a pager that quit
 /// early, is ignored, as the CLI ignores the `OSError`. Call only with
 /// output to write: an unwritten `LazyPager` never starts.
+///
+/// # Errors
+/// See [`SpawnError`].
 pub fn run(
     argv: &[String],
     env: &[(OsString, OsString)],
     output: &[u8],
     interrupt: &State,
 ) -> Result<Outcome, SpawnError> {
-    let (program, arguments) = argv.split_first().ok_or_else(|| SpawnError {
-        text: "list index out of range".into(),
-        not_found: false,
-    })?;
-    let path = env
-        .iter()
-        .find(|(name, _)| name == "PATH")
-        .map(|(_, value)| value.as_os_str());
-    let candidates = cli_core::subprocess::candidates(program, path);
-    let mut child = match cli_core::subprocess::spawn_piped(&candidates, program, arguments, env) {
-        Ok(child) => child,
-        // `get_pager_stream` passes over any other `OSError`: nothing is
-        // written and the command succeeds.
-        Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Ok(Outcome::Exited),
-        Err(error) => return Err(spawn_error(&error, program)),
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(output);
-    }
-    // Waiting is active work, so the first Ctrl-C cancels it rather than
-    // terminating the process (`interrupt::State::record_interrupt`).
-    let _scope = cli_core::interrupt::Scope::enter(interrupt);
-    loop {
-        if !matches!(child.try_wait(), Ok(None)) {
-            return Ok(Outcome::Exited);
+    let mut stream = Stream::new(argv, env);
+    stream.write(output)?;
+    Ok(stream.finish(interrupt))
+}
+
+/// `io.DEFAULT_BUFFER_SIZE`, the buffer of the pager's input pipe
+/// (`Popen(stdin=PIPE)` with the default `bufsize`).
+const PIPE_BUFFER: usize = 128 * 1024;
+
+/// The pager as `get_pager_stream` writes to it, one piece of output at a
+/// time: `LazyPager` starts it at the first write, its input is buffered as
+/// Python's pipe is, and the first `OSError`, from starting it or writing
+/// to it, ends the writing, which `get_pager_stream` passes over.
+#[derive(Debug)]
+pub struct Stream<'a> {
+    argv: &'a [String],
+    env: &'a [(OsString, OsString)],
+    child: Option<std::process::Child>,
+    input: Option<std::io::BufWriter<std::process::ChildStdin>>,
+    broken: bool,
+}
+
+impl<'a> Stream<'a> {
+    /// A pager not yet started.
+    pub const fn new(argv: &'a [String], env: &'a [(OsString, OsString)]) -> Self {
+        Self {
+            argv,
+            env,
+            child: None,
+            input: None,
+            broken: false,
         }
-        if interrupt.sleep(POLL).is_err() {
-            let deadline = Instant::now() + SIGINT_WAIT;
-            while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
-                std::thread::sleep(POLL);
+    }
+
+    /// `LazyStdin.write`: starts the pager the first time, then writes
+    /// `output`. False once the pager could not start for an `OSError`
+    /// other than a missing program, or its input failed, after which
+    /// nothing more is written.
+    ///
+    /// # Errors
+    /// See [`SpawnError`].
+    pub fn write(&mut self, output: &[u8]) -> Result<bool, SpawnError> {
+        if self.broken {
+            return Ok(false);
+        }
+        if self.child.is_none() {
+            let Some(mut child) = self.spawn()? else {
+                self.broken = true;
+                return Ok(false);
+            };
+            self.input = child
+                .stdin
+                .take()
+                .map(|stdin| std::io::BufWriter::with_capacity(PIPE_BUFFER, stdin));
+            self.child = Some(child);
+        }
+        let written = self
+            .input
+            .as_mut()
+            .is_some_and(|input| input.write_all(output).is_ok());
+        self.broken = !written;
+        Ok(written)
+    }
+
+    /// `Popen(argv)`; `None` for an `OSError` `get_pager_stream` passes over.
+    fn spawn(&self) -> Result<Option<std::process::Child>, SpawnError> {
+        let (program, arguments) = self.argv.split_first().ok_or_else(|| SpawnError {
+            text: "list index out of range".into(),
+            not_found: false,
+        })?;
+        let path = self
+            .env
+            .iter()
+            .find(|(name, _)| name == "PATH")
+            .map(|(_, value)| value.as_os_str());
+        let candidates = cli_core::subprocess::candidates(program, path);
+        match cli_core::subprocess::spawn_piped(&candidates, program, arguments, self.env) {
+            Ok(child) => Ok(Some(child)),
+            // `get_pager_stream` passes over any other `OSError`: nothing
+            // is written and the command succeeds.
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(spawn_error(&error, program)),
+        }
+    }
+
+    /// `process.communicate()`: closes the pager's input and waits for it
+    /// to exit; nothing to wait for when it never started.
+    pub fn finish(mut self, interrupt: &State) -> Outcome {
+        if let Some(mut input) = self.input.take() {
+            // communicate() passes over a pipe the pager already closed.
+            let _ = input.flush();
+        }
+        let Some(mut child) = self.child.take() else {
+            return Outcome::Exited;
+        };
+        // Waiting is active work, so the first Ctrl-C cancels it rather than
+        // terminating the process (`interrupt::State::record_interrupt`).
+        let _scope = cli_core::interrupt::Scope::enter(interrupt);
+        loop {
+            if !matches!(child.try_wait(), Ok(None)) {
+                return Outcome::Exited;
             }
-            return Ok(Outcome::Interrupted);
+            if interrupt.sleep(POLL).is_err() {
+                let deadline = Instant::now() + SIGINT_WAIT;
+                while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
+                    std::thread::sleep(POLL);
+                }
+                return Outcome::Interrupted;
+            }
         }
     }
 }

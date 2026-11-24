@@ -15,7 +15,9 @@ const MODEL: &str = r#"{
     "Download": {"name": "Download", "http": {"method": "GET", "requestUri": "/"},
                  "input": {"shape": "ListRequest"}, "output": {"shape": "DownloadResult"}},
     "ListThings": {"name": "ListThings", "http": {"method": "GET", "requestUri": "/"},
-                   "input": {"shape": "ListRequest"}}
+                   "input": {"shape": "ListRequest"}},
+    "ListShadowed": {"name": "ListShadowed", "http": {"method": "GET", "requestUri": "/"},
+                     "input": {"shape": "ShadowedRequest"}}
   },
   "shapes": {
     "Long": {"type": "long"}, "Double": {"type": "double"}, "Float": {"type": "float"},
@@ -27,6 +29,9 @@ const MODEL: &str = r#"{
     "ListRequest": {"type": "structure", "members": {
       "NextToken": {"shape": "String"}, "MaxResults": {"shape": "Integer"},
       "Marker": {"shape": "String"}}},
+    "ShadowedRequest": {"type": "structure", "members": {
+      "StartingToken": {"shape": "String"}, "MaxItems": {"shape": "Integer"},
+      "Filter": {"shape": "String"}}},
     "DownloadResult": {"type": "structure", "payload": "Body",
                        "members": {"Body": {"shape": "Body"}}}
   }
@@ -129,7 +134,58 @@ fn table_for_string_limit(config: &Json) -> Table {
 #[test]
 fn a_paging_token_with_no_argument_is_python_s_to_build() {
     let missing: Json = serde_json::json!({"input_token": "Cursor"});
-    assert!(table("ListThings", Some(&missing)).customized);
+    let table = table("ListThings", Some(&missing));
+    assert!(table.customized);
+    assert_eq!(table.paging, None);
+}
+
+/// `unify_paging_params` hands its handlers the tokens and the limit key,
+/// in the model's names and the CLI's, and nothing shadowed when no member
+/// is named as a page option; the page options bind as they parse.
+#[test]
+fn paging_records_its_tokens_for_the_parse() {
+    let config: Json = serde_json::json!({"input_token": "NextToken", "limit_key": "MaxResults"});
+    let table = table("ListThings", Some(&config));
+    let paging = table.paging.as_ref().unwrap_or_else(|| panic!("no paging"));
+    assert_eq!(paging.tokens, ["NextToken".into(), "MaxResults".into()]);
+    assert_eq!(
+        paging.cli_tokens,
+        ["next-token".into(), "max-results".into()]
+    );
+    assert!(paging.shadowed.is_empty());
+    for name in ["starting-token", "page-size", "max-items"] {
+        assert_eq!(find(&table, name).unpack, Unpack::AsIs, "{name}");
+    }
+}
+
+/// A member named as a page option is replaced where it stands and kept
+/// as shadowed (`add_paging_argument`), hidden as a token is.
+#[test]
+fn a_member_named_as_a_page_option_is_shadowed_in_place() {
+    let config: Json = serde_json::json!({"input_token": "StartingToken", "limit_key": "MaxItems"});
+    let table = table("ListShadowed", Some(&config));
+    let names: Vec<&str> = table
+        .arguments
+        .iter()
+        .map(|argument| &*argument.name)
+        .collect();
+    assert_eq!(
+        names[..4],
+        ["starting-token", "max-items", "filter", "cli-input-json"]
+    );
+    assert_eq!(find(&table, "starting-token").origin, Origin::StartingToken);
+    assert_eq!(find(&table, "max-items").origin, Origin::MaxItems);
+    let paging = table.paging.as_ref().unwrap_or_else(|| panic!("no paging"));
+    let shadowed: Vec<(&str, bool)> = paging
+        .shadowed
+        .iter()
+        .map(|argument| (&*argument.name, argument.hidden))
+        .collect();
+    assert_eq!(shadowed, [("starting-token", true), ("max-items", true)]);
+    assert!(matches!(
+        &paging.shadowed[1].origin,
+        Origin::Member { member, .. } if &**member == "MaxItems"
+    ));
 }
 
 /// What the unpack loop does with each member's supplied value: a string,

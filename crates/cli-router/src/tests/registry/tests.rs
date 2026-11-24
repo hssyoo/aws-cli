@@ -89,6 +89,9 @@ impl OperationSource for Fake {
     }
 }
 impl Binder for Fake {
+    fn precedes_unpack_failure(&self, _parsed: &ParseResult<'_>) -> bool {
+        false
+    }
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission> {
         let echo = match parsed.values.string("role_session_name") {
             Some("refused") => return Err(Admission::Python(PythonReason::UnsupportedOption)),
@@ -289,6 +292,19 @@ fn an_alias_naming_the_root_hands_it_to_python() {
     }
 }
 
+/// `--no-paginate` is `parsed_globals.paginate`, which a model operation's
+/// binding reads, at either position; one that does not paginate ignores it.
+#[test]
+fn no_paginate_binds_a_model_operation_natively() {
+    for args in [
+        &["--no-paginate", "sts", "get-caller-identity"][..],
+        &["sts", "get-caller-identity", "--no-paginate"],
+    ] {
+        let verdict = evaluate_with(args, &BTreeMap::new(), &files(""));
+        assert!(matches!(verdict, Verdict::Run(_)), "{args:?}: {verdict:?}");
+    }
+}
+
 /// One refusal: argv, the environment, the config file, and the reason.
 type Refusal<'a> = (
     &'a [&'a str],
@@ -334,14 +350,6 @@ fn the_prologue_and_the_command_line_refuse_before_run() {
         ),
         (
             &["--query", "Account", "sts", "get-caller-identity"],
-            &[],
-            "",
-            PythonReason::PythonOnlyGlobal,
-        ),
-        // A paginated operation pages unless --no-paginate says not to,
-        // which only Python does.
-        (
-            &["--no-paginate", "sts", "decode-authorization-message"],
             &[],
             "",
             PythonReason::PythonOnlyGlobal,

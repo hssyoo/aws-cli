@@ -109,6 +109,33 @@
       "output": {
         "shape": "PingResult"
       }
+    },
+    "ListFunctions": {
+      "name": "ListFunctions",
+      "http": {
+        "method": "GET",
+        "requestUri": "/functions",
+        "responseCode": 200
+      },
+      "input": {
+        "shape": "ListFunctionsRequest"
+      },
+      "output": {
+        "shape": "ListFunctionsResponse"
+      }
+    },
+    "SearchUsers": {
+      "name": "SearchUsers",
+      "http": {
+        "method": "POST",
+        "requestUri": "/search-users"
+      },
+      "input": {
+        "shape": "SearchUsersRequest"
+      },
+      "output": {
+        "shape": "SearchUsersResponse"
+      }
     }
   },
   "shapes": {
@@ -445,6 +472,102 @@
         "senderFault": true
       },
       "exception": true
+    },
+    "ListFunctionsRequest": {
+      "type": "structure",
+      "members": {
+        "FunctionVersion": {
+          "shape": "String",
+          "location": "querystring",
+          "locationName": "FunctionVersion"
+        },
+        "Marker": {
+          "shape": "String",
+          "location": "querystring",
+          "locationName": "Marker"
+        },
+        "MaxItems": {
+          "shape": "Integer",
+          "location": "querystring",
+          "locationName": "MaxItems"
+        }
+      }
+    },
+    "ListFunctionsResponse": {
+      "type": "structure",
+      "members": {
+        "NextMarker": {
+          "shape": "String"
+        },
+        "Functions": {
+          "shape": "FunctionList"
+        }
+      }
+    },
+    "FunctionList": {
+      "type": "list",
+      "member": {
+        "shape": "FunctionConfiguration"
+      }
+    },
+    "FunctionConfiguration": {
+      "type": "structure",
+      "members": {
+        "FunctionName": {
+          "shape": "String"
+        },
+        "Runtime": {
+          "shape": "String"
+        }
+      }
+    },
+    "SearchUsersRequest": {
+      "type": "structure",
+      "required": [
+        "InstanceId"
+      ],
+      "members": {
+        "InstanceId": {
+          "shape": "String"
+        },
+        "NextToken": {
+          "shape": "String"
+        },
+        "MaxResults": {
+          "shape": "Integer"
+        }
+      }
+    },
+    "SearchUsersResponse": {
+      "type": "structure",
+      "members": {
+        "Users": {
+          "shape": "UserSearchSummaryList"
+        },
+        "NextToken": {
+          "shape": "String"
+        },
+        "ApproximateTotalCount": {
+          "shape": "Long"
+        }
+      }
+    },
+    "UserSearchSummaryList": {
+      "type": "list",
+      "member": {
+        "shape": "UserSearchSummary"
+      }
+    },
+    "UserSearchSummary": {
+      "type": "structure",
+      "members": {
+        "Id": {
+          "shape": "String"
+        },
+        "Username": {
+          "shape": "String"
+        }
+      }
     }
   }
 }

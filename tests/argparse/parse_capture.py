@@ -36,6 +36,7 @@ from awscli.arguments import CustomArgument, UnknownArgumentError
 from awscli.commands import help_requested
 from awscli.customizations import globalargs
 from awscli.customizations.exceptions import ParamValidationError
+from awscli.customizations.paginate import PageArgument
 from awscli.customizations.s3.s3 import S3, register_s3_sync_strategies
 from awscli.errorhandler import construct_entry_point_handlers_chain
 from awscli.paramfile import LOCAL_PREFIX_MAP, URIArgumentHandler
@@ -402,7 +403,9 @@ def capture_parse_requests(request_path: str, data_path: str) -> None:
             leftover check: the service parser, the operation's table with the
             required-argument overrides applied and `_add_help`'s positional;
             then `_build_call_parameters`, one argument at a time in table
-            order, each value as `add_to_params` stores it, by destination."""
+            order, each value as `add_to_params` stores it, by destination:
+            a member's under its name, a page option's under its key of the
+            `PaginationConfig` (`PageArgument.add_to_params`)."""
             nonlocal current_dest
             output["stage"] = "probe"
             service_args, remaining = level(
@@ -462,6 +465,10 @@ def capture_parse_requests(request_path: str, data_path: str) -> None:
                 value = operation._unpack_arg(argument, namespace[argument.py_name])
                 params = {}
                 argument.add_to_params(params, value)
+                if isinstance(argument, PageArgument):
+                    # A page option's value goes under its own key of the
+                    # call's PaginationConfig, one level below a member's.
+                    params = params.get("PaginationConfig", {})
                 for unpacked in params.values():
                     values[argument.py_name] = unpacked
             current_dest = None

@@ -21,6 +21,7 @@ pub mod endpoint;
 pub mod error;
 pub mod hooks;
 pub mod http;
+pub mod paginate;
 pub mod protocol;
 pub mod retry;
 pub mod runtime;

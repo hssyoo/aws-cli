@@ -35,3 +35,25 @@ fn a_shipped_operation_has_its_standing_and_the_report_its_rows() -> Result<()> 
     );
     Ok(())
 }
+
+/// Over the fake models, a paginated operation whose paginator reads
+/// member names is admitted with no arguments, and one whose paginator
+/// reads its token with an expression (`Jobs[-1].JobId`) is refused as a
+/// paginator.
+#[test]
+fn a_paginator_s_standing_follows_what_the_native_one_runs() -> Result<()> {
+    let table = &customizations::TABLE[..];
+    let models = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/models");
+    let standings = crate::with_source(empty_home()?, Some(models.into_os_string()), |source| {
+        [("zjson", "list-things"), ("zquery", "list-jobs")]
+            .map(|(command, operation)| standing(source, table, command, operation))
+    })?;
+    assert_eq!(
+        standings,
+        [
+            Standing::NoArguments,
+            Standing::Refused(PythonReasonName("paginator")),
+        ]
+    );
+    Ok(())
+}

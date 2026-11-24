@@ -33,11 +33,12 @@ fn a_covered_operation_is_admitted_with_its_request() -> Result<()> {
 }
 
 /// Each stage refuses with its own reason: an uncovered customization, a
-/// paginated operation, an unimplemented protocol.
+/// paginator whose expression the native paginator does not run (zquery's
+/// ListJobs reads its token as `Jobs[-1].JobId`), an unimplemented protocol.
 #[test]
 fn each_stage_names_its_refusal() -> Result<()> {
     with_models(|models| {
-        let everything = replacing_all(&models, "zjson", "list-things");
+        let everything = replacing_all(&models, "zquery", "list-jobs");
         let source = crate::testing::source(models, everything);
         let refused = |customizations: &[&'static Customization], argv: &[&str]| {
             admitted(&source, customizations, argv).err()
@@ -47,13 +48,78 @@ fn each_stage_names_its_refusal() -> Result<()> {
             Some(PythonReason::UnportedCustomization)
         );
         assert_eq!(
-            refused(everything, &["zjson", "list-things"]),
+            refused(everything, &["zquery", "list-jobs"]),
             Some(PythonReason::Paginator)
         );
         assert_eq!(
             refused(&[], &["s3api", "list-buckets"]),
             Some(PythonReason::UnsupportedProtocol)
         );
+    })
+}
+
+/// A paginated operation is admitted with its paginator when paging is on,
+/// and as one call under `--no-paginate`.
+#[test]
+fn a_paginated_operation_is_admitted_with_its_paginator() -> Result<()> {
+    with_models(|models| {
+        let everything = replacing_all(&models, "zjson", "list-things");
+        let source = crate::testing::source(models, everything);
+        let found = admitted(
+            &source,
+            everything,
+            &["zjson", "list-things", "--max-items", "2"],
+        )
+        .unwrap_or_else(|reason| panic!("{reason:?}"));
+        let paginated = found.paginated.unwrap_or_else(|| panic!("no paginator"));
+        assert_eq!(paginated.config.result_key, ["Things"]);
+        assert_eq!(paginated.config.limit_key.as_deref(), Some("MaxResults"));
+        assert_eq!(paginated.pagination.max_items, Some(Value::Integer(2)));
+        assert_eq!((found.raised, found.warned), (None, false));
+        let single = admitted(
+            &source,
+            everything,
+            &["zjson", "list-things", "--no-paginate"],
+        )
+        .unwrap_or_else(|reason| panic!("{reason:?}"));
+        assert_eq!(single.paginated, None);
+        let raised = admitted(
+            &source,
+            everything,
+            &["zjson", "list-things", "--no-paginate", "--max-items", "2"],
+        )
+        .unwrap_or_else(|reason| panic!("{reason:?}"));
+        assert!(raised.raised.is_some());
+    })
+}
+
+/// The paginator entries the native paginator runs: plain member names
+/// (zjson's ListThings) and dotted paths (elasticache's
+/// DescribeEngineDefaultParameters); real JMESPath (kinesis's
+/// DescribeStream) is refused, and an operation without one has none.
+#[test]
+fn paginators_of_names_and_dotted_paths_are_run() -> Result<()> {
+    with_models(|models| {
+        let entry = |command: &str, operation: &str| {
+            let service = models
+                .service(command)
+                .unwrap_or_else(|| panic!("{command}"));
+            let found = service
+                .operation(operation)
+                .unwrap_or_else(|| panic!("{operation}"));
+            paginator(service, found)
+        };
+        assert!(matches!(entry("zjson", "list-things"), Some(Ok(_))));
+        let dotted = entry("elasticache", "describe-engine-default-parameters");
+        let result_keys = dotted
+            .and_then(std::result::Result::ok)
+            .map(|config| config.result_key);
+        assert_eq!(
+            result_keys,
+            Some(vec!["EngineDefaults.Parameters".to_owned()])
+        );
+        assert!(matches!(entry("kinesis", "describe-stream"), Some(Err(_))));
+        assert_eq!(entry("zjson", "measure"), None);
     })
 }
 
@@ -102,6 +168,7 @@ fn each_client_refusal_names_its_own_reason() {
         Unsupported::EndpointData,
         Unsupported::Validation(model::validate::Undecided::Comparison),
         Unsupported::Hook("declined".into()),
+        Unsupported::StartingToken("a float"),
     ];
     let reasons: Vec<&str> = refusals.iter().map(|one| reason(one).name()).collect();
     let mut distinct = reasons.clone();

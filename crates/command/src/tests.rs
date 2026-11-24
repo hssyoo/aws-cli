@@ -62,6 +62,9 @@ impl OperationSource for Fake {
     }
 }
 impl Binder for Fake {
+    fn precedes_unpack_failure(&self, _parsed: &ParseResult<'_>) -> bool {
+        false
+    }
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission> {
         let echo = match parsed.values.string("thing_id") {
             Some("refused") => return Err(Admission::Python(PythonReason::UnsupportedValue)),

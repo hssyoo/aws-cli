@@ -9,8 +9,10 @@ enum GlobalSupport {
     /// it, whose format the settings stage judges with the environment's
     /// and the profile's (`command::OutputSettings::resolve`).
     Output,
-    /// `--no-paginate`: a listing ignores it, and so does Python for a model
-    /// operation that does not paginate; one that does is Python's.
+    /// `--no-paginate`: a listing ignores it, and a model operation honors
+    /// it as `parsed_globals.paginate`, which its binding reads
+    /// (`check_should_enable_pagination`, `_make_client_call`); one that
+    /// does not paginate ignores it. A transfer is Python's.
     Pagination,
     /// `--color` and `--no-cli-pager`: a command below a root writes no
     /// colored text and starts no pager it would change, or starts one it
@@ -35,9 +37,8 @@ pub(super) enum Target {
     Listing,
     /// A transfer writing its own progress, as `s3 cp` does.
     Transfer,
-    /// A model operation, whose response the `--output` formatter prints;
-    /// whether it paginates decides `--no-paginate`.
-    Operation { paginated: bool },
+    /// A model operation, whose response the `--output` formatter prints.
+    Operation,
 }
 impl Target {
     /// The target of a pinned `s3` lineage: `s3 ls` is a listing and the
@@ -151,14 +152,11 @@ pub(super) fn route_parsed_unsupported_global(
         .then_some(PythonReason::PythonOnlyGlobal)
 }
 fn is_native_global(support: GlobalSupport, target: Target, level: &Level<'_>) -> bool {
-    let operation = matches!(target, Target::Operation { .. });
+    let operation = target == Target::Operation;
     match support {
         GlobalSupport::Native => true,
         GlobalSupport::Output => target == Target::Listing || operation,
-        GlobalSupport::Pagination => matches!(
-            target,
-            Target::Listing | Target::Operation { paginated: false }
-        ),
+        GlobalSupport::Pagination => target == Target::Listing || operation,
         GlobalSupport::Presentation => target != Target::Group,
         GlobalSupport::ErrorFormat => level
             .namespace

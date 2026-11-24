@@ -105,9 +105,9 @@ const PAGINATOR_FIX: &str =
     "awscli.customizations.dynamodb.paginatorfix.register_dynamodb_paginator_fix";
 
 /// With the client's real table, dynamodb's discovery block is covered
-/// (`customizations::DYNAMODB`); what keeps its operations Python's is the
-/// CLI's own: the paginator fix on its calls and the wizard commands on its
-/// command table.
+/// (`customizations::DYNAMODB`), and so are the wizard commands on its
+/// command table; what keeps its operations Python's is the CLI's own
+/// paginator fix on its calls.
 #[test]
 fn dynamodb_is_uncovered_only_by_its_cli_customizations() -> Result<()> {
     with_models(|models| {
@@ -126,30 +126,78 @@ fn dynamodb_is_uncovered_only_by_its_cli_customizations() -> Result<()> {
             })
             .map(|one| (&*one.pattern, &*one.name))
             .collect();
+        assert_eq!(missing, [("calling-command.dynamodb.*", PAGINATOR_FIX)]);
+    })
+}
+
+const REMOVALS: &str = "awscli.customizations.removals.register_removals";
+const WIZARDS: &str = "awscli.customizations.wizard.commands.register_wizard_commands";
+
+/// Every editor row names an initializer the pack recorded as a table
+/// editor, listed under root table events alone: the rows describe the AWS
+/// CLI the fallback runs.
+#[test]
+fn every_editor_row_is_a_recorded_editor_listed_under_root_tables() -> Result<()> {
+    with_models(|models| {
+        let patterns = models.patterns();
+        for row in TABLE_EDITORS {
+            assert!(
+                patterns
+                    .table_editors
+                    .iter()
+                    .any(|editor| editor.entry.name() == row.entry),
+                "{} is not recorded",
+                row.entry
+            );
+            let listed: Vec<&str> = patterns
+                .registry
+                .iter()
+                .filter(|(_, entries)| entries.iter().any(|entry| entry.name() == row.entry))
+                .map(|(pattern, _)| &**pattern)
+                .collect();
+            assert!(!listed.is_empty(), "{}", row.entry);
+            assert!(
+                listed.iter().all(|pattern| root_table_event(pattern)),
+                "{}: {listed:?}",
+                row.entry
+            );
+        }
+    })
+}
+
+/// lambda's operations meet both editors through lambda's own table
+/// event, and with the client's side settled nothing else of the CLI's is
+/// left uncovered for one without a paginator.
+#[test]
+fn the_editors_are_covered_through_a_root_s_table_event() -> Result<()> {
+    with_models(|models| {
+        let found = matches(&models, "lambda", "get-account-settings");
+        for entry in [REMOVALS, WIZARDS] {
+            assert!(
+                found
+                    .iter()
+                    .any(|one| one.pattern == "building-command-table.lambda" && one.name == entry),
+                "{entry}"
+            );
+        }
+        let everything = replacing_all(&models, "lambda", "get-account-settings");
         assert_eq!(
-            missing,
-            [
-                (
-                    "building-command-table.dynamodb",
-                    "awscli.customizations.wizard.commands.register_wizard_commands"
-                ),
-                ("calling-command.dynamodb.*", PAGINATOR_FIX),
-            ]
+            uncovered(&found, everything, "lambda", "GetAccountSettings"),
+            None
         );
     })
 }
 
-/// Every `Implemented` row names an item the workspace defines.
+/// Every `Implemented` row and editor row names an item the workspace
+/// defines.
 #[test]
 fn every_implemented_path_is_defined() -> Result<()> {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for row in CLI {
-        if let Basis::Implemented { at } = row.basis {
-            assert!(
-                client::testing::defines(&workspace, at)?,
-                "{at} ({})",
-                row.entry
-            );
+    let rows = CLI.iter().map(|row| (row.entry, row.basis));
+    let editors = TABLE_EDITORS.iter().map(|row| (row.entry, row.basis));
+    for (entry, basis) in rows.chain(editors) {
+        if let Basis::Implemented { at } = basis {
+            assert!(client::testing::defines(&workspace, at)?, "{at} ({entry})");
         }
     }
     Ok(())
@@ -235,16 +283,25 @@ fn assert_trait_refused(entry: &str, key: &str, acting: &[&str]) -> Result<()> {
 }
 
 /// With the table's edits reproduced, the derivation reproduces sts's
-/// parse failures, and not those of a table another initializer edits.
+/// parse failures and those of the tables the editors alone edit, and not
+/// those of a table another initializer edits.
 #[test]
 fn the_table_s_edits_leave_only_other_customized_tables_to_python() -> Result<()> {
     with_models(|models| {
         assert!(models.reproduces_failures("sts", None));
         assert!(models.reproduces_failures("sts", Some("get-caller-identity")));
         assert!(models.reproduces_failures("zjson", Some("get-thing")));
+        for command in ["lambda", "ses", "ec2", "dynamodb", "iam", "events"] {
+            assert!(models.reproduces_failures(command, None), "{command}");
+        }
+        assert!(models.reproduces_failures("lambda", Some("get-account-settings")));
         assert!(
-            !models.reproduces_failures("ec2", None),
-            "removals edit ec2's table"
+            !models.reproduces_failures("logs", None),
+            "register_logs_commands adds logs' hand-written commands"
+        );
+        assert!(
+            !models.reproduces_failures("emr", Some("list-clusters")),
+            "emr_initialize edits emr's table"
         );
     })
 }
@@ -297,10 +354,6 @@ const CASES: &[(&str, Case)] = &[
             IDENTITY,
             &["sts", "get-caller-identity", "--cli-input-json", "{}"],
         ),
-    ),
-    (
-        ".register_pagination",
-        with_argv(&["zjson", "ping"], &["zjson", "list-things"]),
     ),
     (
         ".register_generate_cli_skeleton",
@@ -392,4 +445,42 @@ fn static_refusal(command: &str, operation: &str) -> Result<Option<Unsupported>>
         ))
     })
     .map(Option::flatten)
+}
+
+/// An editor is covered through a root's own table event alone: not the
+/// main table's, a subcommand's, a wildcard or any other event.
+#[test]
+fn an_editor_through_any_other_pattern_is_uncovered() {
+    let registry = |pattern: &str, name: &str| Match {
+        kind: MatchKind::Registry,
+        pattern: pattern.to_owned(),
+        name: name.to_owned(),
+    };
+    for pattern in [
+        "building-command-table.ses",
+        "building-command-table.lexv2-runtime",
+    ] {
+        let found = [registry(pattern, REMOVALS)];
+        assert_eq!(uncovered(&found, &[], "ses", "Op"), None, "{pattern}");
+    }
+    for pattern in [
+        "building-command-table",
+        "building-command-table.main",
+        "building-command-table.*",
+        "building-command-table.lambda_invoke",
+        "building-command-table.lambda.invoke",
+        "building-command-table.",
+        "session-initialized",
+    ] {
+        let found = [registry(pattern, WIZARDS)];
+        assert!(
+            uncovered(&found, &[], "lambda", "Op").is_some(),
+            "{pattern}"
+        );
+    }
+    let other = [registry(
+        "building-command-table.logs",
+        "awscli.customizations.logs.register_logs_commands",
+    )];
+    assert!(uncovered(&other, &[], "logs", "Op").is_some());
 }

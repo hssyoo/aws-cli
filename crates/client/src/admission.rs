@@ -46,6 +46,9 @@ pub enum Unsupported {
     /// A customization's interceptor left the call to Python, for the
     /// reason it names.
     Hook(String),
+    /// A starting token whose JSON Python reads into what the native
+    /// values cannot hold, or follows deeper than they do.
+    StartingToken(&'static str),
 }
 
 impl std::fmt::Display for Unsupported {
@@ -63,6 +66,7 @@ impl std::fmt::Display for Unsupported {
             Self::EndpointData => f.write_str("an unreadable endpoints.json"),
             Self::Validation(undecided) => write!(f, "a validation of {undecided:?}"),
             Self::Hook(reason) => write!(f, "a customization: {reason}"),
+            Self::StartingToken(why) => write!(f, "a starting token with {why}"),
         }
     }
 }
