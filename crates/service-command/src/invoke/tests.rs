@@ -67,6 +67,12 @@ impl FailingProcess {
         let cli_router::Verdict::Run(run) = verdict else {
             return Err(format!("not native: {verdict:?}").into());
         };
+        assert_eq!(self.preflight_of(&run), Ok(()));
+        Ok(run)
+    }
+
+    /// The preflight of a routed `run`, in the routed environment.
+    fn preflight_of(&self, run: &cli_router::Run) -> Result<(), PythonReason> {
         let env = crate::testing::environment(&[]);
         let variables = std::collections::HashMap::new();
         let preflight = Preflight {
@@ -79,8 +85,27 @@ impl FailingProcess {
             output: &run.output,
             stdout_is_tty: false,
         };
-        assert_eq!(run.invocation.preflight(&preflight), Ok(()));
-        Ok(run)
+        run.invocation.preflight(&preflight)
+    }
+
+    /// The message of the failure a preflighted `run` ends with.
+    fn run_failure(&self, run: &cli_router::Run) -> crate::testing::Result<String> {
+        let env = crate::testing::environment(&[]);
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut cx = Context {
+            env: &env,
+            shared_files: &self.files,
+            globals: &run.globals,
+            directory: &self.directory,
+            stdout: &mut stdout,
+            stderr: &mut stderr,
+        };
+        let failure = run
+            .invocation
+            .run(&mut cx)
+            .err()
+            .ok_or("the run succeeded")?;
+        Ok(String::from_utf8_lossy(&failure.message).into_owned())
     }
 }
 
@@ -111,22 +136,56 @@ fn the_preflight_runs_no_credential_provider() -> crate::testing::Result<()> {
 fn a_failing_credential_chain_is_reported_before_invalid_input() -> crate::testing::Result<()> {
     let process = FailingProcess::new("invalid-input")?;
     let run = process.preflight(&["zjson", "strict", "--name", "", "--size", "0"])?;
-    let env = crate::testing::environment(&[]);
-    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
-    let mut cx = Context {
-        env: &env,
-        shared_files: &process.files,
-        globals: &run.globals,
-        directory: &process.directory,
-        stdout: &mut stdout,
-        stderr: &mut stderr,
+    let message = process.run_failure(&run)?;
+    assert!(
+        message.starts_with("Error when retrieving credentials from custom-process"),
+        "{message}"
+    );
+    assert_eq!(process.runs()?, 1);
+    Ok(())
+}
+
+/// A starting token only Python reads is refused as a paginator before
+/// any provider runs: `{"NextToken": "\ud800"}`, whose lone surrogate no
+/// native string holds.
+#[test]
+#[cfg(unix)]
+fn a_starting_token_only_python_reads_runs_no_provider() -> crate::testing::Result<()> {
+    let process = FailingProcess::new("python-token")?;
+    let argv = [
+        "zjson",
+        "list-things",
+        "--starting-token",
+        "eyJOZXh0VG9rZW4iOiAiXHVkODAwIn0=",
+    ];
+    let verdict = crate::testing::route(&argv, &[], &process.files)?;
+    let cli_router::Verdict::Run(run) = verdict else {
+        return Err(format!("not native: {verdict:?}").into());
     };
-    let failure = run
-        .invocation
-        .run(&mut cx)
-        .err()
-        .ok_or("the run succeeded")?;
-    let message = String::from_utf8_lossy(&failure.message);
+    assert_eq!(
+        process.preflight_of(&run),
+        Err(PythonReason::Paginator),
+        "the preflight admitted it"
+    );
+    assert_eq!(process.runs()?, 0, "the preflight ran the process");
+    Ok(())
+}
+
+/// botocore creates the client, walking the chain, before the paginator
+/// reads the starting token, so a failing provider is reported over a
+/// bad one; the process runs once.
+#[test]
+#[cfg(unix)]
+fn a_failing_chain_is_reported_before_a_bad_starting_token() -> crate::testing::Result<()> {
+    let process = FailingProcess::new("bad-token")?;
+    let argv = [
+        "zjson",
+        "list-things",
+        "--starting-token",
+        "does___not___work",
+    ];
+    let run = process.preflight(&argv)?;
+    let message = process.run_failure(&run)?;
     assert!(
         message.starts_with("Error when retrieving credentials from custom-process"),
         "{message}"
