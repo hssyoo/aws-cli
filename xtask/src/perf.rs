@@ -291,7 +291,9 @@ fn measure_command(
 fn calibrated(context: &Context, tier: Tier) -> Result<Option<Calibration>, TaskError> {
     let calibration = Baseline::read(&context.baseline)?
         .and_then(|baseline| baseline.section(tier).calibration.clone());
-    if calibration.is_none() {
+    if let Some(calibration) = &calibration {
+        write!(io::stdout(), "{}", table::calibration(tier, calibration))?;
+    } else {
         writeln!(
             io::stdout(),
             "perf: {} has no {} calibration: counts are judged, times and memory are not; \
