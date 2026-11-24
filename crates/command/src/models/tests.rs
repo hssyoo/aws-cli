@@ -192,10 +192,76 @@ fn customized_tables_leave_their_failures_to_python() -> Result<()> {
         assert!(source.reproduces_failures("sts", None));
         assert!(source.reproduces_failures("sts", Some("get-caller-identity")));
         assert!(
-            !source.reproduces_failures("ec2", None),
-            "removals edit ec2's table"
+            !source.reproduces_failures("logs", None),
+            "register_logs_commands adds logs' hand-written commands"
+        );
+        assert!(
+            !source.reproduces_failures("emr", Some("list-clusters")),
+            "emr_initialize edits emr's table"
         );
         assert!(!source.reproduces_failures("nosuch", None));
+    })
+}
+
+/// A removed operation leaves the table and the operations, so it parses
+/// as an invalid choice and has no derived table; the operations after it
+/// still name their own model operations.
+#[test]
+fn removed_operations_leave_the_derived_tables() -> Result<()> {
+    with_source(None, |source| {
+        for (command, removed) in [
+            ("lambda", "invoke-with-response-stream"),
+            ("ses", "verify-email-address"),
+            ("emr", "run-job-flow"),
+            ("ec2", "import-instance"),
+        ] {
+            let found = source
+                .service(command)
+                .unwrap_or_else(|| panic!("{command}"));
+            let held = |names: &[String]| names.iter().any(|name| name == removed);
+            assert!(
+                !held(&found.choices) && !held(&found.operations),
+                "{removed}"
+            );
+            assert!(source.table(command, removed).is_none(), "{removed}");
+        }
+        let lambda = source.service("lambda").unwrap_or_else(|| panic!("lambda"));
+        let invoke = lambda
+            .operation("invoke")
+            .unwrap_or_else(|| panic!("invoke"));
+        assert_eq!(&*invoke.name, "Invoke");
+        let table = source
+            .table("lambda", "list-functions")
+            .unwrap_or_else(|| panic!("list-functions"));
+        assert!(
+            table
+                .arguments
+                .iter()
+                .any(|argument| &*argument.name == "function-version")
+        );
+    })
+}
+
+/// `wizard` is set after the operations and before `wait`, which the
+/// general event adds, and is no operation; a service whose table nothing
+/// else edits renders its failures natively.
+#[test]
+fn wizard_is_set_before_wait_and_the_tables_render_their_failures() -> Result<()> {
+    with_source(None, |source| {
+        let choices = |command| {
+            source
+                .operations(command)
+                .unwrap_or_else(|| panic!("{command}"))
+                .to_vec()
+        };
+        let lambda = choices("lambda");
+        assert_eq!(lambda[lambda.len() - 2..], ["wizard", "wait"]);
+        assert_eq!(choices("events").last(), Some(&"wizard"));
+        assert!(source.table("lambda", "wizard").is_none());
+        for command in ["lambda", "ses", "ec2", "dynamodb", "iam", "events"] {
+            assert!(source.reproduces_failures(command, None), "{command}");
+        }
+        assert!(source.reproduces_failures("lambda", Some("get-account-settings")));
     })
 }
 

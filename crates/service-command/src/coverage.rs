@@ -12,7 +12,9 @@
 //!   [`CLI`], which this crate owns. Its [`Basis`] says why: the native
 //!   route implements what the handlers it registers do, or they do
 //!   nothing for an invocation that the native route admits, because the
-//!   case where they act is refused before any request.
+//!   case where they act is refused before any request;
+//! - a table editor, reached by any root command's table event, by an
+//!   [`EditorRow`] of [`TABLE_EDITORS`].
 //!
 //! An initializer is keyed by the pattern it was reached through because
 //! the lazy emitter imports it the first time any of its patterns matches
@@ -20,8 +22,10 @@
 //! on its own events: `cloudfront`'s, reached through `top-level-args-parsed`
 //! alone, registers handlers for that service's operations and one
 //! `context.update` on the shared event. The derived table's shape
-//! (`command::models::TABLE_EDITS`) is no basis: it is what parses, not what
-//! runs.
+//! (`command::models::TABLE_EDITS`) is no basis for an initializer whose
+//! handlers act as the command runs: it is what parses, not what runs. A
+//! table editor's handlers do nothing but shape a table, so for it the
+//! derived table is the basis.
 use cli_core::cli_error::PythonReason;
 use client::hooks::Customization;
 use command::patterns::{Match, MatchKind};
@@ -251,9 +255,68 @@ pub static CLI: &[Row] = &[
     },
 ];
 
+/// An initializer covered through any root command's table event
+/// (`building-command-table.<command>`), whichever command it is.
+///
+/// Keying such an initializer by each pattern it is listed under would add
+/// nothing but a row per service upstream lists it for: the lazy emitter
+/// calls an initializer once, with the emitter alone (`fn(self)`,
+/// lazy_emitter.py:125-137), so what it registers does not depend on the
+/// pattern that reached it. A table editor registers nothing but handlers
+/// on root command tables, which the pack records by running it from the
+/// source the fallback runs (`command::patterns::TableEditor`), and the
+/// derived table applies each where the lazy emitter would run it
+/// (`command::patterns::Patterns::table_edits`). The pack refuses an editor
+/// listed under any other pattern or registering on any other event, and
+/// the shape is checked here too: a pattern of this shape is met only by a
+/// root's own table event, and an editor met through any other pattern is
+/// still uncovered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorRow {
+    pub entry: &'static str,
+    pub basis: Basis,
+}
+
+const TABLE_EVENT: &str = "building-command-table.";
+
+/// Whether `pattern` is one root command's table event: one command, not
+/// the main table's (whose initializers the main table's ops replace) and
+/// no subcommand's, whose lineage is `_`-joined
+/// (`ServiceOperation._build_subcommand_table`, clidriver.py:891).
+fn root_table_event(pattern: &str) -> bool {
+    pattern.strip_prefix(TABLE_EVENT).is_some_and(|command| {
+        !command.is_empty() && command != "main" && command != "*" && !command.contains(['.', '_'])
+    })
+}
+
+/// The table editors, covered through every root's table event. Their
+/// handlers act on the building of a table, never on an invocation's
+/// arguments or calls, and the derived table holds what they leave in it.
+pub static TABLE_EDITORS: &[EditorRow] = &[
+    EditorRow {
+        entry: "awscli.customizations.removals.register_removals",
+        basis: Basis::Native {
+            at: "command::models::ModelSource::load deletes the operations each \
+                 `_remove_commands` handler deletes from its service's table, so they parse \
+                 as invalid choices and are no operation of the source; CommandRemover \
+                 registers nothing else (removals.py:28-154)",
+        },
+    },
+    EditorRow {
+        entry: "awscli.customizations.wizard.commands.register_wizard_commands",
+        basis: Basis::Native {
+            at: "command::models::ModelSource::load sets `wizard` where `_add_wizard_command` \
+                 does, after the operations and before `wait`, and `wizard-dev` on cli-dev, \
+                 a hand-written table; neither is an operation of the source, so invoking \
+                 one is Python's (wizard/commands.py:18-40, wizard/devcommands.py:18-21)",
+        },
+    },
+];
+
 /// The first match nothing covers: no [`CLI`] row for a registry
-/// initializer and its pattern, and no `replaces` of a customization in
-/// scope for `service` and `operation` (model names) for a botocore row.
+/// initializer and its pattern, nor an [`EditorRow`] for it through a root
+/// table event, and no `replaces` of a customization in scope for
+/// `service` and `operation` (model names) for a botocore row.
 pub fn uncovered<'m>(
     matches: &'m [Match],
     customizations: &[&Customization],
@@ -261,14 +324,24 @@ pub fn uncovered<'m>(
     operation: &str,
 ) -> Option<&'m Match> {
     matches.iter().find(|found| match found.kind {
-        MatchKind::Registry => !CLI
-            .iter()
-            .any(|row| row.pattern == found.pattern && row.entry == found.name),
+        MatchKind::Registry => !covered_initializer(found),
         MatchKind::Builtin | MatchKind::Client => !customizations.iter().any(|customization| {
             customization.scope.matches(service, operation)
                 && customization.replaces.contains(&found.name.as_str())
         }),
     })
+}
+
+/// Whether a [`CLI`] row covers the registry match, or an [`EditorRow`]
+/// does through a root table event.
+fn covered_initializer(found: &Match) -> bool {
+    let row = CLI
+        .iter()
+        .any(|row| row.pattern == found.pattern && row.entry == found.name);
+    let editor = || {
+        root_table_event(&found.pattern) && TABLE_EDITORS.iter().any(|row| row.entry == found.name)
+    };
+    row || editor()
 }
 
 #[cfg(test)]

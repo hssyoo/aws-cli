@@ -53,7 +53,17 @@ const DOCUMENT: &str = r#"{
       ["request-created.{service_id}", "botocore.signers.RequestSigner.handler", "default"]
     ],
     "services": [["zsvc", [["before-parameter-build", "botocore.discovery.block", "default"]]]]
-  }
+  },
+  "command_table_edits": [
+    [["awscli.r", "remove"], [
+      ["building-command-table.zsvc", "awscli.r._remove", [["del", "gone"], ["del", "absent"]]],
+      ["building-command-table.zunlisted", "awscli.r._remove", [["del", "op"]]]
+    ]],
+    [["awscli.w", "add"], [
+      ["building-command-table.zother", "awscli.w._add", [["set", "wizard"]]],
+      ["building-command-table.zsvc", "awscli.w._add", [["set", "wizard"]]]
+    ]]
+  ]
 }"#;
 
 fn subject(service: &'static str, packed: bool) -> Subject<'static> {
@@ -92,6 +102,45 @@ fn the_entry_reads_as_the_generator_writes_it() -> Result<(), PatternError> {
     assert_eq!(&*patterns.client.services[0].0, "zsvc");
     for broken in [&b"{}"[..], b"[]", br#"{"plugin_registry": 1}"#, b"not json"] {
         assert!(Patterns::parse(broken).is_err(), "{broken:?}");
+    }
+    Ok(())
+}
+
+/// A root's table edits are its listed editors' handlers on its own event,
+/// in the registry's order; an editor's handler on a root it is not listed
+/// under is never initialized for it, so it edits nothing there.
+#[test]
+fn table_edits_follow_the_editors_listed_under_the_root_s_event() -> Result<(), PatternError> {
+    let mut document: Json =
+        serde_json::from_str(DOCUMENT).map_err(|error| PatternError::Json(error.to_string()))?;
+    document["plugin_registry"] = serde_json::json!([
+        [
+            "building-command-table.zsvc",
+            [["awscli.r", "remove"], ["awscli.w", "add"]]
+        ],
+        ["building-command-table.zother", [["awscli.w", "add"]]]
+    ]);
+    let patterns = Patterns::parse(document.to_string().as_bytes())?;
+    let set = |name: &str| TableEdit::Set(name.into());
+    let delete = |name: &str| TableEdit::Delete(name.into());
+    let edits = |command| -> Vec<TableEdit> {
+        patterns.table_edits(command).into_iter().cloned().collect()
+    };
+    assert_eq!(
+        edits("zsvc"),
+        [delete("gone"), delete("absent"), set("wizard")]
+    );
+    assert_eq!(edits("zother"), [set("wizard")]);
+    assert_eq!(edits("zunlisted"), []);
+    assert_eq!(edits("nosuch"), []);
+    for broken in [
+        serde_json::json!([["a", "f"], []]),
+        serde_json::json!([[["a", "f"], [["e", "h", [["move", "x"]]]]]]),
+        Json::Null,
+    ] {
+        document["command_table_edits"] = broken.clone();
+        let bytes = document.to_string();
+        assert!(Patterns::parse(bytes.as_bytes()).is_err(), "{broken}");
     }
     Ok(())
 }

@@ -5,8 +5,10 @@
 //! `LazyInitEmitter._apply_main_command_table_ops`), a service's table is
 //! its operations through `xform_name` (`ServiceCommand._create_command_table`),
 //! and an operation's argument table is its input members and the
-//! cross-cutting arguments (`table`).
-use crate::patterns::{CliCustomization, Match, Patterns, Subject, TableOp};
+//! cross-cutting arguments (`table`). A service's table then takes the
+//! edits the pack recorded its table editors making
+//! (`Patterns::table_edits`), and `wait`.
+use crate::patterns::{CliCustomization, Match, Patterns, Subject, TableEdit, TableOp};
 use crate::registry::OperationSource;
 use crate::spec::{Admission, Invocation, Needs};
 use awscli_argparse::tables::RequiredOverride;
@@ -28,11 +30,20 @@ pub use table::{DerivedArgument, Origin, Paging, Table, Unpack, ValueType, kind_
 type Json = serde_json::Value;
 
 /// The registry entries whose table edits the derived tables reproduce:
-/// `wait` for a service with waiters, the router's alias rule, and the
-/// cross-cutting arguments. They stand in for the table edits only, not
-/// for what the handlers do when an argument is supplied, so admission
-/// does not read them.
+/// `wait` for a service with waiters, the router's alias rule, the
+/// cross-cutting arguments, and the table editors' removals and `wizard`
+/// commands. They stand in for the table edits only, not for what the
+/// handlers do when an argument is supplied, so admission does not read
+/// them.
 pub const TABLE_EDITS: &[CliCustomization] = &[
+    CliCustomization {
+        id: "tables.removals",
+        replaces: &["awscli.customizations.removals.register_removals"],
+    },
+    CliCustomization {
+        id: "tables.wizard",
+        replaces: &["awscli.customizations.wizard.commands.register_wizard_commands"],
+    },
     CliCustomization {
         id: "tables.wait",
         replaces: &["awscli.customizations.waiters.register_add_waiters"],
@@ -66,10 +77,12 @@ pub struct Service {
     pub command: String,
     pub name: String,
     pub model: Model,
-    /// The operations' CLI names, in model order.
+    /// The CLI names of the model operations the command table holds, in
+    /// model order: those its table editors neither delete nor set.
     pub operations: Vec<String>,
-    /// The command table's names: the operations, then `wait` when the
-    /// service has waiters (`add_waiters`).
+    /// The command table's names: the model operations' names after the
+    /// table editors' edits, then `wait` when the service has waiters
+    /// (`add_waiters`). A name an editor sets is no model operation.
     pub choices: Vec<String>,
     /// A `building-command-table` handler the derivation does not reproduce
     /// edits the table.
@@ -78,14 +91,22 @@ pub struct Service {
     /// whose client the pack observed.
     pub packed: bool,
     pages: Option<Json>,
+    /// Each of `operations`' index in the model's operations.
+    indices: Vec<usize>,
     tables: Vec<OnceCell<Table>>,
 }
 
 impl Service {
+    /// The model operation the CLI name `operation` stands for, with its
+    /// place in `operations`.
+    fn position(&self, operation: &str) -> Option<(usize, &model::shapes::Operation)> {
+        let index = self.operations.iter().position(|name| name == operation)?;
+        let model_index = *self.indices.get(index)?;
+        Some((index, self.model.operations().get(model_index)?))
+    }
     /// The model operation the CLI name `operation` stands for.
     pub fn operation(&self, operation: &str) -> Option<&model::shapes::Operation> {
-        let index = self.operations.iter().position(|name| name == operation)?;
-        self.model.operations().get(index)
+        self.position(operation).map(|(_, found)| found)
     }
     /// Whether the paginators file configures the model operation
     /// `operation` (`get_paginator_config`, which `client.can_paginate`
@@ -239,15 +260,25 @@ impl<'a> ModelSource<'a> {
     fn load(&self, command: &str, service: &str) -> Option<Service> {
         let model = Model::load(&self.models, service).ok()?;
         let packed = self.models.packed(service).ok()?;
-        let operations: Vec<String> = model
+        let mut table: Vec<(String, Option<usize>)> = model
             .operations()
             .iter()
-            .map(|operation| xform_name(&operation.name, "-", &self.special))
+            .enumerate()
+            .map(|(index, operation)| {
+                (xform_name(&operation.name, "-", &self.special), Some(index))
+            })
             .collect();
-        let mut choices = operations.clone();
-        if self.has_waiters(service) {
-            choices.push("wait".to_owned());
+        for edit in self.patterns.table_edits(command) {
+            edit_table(&mut table, edit);
         }
+        if self.has_waiters(service) {
+            edit_table(&mut table, &TableEdit::Set("wait".into()));
+        }
+        let choices = table.iter().map(|(name, _)| name.clone()).collect();
+        let (operations, indices): (Vec<String>, Vec<usize>) = table
+            .into_iter()
+            .filter_map(|(name, index)| Some((name, index?)))
+            .unzip();
         let pages = load_service_model(&self.models, service, Kind::Paginators)
             .ok()
             .and_then(|document| document.json.get("pagination").cloned());
@@ -261,6 +292,7 @@ impl<'a> ModelSource<'a> {
             operations,
             choices,
             pages,
+            indices,
             tables,
         })
     }
@@ -293,12 +325,8 @@ impl<'a> ModelSource<'a> {
     /// The table of `[command, operation]`, derived once.
     pub fn table(&self, command: &str, operation: &str) -> Option<&Table> {
         let service = self.service(command)?;
-        let index = service
-            .operations
-            .iter()
-            .position(|name| name == operation)?;
-        let model_operation = &service.model.operations()[index];
-        Some(service.tables[index].get_or_init(|| {
+        let (index, model_operation) = service.position(operation)?;
+        Some(service.tables.get(index)?.get_or_init(|| {
             let pages = service
                 .pages
                 .as_ref()
@@ -350,10 +378,7 @@ impl<'a> ModelSource<'a> {
     ) -> Option<T> {
         let service = self.service(command)?;
         let table = self.table(command, operation)?;
-        let index = service
-            .operations
-            .iter()
-            .position(|name| name == operation)?;
+        let model_operation = service.operation(operation)?;
         let metadata = service.model.metadata();
         let service_id = metadata.hyphenized_service_id().unwrap_or_default();
         let arguments: Vec<&str> = table
@@ -366,12 +391,26 @@ impl<'a> ModelSource<'a> {
             endpoint_prefix: metadata.endpoint_prefix.as_deref().unwrap_or_default(),
             service_id: &service_id,
             command,
-            operation: &service.model.operations()[index].name,
+            operation: &model_operation.name,
             cli_operation: operation,
             arguments: &arguments,
             packed: service.packed,
         };
         Some(judge(&subject))
+    }
+}
+
+/// One edit of a command table: a set name keeps its place, or is added
+/// last, and is no model operation from then on; a deleted name leaves
+/// (`OrderedDict.__setitem__`, `__delitem__`). Deleting a name the table
+/// lacks only logs (`_remove_commands`).
+fn edit_table(table: &mut Vec<(String, Option<usize>)>, edit: &TableEdit) {
+    match edit {
+        TableEdit::Set(name) => match table.iter_mut().find(|(held, _)| **held == **name) {
+            Some((_, index)) => *index = None,
+            None => table.push((name.to_string(), None)),
+        },
+        TableEdit::Delete(name) => table.retain(|(held, _)| **held != **name),
     }
 }
 
