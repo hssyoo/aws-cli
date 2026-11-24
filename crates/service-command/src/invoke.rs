@@ -57,6 +57,9 @@ struct Ready {
     client: Result<Client, CommandFailure>,
     format: OutputFormat,
     destination: Destination,
+    /// Stdout is a terminal, on which CPython's `sys.stdout` is
+    /// line-buffered.
+    line_buffered: bool,
     pager_env: Vec<(OsString, OsString)>,
 }
 
@@ -165,6 +168,7 @@ impl Invocation for ServiceInvocation {
             client,
             format,
             destination,
+            line_buffered: cx.stdout_is_tty,
             pager_env,
         });
         Ok(())
@@ -191,7 +195,21 @@ impl Invocation for ServiceInvocation {
         if let Some(paginated) = &self.admitted.paginated {
             return paged::run(self, cx, ready, client, paginated);
         }
-        match client.call(&self.admitted.operation, self.admitted.input.clone()) {
+        // KeyboardInterrupt ends the call wherever it lands: the call is
+        // active work, so a Ctrl-C is recorded rather than ending the
+        // process, and the call ends interrupted once its request in flight,
+        // which the transport cannot cut short, returns (`paged` does the
+        // same for each page).
+        let interrupt = cli_core::interrupt::process_state();
+        let mut scope = cli_core::interrupt::Scope::enter(interrupt);
+        let called = client.call(&self.admitted.operation, self.admitted.input.clone());
+        let called = if interrupt.is_requested() {
+            Err(CallError::Interrupted)
+        } else {
+            called
+        };
+        scope.leave();
+        match called {
             Ok(output) => self.print(cx, ready, &output.value),
             Err(error) => self.call_failed(cx, error),
         }
@@ -248,13 +266,14 @@ impl ServiceInvocation {
             &ready.pager_env,
             &text,
             cx.stdout,
+            ready.line_buffered,
             interrupt,
         ) {
             Ok(Delivered::Paged(Outcome::Interrupted)) => Ok(interrupted(cx)),
             // JSONFormatter swallows a failed write; the exit-time flush then
             // reports the closed stream as the s3 commands' does.
             Ok(Delivered::Stdout(Err(_))) if ready.format.swallows_write_errors() => Ok(0),
-            Ok(Delivered::Stdout(Err(error))) => Err(general(error.to_string().into_bytes())),
+            Ok(Delivered::Stdout(Err(error))) => Err(write_failure(&error)),
             Ok(Delivered::Stdout(Ok(())) | Delivered::Paged(Outcome::Exited)) => Ok(0),
             Err(error) => Err(service_errors::pager_failure(&error)),
         }
@@ -268,6 +287,12 @@ impl ServiceInvocation {
             error => Err(service_errors::call_failure(&error, &self.model)),
         }
     }
+}
+
+/// `GeneralExceptionHandler`'s failure for the `OSError` a write to stdout
+/// raised, as `str()` of it reads.
+fn write_failure(error: &std::io::Error) -> CommandFailure {
+    general(cli_core::cli_error::stdout_write_failure_message(error).into_bytes())
 }
 
 /// `GeneralExceptionHandler`'s failure with `str()` of the exception.
@@ -503,9 +528,9 @@ impl Transport for LazyTransport {
         request: &HttpRequest,
         timeouts: Timeouts,
     ) -> Result<HttpResponse, TransportError> {
-        // A Ctrl-C recorded while a paginated call fetches its pages: no
-        // further request starts, as KeyboardInterrupt ends Python's
-        // iteration (`paged`).
+        // A Ctrl-C recorded while a call or a paginated call's pages are
+        // fetched: no further request starts, as KeyboardInterrupt ends
+        // Python's call or iteration (`run`, `paged`).
         if cli_core::interrupt::process_state().is_requested() {
             return Err(TransportError::Interrupted);
         }

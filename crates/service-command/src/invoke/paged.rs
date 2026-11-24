@@ -67,7 +67,9 @@ pub(super) fn run(
     let full = match ready.format {
         OutputFormat::Text => {
             return match &ready.destination {
-                Destination::Stdout => text_to_stdout(invocation, cx, &mut fetched, scope),
+                Destination::Stdout => {
+                    text_to_stdout(invocation, cx, ready.line_buffered, &mut fetched, scope)
+                }
                 Destination::Pager(argv) => {
                     text_to_pager(invocation, cx, ready, argv, &mut fetched, scope)
                 }
@@ -97,20 +99,24 @@ fn drain(fetched: &mut Fetched<'_>) -> Result<(), CallError> {
     Ok(())
 }
 
-/// `TextFormatter` writing to stdout: each page as it is formatted, the
+/// `TextFormatter` writing to stdout: each page as it is formatted, shown
+/// at once on a terminal, where `sys.stdout` is line-buffered, and the
 /// stream flushed at the end.
 fn text_to_stdout(
     invocation: &ServiceInvocation,
     cx: &mut Context<'_>,
+    line_buffered: bool,
     fetched: &mut Fetched<'_>,
     mut scope: Scope<'_>,
 ) -> Result<u8, CommandFailure> {
     let stdout = &mut *cx.stdout;
-    let written = format::pages::text(fetched, &mut |text| stdout.write_all(text.as_bytes()));
-    // TextFormatter flushes the stream however the pages ended; only a
-    // failure it raised before then is passed over.
-    let flushed = stdout.flush();
-    let written = written.and_then(|()| flushed.map_err(Stopped::Write));
+    let written = format::pages::text(fetched, &mut |text| {
+        format::write_stdout(stdout, text, line_buffered)
+    });
+    // TextFormatter flushes the stream however the pages ended, passing
+    // over an OSError (`_flush_stream`); the exit-time flush reports what
+    // that leaves unwritten.
+    let _ = stdout.flush();
     scope.leave();
     match written {
         Ok(()) => Ok(0),
@@ -165,7 +171,8 @@ fn text_to_pager(
 }
 
 /// What the text formatter's early end comes to: the page's failure, the
-/// formatter's exception, or the failed write (`GeneralExceptionHandler`).
+/// formatter's exception, or the `OSError` of a failed write
+/// (`GeneralExceptionHandler`).
 fn ended(
     invocation: &ServiceInvocation,
     cx: &mut Context<'_>,
@@ -174,6 +181,6 @@ fn ended(
     match stopped {
         Stopped::Page(error) => invocation.call_failed(cx, error),
         Stopped::Format(error) => Err(general(error.message.into_bytes())),
-        Stopped::Write(error) => Err(general(error.to_string().into_bytes())),
+        Stopped::Write(error) => Err(write_failure(&error)),
     }
 }

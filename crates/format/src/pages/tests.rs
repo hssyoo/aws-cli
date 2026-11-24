@@ -171,3 +171,28 @@ fn a_dotted_search_reads_through_objects_only() {
     assert_eq!(search(&page, "A.C"), None);
     assert_eq!(search(&page, "S.B"), None);
 }
+
+/// Pages with no rows hand nothing on: `format_text` writes nothing for
+/// them, so a lazily started pager never starts.
+#[test]
+fn pages_with_no_rows_write_nothing() {
+    let mut pages = Listed::new(
+        vec![value(r#"{"Keys": []}"#), value(r#"{"Keys": []}"#)],
+        &["Keys"],
+    );
+    let mut writes = 0;
+    let result = text(&mut pages, &mut |_| {
+        writes += 1;
+        Ok(())
+    });
+    assert!(result.is_ok());
+    assert_eq!(writes, 0);
+    let mut failing = Listed::new(vec![value(r#"{"Mixed": [{"k": 1}, "s"]}"#)], &["Mixed"]);
+    let mut writes = 0;
+    let result = text(&mut failing, &mut |_| {
+        writes += 1;
+        Ok(())
+    });
+    assert!(matches!(result, Err(Stopped::Format(_))));
+    assert_eq!(writes, 0);
+}
