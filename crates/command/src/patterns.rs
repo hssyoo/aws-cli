@@ -90,11 +90,11 @@ pub enum TableEdit {
 }
 
 /// One handler a table editor registers: the root command table event it
-/// is registered on, its name, and what it does to that table, in order.
+/// is registered on, and what it does to that table, in order. The pack
+/// also names the handler, which nothing here reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableHandler {
     pub event: Box<str>,
-    pub handler: Box<str>,
     pub edits: Vec<TableEdit>,
 }
 
@@ -409,9 +409,8 @@ fn table_editor(row: &Json) -> Result<TableEditor, PatternError> {
     let handlers = array(handlers, "table editor handlers")?
         .iter()
         .map(|handler| match array(handler, "table handler")? {
-            [event, name, edits] => Ok(TableHandler {
+            [event, _name, edits] => Ok(TableHandler {
                 event: text(event, "table handler event")?,
-                handler: text(name, "table handler name")?,
                 edits: array(edits, "table edits")?
                     .iter()
                     .map(table_edit)
