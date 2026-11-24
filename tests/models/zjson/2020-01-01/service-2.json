@@ -146,6 +146,32 @@
       "output": {
         "shape": "FetchBlobOutput"
       }
+    },
+    "ListKeys": {
+      "name": "ListKeys",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "ListKeysRequest"
+      },
+      "output": {
+        "shape": "ListKeysResponse"
+      }
+    },
+    "FilterEvents": {
+      "name": "FilterEvents",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "FilterEventsRequest"
+      },
+      "output": {
+        "shape": "FilterEventsResponse"
+      }
     }
   },
   "shapes": {
@@ -707,6 +733,113 @@
     "BlobStream": {
       "type": "blob",
       "streaming": true
+    },
+    "ListKeysRequest": {
+      "type": "structure",
+      "members": {
+        "Limit": {
+          "shape": "Integer"
+        },
+        "Marker": {
+          "shape": "String"
+        }
+      }
+    },
+    "ListKeysResponse": {
+      "type": "structure",
+      "members": {
+        "Keys": {
+          "shape": "KeyList"
+        },
+        "NextMarker": {
+          "shape": "String"
+        },
+        "Truncated": {
+          "shape": "Boolean"
+        }
+      }
+    },
+    "KeyList": {
+      "type": "list",
+      "member": {
+        "shape": "KeyListEntry"
+      }
+    },
+    "KeyListEntry": {
+      "type": "structure",
+      "members": {
+        "KeyId": {
+          "shape": "String"
+        },
+        "KeyArn": {
+          "shape": "String"
+        }
+      }
+    },
+    "FilterEventsRequest": {
+      "type": "structure",
+      "members": {
+        "logGroupName": {
+          "shape": "String"
+        },
+        "filterPattern": {
+          "shape": "String"
+        },
+        "nextToken": {
+          "shape": "String"
+        },
+        "limit": {
+          "shape": "Integer"
+        }
+      }
+    },
+    "FilterEventsResponse": {
+      "type": "structure",
+      "members": {
+        "events": {
+          "shape": "EventList"
+        },
+        "searchedLogStreams": {
+          "shape": "SearchedStreamList"
+        },
+        "nextToken": {
+          "shape": "String"
+        }
+      }
+    },
+    "EventList": {
+      "type": "list",
+      "member": {
+        "shape": "Event"
+      }
+    },
+    "Event": {
+      "type": "structure",
+      "members": {
+        "eventId": {
+          "shape": "String"
+        },
+        "message": {
+          "shape": "String"
+        }
+      }
+    },
+    "SearchedStreamList": {
+      "type": "list",
+      "member": {
+        "shape": "SearchedStream"
+      }
+    },
+    "SearchedStream": {
+      "type": "structure",
+      "members": {
+        "logStreamName": {
+          "shape": "String"
+        },
+        "searchedCompletely": {
+          "shape": "Boolean"
+        }
+      }
     }
   },
   "documentation": "A fake json service for tests."

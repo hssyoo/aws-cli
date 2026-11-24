@@ -1,6 +1,8 @@
 //! A response printed as the Python CLI prints it: `--output json`, `text`
 //! and `off` (`awscli.formatter`, `awscli.text`), through the pager as
-//! `OutputStreamFactory` sends it, with the CLI's timestamp handling.
+//! `OutputStreamFactory` sends it, with the CLI's timestamp handling. A
+//! paginated response's text is written page by page ([`pages`]); its JSON
+//! is the full result's, which the paginator builds.
 //!
 //! `table`, `yaml` and `yaml-stream` stay on the Python route
 //! ([`OutputFormat::from_name`] knows only the three here).
@@ -9,6 +11,7 @@ use model::value::Value;
 
 pub mod json;
 pub mod pager;
+pub mod pages;
 pub mod text;
 pub mod timestamps;
 
@@ -100,6 +103,24 @@ fn not_iterable(value: &Value) -> Option<&'static str> {
     }
 }
 
+/// `text` written to stdout as CPython's `sys.stdout` takes it: buffered,
+/// and line-buffered on a terminal, which flushes each line as it is
+/// written, so a failure to flush there is the write's.
+///
+/// # Errors
+/// The write failed.
+pub fn write_stdout(
+    stdout: &mut dyn std::io::Write,
+    text: &str,
+    line_buffered: bool,
+) -> std::io::Result<()> {
+    stdout.write_all(text.as_bytes())?;
+    if line_buffered {
+        stdout.flush()?;
+    }
+    Ok(())
+}
+
 /// Where delivered output went.
 #[derive(Debug)]
 pub enum Delivered {
@@ -110,8 +131,11 @@ pub enum Delivered {
     Paged(Outcome),
 }
 
-/// Writes `output` where `destination` says: to `stdout`, or to a pager
-/// started with `env` ([`pager::environment`]) only when there is output.
+/// Writes `output` where `destination` says: to `stdout` ([`write_stdout`],
+/// line-buffered on a terminal), or to a pager started with `env`
+/// ([`pager::environment`]) only when there is output. Stdout is then
+/// flushed as the formatter's `_flush_stream` flushes it, which passes over
+/// an `OSError`: what that leaves unwritten, the exit-time flush reports.
 ///
 /// # Errors
 /// The pager could not start.
@@ -120,14 +144,15 @@ pub fn deliver(
     env: &[(std::ffi::OsString, std::ffi::OsString)],
     output: &str,
     stdout: &mut dyn std::io::Write,
+    line_buffered: bool,
     interrupt: &cli_core::interrupt::State,
 ) -> Result<Delivered, SpawnError> {
     match destination {
-        Destination::Stdout => Ok(Delivered::Stdout(
-            stdout
-                .write_all(output.as_bytes())
-                .and_then(|()| stdout.flush()),
-        )),
+        Destination::Stdout => {
+            let written = write_stdout(stdout, output, line_buffered);
+            let _ = stdout.flush();
+            Ok(Delivered::Stdout(written))
+        }
         Destination::Pager(_) if output.is_empty() => Ok(Delivered::Paged(Outcome::Exited)),
         Destination::Pager(argv) => {
             pager::run(argv, env, output.as_bytes(), interrupt).map(Delivered::Paged)

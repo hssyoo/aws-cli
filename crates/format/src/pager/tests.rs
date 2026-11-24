@@ -204,3 +204,50 @@ fn ctrl_c_while_the_pager_runs_cancels_the_wait() -> Result<(), Box<dyn std::err
     assert_eq!(outcome, Ok(Outcome::Interrupted));
     Ok(())
 }
+
+/// A stream starts its pager at the first write and hands it every piece
+/// written; one never written starts nothing.
+#[test]
+fn a_stream_starts_its_pager_at_the_first_write() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = std::env::temp_dir().join(format!("format-pager-stream-{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let record = dir.join("record");
+    let argv = vec![
+        "sh".to_owned(),
+        "-c".to_owned(),
+        format!("cat > '{}'", record.display()),
+    ];
+    let env = environment(std::env::vars_os());
+    let state = cli_core::interrupt::State::default();
+    assert_eq!(Stream::new(&argv, &env).finish(&state), Outcome::Exited);
+    assert!(!record.exists());
+    let mut stream = Stream::new(&argv, &env);
+    assert_eq!(stream.write(b"one\n"), Ok(true));
+    assert_eq!(stream.write(b"two\n"), Ok(true));
+    assert_eq!(stream.finish(&state), Outcome::Exited);
+    assert_eq!(std::fs::read_to_string(&record)?, "one\ntwo\n");
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// Once the pager's input is gone, a write reports it, and nothing more is
+/// written.
+#[test]
+fn a_stream_whose_pager_quit_takes_no_more() -> Result<(), SpawnError> {
+    let env = environment(std::env::vars_os());
+    let state = cli_core::interrupt::State::default();
+    let closed = vec!["true".to_owned()];
+    let mut stream = Stream::new(&closed, &env);
+    let big = vec![b'x'; 4 * PIPE_BUFFER];
+    let mut written = stream.write(b"x")?;
+    let mut attempts = 0;
+    while written && attempts < 64 {
+        std::thread::sleep(Duration::from_millis(20));
+        written = stream.write(&big)?;
+        attempts += 1;
+    }
+    assert!(!written, "a pager that exited still took input");
+    assert_eq!(stream.write(b"more"), Ok(false));
+    assert_eq!(stream.finish(&state), Outcome::Exited);
+    Ok(())
+}

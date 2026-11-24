@@ -28,6 +28,7 @@ use crate::runtime::Runtime;
 use crate::transport::{Timeouts, Transport, TransportError};
 pub use crate::useragent::UserAgentContext;
 use cli_core::client_config::ClientSettings;
+use cli_core::client_config::user_agent::Features;
 use model::shapes::{Flag, Model, Operation};
 use model::validate::{Validation, validate_input};
 use model::value::{Map, Value};
@@ -152,6 +153,26 @@ impl Client {
         let prepared = self.prepare(operation, input)?;
         self.send(prepared)
     }
+    /// [`Self::call`], its `User-Agent` also naming `features`: the feature
+    /// ids a caller registers in the call's context, as
+    /// `PageIterator._make_request` registers `PAGINATOR`
+    /// (`with_current_context(partial(register_feature_id, ...))`).
+    ///
+    /// # Errors
+    /// See [`CallError`].
+    pub fn call_with_features(
+        &self,
+        operation: &str,
+        input: Value,
+        features: Features,
+    ) -> Result<Output, CallError> {
+        let prepared = self.prepare_with_features(operation, input, features)?;
+        self.send(prepared)
+    }
+    /// The service's model.
+    pub(crate) fn model(&self) -> &Model {
+        &self.parts.model
+    }
 }
 
 /// A timeout in milliseconds as the transport takes it: 0, botocore's
@@ -184,6 +205,15 @@ impl Client {
     /// Anything botocore raises before it sends, and
     /// [`CallError::Unsupported`] for a call to leave to the Python route.
     pub fn prepare(&self, operation: &str, input: Value) -> Result<Prepared, CallError> {
+        self.prepare_with_features(operation, input, Features::default())
+    }
+    /// [`Self::prepare`], with `extra` among the call's feature ids.
+    fn prepare_with_features(
+        &self,
+        operation: &str,
+        input: Value,
+        extra: Features,
+    ) -> Result<Prepared, CallError> {
         let parts = &self.parts;
         let operation = parts
             .model
@@ -207,7 +237,8 @@ impl Client {
                 .map_err(prepare_hook_error)?;
         }
         self.fill_idempotency_tokens(operation, &mut input);
-        let (endpoint, features) = self.resolve_endpoint(&mut cx, operation, &input, None)?;
+        let (endpoint, mut features) = self.resolve_endpoint(&mut cx, operation, &input, None)?;
+        features.extend(extra.iter());
         match validate_input(&parts.model, operation, &input) {
             Validation::Valid => {}
             Validation::Invalid(report) => return Err(CallError::Validation(report)),
@@ -286,13 +317,7 @@ impl Client {
         operation: &Operation,
         input: &Value,
         account_id: Option<&str>,
-    ) -> Result<
-        (
-            ResolvedEndpoint,
-            cli_core::client_config::user_agent::Features,
-        ),
-        CallError,
-    > {
+    ) -> Result<(ResolvedEndpoint, Features), CallError> {
         let parts = &self.parts;
         let mut builtins = parts.endpoint.builtins(&parts.endpoints)?;
         for hook in self.hooks.interceptors(&operation.name) {
