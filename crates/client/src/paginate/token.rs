@@ -11,7 +11,7 @@ use model::pyrepr::py_repr;
 use model::value::{Map, Value};
 
 /// The key a truncated page's token carries its offset in.
-pub(super) const TRUNCATE_AMOUNT: &str = "boto_truncate_amount";
+pub(crate) const TRUNCATE_AMOUNT: &str = "boto_truncate_amount";
 const ENCODED_KEYS: &str = "boto_encoded_keys";
 
 /// `TokenEncoder.encode`: `json.dumps(token)`, base64. A token `json`
@@ -230,10 +230,10 @@ fn sequence_index(len: usize, step: &Value, kind: &str) -> Result<usize, DecodeE
 /// A starting token as `_parse_starting_token` reads it: the input tokens
 /// to send, and how far into the first page's primary result key to start.
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct StartingToken {
-    pub(super) token: Map,
+pub(crate) struct StartingToken {
+    pub(crate) token: Map,
     /// `boto_truncate_amount`, as the token gave it (0 when absent).
-    pub(super) index: Value,
+    pub(crate) index: Value,
 }
 
 /// `_parse_starting_token`: the token [`decode`]s, or else it is of the old
@@ -243,7 +243,7 @@ pub(super) struct StartingToken {
 /// `ValueError("Bad starting token: ...")`, an exception the decoder
 /// raises that is neither a `ValueError` nor a `TypeError`, or
 /// [`Unsupported::StartingToken`] for a token only Python can read.
-pub(super) fn parse_starting_token(
+pub(crate) fn parse_starting_token(
     raw: &str,
     input_token: &[String],
 ) -> Result<StartingToken, CallError> {
@@ -292,7 +292,7 @@ fn deprecated(raw: &str, input_token: &[String]) -> Result<StartingToken, Pagina
 /// # Errors
 /// `ValueError("Bad starting token: ...")` for other keys, and
 /// [`encode`]'s error.
-pub(super) fn resume_token(value: &Map, input_token: &[String]) -> Result<String, PaginationError> {
+pub(crate) fn resume_token(value: &Map, input_token: &[String]) -> Result<String, PaginationError> {
     let mut expected: Vec<&str> = input_token.iter().map(String::as_str).collect();
     if value.contains_key(TRUNCATE_AMOUNT) {
         expected.push(TRUNCATE_AMOUNT);

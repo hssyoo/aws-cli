@@ -10,7 +10,7 @@ fn default_campaign_matches_all_seventeen_targets() -> Result<(), TaskError> {
     assert_eq!(options, Options::default());
     assert_eq!(budget_flags(&options), ["-runs=1000"]);
     assert_eq!(budget_text(&options), "1000 runs");
-    assert_eq!(TARGETS.len(), 17);
+    assert_eq!(TARGETS.len(), 18);
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or_else(|| deps::error("root"))?;

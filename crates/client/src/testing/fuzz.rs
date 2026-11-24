@@ -1,6 +1,7 @@
 //! The bodies of the fuzz targets over this crate's readers
-//! (`fuzz/fuzz_targets/xml_reader.rs`, `responses.rs`), which the stable
-//! replay test (its `tests`) also runs. No input may panic.
+//! (`fuzz/fuzz_targets/client_xml.rs`, `protocol_responses.rs`,
+//! `paginator_token.rs`), which the stable replay test (its `tests`) also
+//! runs. No input may panic.
 use crate::error::ParseError;
 use crate::http::{Headers, HttpResponse};
 use crate::protocol::{self, ParseOptions};
@@ -88,3 +89,42 @@ pub fn responses(models: &[Model], bytes: &[u8]) {
 
 #[cfg(test)]
 mod tests;
+
+/// The input tokens a paginator may name: none, botocore's usual one, or
+/// two, as a paginator with a compound token has.
+const INPUT_TOKENS: [&[&str]; 3] = [&[], &["NextToken"], &["Marker", "NextRecord"]];
+
+/// `PageIterator._parse_starting_token` of any text: the first byte picks
+/// the paginator's input tokens and the rest, as UTF-8 with any invalid
+/// bytes replaced, is the token. It reads the same twice, and a token that
+/// decodes to exactly the input tokens encodes (the `resume_token` setter)
+/// to one that decodes to the same token and offset.
+pub fn starting_token(bytes: &[u8]) {
+    use crate::paginate::{TRUNCATE_AMOUNT, parse_starting_token, resume_token};
+    let [pick, raw @ ..] = bytes else {
+        return;
+    };
+    let names: Vec<String> = INPUT_TOKENS[usize::from(*pick) % INPUT_TOKENS.len()]
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect();
+    let raw = String::from_utf8_lossy(raw);
+    let first = parse_starting_token(&raw, &names);
+    assert_eq!(first, parse_starting_token(&raw, &names));
+    let Ok(parsed) = first else {
+        return;
+    };
+    let mut keys: Vec<&str> = parsed.token.keys().collect();
+    keys.sort_unstable();
+    let mut expected: Vec<&str> = names.iter().map(String::as_str).collect();
+    expected.sort_unstable();
+    if keys != expected {
+        return;
+    }
+    let mut value = parsed.token.clone();
+    value.insert(TRUNCATE_AMOUNT.to_owned(), parsed.index.clone());
+    let Ok(encoded) = resume_token(&value, &names) else {
+        return;
+    };
+    assert_eq!(parse_starting_token(&encoded, &names), Ok(parsed));
+}

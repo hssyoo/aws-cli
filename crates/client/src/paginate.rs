@@ -27,6 +27,9 @@ mod py;
 mod token;
 
 use object::Object;
+/// The token codec, for the fuzz target over it.
+#[cfg(any(test, feature = "testing"))]
+pub(crate) use token::{TRUNCATE_AMOUNT, parse_starting_token, resume_token};
 
 /// One operation's entry in `paginators-1.json`, as `Paginator` reads it:
 /// every token and key a list, as `_get_input_tokens` and kin make them.
