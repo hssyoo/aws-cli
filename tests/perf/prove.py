@@ -38,6 +38,8 @@ from typing import Final
 ROOT: Final = Path(__file__).resolve().parents[2]
 PROOF: Final = ROOT / "target" / "perf" / "proof"
 PATCH: Final = Path(__file__).resolve().parent / "planted" / "paging-cost.patch"
+# The file the patch plants its cost in.
+PLANTED_FILE: Final = Path("crates/client/src/paginate.rs")
 # The series the planted cost is in: the native route of paged cases.
 PAGED_NATIVE: Final = ("-pages-", " native ")
 SETTLE_SECONDS: Final = 30
@@ -88,8 +90,12 @@ def planted_build(commit: str, per_page_us: int) -> Path:
     if archive.wait() != 0 or unpacked.returncode != 0:
         raise SystemExit(f"cannot export {commit}")
     patch = PATCH.read_text(encoding="utf-8").replace("@PER_PAGE_US@", str(per_page_us))
-    applied = run(["git", "apply", "-"], cwd=source, input=patch)
-    if applied.returncode != 0:
+    # `patch`, not `git apply`: the export lies inside this repository's
+    # worktree, and `git apply` run there silently skips every path
+    # outside the export's directory, which is all of them.
+    applied = run(["patch", "-p1", "--forward", "--batch"], cwd=source, input=patch)
+    planted = f"from_micros({per_page_us})"
+    if applied.returncode != 0 or planted not in (source / PLANTED_FILE).read_text("utf-8"):
         raise SystemExit(f"{PATCH} does not apply to {commit}; refresh it")
     target = PROOF / "target"
     env = {**os.environ, "CARGO_TARGET_DIR": str(target)}
