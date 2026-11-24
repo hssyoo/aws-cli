@@ -1,4 +1,4 @@
-use super::super::record::{Binary, Host, Summary};
+use super::super::record::{Binary, Host, Summary, Tier};
 use super::*;
 
 fn spread(p50: f64, mad: f64) -> Spread {
@@ -46,7 +46,7 @@ fn series(route: &str, scale: f64, mad: f64, connections: Exact) -> Series {
 
 fn record(cpu: &str, series: Vec<Series>) -> Record {
     Record {
-        format: 1,
+        format: super::super::record::FORMAT,
         platform: "macos-aarch64".into(),
         host: Host {
             system: "Darwin".into(),
@@ -61,6 +61,7 @@ fn record(cpu: &str, series: Vec<Series>) -> Record {
             commit: None,
             dirty: None,
         },
+        tier: Tier::Quick,
         started_unix_s: 0.0,
         warmup: 2,
         runs: 10,
@@ -69,6 +70,13 @@ fn record(cpu: &str, series: Vec<Series>) -> Record {
 }
 
 const ONE: Exact = Exact { min: 1, max: 1 };
+
+/// 20%, and at least 5 ms: a tolerance fixed for these tests, whatever the
+/// tiers' tuned ones are.
+const WALL: Tolerance = Tolerance {
+    relative: 0.20,
+    absolute: 0.005,
+};
 
 fn verdicts(findings: &[Finding]) -> Vec<(Metric, Verdict)> {
     findings
@@ -191,4 +199,25 @@ fn cpu_time_is_not_gated_on_a_series_with_injected_latency() {
             Metric::Rss
         ]
     );
+}
+
+#[test]
+fn a_result_is_judged_with_its_own_tier_s_tolerances() {
+    assert_eq!(tolerances(Tier::Quick), QUICK);
+    assert_eq!(tolerances(Tier::Full), FULL);
+    let base = record("M4", vec![series("native", 1.0, 0.0, ONE)]);
+    for (tier, bounds) in [(Tier::Quick, QUICK), (Tier::Full, FULL)] {
+        // Just past the tier's wall bound on the 100 ms series.
+        let growth = 1.0 + bounds.wall.relative.max(bounds.wall.absolute / 0.1) + 0.01;
+        let mut now = record("M4", vec![series("native", growth, 0.0, ONE)]);
+        now.tier = tier;
+        let wall = judge(&base, &now)
+            .into_iter()
+            .find(|finding| finding.metric == Metric::Wall)
+            .map(|finding| finding.verdict);
+        assert!(
+            matches!(wall, Some(Verdict::Regressed { .. })),
+            "{tier:?}: {wall:?}"
+        );
+    }
 }

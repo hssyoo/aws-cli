@@ -14,8 +14,31 @@ use serde::{Deserialize, Serialize};
 use super::stats::Spread;
 use crate::{TaskError, deps};
 
-/// The version of both files' layout; a reader refuses any other.
-pub(super) const FORMAT: u32 = 1;
+/// The version of the result file's layout; a reader refuses any other.
+pub(super) const FORMAT: u32 = 2;
+/// The version of measure.py's samples.
+pub(super) const SAMPLES_FORMAT: u32 = 1;
+
+/// Which matrix a run measured: the quick tier, a subset of the cases'
+/// series that the default check runs, or the full tier, every series,
+/// which a baseline holds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum Tier {
+    #[default]
+    Quick,
+    Full,
+}
+
+impl Tier {
+    /// The name measure.py's `--tier` takes.
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::Quick => "quick",
+            Self::Full => "full",
+        }
+    }
+}
 
 /// One run of a command, as measure.py reports it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -179,6 +202,7 @@ pub(super) struct Record {
     pub(super) platform: String,
     pub(super) host: Host,
     pub(super) binary: Binary,
+    pub(super) tier: Tier,
     pub(super) started_unix_s: f64,
     pub(super) warmup: u32,
     pub(super) runs: u32,
@@ -188,10 +212,15 @@ pub(super) struct Record {
 impl Record {
     /// The record of `samples`, which must be measure.py's current format
     /// and hold at least one run in every series.
-    pub(super) fn new(samples: Samples, platform: &str, binary: Binary) -> Result<Self, TaskError> {
-        if samples.format != FORMAT {
+    pub(super) fn new(
+        samples: Samples,
+        platform: &str,
+        binary: Binary,
+        tier: Tier,
+    ) -> Result<Self, TaskError> {
+        if samples.format != SAMPLES_FORMAT {
             return Err(deps::error(format!(
-                "perf samples have format {}, expected {FORMAT}",
+                "perf samples have format {}, expected {SAMPLES_FORMAT}",
                 samples.format
             )));
         }
@@ -216,6 +245,7 @@ impl Record {
             platform: platform.to_owned(),
             host: samples.host,
             binary,
+            tier,
             started_unix_s: samples.started_unix_s,
             warmup: samples.warmup,
             runs: samples.runs,

@@ -3,10 +3,12 @@
 //!
 //! `tests/perf/run.py` provisions its venv and runs `tests/perf/measure.py`,
 //! which starts an HTTP and an HTTPS stub (`tests/perf/stub.py`, with a
-//! test CA the CLI trusts through `AWS_CA_BUNDLE`) and runs every case of
-//! `tests/perf/cases.json` on the native and the Python route, at each of
-//! the case's schemes and injected latencies, `warmup` times unrecorded
-//! and `runs` times recorded. No command can reach anything but the stubs:
+//! test CA the CLI trusts through `AWS_CA_BUNDLE`) and runs the cases of
+//! `tests/perf/cases.json` on the native and the Python route, round-robin,
+//! `warmup` rounds unrecorded and `runs` recorded. The quick tier, the
+//! default, runs the few series each case names as quick; `--full` runs
+//! every scheme and injected latency of every case. No command can reach
+//! anything but the stubs:
 //! each runs with the stub as `--endpoint-url` and `AWS_ENDPOINT_URL`, fake
 //! keys and a scratch HOME.
 //!
@@ -17,8 +19,9 @@
 //! `--out PATH`) and prints a table ([`table`]). `--check` judges the result
 //! against the committed baseline of its platform,
 //! `tests/perf/baselines/<os>-<arch>.json` ([`gate`]); a platform without
-//! one is reported and not judged. `--write-baseline` writes the result as
-//! that baseline; it takes a complete run of a committed head.
+//! one is reported and not judged. `--write-baseline` writes a full-tier
+//! result as that baseline, which both tiers are judged against; it takes
+//! a complete run of a committed head.
 //! `tests/perf/README.md` holds the procedure and the thresholds' reasons.
 
 mod gate;
@@ -55,7 +58,7 @@ pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
         ));
     }
     let samples = measure(root, &binary, &options)?;
-    let record = Record::new(samples, &platform(), identity)?;
+    let record = Record::new(samples, &platform(), identity, options.tier)?;
     let out = options.out.as_ref().map_or_else(
         || root.join("target/perf/result.json"),
         |path| root.join(path),
@@ -180,7 +183,9 @@ fn measure_command(
         .arg("--scratch")
         .arg(directory.join("scratch"))
         .arg("--out")
-        .arg(samples);
+        .arg(samples)
+        .arg("--tier")
+        .arg(options.tier.name());
     for (flag, value) in [("--runs", options.runs), ("--warmup", options.warmup)] {
         if let Some(value) = value {
             command.arg(flag).arg(value.to_string());

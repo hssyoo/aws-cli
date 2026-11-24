@@ -29,7 +29,7 @@ pub(super) fn render(record: &Record) -> String {
         .collect();
     let binary = &record.binary;
     let mut text = format!(
-        "perf: {} at {}{} on {} ({}, {} CPUs); {} runs after {} warm-up\n",
+        "perf: {} at {}{} on {} ({}, {} CPUs); {} tier, {} runs after {} warm-up\n",
         binary.path,
         binary.commit.as_deref().unwrap_or("an unknown commit"),
         if binary.dirty == Some(true) {
@@ -40,6 +40,7 @@ pub(super) fn render(record: &Record) -> String {
         record.platform,
         record.host.cpu,
         record.host.cpus,
+        record.tier.name(),
         record.runs,
         record.warmup,
     );

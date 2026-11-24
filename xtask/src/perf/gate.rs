@@ -4,7 +4,8 @@
 //! Only the stable measurements are gated. Connections opened and
 //! requests made must equal the baseline's in every run: they are counts,
 //! with no noise. Median wall time, median CPU (user plus system) time and
-//! median peak RSS may grow by their [`Tolerance`]: a growth past both its
+//! median peak RSS may grow by their tier's [`Tolerances`] ([`QUICK`] for
+//! the default check, [`FULL`] for `--full`): a growth past both its
 //! relative and its absolute bound is a regression. CPU time is gated only
 //! on series without injected latency: a process that idles through a
 //! round trip is rescheduled, on a slower core or a lower clock, so its CPU
@@ -21,7 +22,7 @@
 //! baseline taken on the same CPU model; counts are judged on any.
 //! The thresholds' reasons are in `tests/perf/README.md`.
 
-use super::record::{Exact, Key, Record, Series};
+use super::record::{Exact, Key, Record, Series, Tier};
 use super::stats::Spread;
 
 /// How far a median may grow: by the larger of `relative` times the
@@ -38,21 +39,56 @@ impl Tolerance {
     }
 }
 
-/// Median wall time: 20%, and at least 5 ms.
-pub(super) const WALL: Tolerance = Tolerance {
-    relative: 0.20,
-    absolute: 0.005,
+/// A tier's tolerances: median wall time, median CPU user plus system
+/// time, and median peak RSS (in bytes).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Tolerances {
+    pub(super) wall: Tolerance,
+    pub(super) cpu: Tolerance,
+    pub(super) rss: Tolerance,
+}
+
+const MIB: f64 = 1024.0 * 1024.0;
+
+/// The quick tier's tolerances, sized to its measured noise.
+pub(super) const QUICK: Tolerances = Tolerances {
+    wall: Tolerance {
+        relative: 0.20,
+        absolute: 0.005,
+    },
+    cpu: Tolerance {
+        relative: 0.20,
+        absolute: 0.005,
+    },
+    rss: Tolerance {
+        relative: 0.10,
+        absolute: 4.0 * MIB,
+    },
 };
-/// Median CPU user plus system time: 20%, and at least 5 ms.
-pub(super) const CPU: Tolerance = Tolerance {
-    relative: 0.20,
-    absolute: 0.005,
+
+/// The full tier's tolerances, sized to its measured noise.
+pub(super) const FULL: Tolerances = Tolerances {
+    wall: Tolerance {
+        relative: 0.20,
+        absolute: 0.005,
+    },
+    cpu: Tolerance {
+        relative: 0.20,
+        absolute: 0.005,
+    },
+    rss: Tolerance {
+        relative: 0.10,
+        absolute: 4.0 * MIB,
+    },
 };
-/// Median peak RSS: 10%, and at least 4 MiB.
-pub(super) const RSS: Tolerance = Tolerance {
-    relative: 0.10,
-    absolute: 4.0 * 1024.0 * 1024.0,
-};
+
+/// The tolerances a result of `tier` is judged with.
+pub(super) fn tolerances(tier: Tier) -> Tolerances {
+    match tier {
+        Tier::Quick => QUICK,
+        Tier::Full => FULL,
+    }
+}
 
 /// One gated measurement's outcome.
 #[derive(Debug, Clone, PartialEq)]
@@ -132,20 +168,27 @@ impl Metric {
     }
 }
 
-/// Every finding on `current` against `baseline`, series by series.
+/// Every finding on `current` against `baseline`, series by series, with
+/// the tolerances of `current`'s tier.
 pub(super) fn judge(baseline: &Record, current: &Record) -> Vec<Finding> {
     let same_cpu = baseline.host.cpu == current.host.cpu;
+    let tolerances = tolerances(current.tier);
     current
         .series
         .iter()
         .flat_map(|now| {
             let base = baseline.series.iter().find(|base| base.key == now.key);
-            judge_series(base, now, same_cpu)
+            judge_series(base, now, same_cpu, tolerances)
         })
         .collect()
 }
 
-fn judge_series(base: Option<&Series>, now: &Series, same_cpu: bool) -> Vec<Finding> {
+fn judge_series(
+    base: Option<&Series>,
+    now: &Series,
+    same_cpu: bool,
+    tolerances: Tolerances,
+) -> Vec<Finding> {
     let finding = |metric, verdict| Finding {
         key: now.key.clone(),
         metric,
@@ -161,9 +204,14 @@ fn judge_series(base: Option<&Series>, now: &Series, same_cpu: bool) -> Vec<Find
         finding(Metric::Requests, exact(b.requests, n.requests)),
     ];
     let timed = [
-        (Metric::Wall, b.wall_s, n.wall_s, WALL),
-        (Metric::Cpu, b.cpu_s, n.cpu_s, CPU),
-        (Metric::Rss, b.max_rss_bytes, n.max_rss_bytes, RSS),
+        (Metric::Wall, b.wall_s, n.wall_s, tolerances.wall),
+        (Metric::Cpu, b.cpu_s, n.cpu_s, tolerances.cpu),
+        (
+            Metric::Rss,
+            b.max_rss_bytes,
+            n.max_rss_bytes,
+            tolerances.rss,
+        ),
     ];
     let idle = now.key.latency_ms != 0;
     for (metric, base, now, tolerance) in timed {

@@ -1,5 +1,5 @@
 use super::super::gate::Finding;
-use super::super::record::{Binary, Key, Samples};
+use super::super::record::{Binary, Key, Samples, Tier};
 use super::*;
 use crate::{TaskError, deps};
 use serde_json::json;
@@ -24,7 +24,7 @@ fn record() -> Result<Record, TaskError> {
         commit: Some("abc123".into()),
         dirty: Some(true),
     };
-    Record::new(samples, "macos-aarch64", binary)
+    Record::new(samples, "macos-aarch64", binary, Tier::Quick)
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn the_table_has_a_row_per_series_under_the_binary_and_host() -> Result<(), Task
     assert_eq!(
         lines[0],
         "perf: target/aws at abc123 with uncommitted changes on macos-aarch64 \
-         (Apple M4 Pro, 12 CPUs); 1 runs after 2 warm-up"
+         (Apple M4 Pro, 12 CPUs); quick tier, 1 runs after 2 warm-up"
     );
     assert!(lines[1].starts_with("case          scheme  rtt ms  route   p50 ms"));
     let cells: Vec<&str> = lines[2].split_whitespace().collect();

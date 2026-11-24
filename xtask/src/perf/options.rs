@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use super::record::Tier;
 use crate::{TaskError, deps};
 
 /// What to do with the result besides writing and printing it.
@@ -19,6 +20,9 @@ pub(super) enum Mode {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Options {
     pub(super) mode: Mode,
+    /// `--full`: every series; without it, the quick tier. A baseline is
+    /// always the full tier.
+    pub(super) tier: Tier,
     /// `--aws-binary PATH`: measure this binary instead of the default
     /// artifact.
     pub(super) binary: Option<String>,
@@ -69,6 +73,10 @@ pub(super) fn parse(args: &[String]) -> Result<Options, TaskError> {
     let mut options = Options::default();
     let mut args = args.iter();
     while let Some(flag) = args.next() {
+        if flag == "--full" {
+            options.tier = Tier::Full;
+            continue;
+        }
         let mode = match flag.as_str() {
             "--check" => Some(Mode::Check),
             "--write-baseline" => Some(Mode::WriteBaseline),
@@ -81,6 +89,9 @@ pub(super) fn parse(args: &[String]) -> Result<Options, TaskError> {
                 ));
             }
             options.mode = mode;
+            if mode == Mode::WriteBaseline {
+                options.tier = Tier::Full;
+            }
             continue;
         }
         if !VALUED.contains(&flag.as_str()) {

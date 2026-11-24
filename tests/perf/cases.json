@@ -18,6 +18,14 @@
         20,
         80
       ],
+      "quick": {
+        "schemes": [
+          "https"
+        ],
+        "latencies_ms": [
+          0
+        ]
+      },
       "response": {
         "content_type": "text/xml",
         "pages": 1,
@@ -42,6 +50,14 @@
         20,
         80
       ],
+      "quick": {
+        "schemes": [
+          "https"
+        ],
+        "latencies_ms": [
+          0
+        ]
+      },
       "response": {
         "content_type": "application/x-amz-json-1.0",
         "pages": 1,
@@ -66,6 +82,14 @@
         20,
         80
       ],
+      "quick": {
+        "schemes": [
+          "https"
+        ],
+        "latencies_ms": [
+          0
+        ]
+      },
       "response": {
         "content_type": "application/json",
         "pages": 1,
@@ -114,6 +138,14 @@
         20,
         80
       ],
+      "quick": {
+        "schemes": [
+          "https"
+        ],
+        "latencies_ms": [
+          20
+        ]
+      },
       "response": {
         "content_type": "application/x-amz-json-1.0",
         "pages": 10,
@@ -188,6 +220,14 @@
         0,
         20
       ],
+      "quick": {
+        "schemes": [
+          "https"
+        ],
+        "latencies_ms": [
+          20
+        ]
+      },
       "response": {
         "content_type": "application/x-amz-json-1.0",
         "pages": 100,
@@ -237,6 +277,14 @@
       "latencies_ms": [
         0
       ],
+      "quick": {
+        "schemes": [
+          "https"
+        ],
+        "latencies_ms": [
+          0
+        ]
+      },
       "response": {
         "content_type": "application/json",
         "pages": 1,
@@ -262,6 +310,14 @@
         20,
         80
       ],
+      "quick": {
+        "schemes": [
+          "https"
+        ],
+        "latencies_ms": [
+          0
+        ]
+      },
       "response": {
         "content_type": "application/xml",
         "pages": 1,

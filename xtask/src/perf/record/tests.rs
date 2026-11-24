@@ -43,7 +43,12 @@ fn binary() -> Binary {
 
 fn record() -> Result<Record, TaskError> {
     let runs = [run(0.5, 1), run(0.4, 1), run(0.6, 2)];
-    Record::new(samples(FORMAT, &runs)?, "macos-aarch64", binary())
+    Record::new(
+        samples(SAMPLES_FORMAT, &runs)?,
+        "macos-aarch64",
+        binary(),
+        Tier::Full,
+    )
 }
 
 #[test]
@@ -67,7 +72,10 @@ fn a_series_is_summarised_over_its_runs() -> Result<(), TaskError> {
     );
     assert_eq!(series.load_average, [1.5, 1.75]);
     assert_eq!(series.runs.len(), 3);
-    assert_eq!(record.platform, "macos-aarch64");
+    assert_eq!(
+        (record.platform.as_str(), record.tier),
+        ("macos-aarch64", Tier::Full)
+    );
     Ok(())
 }
 
@@ -90,7 +98,12 @@ fn the_result_file_reads_back_as_written_and_a_baseline_drops_the_runs() -> Resu
 
 #[test]
 fn another_format_is_refused_in_samples_and_records() -> Result<(), TaskError> {
-    let error = Record::new(samples(2, &[run(0.5, 1)])?, "linux-x86_64", binary());
+    let error = Record::new(
+        samples(2, &[run(0.5, 1)])?,
+        "linux-x86_64",
+        binary(),
+        Tier::Quick,
+    );
     assert_eq!(
         error.err().map(|error| error.to_string()),
         Some("perf samples have format 2, expected 1".to_owned())
@@ -99,12 +112,12 @@ fn another_format_is_refused_in_samples_and_records() -> Result<(), TaskError> {
         record()?
             .to_json()
             .unwrap_or_default()
-            .replacen("\"format\": 1", "\"format\": 9", 1);
+            .replacen("\"format\": 2", "\"format\": 9", 1);
     assert_eq!(
         Record::parse(&text, "the baseline")
             .err()
             .map(|error| error.to_string()),
-        Some("the baseline has format 9, expected 1".to_owned())
+        Some("the baseline has format 9, expected 2".to_owned())
     );
     assert!(Record::parse("{}", "the baseline").is_err());
     Ok(())
@@ -112,7 +125,12 @@ fn another_format_is_refused_in_samples_and_records() -> Result<(), TaskError> {
 
 #[test]
 fn a_series_without_runs_is_refused() -> Result<(), TaskError> {
-    let error = Record::new(samples(FORMAT, &[])?, "linux-x86_64", binary());
+    let error = Record::new(
+        samples(SAMPLES_FORMAT, &[])?,
+        "linux-x86_64",
+        binary(),
+        Tier::Quick,
+    );
     assert_eq!(
         error.err().map(|error| error.to_string()),
         Some("perf series json-pages-4 https 20 ms native has no runs".to_owned())

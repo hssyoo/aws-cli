@@ -3,6 +3,8 @@
 `cargo xtask perf` runs this through run.py, which provides the venv;
 xtask reads the samples it writes and does every statistic. A series is a
 case of the case file at one of its schemes and latencies, on one route.
+The full tier runs every scheme and latency of every case; the quick tier
+runs only the pairs each case's `quick` entry names, a subset of those.
 The runs go round-robin: each round runs every series once, the routes
 taking turns, and the first `warmup` rounds are not recorded. So a passing
 load on the machine falls on every series alike, widening each one's
@@ -59,6 +61,9 @@ class Case:
     latencies_ms: list[int]
     pages: int
     script: dict[str, Any]
+    # The (scheme, latency) pairs of the quick tier; none when the case is
+    # in the full tier alone.
+    quick: list[tuple[str, int]]
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int)
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--route", action="append", choices=ROUTES)
+    parser.add_argument("--tier", choices=("quick", "full"), required=True)
     return parser.parse_args()
 
 
@@ -89,18 +95,7 @@ def load_cases(path: Path, selected: list[str]) -> tuple[dict[str, Any], list[Ca
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("format") != FORMAT:
         raise SystemExit(f"{path}: expected format {FORMAT}")
-    cases = [
-        Case(
-            name=entry["name"],
-            argv=entry["argv"],
-            fake_models=entry.get("fake_models", False),
-            schemes=entry["schemes"],
-            latencies_ms=entry["latencies_ms"],
-            pages=entry["response"]["pages"],
-            script=entry["response"],
-        )
-        for entry in data["cases"]
-    ]
+    cases = [case(entry) for entry in data["cases"]]
     names = {case.name for case in cases}
     unknown = [name for name in selected if name not in names]
     if unknown:
@@ -108,6 +103,33 @@ def load_cases(path: Path, selected: list[str]) -> tuple[dict[str, Any], list[Ca
     if selected:
         cases = [case for case in cases if case.name in selected]
     return data, cases
+
+
+def case(entry: dict[str, Any]) -> Case:
+    """One case of the case file. Its `quick` entry names the schemes and
+    latencies the quick tier runs, which must be among the full tier's."""
+    quick = entry.get("quick", {})
+    pairs = [
+        (scheme, latency)
+        for scheme in quick.get("schemes", [])
+        for latency in quick.get("latencies_ms", [])
+    ]
+    for scheme, latency in pairs:
+        if scheme not in entry["schemes"] or latency not in entry["latencies_ms"]:
+            raise SystemExit(
+                f"case {entry['name']}: its quick {scheme} {latency} ms is not one "
+                "of its full schemes and latencies"
+            )
+    return Case(
+        name=entry["name"],
+        argv=entry["argv"],
+        fake_models=entry.get("fake_models", False),
+        schemes=entry["schemes"],
+        latencies_ms=entry["latencies_ms"],
+        pages=entry["response"]["pages"],
+        script=entry["response"],
+        quick=pairs,
+    )
 
 
 def pages(script: dict[str, Any]) -> list[bytes]:
@@ -215,18 +237,27 @@ class Setting:
     script: Script
 
 
-def settings(cases: list[Case]) -> list[Setting]:
+def settings(cases: list[Case], tier: str) -> list[Setting]:
+    """The tier's settings: every scheme and latency of every case for
+    the full tier, each case's quick pairs for the quick one."""
+    chosen = [
+        (case, pair)
+        for case in cases
+        for pair in (
+            case.quick
+            if tier == "quick"
+            else [(scheme, ms) for scheme in case.schemes for ms in case.latencies_ms]
+        )
+    ]
     return [
         Setting(case, scheme, latency, Script(pages(case.script), latency / 1000))
-        for case in cases
-        for scheme in case.schemes
-        for latency in case.latencies_ms
+        for case, (scheme, latency) in chosen
     ]
 
 
 def measure(
     binary: Path,
-    cases: list[Case],
+    plan: list[Setting],
     routes: list[str],
     counts: tuple[int, int],
     env: Environment,
@@ -234,7 +265,6 @@ def measure(
     """Every series, measured round-robin; each records the least and
     greatest one-minute load average seen before its runs."""
     warmup, runs = counts
-    plan = settings(cases)
     samples: dict[tuple[int, str], list[dict[str, Any]]] = {
         (index, route): [] for index in range(len(plan)) for route in routes
     }
@@ -316,9 +346,13 @@ def main() -> None:
         raise SystemExit("--runs must be at least 1 and --warmup at least 0")
     env = prepare(args.scratch, args.models.resolve())
     started = time.time()
-    series = measure(args.aws_binary, cases, routes, (warmup, runs), env)
+    plan = settings(cases, args.tier)
+    if not plan:
+        raise SystemExit(f"the {args.tier} tier selects no series from these cases")
+    series = measure(args.aws_binary, plan, routes, (warmup, runs), env)
     samples = {
         "format": FORMAT,
+        "tier": args.tier,
         "host": host(),
         "started_unix_s": started,
         "warmup": warmup,

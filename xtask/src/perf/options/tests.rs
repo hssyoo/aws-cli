@@ -21,6 +21,7 @@ fn no_options_report_on_every_case_with_the_default_binary() -> Result<(), TaskE
 fn every_option_is_read() -> Result<(), TaskError> {
     let options = parse(&args(&[
         "--check",
+        "--full",
         "--aws-binary",
         "before/aws",
         "--commit",
@@ -42,6 +43,7 @@ fn every_option_is_read() -> Result<(), TaskError> {
         options,
         Options {
             mode: Mode::Check,
+            tier: Tier::Full,
             binary: Some("before/aws".into()),
             commit: Some("abc".into()),
             cases: vec!["query-single".into(), "s3-ls".into()],
@@ -93,4 +95,12 @@ fn bad_options_are_refused_by_name() {
         error(&["--check", "--write-baseline"]),
         Some("--check and --write-baseline exclude each other".into())
     );
+}
+
+#[test]
+fn the_check_is_quick_unless_full_and_a_baseline_is_always_full() -> Result<(), TaskError> {
+    assert_eq!(parse(&args(&["--check"]))?.tier, Tier::Quick);
+    assert_eq!(parse(&args(&["--full"]))?.tier, Tier::Full);
+    assert_eq!(parse(&args(&["--write-baseline"]))?.tier, Tier::Full);
+    Ok(())
 }
