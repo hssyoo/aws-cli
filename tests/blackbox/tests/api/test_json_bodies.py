@@ -149,9 +149,9 @@ async def test_known_difference_nesting_between_the_limits(
 @pytest.mark.parametrize(
     "case, doc, args",
     [
+        # `--query` is the Python route's on either run (a Python-only
+        # global), so a value it leaves out makes no difference.
         ("surrogate-output-off", '"\\ud800"', ("--output", "off")),
-        ("surrogate-query", '"\\ud800"', ("--query", "keys(@)")),
-        ("deep-query", nested(PYTHON_DEPTH + 100), ("--query", "keys(@)")),
         ("deep-output-off", nested(PYTHON_DEPTH + 100), ("--output", "off")),
     ],
 )
