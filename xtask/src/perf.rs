@@ -95,7 +95,7 @@ fn platform() -> String {
 /// with the worktree, so it was built from `HEAD` and whatever tracked
 /// changes are uncommitted; an explicit binary's commit is `--commit`'s.
 fn identity(root: &Path, binary: &Path, options: &Options) -> Result<Binary, TaskError> {
-    let path = binary.display().to_string();
+    let path = shown(root, binary);
     if options.binary.is_some() {
         return Ok(Binary {
             path,
@@ -115,6 +115,16 @@ fn identity(root: &Path, binary: &Path, options: &Options) -> Result<Binary, Tas
         commit: Some(head),
         dirty: Some(!changes.is_empty()),
     })
+}
+
+/// `binary` as the result records it: relative to `root` when it lies
+/// under it, so a committed baseline names no checkout's location.
+fn shown(root: &Path, binary: &Path) -> String {
+    binary
+        .strip_prefix(root)
+        .unwrap_or(binary)
+        .display()
+        .to_string()
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<String, TaskError> {
@@ -225,3 +235,6 @@ fn check(path: &Path, record: &Record) -> Result<(), TaskError> {
         Err(deps::error(format!("perf check failed: {failed} findings")))
     }
 }
+
+#[cfg(test)]
+mod tests;
