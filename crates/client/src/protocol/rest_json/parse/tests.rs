@@ -525,3 +525,29 @@ fn a_gzip_body_fails_as_its_decode_does() {
         ))
     );
 }
+
+/// `BaseRestParser._do_parse` sets `ResponseMetadata` before the output's
+/// members, and `ResponseParser.parse` then adds the status and headers to
+/// that same dict, which keeps its place.
+#[test]
+fn response_metadata_comes_before_the_output_s_members() -> TestResult {
+    let model = model()?;
+    let operation = model.operation("Go").ok_or("Go")?;
+    let parsed = RestJson.parse(
+        &model,
+        operation,
+        &response(200, &[("X-Count", "3")], br#"{"N": 1}"#),
+        &ParseOptions::BOTOCORE,
+    )?;
+    let Value::Map(parsed) = parsed else {
+        return Err("not a map".into());
+    };
+    let keys: Vec<&str> = parsed.keys().collect();
+    assert_eq!(keys.first(), Some(&"ResponseMetadata"), "{keys:?}");
+    let metadata = parsed
+        .get("ResponseMetadata")
+        .and_then(Value::as_map)
+        .ok_or("metadata")?;
+    assert_eq!(metadata.get("HTTPStatusCode"), Some(&Value::Integer(200)));
+    Ok(())
+}
