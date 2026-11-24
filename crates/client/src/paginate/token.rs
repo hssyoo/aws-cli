@@ -1,10 +1,13 @@
 //! The tokens the paginator hands out and takes back: `TokenEncoder`,
 //! `TokenDecoder`, `PageIterator._parse_starting_token` and the
 //! `resume_token` setter.
+use super::loads::{LoadError, loads};
 use super::py::{self, type_name};
+use crate::admission::Unsupported;
+use crate::error::CallError;
 use crate::error::PaginationError;
 use model::pyjson::{self, Options};
-use model::pyrepr::{int_from_text, py_repr};
+use model::pyrepr::py_repr;
 use model::value::{Map, Value};
 
 /// The key a truncated page's token carries its offset in.
@@ -75,6 +78,9 @@ enum DecodeError {
     Deprecated,
     /// Any other exception, which `_parse_starting_token` lets through.
     Raised(String),
+    /// JSON the native values cannot hold as Python does: the Python
+    /// route's to read.
+    Unsupported(&'static str),
 }
 
 /// `TokenDecoder.decode`: base64, then a JSON object, then each path
@@ -82,10 +88,11 @@ enum DecodeError {
 fn decode(token: &str) -> Result<Map, DecodeError> {
     let bytes = model::base64::decode(token).map_err(|_| DecodeError::Deprecated)?;
     let text = String::from_utf8(bytes).map_err(|_| DecodeError::Deprecated)?;
-    let mut decoded = match Value::from_json(text.as_bytes()) {
+    let mut decoded = match loads(&text) {
         Ok(Value::Map(map)) => map,
         // `list.pop('boto_encoded_keys', None)` is a `TypeError`.
-        Ok(Value::List(_)) | Err(_) => return Err(DecodeError::Deprecated),
+        Ok(Value::List(_)) | Err(LoadError::Invalid) => return Err(DecodeError::Deprecated),
+        Err(LoadError::Unsupported(why)) => return Err(DecodeError::Unsupported(why)),
         Ok(other) => {
             return Err(DecodeError::Raised(format!(
                 "'{}' object has no attribute 'pop'",
@@ -233,19 +240,23 @@ pub(super) struct StartingToken {
 /// form (`_parse_starting_token_deprecated`).
 ///
 /// # Errors
-/// `ValueError("Bad starting token: ...")`, or an exception the decoder
-/// raises that is neither a `ValueError` nor a `TypeError`.
+/// `ValueError("Bad starting token: ...")`, an exception the decoder
+/// raises that is neither a `ValueError` nor a `TypeError`, or
+/// [`Unsupported::StartingToken`] for a token only Python can read.
 pub(super) fn parse_starting_token(
     raw: &str,
     input_token: &[String],
-) -> Result<StartingToken, PaginationError> {
+) -> Result<StartingToken, CallError> {
     match decode(raw) {
         Ok(mut token) => {
             let index = token.remove(TRUNCATE_AMOUNT).unwrap_or(Value::Integer(0));
             Ok(StartingToken { token, index })
         }
-        Err(DecodeError::Raised(text)) => Err(PaginationError::Other(text)),
-        Err(DecodeError::Deprecated) => deprecated(raw, input_token),
+        Err(DecodeError::Raised(text)) => Err(PaginationError::Other(text).into()),
+        Err(DecodeError::Unsupported(why)) => {
+            Err(CallError::Unsupported(Unsupported::StartingToken(why)))
+        }
+        Err(DecodeError::Deprecated) => Ok(deprecated(raw, input_token)?),
     }
 }
 
@@ -256,7 +267,7 @@ fn deprecated(raw: &str, input_token: &[String]) -> Result<StartingToken, Pagina
     let mut parts: Vec<&str> = raw.split("___").collect();
     let mut index = Value::Integer(0);
     if parts.len() == input_token.len() + 1 {
-        match parts.pop().map(int_from_text) {
+        match parts.pop().map(py::int_of_str) {
             Some(Ok(number)) => index = number,
             _ => parts = vec![raw],
         }

@@ -226,15 +226,15 @@ fn an_old_token_is_split_on_triple_underscores() -> TestResult {
     assert_eq!(opaque.token, map(vec![("nextToken", string("foo___bar"))]));
     assert_eq!(
         parse("m1___m4___0", &["Marker"]),
-        Err(PaginationError::Value(
+        Err(CallError::Pagination(PaginationError::Value(
             "Bad starting token: m1___m4___0".into()
-        ))
+        )))
     );
     assert_eq!(
         parse("does___not___work", &["Marker"]),
-        Err(PaginationError::Value(
+        Err(CallError::Pagination(PaginationError::Value(
             "Bad starting token: does___not___work".into()
-        ))
+        )))
     );
     Ok(())
 }
@@ -266,6 +266,77 @@ fn a_resume_token_has_only_the_input_tokens() -> TestResult {
         Err(PaginationError::Value(
             "Bad starting token: {'Marker': 'm1', 'Filter': 'x', 'boto_truncate_amount': 2}".into()
         ))
+    );
+    Ok(())
+}
+
+/// `int()` of the old form's offset reads any Unicode decimal digit, as
+/// `_PyUnicode_TransformDecimalAndSpaceToASCII` gives it (Python 3.12 for
+/// those it knows, and CPython 3.14.8's table for Unicode 16.0's).
+#[test]
+fn an_old_token_s_offset_is_int_of_any_decimal_digits() -> TestResult {
+    let int = |text: &str| py::int_of_str(text).ok();
+    let cases = [
+        ("\u{661}", Some(1)),
+        ("\u{661}\u{662}", Some(12)),
+        ("\u{3000}\u{661}\u{3000}", Some(1)),
+        ("1\u{661}", Some(11)),
+        ("\u{1D7CE}", Some(0)),
+        ("\u{FF11}_\u{FF12}", Some(12)),
+        ("-\u{663}", Some(-3)),
+        ("\u{661}\u{85}", Some(1)),
+        ("\u{1E5F1}", Some(0)),
+        ("\u{1E5FA}", Some(9)),
+        ("\u{1E5FB}", None),
+        ("x", None),
+        ("\u{661}x", None),
+        ("\u{B2}", None),
+        ("\u{1C}1", None),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(int(text), expected.map(Value::Integer), "{text:?}");
+    }
+    let parsed = parse_starting_token("m1___\u{661}", &names(&["Marker"]))?;
+    assert_eq!(
+        parsed.token,
+        map(vec![("Marker", Value::String("m1".into()))])
+    );
+    assert_eq!(parsed.index, Value::Integer(1));
+    Ok(())
+}
+
+/// The reviewer's tokens (kms `ListAliases` on the Python route): `NaN`
+/// and `Infinity` offsets are floats; an `int` past 4300 digits fails
+/// `json.loads`, so the token is of the old form; a lone surrogate is the
+/// Python route's.
+#[test]
+fn a_new_token_is_json_loads_python_s() -> TestResult {
+    let input = names(&["Marker"]);
+    for literal in ["NaN", "Infinity"] {
+        let token = b64(&format!(
+            r#"{{"Marker": "m1", "boto_truncate_amount": {literal}}}"#
+        ));
+        let parsed = parse_starting_token(&token, &input)?;
+        assert_eq!(
+            parsed.token,
+            map(vec![("Marker", Value::String("m1".into()))])
+        );
+        assert!(matches!(parsed.index, Value::Float(_)), "{literal}");
+    }
+    let long = "1".repeat(5000);
+    for json in [
+        format!(r#"{{"Marker": "m1", "boto_truncate_amount": {long}}}"#),
+        format!(r#"{{"Marker": {long}}}"#),
+    ] {
+        let token = b64(&json);
+        let parsed = parse_starting_token(&token, &input)?;
+        assert_eq!(parsed.token, map(vec![("Marker", Value::String(token))]));
+    }
+    assert_eq!(
+        parse_starting_token(&b64(r#"{"Marker": "\ud800"}"#), &input),
+        Err(CallError::Unsupported(Unsupported::StartingToken(
+            "a lone surrogate"
+        )))
     );
     Ok(())
 }

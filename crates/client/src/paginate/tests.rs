@@ -1503,3 +1503,30 @@ fn a_scalar_within_a_non_aggregate_key_is_the_first_page_s() -> TestResult {
     );
     Ok(())
 }
+
+/// A `NaN` offset is `json.loads`' float, which the first page cannot be
+/// sliced from (kms `ListAliases`, on the Python route); a token only
+/// Python can read is unsupported before any request.
+#[test]
+fn a_token_python_reads_differently_is_read_as_python_does() -> TestResult {
+    let f = fixture()?;
+    f.respond(&[r#"{"Users": ["a", "b"], "Marker": "m2"}"#]);
+    let nan = b64(r#"{"Marker": "m1", "boto_truncate_amount": NaN}"#);
+    let error = all(f.pages(MARKER, starting(&nan))?)
+        .err()
+        .ok_or("an error")?;
+    assert_eq!(
+        error.to_string(),
+        "slice indices must be integers or None or have an __index__ method"
+    );
+    assert_eq!(f.bodies(), [r#"{"Marker": "m1"}"#]);
+    let lone = f.pages(MARKER, starting(&b64(r#"{"Marker": "\ud800"}"#)))?;
+    assert!(matches!(
+        lone.first_input(),
+        Err(CallError::Unsupported(
+            crate::admission::Unsupported::StartingToken(_)
+        ))
+    ));
+    assert_eq!(f.bodies().len(), 1);
+    Ok(())
+}

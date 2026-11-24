@@ -25,6 +25,9 @@ pub enum Unsupported {
     EndpointData,
     /// A protocol not implemented, as botocore resolves it for the model.
     Protocol(String),
+    /// A starting token whose JSON Python reads into what the native
+    /// values cannot hold, or follows deeper than they do.
+    StartingToken(&'static str),
 }
 
 impl std::fmt::Display for Unsupported {
@@ -38,6 +41,7 @@ impl std::fmt::Display for Unsupported {
             Self::RegionPattern => f.write_str("a partition region pattern"),
             Self::EndpointData => f.write_str("an unreadable endpoints.json"),
             Self::Protocol(name) => write!(f, "the {name} protocol"),
+            Self::StartingToken(why) => write!(f, "a starting token with {why}"),
         }
     }
 }

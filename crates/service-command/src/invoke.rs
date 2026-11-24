@@ -137,9 +137,13 @@ impl Invocation for ServiceInvocation {
         let failure = |error: CallError| service_errors::call_failure(&error, &self.model);
         let client = match self.client(cx)? {
             Ok(Ok(client)) => {
-                let prepared = self
-                    .first_request(&client)
-                    .map(|input| client.prepare(&self.admitted.operation, input).map(drop));
+                let prepared = match self.first_request(&client) {
+                    Ok(Some(input)) => {
+                        Some(client.prepare(&self.admitted.operation, input).map(drop))
+                    }
+                    Ok(None) => None,
+                    Err(unsupported) => Some(Err(unsupported)),
+                };
                 match prepared {
                     Some(Err(CallError::Unsupported(_))) => {
                         return Err(PythonReason::UnsupportedTrait);
@@ -197,20 +201,26 @@ impl Invocation for ServiceInvocation {
 impl ServiceInvocation {
     /// The input of the first request: the call's, or the paginator's first
     /// page's (`_inject_starting_params`). `None` when the paginator fails
-    /// before that request, which the run's first page reports.
-    fn first_request(&self, client: &Client) -> Option<Value> {
+    /// before that request, which the run's first page reports, and
+    /// [`CallError::Unsupported`] for a starting token only the Python
+    /// route reads.
+    fn first_request(&self, client: &Client) -> Result<Option<Value>, CallError> {
         let Some(paginated) = &self.admitted.paginated else {
-            return Some(self.admitted.input.clone());
+            return Ok(Some(self.admitted.input.clone()));
         };
-        client::paginate::PageIterator::new(
+        let first = client::paginate::PageIterator::new(
             client,
             &self.admitted.operation,
             self.admitted.input.clone(),
             paginated.config.clone(),
             paginated.pagination.clone(),
         )
-        .first_input()
-        .ok()
+        .first_input();
+        match first {
+            Ok(input) => Ok(Some(input)),
+            Err(unsupported @ CallError::Unsupported(_)) => Err(unsupported),
+            Err(_) => Ok(None),
+        }
     }
 
     /// What the formatter writes for `response`, delivered where
