@@ -153,9 +153,10 @@ static bool s_write(struct s2n_connection *conn, struct aws_byte_cursor bytes) {
     }
     return true;
 }
-bool zaws_test_tls_serve(struct zaws_test_tls *tls, int fd, struct aws_byte_cursor response, uint8_t *out, size_t capacity, size_t *length) {
+bool zaws_test_tls_serve(struct zaws_test_tls *tls, int fd, struct aws_byte_cursor response, uint8_t *out, size_t capacity, size_t *length, size_t *answered) {
     struct s2n_connection *conn = s2n_connection_new(S2N_SERVER);
     s2n_blocked_status blocked;
+    *answered = 0;
     /* Self-service blinding: a failed handshake ends at once rather than after s2n's delay. */
     bool served = conn && s2n_connection_set_config(conn, tls->config) == S2N_SUCCESS &&
         s2n_connection_set_fd(conn, fd) == S2N_SUCCESS &&
@@ -163,9 +164,11 @@ bool zaws_test_tls_serve(struct zaws_test_tls *tls, int fd, struct aws_byte_curs
         s2n_negotiate(conn, &blocked) == S2N_SUCCESS && s_read_request(conn, out, capacity, length) &&
         s_write(conn, response);
     if (served) {
-        uint8_t rest[256];
-        while (s2n_recv(conn, rest, sizeof(rest), &blocked) > 0) {
-        }
+        /* Every later request on the connection gets the same response, until the client closes. */
+        *answered = 1;
+        uint8_t rest[1 << 14];
+        size_t rest_length = 0;
+        while (s_read_request(conn, rest, sizeof(rest), &rest_length) && s_write(conn, response)) ++*answered;
     }
     if (conn) s2n_connection_free(conn);
     return served;

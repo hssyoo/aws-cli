@@ -3,11 +3,52 @@
 //! This is the path a call to any service other than S3 takes: a
 //! credential provider's own request to its service, unsigned, one the
 //! runtime's credentials sign, or one its caller signed, which is sent as
-//! it is ([`Request::signing`]). A [`Client`] sends one request per
-//! connection, in plaintext or over TLS ([`Request::tls`]), and reads the
-//! process environment for nothing: a caller with a forwarding proxy
+//! it is ([`Request::signing`]). [`Client::send`] sends one request per
+//! connection and [`Client::send_pooled`] reuses connections (see
+//! *Pooling*), in plaintext or over TLS ([`Request::tls`]), and neither
+//! reads the process environment: a caller with a forwarding proxy
 //! connects to it and sends an absolute target, and one that tunnels names
 //! the proxy ([`Request::tunnel`]).
+//!
+//! # Pooling
+//!
+//! [`Client::send_pooled`] keeps connections as botocore's
+//! `URLLib3Session` does through urllib3 (2.x, `PoolManager` and
+//! `HTTPConnectionPool`), on aws-c-http's connection manager:
+//!
+//! - **One pool per server**: per host, port and TLS, a forwarding proxy's
+//!   requests on the proxy's, and a tunnel's per server reached through
+//!   its proxy, as urllib3 keys pools (`PoolManager.connection_from_host`,
+//!   `ProxyManager`'s for `https`). A client keeps ten pools, urllib3's
+//!   `num_pools`, dropping the least recently used.
+//! - **Size**: a pool keeps at most the `max_connections` given, urllib3's
+//!   `maxsize` (botocore's `max_pool_connections`). urllib3 opens more when
+//!   all are busy and closes the extras as they come back; aws-c-http's
+//!   manager makes a request wait for one instead. A client sends one
+//!   request at a time, so neither happens.
+//! - **Reuse**: a connection goes back only once its response arrived whole
+//!   (urllib3 releases it when the body is read to the end, which botocore
+//!   does for every response); one that failed, timed out or was
+//!   abandoned is closed. A response with `Connection: close` ends its
+//!   connection (aws-c-http stops taking requests on it, as `http.client`'s
+//!   `will_close` closes it). Idle connections are kept until the server
+//!   closes them or the runtime closes: urllib3 has no idle timeout either.
+//! - **A dropped connection**: before a request goes out on a kept
+//!   connection, a zero-timeout poll of its socket for reading, on the
+//!   connection's own thread, finds the server's close, or anything it
+//!   sent unasked, and the connection is closed and another taken or
+//!   opened, without an error: urllib3's `is_connection_dropped` in
+//!   `_get_conn`. A connection the server closes after that check fails the
+//!   request as the connection ending before its response, which botocore
+//!   raises as `ConnectionClosedError` (urllib3 retries nothing itself:
+//!   botocore passes `Retry(False)`), and standard retries then try again.
+//! - **The one difference**: `http.client` also closes after a response
+//!   that says `HTTP/1.0` without `Connection: keep-alive`. aws-c-http
+//!   parses the status line's version and keeps none of it, so such a
+//!   connection is reused when the server leaves it open; a server that
+//!   closes it, as HTTP/1.0 servers do, is found by the check above. One
+//!   that leaves it open but serves no second request on it fails that
+//!   request as a connection that ended, which standard retries try again.
 //!
 //! A request's body is framed here, as botocore and `http.client` frame
 //! it ([`Request::body`]). A response is read whole: its status, its
@@ -49,6 +90,7 @@ use crate::runtime::HttpRuntime;
 use crate::signal::lock;
 use crt_sys::{self as ffi, native as c};
 use std::ffi::{c_int, c_void};
+use std::num::NonZeroU32;
 use std::ptr::NonNull;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -239,6 +281,8 @@ struct State {
     runtime: Option<NonNull<c::Runtime>>,
     /// The calls in flight, each for as long as its sender holds it.
     calls: Vec<NonNull<c::HttpCall>>,
+    /// The connection pools, the most recently used last.
+    pools: Vec<(PoolKey, NonNull<c::HttpPool>)>,
 }
 
 // SAFETY: the pointers are only used under the lock: the runtime's until
@@ -254,13 +298,14 @@ impl Shared {
             state: Mutex::new(State {
                 runtime: Some(runtime),
                 calls: Vec::new(),
+                pools: Vec::new(),
             }),
             signs,
         }
     }
-    /// Refuses new requests and closes the connection of each one in
-    /// flight, so the runtime's bootstrap stage does not wait for a
-    /// response.
+    /// Refuses new requests, closes the connection of each one in flight,
+    /// so the runtime's bootstrap stage does not wait for a response, and
+    /// gives up the pools, whose idle connections then close.
     pub(crate) fn close(&self) {
         let mut state = lock(&self.state);
         state.runtime = None;
@@ -269,11 +314,17 @@ impl Shared {
             // reference, and the sender unlists it under this lock.
             unsafe { c::zaws_http_cancel(call.as_ptr()) };
         }
+        for (_, pool) in state.pools.drain(..) {
+            // SAFETY: the client's reference, which nothing reaches now.
+            unsafe { c::zaws_http_pool_release(pool.as_ptr()) };
+        }
     }
-    /// Starts `request` and lists its call.
+    /// Starts `request`, on a connection of its server's pool when
+    /// `pooled` gives the pool's size, and lists its call.
     fn start(
         &self,
         request: &Request<'_>,
+        pooled: Option<NonZeroU32>,
         exchange: &Arc<Exchange>,
     ) -> Result<NonNull<c::HttpCall>, Error> {
         if request.signing.is_some() && !self.signs {
@@ -287,7 +338,7 @@ impl Shared {
             region: "",
             service: "",
         });
-        let options = c::HttpOptions {
+        let mut options = c::HttpOptions {
             host: cursor(request.host),
             method: cursor(request.method),
             target: cursor(request.target),
@@ -302,9 +353,13 @@ impl Shared {
             tunnel_port: u32::from(tunnel.port),
             tls: request.tls,
             keep_alive: request.keep_alive,
+            pool: std::ptr::null_mut(),
         };
         let mut state = lock(&self.state);
         let runtime = state.runtime.ok_or(Error::Closed)?;
+        if let Some(size) = pooled {
+            options.pool = state.pool(runtime, PoolKey::of(request, size))?.as_ptr();
+        }
         let data = Arc::into_raw(Arc::clone(exchange));
         // SAFETY: the lock keeps the runtime's stages from releasing while
         // the call starts, and the shim copies the options before it
@@ -553,8 +608,28 @@ impl Client {
     /// See [`Error`]. A request signed by a delegate that fails its query
     /// gives `Connect` with `AWS_AUTH_SIGNING_NO_CREDENTIALS`.
     pub fn send(&self, request: &Request<'_>) -> Result<Response, Error> {
+        self.exchange(request, None)
+    }
+    /// Sends `request` as [`Self::send`] does, on a kept connection to its
+    /// server: see the module's notes on pooling. The pool keeps at most
+    /// `max_connections`.
+    ///
+    /// # Errors
+    /// As [`Self::send`].
+    pub fn send_pooled(
+        &self,
+        request: &Request<'_>,
+        max_connections: NonZeroU32,
+    ) -> Result<Response, Error> {
+        self.exchange(request, Some(max_connections))
+    }
+    fn exchange(
+        &self,
+        request: &Request<'_>,
+        pooled: Option<NonZeroU32>,
+    ) -> Result<Response, Error> {
         let exchange = Arc::new(Exchange::default());
-        let call = self.0.start(request, &exchange)?;
+        let call = self.0.start(request, pooled, &exchange)?;
         // The shim bounds a tunnel's CONNECT unless aws-c-http's private
         // state did not check out; this bounds it then.
         let setup = request
@@ -573,6 +648,9 @@ impl Client {
         result
     }
 }
+
+mod pool;
+use pool::PoolKey;
 
 #[cfg(test)]
 mod tests;

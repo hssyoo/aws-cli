@@ -20,10 +20,11 @@ struct zaws_test_tls *zaws_test_tls_new(void);
 struct aws_byte_cursor zaws_test_tls_ca(const struct zaws_test_tls *tls);
 /* Serves one connection on the connected socket `fd`, blocking: the handshake, one request (its
  * head and as many body bytes as its one Content-Length names) read into `out`, `response` written,
- * then reads until the client closes. The caller bounds each read with the socket's timeout and
- * closes `fd`. True when the request was read and answered whole, and then `*length` is its
- * length; false for a handshake that failed, a request longer than `capacity`, or a read or a
- * write that did. */
-bool zaws_test_tls_serve(struct zaws_test_tls *tls, int fd, struct aws_byte_cursor response, uint8_t *out, size_t capacity, size_t *length);
+ * then each later request on the connection answered with `response` too, until the client
+ * closes. The caller bounds each read with the socket's timeout and closes `fd`. True when the
+ * first request was read and answered whole, and then `*length` is its length; false for a
+ * handshake that failed, a request longer than `capacity`, or a read or a write that did.
+ * `*answered` is how many requests were answered. */
+bool zaws_test_tls_serve(struct zaws_test_tls *tls, int fd, struct aws_byte_cursor response, uint8_t *out, size_t capacity, size_t *length, size_t *answered);
 void zaws_test_tls_destroy(struct zaws_test_tls *tls);
 #endif

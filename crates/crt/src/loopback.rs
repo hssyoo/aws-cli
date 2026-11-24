@@ -27,15 +27,20 @@ fn read_head(stream: &mut TcpStream) -> std::io::Result<String> {
 /// A loopback HTTPS server on the shim's TLS (crt-sys `testing.c`), whose
 /// certificate a CA made for the server issued to `sts.example.invalid`,
 /// `localhost` and 127.0.0.1. It serves `connections` connections one at a
-/// time, answering each whole request with `response`, and returns each
-/// one's request, `None` for one whose handshake or exchange failed.
+/// time, answering each whole request with `response` until the client
+/// closes, and returns each one's first request, `None` for one whose
+/// handshake or exchange failed.
 #[derive(Debug)]
 pub struct TlsServer {
     pub port: u16,
     /// The CA's certificate, PEM.
     pub ca: Vec<u8>,
-    thread: JoinHandle<Result<Vec<Option<Vec<u8>>>, String>>,
+    thread: JoinHandle<Result<Vec<Served>, String>>,
 }
+
+/// One connection a [`TlsServer`] served: its first request, if it was
+/// answered, and how many requests it answered.
+type Served = (Option<Vec<u8>>, usize);
 
 impl TlsServer {
     pub fn start(
@@ -73,8 +78,18 @@ impl TlsServer {
         }
         Ok(Self { port, ca, thread })
     }
-    /// The requests of every connection, once the server served them all.
+    /// The first request of every connection, once the server served them
+    /// all.
     pub fn finish(self) -> Result<Vec<Option<Vec<u8>>>, Box<dyn std::error::Error>> {
+        Ok(self
+            .finish_counted()?
+            .into_iter()
+            .map(|(first, _)| first)
+            .collect())
+    }
+    /// Each connection's first request and how many requests it answered,
+    /// once the server served them all.
+    pub fn finish_counted(self) -> Result<Vec<Served>, Box<dyn std::error::Error>> {
         Ok(self
             .thread
             .join()
@@ -87,13 +102,14 @@ fn serve_tls(
     listener: &TcpListener,
     tls: std::ptr::NonNull<crt_sys::testing::TestTls>,
     response: &[u8],
-) -> std::io::Result<Option<Vec<u8>>> {
+) -> std::io::Result<Served> {
     use std::os::fd::AsRawFd;
     let (stream, _) = listener.accept()?;
     stream.set_read_timeout(Some(PATIENCE))?;
     stream.set_write_timeout(Some(PATIENCE))?;
     let mut request = vec![0; 1 << 16];
     let mut length = 0;
+    let mut answered = 0;
     // SAFETY: the configuration is live, the socket is open until `stream`
     // drops, and `request` holds the capacity given.
     let served = unsafe {
@@ -104,10 +120,11 @@ fn serve_tls(
             request.as_mut_ptr(),
             request.len(),
             &mut length,
+            &mut answered,
         )
     };
     request.truncate(length);
-    Ok(served.then_some(request))
+    Ok((served.then_some(request), answered))
 }
 
 /// A stand-in HTTP proxy that tunnels: for each connection it reads the

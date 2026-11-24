@@ -142,6 +142,31 @@ pub struct HttpOptions {
     /// Sets SO_KEEPALIVE on the connection's socket, at the system's
     /// timings.
     pub keep_alive: bool,
+    /// Takes a connection from this pool, the server's, and gives it back
+    /// once the response is read whole; null connects anew and closes the
+    /// connection after.
+    pub pool: *mut HttpPool,
+}
+/// `struct zaws_http_pool_options`: keep-alive connections to one server,
+/// directly or through a tunnel, made with the options a call would connect
+/// with; at most `max_connections` are kept.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct HttpPoolOptions {
+    pub host: AwsByteCursor,
+    pub tunnel_host: AwsByteCursor,
+    pub port: u32,
+    pub tunnel_port: u32,
+    pub connect_timeout_ms: u32,
+    pub max_connections: u32,
+    pub tls: bool,
+    pub keep_alive: bool,
+}
+/// `struct zaws_http_pool`: aws-c-http's connection manager for one server.
+#[repr(C)]
+#[derive(Debug)]
+pub struct HttpPool {
+    _private: [u8; 0],
 }
 /// `ZAWS_HTTP_CONNECTED`: the connection is up and aws-c-http has taken
 /// the request to send.
@@ -330,6 +355,14 @@ c_functions! {
     pub fn zaws_http_cancel(call: *mut HttpCall);
     /// Gives up the caller's reference.
     pub fn zaws_http_release(call: *mut HttpCall);
+    /// A pool on the runtime's bootstrap; null, with the CRT's error
+    /// raised, when it could not be made. A pool is released before the
+    /// runtime's bootstrap stage, which waits for its connections.
+    pub fn zaws_http_pool_new(runtime: *mut Runtime, options: *const HttpPoolOptions)
+    -> *mut HttpPool;
+    /// Gives up the caller's reference; idle connections close once no
+    /// call holds the pool.
+    pub fn zaws_http_pool_release(pool: *mut HttpPool);
     pub fn zaws_platform(recommended_gbps: *mut f64) -> bool;
     /// The buffer-pool size aws-c-s3 picks for a throughput target when no
     /// limit is configured; a zero target consults the platform detection,
@@ -457,7 +490,14 @@ const _: () = {
     assert!(std::mem::offset_of!(RuntimeOptions, credentials_delegate) == 184);
     assert!(std::mem::size_of::<CredentialsView>() == 72);
     assert!(std::mem::offset_of!(CredentialsView, expiration_timepoint_seconds) == 64);
-    assert!(std::mem::size_of::<HttpOptions>() == 144);
+    assert!(std::mem::size_of::<HttpOptions>() == 152);
+    assert!(std::mem::offset_of!(HttpOptions, pool) == 144);
+    assert!(std::mem::size_of::<HttpPoolOptions>() == 56);
+    assert!(std::mem::offset_of!(HttpPoolOptions, tunnel_host) == 16);
+    assert!(std::mem::offset_of!(HttpPoolOptions, port) == 32);
+    assert!(std::mem::offset_of!(HttpPoolOptions, max_connections) == 44);
+    assert!(std::mem::offset_of!(HttpPoolOptions, tls) == 48);
+    assert!(std::mem::offset_of!(HttpPoolOptions, keep_alive) == 49);
     assert!(std::mem::offset_of!(HttpOptions, tls) == 140);
     assert!(std::mem::offset_of!(HttpOptions, keep_alive) == 141);
     assert!(std::mem::offset_of!(HttpOptions, tunnel_host) == 96);
