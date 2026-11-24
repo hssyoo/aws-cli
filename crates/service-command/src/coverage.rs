@@ -8,10 +8,9 @@
 //! - a botocore builtin or client-creation row by a `replaces` list of a
 //!   client [`Customization`] in scope, which the `client` and
 //!   `customizations` crates own;
-//! - an awscli registry initializer, reached by one pattern, by a [`Row`] of
-//!   [`CLI`], which this crate owns;
-//! - a table editor, reached by any root command's table event, by an
-//!   [`EditorRow`] of [`TABLE_EDITORS`].
+//! - an awscli registry initializer by a [`Row`] of [`CLI`], which this
+//!   crate owns, reached by one pattern or, for a table editor, by any root
+//!   command's table event ([`Reached`]).
 //!
 //! A row says two things. [`TableEdit`]: whether the derived tables
 //! reproduce what the initializer does to them, which the derivation reads
@@ -44,11 +43,46 @@ pub enum TableEdit {
     Reproduced { how: &'static str },
 }
 
-/// One awscli initializer reached by one registry pattern: what it does to
-/// the tables, and the basis for running without it.
+/// The registry patterns through which a row covers its initializer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reached {
+    /// This one pattern.
+    Pattern(&'static str),
+    /// Any root command's table event (`building-command-table.<command>`),
+    /// whichever command it is: a table editor's.
+    ///
+    /// Keying such an initializer by each pattern it is listed under would
+    /// add nothing but a row per service upstream lists it for: the lazy
+    /// emitter calls an initializer once, with the emitter alone
+    /// (`fn(self)`, lazy_emitter.py:125-137), so what it registers does not
+    /// depend on the pattern that reached it. A table editor registers
+    /// nothing but handlers on root command tables, which the pack records
+    /// by running it from the source the fallback runs
+    /// (`command::patterns::TableEditor`), and the derived table applies
+    /// each where the lazy emitter would run it
+    /// (`command::patterns::Patterns::table_edits`). The pack refuses an
+    /// editor listed under any other pattern or registering on any other
+    /// event, and the shape is checked here too: a pattern of this shape is
+    /// met only by a root's own table event, and an editor met through any
+    /// other pattern is still uncovered.
+    RootTable,
+}
+
+impl Reached {
+    /// Whether a match through `pattern` is one of these.
+    pub fn by(self, pattern: &str) -> bool {
+        match self {
+            Self::Pattern(own) => own == pattern,
+            Self::RootTable => root_table_event(pattern),
+        }
+    }
+}
+
+/// One awscli initializer and the registry patterns it is reached by: what
+/// it does to the tables, and the basis for running without it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Row {
-    pub pattern: &'static str,
+    pub reached: Reached,
     pub entry: &'static str,
     pub table: TableEdit,
     pub basis: Basis,
@@ -60,7 +94,7 @@ pub struct Row {
 /// same list.
 const fn main_table(entry: &'static str) -> Row {
     Row {
-        pattern: "building-command-table.main",
+        reached: Reached::Pattern("building-command-table.main"),
         entry,
         table: TableEdit::None,
         basis: Basis::Implemented {
@@ -87,7 +121,7 @@ pub static CLI: &[Row] = &[
     main_table("awscli.customizations.login.register_login_cmds"),
     main_table("awscli.customizations.update.register_update_command"),
     Row {
-        pattern: ARGUMENT_TABLE,
+        reached: Reached::Pattern(ARGUMENT_TABLE),
         entry: "awscli.customizations.cliinput.register_cli_input_args",
         table: TableEdit::Reproduced {
             how: "the cross-cutting --cli-input-json and --cli-input-yaml",
@@ -100,7 +134,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: ARGUMENT_TABLE,
+        reached: Reached::Pattern(ARGUMENT_TABLE),
         entry: "awscli.customizations.paginate.register_pagination",
         table: TableEdit::Reproduced {
             how: "the paging options of a paginated operation",
@@ -120,7 +154,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: ARGUMENT_TABLE,
+        reached: Reached::Pattern(ARGUMENT_TABLE),
         entry: "awscli.customizations.generatecliskeleton.register_generate_cli_skeleton",
         table: TableEdit::Reproduced {
             how: "--generate-cli-skeleton and its required-argument override",
@@ -133,7 +167,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: "building-argument-table.*",
+        reached: Reached::Pattern("building-argument-table.*"),
         entry: "awscli.customizations.streamingoutputarg.register_streaming_output_arg",
         table: TableEdit::Reproduced {
             how: "outfile for a streaming output",
@@ -146,7 +180,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: COMMAND_TABLE,
+        reached: Reached::Pattern(COMMAND_TABLE),
         entry: "awscli.customizations.waiters.register_add_waiters",
         table: TableEdit::Reproduced {
             how: "`wait` for a service with waiters",
@@ -159,7 +193,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: COMMAND_TABLE,
+        reached: Reached::Pattern(COMMAND_TABLE),
         entry: "awscli.alias.register_alias_commands",
         table: TableEdit::Reproduced {
             how: "nothing without an alias under the command",
@@ -171,7 +205,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: SESSION,
+        reached: Reached::Pattern(SESSION),
         entry: "awscli.paramfile.register_init_uri_param_handler",
         table: TableEdit::None,
         // file:// and fileb:// read as get_paramfile reads them
@@ -182,7 +216,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: SESSION,
+        reached: Reached::Pattern(SESSION),
         entry: "awscli.customizations.binaryformat.register_init_binary_formatter",
         table: TableEdit::None,
         // Its input decoder acts on a supplied blob member
@@ -196,7 +230,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: SESSION,
+        reached: Reached::Pattern(SESSION),
         entry: "awscli.clidriver.register_no_pager_handler",
         table: TableEdit::None,
         // no_pager_handler clears the pager setting (clidriver.py:233).
@@ -205,7 +239,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: SESSION,
+        reached: Reached::Pattern(SESSION),
         entry: "awscli.customizations.assumerole.register_assume_role_provider",
         table: TableEdit::None,
         // It sets the assume-role provider's cache (assumerole.py:19).
@@ -215,7 +249,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: SESSION,
+        reached: Reached::Pattern(SESSION),
         entry: "awscli.customizations.timestampformat.register_timestamp_format",
         table: TableEdit::None,
         // add_timestamp_parser (timestampformat.py:49).
@@ -224,7 +258,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: SESSION,
+        reached: Reached::Pattern(SESSION),
         entry: "awscli.customizations.history.register_history_mode",
         table: TableEdit::None,
         // attach_history_handler (history/__init__.py:49).
@@ -234,7 +268,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: SESSION,
+        reached: Reached::Pattern(SESSION),
         entry: "awscli.customizations.sso.register_sso_commands",
         table: TableEdit::None,
         // inject_json_file_cache sets the SSO provider's cache
@@ -245,7 +279,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: "top-level-args-parsed",
+        reached: Reached::Pattern("top-level-args-parsed"),
         entry: "awscli.customizations.globalargs.register_parse_global_args",
         table: TableEdit::None,
         // resolve_types, no_sign_request, resolve_verify_ssl and the timeout
@@ -255,7 +289,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: "top-level-args-parsed",
+        reached: Reached::Pattern("top-level-args-parsed"),
         entry: "awscli.customizations.cloudfront.register",
         table: TableEdit::None,
         // Its only handler on this event is `context.update`, recording the
@@ -270,7 +304,7 @@ pub static CLI: &[Row] = &[
         },
     },
     Row {
-        pattern: "process-cli-arg",
+        reached: Reached::Pattern("process-cli-arg"),
         entry: "awscli.argprocess.register_param_shorthand_parser",
         table: TableEdit::None,
         // ParamShorthandParser returns None for any member that is not a
@@ -281,59 +315,11 @@ pub static CLI: &[Row] = &[
             refused_as: OPTION,
         },
     },
-];
-
-/// The initializers whose table edits the derived tables reproduce, which
-/// the derivation does not count as customizing a table.
-pub fn table_edits() -> Vec<&'static str> {
-    let rows = CLI.iter().map(|row| (row.entry, row.table));
-    let editors = TABLE_EDITORS.iter().map(|row| (row.entry, row.table));
-    rows.chain(editors)
-        .filter(|(_, table)| matches!(table, TableEdit::Reproduced { .. }))
-        .map(|(entry, _)| entry)
-        .collect()
-}
-
-/// An initializer covered through any root command's table event
-/// (`building-command-table.<command>`), whichever command it is.
-///
-/// Keying such an initializer by each pattern it is listed under would add
-/// nothing but a row per service upstream lists it for: the lazy emitter
-/// calls an initializer once, with the emitter alone (`fn(self)`,
-/// lazy_emitter.py:125-137), so what it registers does not depend on the
-/// pattern that reached it. A table editor registers nothing but handlers
-/// on root command tables, which the pack records by running it from the
-/// source the fallback runs (`command::patterns::TableEditor`), and the
-/// derived table applies each where the lazy emitter would run it
-/// (`command::patterns::Patterns::table_edits`). The pack refuses an editor
-/// listed under any other pattern or registering on any other event, and
-/// the shape is checked here too: a pattern of this shape is met only by a
-/// root's own table event, and an editor met through any other pattern is
-/// still uncovered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EditorRow {
-    pub entry: &'static str,
-    pub table: TableEdit,
-    pub basis: Basis,
-}
-
-const TABLE_EVENT: &str = "building-command-table.";
-
-/// Whether `pattern` is one root command's table event: one command, not
-/// the main table's (whose initializers the main table's ops replace) and
-/// no subcommand's, whose lineage is `_`-joined
-/// (`ServiceOperation._build_subcommand_table`, clidriver.py:891).
-fn root_table_event(pattern: &str) -> bool {
-    pattern.strip_prefix(TABLE_EVENT).is_some_and(|command| {
-        !command.is_empty() && command != "main" && command != "*" && !command.contains(['.', '_'])
-    })
-}
-
-/// The table editors, covered through every root's table event. Their
-/// handlers act on the building of a table, never on an invocation's
-/// arguments or calls, and the derived table holds what they leave in it.
-pub static TABLE_EDITORS: &[EditorRow] = &[
-    EditorRow {
+    // The table editors. Their handlers act on the building of a table,
+    // never on an invocation's arguments or calls, and the derived table
+    // holds what they leave in it.
+    Row {
+        reached: Reached::RootTable,
         entry: "awscli.customizations.removals.register_removals",
         table: TableEdit::Reproduced {
             how: "the operations each `_remove_commands` handler deletes",
@@ -346,7 +332,8 @@ pub static TABLE_EDITORS: &[EditorRow] = &[
             at: "command::models::edit_table",
         },
     },
-    EditorRow {
+    Row {
+        reached: Reached::RootTable,
         entry: "awscli.customizations.wizard.commands.register_wizard_commands",
         table: TableEdit::Reproduced {
             how: "`wizard`, after the operations and before `wait`",
@@ -361,10 +348,31 @@ pub static TABLE_EDITORS: &[EditorRow] = &[
     },
 ];
 
+/// The initializers whose table edits the derived tables reproduce, which
+/// the derivation does not count as customizing a table.
+pub fn table_edits() -> Vec<&'static str> {
+    CLI.iter()
+        .filter(|row| matches!(row.table, TableEdit::Reproduced { .. }))
+        .map(|row| row.entry)
+        .collect()
+}
+
+const TABLE_EVENT: &str = "building-command-table.";
+
+/// Whether `pattern` is one root command's table event: one command, not
+/// the main table's (whose initializers the main table's ops replace) and
+/// no subcommand's, whose lineage is `_`-joined
+/// (`ServiceOperation._build_subcommand_table`, clidriver.py:891).
+fn root_table_event(pattern: &str) -> bool {
+    pattern.strip_prefix(TABLE_EVENT).is_some_and(|command| {
+        !command.is_empty() && command != "main" && command != "*" && !command.contains(['.', '_'])
+    })
+}
+
 /// The first match nothing covers: no [`CLI`] row for a registry
-/// initializer and its pattern, nor an [`EditorRow`] for it through a root
-/// table event, and no `replaces` of a customization in scope for
-/// `service` and `operation` (model names) for a botocore row.
+/// initializer reached through its pattern, and no `replaces` of a
+/// customization in scope for `service` and `operation` (model names) for a
+/// botocore row.
 pub fn uncovered<'m>(
     matches: &'m [Match],
     customizations: &[&Customization],
@@ -372,7 +380,9 @@ pub fn uncovered<'m>(
     operation: &str,
 ) -> Option<&'m Match> {
     matches.iter().find(|found| match found.kind {
-        MatchKind::Registry => !covered_initializer(found),
+        MatchKind::Registry => !CLI
+            .iter()
+            .any(|row| row.entry == found.name && row.reached.by(&found.pattern)),
         MatchKind::Builtin | MatchKind::Client => !customizations.iter().any(|customization| {
             customization.scope.matches(service, operation)
                 && customization
@@ -381,18 +391,6 @@ pub fn uncovered<'m>(
                     .any(|(name, _)| *name == found.name.as_str())
         }),
     })
-}
-
-/// Whether a [`CLI`] row covers the registry match, or an [`EditorRow`]
-/// does through a root table event.
-fn covered_initializer(found: &Match) -> bool {
-    let row = CLI
-        .iter()
-        .any(|row| row.pattern == found.pattern && row.entry == found.name);
-    let editor = || {
-        root_table_event(&found.pattern) && TABLE_EDITORS.iter().any(|row| row.entry == found.name)
-    };
-    row || editor()
 }
 
 #[cfg(test)]

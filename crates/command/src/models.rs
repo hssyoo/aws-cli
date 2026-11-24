@@ -64,12 +64,6 @@ impl Service {
     pub fn operation(&self, operation: &str) -> Option<&model::shapes::Operation> {
         self.position(operation).map(|(_, found)| found)
     }
-    /// Whether the paginators file configures the model operation
-    /// `operation` (`get_paginator_config`, which `client.can_paginate`
-    /// also reads).
-    pub fn paginated(&self, operation: &str) -> bool {
-        self.paginator(operation).is_some()
-    }
     /// The paginators file's entry for the model operation `operation`
     /// (`PaginatorModel.get_paginator`).
     pub fn paginator(&self, operation: &str) -> Option<&Json> {
@@ -429,13 +423,6 @@ impl OperationSource for ModelSource<'_> {
         };
         let table = self.table(root, operation);
         !service.customized && table.is_some_and(|table| !table.customized)
-    }
-    fn paginated(&self, root: &str, operation: &str) -> bool {
-        self.service(root).is_some_and(|service| {
-            service
-                .operation(operation)
-                .is_some_and(|found| service.paginated(&found.name))
-        })
     }
 }
 

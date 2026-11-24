@@ -57,9 +57,6 @@ impl OperationSource for Fake {
     fn reproduces_failures(&self, _root: &str, _operation: Option<&str>) -> bool {
         true
     }
-    fn paginated(&self, _root: &str, _operation: &str) -> bool {
-        false
-    }
 }
 impl Binder for Fake {
     fn precedes_unpack_failure(&self, _parsed: &ParseResult<'_>) -> bool {

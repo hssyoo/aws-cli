@@ -457,6 +457,54 @@ async def test_a_native_operation_runs_the_credential_process_once(
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the process is a POSIX shell command")
+async def test_a_paginated_operation_runs_the_credential_process_once(
+    models: ApiSession,
+) -> None:
+    # Every page is signed with the client's credentials, which its chain
+    # loaded once.
+    runs = counting_process(models)
+    pages = [{"Things": ["a"], "NextToken": "t1"}, {"Things": ["b"]}]
+    run = await models.run("zjson list-things", replies=pages)
+    assert len(run.calls) == 2, run.describe()
+    assert runs_of(runs) == 1, run.describe()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the process is a POSIX shell command")
+async def test_a_starting_token_only_python_reads_runs_the_process_once(
+    models: ApiSession,
+) -> None:
+    # The token's lone surrogate is refused before any provider runs, so
+    # only Python's chain runs the process; a forced-native run refuses it
+    # and runs nothing.
+    runs = counting_process(models)
+    token = "eyJOZXh0VG9rZW4iOiAiXHVkODAwIn0="
+    command = ["zjson", "list-things", "--starting-token", token]
+    if FORCED_NATIVE:
+        run = await models.run(command, expected_rc=255)
+        assert "(starting_token)" in run.stderr, run.describe()
+        assert runs_of(runs) == 0, run.describe()
+        return
+    run = await models.run(command, replies={"Things": ["a"]})
+    assert runs_of(runs) == 1, run.describe()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the process is a POSIX shell command")
+async def test_a_failing_credential_process_is_reported_before_a_bad_starting_token(
+    models: ApiSession,
+) -> None:
+    # botocore creates the client, walking the chain, before the paginator
+    # reads the starting token.
+    runs = counting_process(models, fails=True)
+    command = ["zjson", "list-things", "--starting-token", "does___not___work"]
+    run = await models.run(command, expected_rc=255)
+    assert run.calls == ()
+    assert run.stderr == (
+        "\naws: [ERROR]: Error when retrieving credentials from custom-process: boom\n"
+    ), run.describe()
+    assert runs_of(runs) == 1, run.describe()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="the process is a POSIX shell command")
 async def test_a_failing_credential_process_is_reported_before_invalid_input(
     models: ApiSession,
 ) -> None:

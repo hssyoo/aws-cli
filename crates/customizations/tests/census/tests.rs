@@ -34,6 +34,12 @@ fn row(refusal: &Unsupported) -> (String, String) {
         Unsupported::EndpointData => named("endpointData", "-"),
         Unsupported::Validation(undecided) => named("validation", &format!("{undecided:?}")),
         Unsupported::StartingToken(why) => named("startingToken", why),
+        Unsupported::Paginator(client::paginate::Refused::Expression(expression)) => {
+            named("paginator", expression)
+        }
+        Unsupported::Paginator(client::paginate::Refused::Malformed(why)) => {
+            named("paginator", why)
+        }
     }
 }
 
@@ -42,10 +48,26 @@ fn refusals(source: &impl Source, service: &str) -> Result<Vec<Option<Unsupporte
     let model = Model::load(source, service)?;
     let endpoints = EndpointData::load(source, service, model.metadata())?;
     let table = &customizations::TABLE[..];
+    let pages = model::source::load_service_model(source, service, Kind::Paginators)
+        .ok()
+        .and_then(|document| document.json.get("pagination").cloned());
     Ok(model
         .operations()
         .iter()
-        .map(|operation| static_refusal(&model, operation, &endpoints, service, table))
+        .map(|operation| {
+            let entry = pages
+                .as_ref()
+                .and_then(|pages| pages.get(&*operation.name))
+                .map(model::value::Value::from_serde);
+            static_refusal(
+                &model,
+                operation,
+                &endpoints,
+                service,
+                table,
+                entry.as_ref(),
+            )
+        })
         .collect())
 }
 

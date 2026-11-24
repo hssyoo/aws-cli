@@ -16,29 +16,32 @@ fn matches(models: &ModelSource<'_>, command: &str, operation: &str) -> Vec<Matc
         .unwrap_or_else(|| panic!("{command} {operation}"))
 }
 
-/// Every row names an initializer the payload's registry lists under the
-/// row's pattern: the table describes the AWS CLI the fallback runs.
+/// Every row names an initializer the payload's registry lists under a
+/// pattern the row is reached by: the table describes the AWS CLI the
+/// fallback runs.
 #[test]
 fn every_row_is_a_registry_entry_under_its_pattern() -> Result<()> {
     with_models(|models| {
         let registry = &models.patterns().registry;
         for row in CLI {
             let listed = registry.iter().any(|(pattern, entries)| {
-                &**pattern == row.pattern && entries.iter().any(|entry| entry.name() == row.entry)
+                row.reached.by(pattern) && entries.iter().any(|entry| entry.name() == row.entry)
             });
-            assert!(listed, "{} under {}", row.entry, row.pattern);
+            assert!(listed, "{} under {:?}", row.entry, row.reached);
         }
     })
 }
 
-/// sts and the fake models meet only covered initializers, and every row
-/// is met by one of them: the table is the cross-cutting set, no more.
+/// sts, lambda (whose table both editors edit) and the fake models meet
+/// only covered initializers, and every row is met by one of them: the
+/// table is the cross-cutting set, no more.
 #[test]
 fn the_cross_cutting_initializers_are_covered_and_all_are_met() -> Result<()> {
     with_models(|models| {
         let mut met = Vec::new();
         for (command, operation) in [
             ("sts", "get-caller-identity"),
+            ("lambda", "get-account-settings"),
             ("zquery", "get-thing"),
             ("zjson", "measure"),
         ] {
@@ -58,11 +61,11 @@ fn the_cross_cutting_initializers_are_covered_and_all_are_met() -> Result<()> {
         for row in CLI {
             let reached = met
                 .iter()
-                .any(|found| found.pattern == row.pattern && found.name == row.entry);
+                .any(|found| row.reached.by(&found.pattern) && found.name == row.entry);
             assert!(
                 reached,
-                "{} under {} is met by none",
-                row.entry, row.pattern
+                "{} under {:?} is met by none",
+                row.entry, row.reached
             );
         }
     })
@@ -133,14 +136,25 @@ fn dynamodb_is_uncovered_only_by_its_cli_customizations() -> Result<()> {
 const REMOVALS: &str = "awscli.customizations.removals.register_removals";
 const WIZARDS: &str = "awscli.customizations.wizard.commands.register_wizard_commands";
 
-/// Every editor row names an initializer the pack recorded as a table
-/// editor, listed under root table events alone: the rows describe the AWS
-/// CLI the fallback runs.
+/// The rows reached through root table events are the initializers the
+/// pack recorded as table editors, each listed under root table events
+/// alone: the rows describe the AWS CLI the fallback runs, and the pack's
+/// list of editors and the table's cannot drift apart.
 #[test]
-fn every_editor_row_is_a_recorded_editor_listed_under_root_tables() -> Result<()> {
+fn the_editor_rows_are_the_recorded_editors_listed_under_root_tables() -> Result<()> {
     with_models(|models| {
         let patterns = models.patterns();
-        for row in TABLE_EDITORS {
+        let editors = CLI.iter().filter(|row| row.reached == Reached::RootTable);
+        for recorded in &patterns.table_editors {
+            assert!(
+                editors
+                    .clone()
+                    .any(|row| row.entry == recorded.entry.name()),
+                "{} has no row",
+                recorded.entry.name()
+            );
+        }
+        for row in editors {
             assert!(
                 patterns
                     .table_editors
@@ -188,16 +202,17 @@ fn the_editors_are_covered_through_a_root_s_table_event() -> Result<()> {
     })
 }
 
-/// Every `Implemented` row and editor row names an item the workspace
-/// defines.
+/// Every `Implemented` row names an item the workspace defines.
 #[test]
 fn every_implemented_path_is_defined() -> Result<()> {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let rows = CLI.iter().map(|row| (row.entry, row.basis));
-    let editors = TABLE_EDITORS.iter().map(|row| (row.entry, row.basis));
-    for (entry, basis) in rows.chain(editors) {
-        if let Basis::Implemented { at } = basis {
-            assert!(client::testing::defines(&workspace, at)?, "{at} ({entry})");
+    for row in CLI {
+        if let Basis::Implemented { at } = row.basis {
+            assert!(
+                client::testing::defines(&workspace, at)?,
+                "{at} ({})",
+                row.entry
+            );
         }
     }
     Ok(())
@@ -436,12 +451,14 @@ fn static_refusal(command: &str, operation: &str) -> Result<Option<Unsupported>>
         let found = service.operation(operation)?;
         let endpoints =
             EndpointData::load(models.search(), &service.name, service.model.metadata()).ok()?;
+        let entry = crate::admit::paginator_entry(service, found);
         Some(client::admission::static_refusal(
             &service.model,
             found,
             &endpoints,
             &service.name,
             &customizations::TABLE,
+            entry.as_ref(),
         ))
     })
     .map(Option::flatten)

@@ -84,9 +84,6 @@ impl OperationSource for Fake {
     fn reproduces_failures(&self, _root: &str, operation: Option<&str>) -> bool {
         operation != Some("get-session-token")
     }
-    fn paginated(&self, _root: &str, operation: &str) -> bool {
-        operation == "decode-authorization-message"
-    }
 }
 impl Binder for Fake {
     fn precedes_unpack_failure(&self, _parsed: &ParseResult<'_>) -> bool {

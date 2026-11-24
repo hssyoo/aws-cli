@@ -4,14 +4,14 @@
 //! decide alone comes first (the protocol, the traits, then the
 //! customizations), so an operation's verdict on those is the same whatever
 //! its arguments; the arguments' binding and validation come last.
-use crate::bind::Bound;
+use crate::bind::Binding;
 use crate::coverage;
 use awscli_argparse::ParseResult;
 use cli_core::cli_error::{CommandFailure, PythonReason};
 use client::admission::Unsupported;
 use client::endpoint::EndpointData;
 use client::hooks::Customization;
-use client::paginate::{Config, PaginationConfig, Refused};
+use client::paginate::{Config, PaginationConfig};
 use command::models::{ModelSource, Service};
 use model::shapes::{Model, Operation, ShapeId, ShapeKind};
 use model::validate::{Validation, validate_input};
@@ -73,8 +73,10 @@ pub fn admit(
     let Some((service, operation, table)) = lookup() else {
         return Err(PythonReason::UnsupportedSubcommand);
     };
-    // `operation` refused a paginator the native one does not run.
-    let config = paginator(service, operation).and_then(Result::ok);
+    // `operation` refused a paginator entry the native paginator does not
+    // run (`client::admission::static_refusal`).
+    let config =
+        paginator_entry(service, operation).and_then(|entry| Config::from_value(&entry).ok());
     let mut admitted = Admitted {
         command: command.to_owned(),
         service: service.name.clone(),
@@ -87,8 +89,8 @@ pub fn admit(
         raised: None,
     };
     let call = match crate::bind::bind(table, parsed)? {
-        Bound::Call(call) => call,
-        Bound::Raised(failure) => {
+        Binding::Call(call) => call,
+        Binding::Raised(failure) => {
             admitted.raised = Some(failure);
             return Ok(admitted);
         }
@@ -131,25 +133,27 @@ pub fn operation(
     let model = &service.model;
     let endpoints = EndpointData::load(source.search(), &service.name, model.metadata())
         .map_err(|_| PythonReason::EndpointData)?;
+    let entry = paginator_entry(service, operation);
     let refused = client::admission::static_refusal(
         model,
         operation,
         &endpoints,
         &service.name,
         customizations,
+        entry.as_ref(),
     );
     if let Some(unsupported) = refused {
         return Err(reason(&unsupported));
     }
-    if let Some(config) = paginator(service, operation) {
-        // unify_paging_params raises as it builds a table without the
-        // paging options.
-        let paged = source
+    // unify_paging_params raises as it builds a table without the paging
+    // options.
+    let paged = || {
+        source
             .table(command, cli_operation)
-            .is_some_and(|table| table.paging.is_some());
-        if config.is_err() || !paged {
-            return Err(PythonReason::Paginator);
-        }
+            .is_some_and(|table| table.paging.is_some())
+    };
+    if entry.is_some() && !paged() {
+        return Err(PythonReason::Paginator);
     }
     if coverage::uncovered(&matches, customizations, &service.name, &operation.name).is_some() {
         return Err(PythonReason::UnportedCustomization);
@@ -173,18 +177,15 @@ pub fn reason(unsupported: &Unsupported) -> PythonReason {
         Unsupported::EndpointData => PythonReason::EndpointData,
         Unsupported::Validation(_) => PythonReason::UnsupportedValue,
         Unsupported::Hook(_) => PythonReason::CustomizationHook,
-        Unsupported::StartingToken(_) => PythonReason::Paginator,
+        Unsupported::StartingToken(_) => PythonReason::StartingToken,
+        Unsupported::Paginator(_) => PythonReason::Paginator,
     }
 }
 
-/// The operation's paginator, as `client.get_paginator` reads its entry in
-/// the paginators file; `None` when it has none (`client.can_paginate`).
-///
-/// # Errors
-/// [`Refused`]: an entry the native paginator does not run.
-pub fn paginator(service: &Service, operation: &Operation) -> Option<Result<Config, Refused>> {
-    let entry = service.paginator(&operation.name)?;
-    Some(Config::from_value(&Value::from_serde(entry)))
+/// The operation's entry in the paginators file, as `client.get_paginator`
+/// reads it; `None` when it has none (`client.can_paginate`).
+pub fn paginator_entry(service: &Service, operation: &Operation) -> Option<Value> {
+    service.paginator(&operation.name).map(Value::from_serde)
 }
 
 /// Whether `shape` reaches a timestamp the wire sends as an epoch, which

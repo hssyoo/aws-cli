@@ -164,10 +164,15 @@ pub enum PythonReason {
     /// discovery, `httpChecksum`, request compression, or a key the model
     /// loader does not interpret.
     UnsupportedTrait,
-    /// The operation has a paginator, and the CLI pages its calls
-    /// (`CLIOperationCaller._make_client_call`), which the native route
-    /// does not.
+    /// The operation has a paginator the native one does not run, whose
+    /// calls the CLI pages (`CLIOperationCaller._make_client_call`): an
+    /// entry beyond member names and dotted paths of them, or one whose
+    /// table the paging customization would fail to build.
     Paginator,
+    /// A `--starting-token` whose JSON Python reads into what the native
+    /// values cannot hold, such as a lone surrogate, or nests deeper than
+    /// the native reader follows.
+    StartingToken,
     /// The operation's auth is one the native client cannot sign with:
     /// anything but SigV4 and none, by the name botocore resolves.
     UnsupportedAuth,
@@ -261,6 +266,7 @@ impl PythonReason {
             Self::UnsupportedProtocol => "unsupported_protocol",
             Self::UnsupportedTrait => "unsupported_trait",
             Self::Paginator => "paginator",
+            Self::StartingToken => "starting_token",
             Self::UnportedCustomization => "unported_customization",
             Self::UnsupportedAuth => "unsupported_auth",
             Self::UnsignedPayload => "unsigned_payload",

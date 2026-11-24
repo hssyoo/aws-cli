@@ -78,7 +78,7 @@ fn static_refusals_need_only_the_model_and_the_rule_set() -> Result<(), Box<dyn 
     let data = EndpointData::from_documents(RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
     let refusal = |name: &str| -> Result<Option<Unsupported>, String> {
         let operation = model.operation(name).ok_or(name)?;
-        Ok(static_refusal(&model, operation, &data, "zjson", &[]))
+        Ok(static_refusal(&model, operation, &data, "zjson", &[], None))
     };
     assert_eq!(
         refusal("Streamed")?,
@@ -97,7 +97,7 @@ fn static_refusals_need_only_the_model_and_the_rule_set() -> Result<(), Box<dyn 
     let xml = Model::from_json(SERVICE.replace(r#""json""#, r#""rest-xml""#).as_bytes())?;
     let plain = xml.operation("Plain").ok_or("Plain")?;
     assert_eq!(
-        static_refusal(&xml, plain, &data, "zjson", &[]),
+        static_refusal(&xml, plain, &data, "zjson", &[], None),
         Some(Unsupported::Protocol("rest-xml".into()))
     );
     Ok(())
@@ -116,8 +116,44 @@ fn an_uninterpreted_key_refuses_the_operations_that_reach_it()
     let data = EndpointData::from_documents(RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
     let plain = model.operation("Plain").ok_or("Plain")?;
     assert_eq!(
-        static_refusal(&model, plain, &data, "zjson", &[]),
+        static_refusal(&model, plain, &data, "zjson", &[], None),
         Some(Unsupported::Trait("newTrait".into()))
     );
+    Ok(())
+}
+
+/// A paginator entry the native paginator does not run refuses the
+/// operation by its own reason: an expression beyond names and dotted
+/// paths, or an entry botocore could not read. An entry it runs, or none,
+/// refuses nothing.
+#[test]
+fn a_paginator_entry_the_engine_does_not_run_is_refused() -> Result<(), Box<dyn std::error::Error>>
+{
+    let model = Model::from_json(SERVICE.as_bytes())?;
+    let rules = br#"{"version": "1.0", "parameters": {}, "rules": []}"#.to_vec();
+    let data = EndpointData::from_documents(rules, b"{}".to_vec(), None)?;
+    let operation = model.operation("Plain").ok_or("Plain")?;
+    let entry = |json: &str| Value::from_json(json.as_bytes());
+    let refusal = |paginator: Option<&Value>| {
+        static_refusal(&model, operation, &data, "zjson", &[], paginator)
+    };
+    assert_eq!(refusal(None), None);
+    let tokens = r#""input_token": "NextToken", "output_token": "NextToken""#;
+    let runs = entry(&format!(r#"{{{tokens}, "result_key": "Items"}}"#))?;
+    assert_eq!(refusal(Some(&runs)), None);
+    let filtered = entry(&format!(r#"{{{tokens}, "result_key": "Items[].Name"}}"#))?;
+    assert_eq!(
+        refusal(Some(&filtered)),
+        Some(Unsupported::Paginator(
+            crate::paginate::Refused::Expression("Items[].Name".into())
+        ))
+    );
+    let keyless = entry(&format!("{{{tokens}}}"))?;
+    assert!(matches!(
+        refusal(Some(&keyless)),
+        Some(Unsupported::Paginator(crate::paginate::Refused::Malformed(
+            _
+        )))
+    ));
     Ok(())
 }
