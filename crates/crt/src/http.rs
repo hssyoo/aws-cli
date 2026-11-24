@@ -22,10 +22,11 @@
 //!   `ProxyManager`'s for `https`). A client keeps ten pools, urllib3's
 //!   `num_pools`, dropping the least recently used.
 //! - **Size**: a pool keeps at most the `max_connections` given, urllib3's
-//!   `maxsize` (botocore's `max_pool_connections`). urllib3 opens more when
-//!   all are busy and closes the extras as they come back; aws-c-http's
-//!   manager makes a request wait for one instead. A client sends one
-//!   request at a time, so neither happens.
+//!   `maxsize` (botocore's `max_pool_connections`), and a client keeps
+//!   [`POOLS`] pools of [`POOL_CONNECTIONS`] unless told otherwise. urllib3
+//!   opens more connections when all are busy and closes the extras as
+//!   they come back; here pooled requests on one client go one at a time,
+//!   as botocore's client sends them, so neither happens.
 //! - **Reuse**: a connection goes back only once its response arrived whole
 //!   (urllib3 releases it when the body is read to the end, which botocore
 //!   does for every response); one that failed, timed out or was
@@ -33,15 +34,17 @@
 //!   connection (aws-c-http stops taking requests on it, as `http.client`'s
 //!   `will_close` closes it). Idle connections are kept until the server
 //!   closes them or the runtime closes: urllib3 has no idle timeout either.
-//! - **A dropped connection**: before a request goes out on a kept
-//!   connection, a zero-timeout poll of its socket for reading, on the
-//!   connection's own thread, finds the server's close, or anything it
-//!   sent unasked, and the connection is closed and another taken or
-//!   opened, without an error: urllib3's `is_connection_dropped` in
-//!   `_get_conn`. A connection the server closes after that check fails the
-//!   request as the connection ending before its response, which botocore
-//!   raises as `ConnectionClosedError` (urllib3 retries nothing itself:
-//!   botocore passes `Retry(False)`), and standard retries then try again.
+//! - **A dropped connection**: before a request goes out on a connection
+//!   that was given back idle, a zero-timeout poll of its socket for
+//!   reading, on the connection's own thread, finds the server's close, or
+//!   anything it sent unasked, and the connection is closed and another
+//!   taken or opened, without an error: urllib3's `is_connection_dropped`
+//!   in `_get_conn`, which checks only the connections its pool hands out.
+//!   A connection opened for the request is used unchecked. A connection
+//!   the server closes after that check fails the request as the
+//!   connection ending before its response, which botocore raises as
+//!   `ConnectionClosedError` (urllib3 retries nothing itself: botocore
+//!   passes `Retry(False)`), and standard retries then try again.
 //! - **The one difference**: `http.client` also closes after a response
 //!   that says `HTTP/1.0` without `Connection: keep-alive`. aws-c-http
 //!   parses the status line's version and keeps none of it, so such a
@@ -269,6 +272,10 @@ pub struct Client(Arc<Shared>);
 #[derive(Debug)]
 pub(crate) struct Shared {
     state: Mutex<State>,
+    /// Held for each pooled request, so the client's pools serve one request
+    /// at a time: a pool's handshake error then belongs to the one request
+    /// whose connection the pool was making.
+    pooled: Mutex<()>,
     /// Whether the runtime has credentials to sign with: an
     /// [`HttpRuntime`] alone has none.
     signs: bool,
@@ -300,6 +307,7 @@ impl Shared {
                 calls: Vec::new(),
                 pools: Vec::new(),
             }),
+            pooled: Mutex::new(()),
             signs,
         }
     }
@@ -479,7 +487,15 @@ unsafe extern "C" fn on_event(
         let (name, value) = unsafe { ((*header).name, (*header).value) };
         // SAFETY: as above.
         let field = |cursor| latin1(unsafe { bytes(cursor) });
-        progress.headers.push((field(name), field(value)));
+        let (name, value) = (field(name), field(value));
+        if name.eq_ignore_ascii_case("content-length") {
+            let reservation = body_reservation(&value);
+            let received = progress.body.len();
+            progress
+                .body
+                .reserve_exact(reservation.saturating_sub(received));
+        }
+        progress.headers.push((name, value));
     }
     if event == c::HTTP_BODY {
         // SAFETY: a body event's cursor is live for this call.
@@ -487,6 +503,23 @@ unsafe extern "C" fn on_event(
     }
     exchange.wake.notify_all();
     drop(progress);
+}
+
+/// The most a response's `Content-Length` reserves ahead of its body: past
+/// it the body grows as it arrives, so a length the server declares but
+/// never sends cannot make the client allocate it.
+pub(crate) const BODY_RESERVATION_MAX: usize = 64 * 1024 * 1024;
+
+/// What a `Content-Length` of `value` reserves for the body: its length,
+/// up to [`BODY_RESERVATION_MAX`], so the body is read into one buffer and
+/// the call's peak memory does not depend on how its growth fell out;
+/// nothing for a value that is not a length.
+pub(crate) fn body_reservation(value: &str) -> usize {
+    value.trim().parse::<u64>().map_or(0, |length| {
+        usize::try_from(length).map_or(BODY_RESERVATION_MAX, |length| {
+            length.min(BODY_RESERVATION_MAX)
+        })
+    })
 }
 
 /// The bytes `cursor` points at.
@@ -612,7 +645,8 @@ impl Client {
     }
     /// Sends `request` as [`Self::send`] does, on a kept connection to its
     /// server: see the module's notes on pooling. The pool keeps at most
-    /// `max_connections`.
+    /// `max_connections`. A pooled request waits for any other the client is
+    /// sending on a pool, as botocore's client sends one at a time.
     ///
     /// # Errors
     /// As [`Self::send`].
@@ -621,6 +655,7 @@ impl Client {
         request: &Request<'_>,
         max_connections: NonZeroU32,
     ) -> Result<Response, Error> {
+        let _one_at_a_time = lock(&self.0.pooled);
         self.exchange(request, Some(max_connections))
     }
     fn exchange(
@@ -651,6 +686,7 @@ impl Client {
 
 mod pool;
 use pool::PoolKey;
+pub use pool::{POOL_CONNECTIONS, POOLS};
 
 #[cfg(test)]
 mod tests;

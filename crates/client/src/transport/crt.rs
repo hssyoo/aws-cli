@@ -34,13 +34,9 @@ use credentials::Location;
 use std::sync::Arc;
 
 /// How many connections each server's pool keeps: botocore's
-/// `max_pool_connections`, which the Python route always leaves at its
-/// default, `MAX_POOL_CONNECTIONS` in botocore/endpoint.py (10), since no
-/// CLI option, variable or profile setting reaches the client's `Config`.
-pub const MAX_POOL_CONNECTIONS: std::num::NonZeroU32 = match std::num::NonZeroU32::new(10) {
-    Some(size) => size,
-    None => std::num::NonZeroU32::MIN,
-};
+/// `max_pool_connections` at its default, which the Python route always runs
+/// with (see [`::crt::http::POOL_CONNECTIONS`], beside urllib3's pool count).
+pub const MAX_POOL_CONNECTIONS: std::num::NonZeroU32 = ::crt::http::POOL_CONNECTIONS;
 
 /// What [`CrtTransport::new`] takes: the TLS trust and the CRT's logger,
 /// named here so a caller of the transport needs no `crt` dependency.
