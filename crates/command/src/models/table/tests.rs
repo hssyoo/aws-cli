@@ -148,10 +148,14 @@ fn paging_records_its_tokens_for_the_parse() {
     let config: Json = serde_json::json!({"input_token": "NextToken", "limit_key": "MaxResults"});
     let table = table("ListThings", Some(&config));
     let paging = table.paging.as_ref().unwrap_or_else(|| panic!("no paging"));
-    assert_eq!(paging.tokens, ["NextToken".into(), "MaxResults".into()]);
+    let pairs: Vec<(&str, &str)> = paging
+        .tokens
+        .iter()
+        .map(|token| (&*token.model, &*token.cli))
+        .collect();
     assert_eq!(
-        paging.cli_tokens,
-        ["next-token".into(), "max-results".into()]
+        pairs,
+        [("NextToken", "next-token"), ("MaxResults", "max-results")]
     );
     assert!(paging.shadowed.is_empty());
     for name in ["starting-token", "page-size", "max-items"] {

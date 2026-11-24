@@ -23,7 +23,9 @@ use std::collections::BTreeMap;
 
 mod table;
 #[doc(inline)]
-pub use table::{DerivedArgument, Origin, Paging, Table, Unpack, ValueType, kind_name};
+pub use table::{
+    DerivedArgument, Origin, Paging, PagingToken, Table, Unpack, ValueType, kind_name,
+};
 
 type Json = serde_json::Value;
 
