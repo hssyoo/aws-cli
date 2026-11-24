@@ -518,3 +518,46 @@ fn a_tls_connection_is_kept() -> TestResult {
     assert_eq!(served[0].1, 3);
     Ok(())
 }
+
+/// A body whose `Content-Length` is known arrives in a buffer reserved for
+/// it once, so it never grows by doubling, which would make the call's
+/// peak memory depend on whether each growth happens in place.
+#[test]
+fn a_body_of_known_length_is_read_into_one_reservation() -> TestResult {
+    const LENGTH: usize = 3 * 1024 * 1024 + 17;
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    let server = std::thread::spawn(move || -> std::io::Result<()> {
+        let (mut stream, _) = listener.accept()?;
+        stream.set_read_timeout(Some(PATIENCE))?;
+        read_request(&mut stream);
+        stream
+            .write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {LENGTH}\r\n\r\n").as_bytes())?;
+        stream.write_all(&vec![b'x'; LENGTH])?;
+        let _ = stream.read(&mut [0; 16]);
+        Ok(())
+    });
+    let runtime = http_runtime(crate::runtime::Trust::Platform)?;
+    let response = runtime.http_client().send_pooled(&get(port), POOL)?;
+    drop(runtime);
+    server.join().map_err(|_| "the server panicked")??;
+    assert_eq!(response.body.len(), LENGTH);
+    assert_eq!(response.body.capacity(), LENGTH);
+    Ok(())
+}
+
+/// The reservation is the declared length, up to a bound past which the
+/// body grows as it arrives: a length nothing has sent yet allocates no
+/// more than that.
+#[test]
+fn a_declared_length_is_reserved_up_to_a_bound() {
+    use super::super::body_reservation;
+    assert_eq!(body_reservation("4388904"), 4_388_904);
+    assert_eq!(body_reservation(" 12 "), 12);
+    assert_eq!(
+        body_reservation("99999999999999"),
+        super::super::BODY_RESERVATION_MAX
+    );
+    assert_eq!(body_reservation("-1"), 0);
+    assert_eq!(body_reservation("ten"), 0);
+}

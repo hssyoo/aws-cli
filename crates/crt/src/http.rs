@@ -487,7 +487,15 @@ unsafe extern "C" fn on_event(
         let (name, value) = unsafe { ((*header).name, (*header).value) };
         // SAFETY: as above.
         let field = |cursor| latin1(unsafe { bytes(cursor) });
-        progress.headers.push((field(name), field(value)));
+        let (name, value) = (field(name), field(value));
+        if name.eq_ignore_ascii_case("content-length") {
+            let reservation = body_reservation(&value);
+            let received = progress.body.len();
+            progress
+                .body
+                .reserve_exact(reservation.saturating_sub(received));
+        }
+        progress.headers.push((name, value));
     }
     if event == c::HTTP_BODY {
         // SAFETY: a body event's cursor is live for this call.
@@ -495,6 +503,23 @@ unsafe extern "C" fn on_event(
     }
     exchange.wake.notify_all();
     drop(progress);
+}
+
+/// The most a response's `Content-Length` reserves ahead of its body: past
+/// it the body grows as it arrives, so a length the server declares but
+/// never sends cannot make the client allocate it.
+pub(crate) const BODY_RESERVATION_MAX: usize = 64 * 1024 * 1024;
+
+/// What a `Content-Length` of `value` reserves for the body: its length,
+/// up to [`BODY_RESERVATION_MAX`], so the body is read into one buffer and
+/// the call's peak memory does not depend on how its growth fell out;
+/// nothing for a value that is not a length.
+pub(crate) fn body_reservation(value: &str) -> usize {
+    value.trim().parse::<u64>().map_or(0, |length| {
+        usize::try_from(length).map_or(BODY_RESERVATION_MAX, |length| {
+            length.min(BODY_RESERVATION_MAX)
+        })
+    })
 }
 
 /// The bytes `cursor` points at.
