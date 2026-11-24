@@ -73,6 +73,156 @@
       }
     },
     {
+      "name": "query-pages-10",
+      "argv": [
+        "zquery",
+        "list-things"
+      ],
+      "fake_models": true,
+      "schemes": [
+        "http",
+        "https"
+      ],
+      "latencies_ms": [
+        0,
+        20,
+        80
+      ],
+      "response": {
+        "content_type": "text/xml",
+        "pages": 10,
+        "items_per_page": 50,
+        "separator": "",
+        "page": "<ListThingsResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><ListThingsResult><Things>$items</Things>$marker</ListThingsResult><ResponseMetadata><RequestId>00000000-0000-4000-8000-000000000000</RequestId></ResponseMetadata></ListThingsResponse>",
+        "item": "<member>thing-$index</member>",
+        "marker": "<NextToken>token-$next</NextToken>"
+      }
+    },
+    {
+      "name": "json-pages-10",
+      "argv": [
+        "zjson",
+        "list-things"
+      ],
+      "fake_models": true,
+      "schemes": [
+        "http",
+        "https"
+      ],
+      "latencies_ms": [
+        0,
+        20,
+        80
+      ],
+      "response": {
+        "content_type": "application/x-amz-json-1.0",
+        "pages": 10,
+        "items_per_page": 50,
+        "separator": ", ",
+        "page": "{\"Things\": [$items]$marker}",
+        "item": "\"thing-$index\"",
+        "marker": ", \"NextToken\": \"token-$next\""
+      }
+    },
+    {
+      "name": "rest-json-pages-10",
+      "argv": [
+        "zrestjson",
+        "list-functions"
+      ],
+      "fake_models": true,
+      "schemes": [
+        "http",
+        "https"
+      ],
+      "latencies_ms": [
+        0,
+        20,
+        80
+      ],
+      "response": {
+        "content_type": "application/json",
+        "pages": 10,
+        "items_per_page": 50,
+        "separator": ", ",
+        "page": "{\"Functions\": [$items]$marker}",
+        "item": "{\"FunctionName\": \"function-$index\", \"Runtime\": \"python3.14\"}",
+        "marker": ", \"NextMarker\": \"token-$next\""
+      }
+    },
+    {
+      "name": "query-pages-100",
+      "argv": [
+        "zquery",
+        "list-things"
+      ],
+      "fake_models": true,
+      "schemes": [
+        "https"
+      ],
+      "latencies_ms": [
+        0,
+        20
+      ],
+      "response": {
+        "content_type": "text/xml",
+        "pages": 100,
+        "items_per_page": 50,
+        "separator": "",
+        "page": "<ListThingsResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><ListThingsResult><Things>$items</Things>$marker</ListThingsResult><ResponseMetadata><RequestId>00000000-0000-4000-8000-000000000000</RequestId></ResponseMetadata></ListThingsResponse>",
+        "item": "<member>thing-$index</member>",
+        "marker": "<NextToken>token-$next</NextToken>"
+      }
+    },
+    {
+      "name": "json-pages-100",
+      "argv": [
+        "zjson",
+        "list-things"
+      ],
+      "fake_models": true,
+      "schemes": [
+        "https"
+      ],
+      "latencies_ms": [
+        0,
+        20
+      ],
+      "response": {
+        "content_type": "application/x-amz-json-1.0",
+        "pages": 100,
+        "items_per_page": 50,
+        "separator": ", ",
+        "page": "{\"Things\": [$items]$marker}",
+        "item": "\"thing-$index\"",
+        "marker": ", \"NextToken\": \"token-$next\""
+      }
+    },
+    {
+      "name": "rest-json-pages-100",
+      "argv": [
+        "zrestjson",
+        "list-functions"
+      ],
+      "fake_models": true,
+      "schemes": [
+        "https"
+      ],
+      "latencies_ms": [
+        0,
+        20
+      ],
+      "response": {
+        "content_type": "application/json",
+        "pages": 100,
+        "items_per_page": 50,
+        "separator": ", ",
+        "page": "{\"Functions\": [$items]$marker}",
+        "item": "{\"FunctionName\": \"function-$index\", \"Runtime\": \"python3.14\"}",
+        "marker": ", \"NextMarker\": \"token-$next\""
+      }
+    },
+    {
       "name": "rest-json-large-page",
       "argv": [
         "zrestjson",
