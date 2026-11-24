@@ -5,9 +5,11 @@ use super::*;
 
 /// The roots checked when none is named: the fake models, `sts`, and a
 /// sample covering the query, json, rest-json, rest-xml and ec2 protocols, a
-/// renamed root and paginators.
+/// renamed root, paginators on each implemented protocol (lambda's and
+/// zrestjson's on rest-json) and the table editors' removals and `wizard`
+/// (lambda's table).
 pub const DEFAULT_COMMANDS: &[&str] = &[
-    "zquery", "zjson", "sts", "sns", "dynamodb", "lambda", "s3api", "ec2",
+    "zquery", "zjson", "zrestjson", "sts", "sns", "dynamodb", "lambda", "s3api", "ec2",
 ];
 
 /// Derive the tables of `commands` (the default set when empty) and diff
