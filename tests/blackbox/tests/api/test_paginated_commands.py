@@ -25,7 +25,8 @@ Each paginator follows a real service's:
 A run forcing the Python route checks every expectation against Python.
 The default run sends these commands down the native route once it
 paginates, all but ListJobs: `test_each_paginated_command_s_route` names
-each one's route.
+each one's route, and checks the refusal of ListJobs on a run forcing the
+native route, which the other tests of ListJobs skip.
 """
 
 import base64
@@ -46,8 +47,15 @@ from apihelpers import (
     fake_model_protocol,
     retries_clause,
 )
+from harness_plugin import COMMAND_ENVIRONMENT
 
 pytestmark = pytest.mark.asyncio
+
+# The run forces the native route, which refuses what it cannot run.
+FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get("AWS_CLI_NATIVE_ROUTER") == "native"
+# The case whose paginator only Python runs, which a forced-native run
+# refuses as test_each_paginated_command_s_route checks.
+PYTHON_PAGINATOR: Final = "query-expression-token"
 
 MODELS: Final = Path(__file__).resolve().parents[3] / "models"
 SERVICES: Final = ("zjson", "zquery", "zrestjson")
@@ -199,6 +207,8 @@ MERGES: Final = {
 
 @pytest.mark.parametrize("case", MERGES)
 async def test_the_pages_merge_into_one_result(paged: ApiSession, case: str) -> None:
+    if FORCED_NATIVE and case == PYTHON_PAGINATOR:
+        pytest.skip("forced native refuses it (paginator), as the route test checks")
     command, pages, sent, merged = MERGES[case]
     run = await paged.run(command, replies=pages)
     assert params(run) == sent, run.describe()
@@ -888,6 +898,14 @@ ROUTES: Final = {
 @pytest.mark.parametrize("case", ROUTES)
 async def test_each_paginated_command_s_route(paged: ApiSession, case: str) -> None:
     command, fallback = ROUTES[case]
+    if FORCED_NATIVE and fallback is not None:
+        run = await paged.run(command, expected_rc=None)
+        refusal = (
+            "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable "
+            f"({fallback}); Python fallback disabled\n"
+        )
+        assert (run.rc, run.stderr, run.calls) == (255, refusal, ()), run.describe()
+        return
     run = await paged.run(command, replies={})
     agent = run.calls[0].request.headers.get("user-agent") or ""
     tokens = agent.split()

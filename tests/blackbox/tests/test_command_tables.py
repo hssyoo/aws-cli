@@ -10,7 +10,8 @@ natively, and `wizard` is a command of the table that is no model
 operation, which runs under Python as `wait` does. Every expectation is
 Python's, so a run forcing the Python route checks them all against it;
 the tests marked `native_only` force the native route to show where each
-input runs.
+input runs. A run forcing the native route skips the expectations of what
+it refuses, which those tests check.
 """
 
 import json
@@ -22,10 +23,13 @@ import pytest
 import pytest_asyncio
 
 from apihelpers import ApiSession, CommandRun, Reply, api_session
+from harness_plugin import COMMAND_ENVIRONMENT
 
 pytestmark = pytest.mark.asyncio
 
 ROUTER: Final = "AWS_CLI_NATIVE_ROUTER"
+# The run forces the native route, which refuses what only Python runs.
+FORCED_NATIVE: Final = COMMAND_ENVIRONMENT.get(ROUTER) == "native"
 # MainArgParser's usage (awscli/argparser.py:25-28), which ends a parse
 # failure's report.
 MAIN_USAGE: Final = (
@@ -150,6 +154,8 @@ REMOVED: Final = {
 async def test_a_removed_operation_is_an_invalid_choice(
     api: ApiSession, case: str
 ) -> None:
+    if FORCED_NATIVE and case.startswith("emr-"):
+        pytest.skip("forced native refuses emr's (unsupported_subcommand), as checked below")
     command, stderr = REMOVED[case]
     run = await api.run(command, expected_rc=252)
     assert failed(run) == ("", stderr, 0), run.describe()
@@ -192,6 +198,9 @@ async def test_wizard_s_close_match_renders_natively(api: ApiSession) -> None:
 
 # The wizard command takes a wizard name; with none and no `_main` wizard
 # it reports its usage (TopLevelWizardCommand._run_main).
+@pytest.mark.skipif(
+    FORCED_NATIVE, reason="forced native refuses it (unsupported_command), as checked below"
+)
 @pytest.mark.parametrize("command", ["lambda", "events"])
 async def test_wizard_runs_under_python(api: ApiSession, command: str) -> None:
     run = await api.run(f"{command} wizard", expected_rc=252)
