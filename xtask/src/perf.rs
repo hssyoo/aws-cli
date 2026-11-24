@@ -72,6 +72,9 @@ pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
         Mode::Report => Ok(()),
         Mode::Check => check(&baseline, &record),
         Mode::WriteBaseline => {
+            if let Some(directory) = baseline.parent() {
+                fs::create_dir_all(directory)?;
+            }
             fs::write(&baseline, record.without_runs().to_json()?)?;
             writeln!(
                 io::stdout(),
