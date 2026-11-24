@@ -6,7 +6,7 @@
 //! command to Python with the reason each variant names.
 use crate::endpoint::EndpointData;
 use crate::hooks::Customization;
-use model::shapes::{Flag, Model, Operation, ShapeId};
+use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
 use model::validate::Undecided;
 
 /// Why a call is left to the Python route; each variant is one reason the
@@ -17,8 +17,8 @@ pub enum Unsupported {
     Protocol(String),
     /// An operation trait the client does not implement, by its model key:
     /// a request checksum, required endpoint discovery, the discovery
-    /// operation, request compression, an event stream or a streaming
-    /// member, or a key the model loader does not interpret.
+    /// operation, request compression, an event stream, a streaming member
+    /// or blob payload, or a key the model loader does not interpret.
     Trait(String),
     /// `operationContextParams`, which botocore evaluates with JMESPath.
     OperationContextParams,
@@ -106,9 +106,10 @@ pub fn static_refusal(
         .map(Unsupported::ClientContextParam)
 }
 
-/// An event stream or a streaming member at either end of the operation,
-/// which botocore reads from the top-level members (`OperationModel.
-/// has_event_stream_input`, `has_streaming_output` and their kin).
+/// An event stream, a streaming member or a blob payload at either end of
+/// the operation, which botocore reads from the top-level members and the
+/// payload (`OperationModel.has_event_stream_input`, `has_streaming_output`
+/// and their kin).
 fn streams(model: &Model, operation: &Operation) -> Option<Unsupported> {
     let reaches = |shape: Option<ShapeId>, flag: Flag| {
         shape.is_some_and(|shape| {
@@ -123,10 +124,28 @@ fn streams(model: &Model, operation: &Operation) -> Option<Unsupported> {
     if ends.iter().any(|end| reaches(*end, Flag::EventStream)) {
         return Some(Unsupported::Trait("eventstream".to_owned()));
     }
-    if ends.iter().any(|end| reaches(*end, Flag::Streaming)) {
+    let blob = |end: &Option<ShapeId>| end.is_some_and(|shape| blob_payload(model, shape));
+    if ends
+        .iter()
+        .any(|end| reaches(*end, Flag::Streaming) || blob(end))
+    {
         return Some(Unsupported::Trait("streaming".to_owned()));
     }
     None
+}
+
+/// `OperationModel._get_streaming_body`: a `payload` member that is a blob
+/// streams whether or not it is marked `streaming`, so botocore returns it
+/// as a `StreamingBody` and the CLI writes it to `outfile`.
+fn blob_payload(model: &Model, shape: ShapeId) -> bool {
+    let Some(payload) = model.shape(shape).traits.payload.as_deref() else {
+        return false;
+    };
+    model
+        .members(shape)
+        .iter()
+        .find(|member| &*member.name == payload)
+        .is_some_and(|member| matches!(model.shape(member.shape).kind, ShapeKind::Blob))
 }
 
 /// The first operation trait the client does not implement: request

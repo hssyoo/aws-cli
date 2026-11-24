@@ -189,6 +189,7 @@ fn real_client_retains_custom_source_pool() -> Result<(), Box<dyn std::error::Er
             ..RuntimeOptions::default()
         })?;
         let factory = runtime
+            .http
             .lifecycle
             .ops()
             .pool

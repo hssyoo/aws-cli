@@ -105,10 +105,11 @@ fn an_implementation_is_chosen_for_the_resolved_protocol_only() {
 }
 
 /// Every model in the repository's botocore data resolves to a protocol,
-/// and exactly those resolving to `query` or `json` have an implementation.
+/// and exactly those resolving to `query`, `json` or `rest-json` have an
+/// implementation.
 #[test]
 #[cfg_attr(miri, ignore = "reads the data directory, which Miri cannot")]
-fn query_and_json_models_have_an_implementation() -> TestResult {
+fn query_json_and_rest_json_models_have_an_implementation() -> TestResult {
     let data =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../aws-cli/awscli/botocore/data");
     let source = DirSource::new(data);
@@ -119,7 +120,7 @@ fn query_and_json_models_have_an_implementation() -> TestResult {
         let model = Model::load(&source, &service)?;
         let resolved = resolved_protocol(model.metadata());
         assert!(resolved.is_ok(), "{service}: {resolved:?}");
-        let expected = matches!(resolved, Ok("query" | "json"));
+        let expected = matches!(resolved, Ok("query" | "json" | "rest-json"));
         assert_eq!(for_model(&model).is_some(), expected, "{service}");
         implemented += usize::from(expected);
     }

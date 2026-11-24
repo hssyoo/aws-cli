@@ -29,7 +29,7 @@ from localstub import HTTPResponse
 pytestmark = pytest.mark.asyncio
 
 MODELS: Final = Path(__file__).resolve().parents[3] / "models"
-SERVICES: Final = ("zjson", "zjson11", "zquery", "zglobal")
+SERVICES: Final = ("zjson", "zjson11", "zquery", "zglobal", "zrestjson")
 USAGE: Final = (
     "\nusage: aws [options] <command> <subcommand> [<subcommand> ...] "
     "[parameters]\nTo see help text, you can run:\n\n  aws help\n  "
@@ -254,7 +254,7 @@ async def test_a_global_rule_set_names_one_host(models: ApiSession) -> None:
 # Ping has no output: botocore's query parser still reads the body as
 # XML, so an empty one fails on either route; GetThing has output.
 @pytest.mark.native_only
-@pytest.mark.parametrize("service", ["zjson", "zjson11", "zquery"])
+@pytest.mark.parametrize("service", ["zjson", "zjson11", "zquery", "zrestjson"])
 async def test_the_native_route_sends_each_protocol_s_request(
     models: ApiSession, service: str
 ) -> None:

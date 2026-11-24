@@ -51,7 +51,7 @@ fn each_stage_names_its_refusal() -> Result<()> {
             Some(PythonReason::Paginator)
         );
         assert_eq!(
-            refused(&[], &["lambda", "list-functions"]),
+            refused(&[], &["s3api", "list-buckets"]),
             Some(PythonReason::UnsupportedProtocol)
         );
     })
@@ -108,4 +108,40 @@ fn each_client_refusal_names_its_own_reason() {
     distinct.sort_unstable();
     distinct.dedup();
     assert_eq!(distinct.len(), reasons.len(), "{reasons:?}");
+}
+
+/// A blob payload streams at either end, marked `streaming` or not
+/// (`_get_streaming_body`): apigateway's GetExport returns one and
+/// ImportRestApi sends one; GetAccount has neither.
+#[test]
+fn a_blob_payload_at_either_end_is_streaming() -> Result<()> {
+    with_models(|models| {
+        let service = models
+            .service("apigateway")
+            .unwrap_or_else(|| panic!("apigateway"));
+        let endpoints =
+            EndpointData::load(models.search(), &service.name, service.model.metadata())
+                .unwrap_or_else(|error| panic!("{error:?}"));
+        for (operation, streams) in [
+            ("get-export", true),
+            ("import-rest-api", true),
+            ("get-account", false),
+        ] {
+            let found = service
+                .operation(operation)
+                .unwrap_or_else(|| panic!("{operation}"));
+            let refused = client::admission::static_refusal(
+                &service.model,
+                found,
+                &endpoints,
+                &service.name,
+                &[],
+            );
+            assert_eq!(
+                refused == Some(Unsupported::Trait("streaming".into())),
+                streams,
+                "{operation}: {refused:?}"
+            );
+        }
+    })
 }

@@ -355,12 +355,152 @@ fn header_values_collapse_whitespace_and_repeat_names_join() {
     assert_eq!(signed, "host;x-amz-meta");
 }
 
+/// `SigV4Auth._normalize_url_path` as the vendored botocore computes it for
+/// each path: dot and empty segments removed (`remove_dot_segments`), a
+/// trailing `/` kept only when the path ends in one and a segment is left,
+/// then quoted with `/~` safe, so `%` is encoded again.
 #[test]
-fn path_normalization_removes_dot_segments_and_requotes() {
-    assert_eq!(normalize_path(""), "/");
-    assert_eq!(normalize_path("/a/./b/../c"), "/a/c");
-    assert_eq!(normalize_path("/a%20b"), "/a%2520b");
-    assert_eq!(normalize_path("/~x/y z"), "/~x/y%20z");
+fn paths_normalize_as_botocore_normalizes_them() {
+    for (path, canonical) in [
+        ("", "/"),
+        ("/", "/"),
+        ("//", "/"),
+        ("///", "/"),
+        ("/a", "/a"),
+        ("/a/", "/a/"),
+        ("/a//", "/a/"),
+        ("//a//", "/a/"),
+        ("/clusters//updates", "/clusters/updates"),
+        ("/tags//leading", "/tags/leading"),
+        ("/tags/a//b", "/tags/a/b"),
+        ("/accounts//users/u", "/accounts/users/u"),
+        ("/a/.", "/a"),
+        ("/a/./", "/a/"),
+        ("/a/..", "/"),
+        ("/a/../", "/"),
+        ("/a/b/..", "/a"),
+        ("/a/b/../", "/a/"),
+        ("/..", "/"),
+        ("/../", "/"),
+        ("/../a", "/a"),
+        ("/.", "/"),
+        ("/./", "/"),
+        ("/./a", "/a"),
+        ("/a/./b/../c", "/a/c"),
+        ("/a/b/c/../../..", "/"),
+        ("/a/b/c/../../../..", "/"),
+        ("/a/b/c/../../../../", "/"),
+        ("a", "a"),
+        ("a/b/", "a/b/"),
+        ("a/../b", "b"),
+        ("./a", "a"),
+        ("../a", "a"),
+        ("..", ""),
+        (".", ""),
+        ("/a%20b", "/a%2520b"),
+        ("/~x/y z", "/~x/y%20z"),
+        ("/a/.../b", "/a/.../b"),
+        ("/a/..b", "/a/..b"),
+        ("/a/.b/", "/a/.b/"),
+        ("/%2E/a", "/%252E/a"),
+        ("/a/b/./", "/a/b/"),
+        ("/a//./b", "/a/b"),
+        ("/a/.//b", "/a/b"),
+        ("/tags/arn%3Aaws%3Ar/a/.", "/tags/arn%253Aaws%253Ar/a"),
+        ("/a/b/.", "/a/b"),
+        ("/tags/.", "/tags"),
+        ("/example/$delete", "/example/%24delete"),
+        ("/é", "/%C3%A9"),
+        ("/a/b//", "/a/b/"),
+    ] {
+        assert_eq!(normalize_path(path), canonical, "{path:?}");
+    }
+}
+
+/// A GET of `path` signed as the AWS SigV4 test suite signs.
+fn suite_signed_path(path: &str) -> Signed {
+    sign(&SignedRequest {
+        credentials: suite_credentials(),
+        scope: Scope {
+            region: "us-east-1",
+            service: "service",
+        },
+        timestamp: at(SUITE_DATE),
+        method: "GET",
+        host: "example.amazonaws.com",
+        path,
+        query: "",
+        headers: &[],
+        payload: Payload::Body(b""),
+        content_sha256: false,
+        path_encoding: PathEncoding::Normalized,
+    })
+}
+
+/// The signatures the vendored botocore's `SigV4Auth.add_auth` gives the
+/// same GETs: an empty label's `//` and a trailing `/.` sign as collapsed.
+#[test]
+fn empty_and_trailing_dot_segments_sign_as_botocore_signs_them() {
+    for (path, signature) in [
+        (
+            "/clusters//updates",
+            "e397c00f0b9bb7718638924460a4a0ea8ba3d6ad5e0c4784ecf0285250cc7f5f",
+        ),
+        (
+            "/tags/a/.",
+            "d4eb03ed8c14194847c24c7d8b2df3dbaf656fcfa42a569f31af79c9151000be",
+        ),
+    ] {
+        assert_eq!(suite_signed_path(path).signature, signature, "{path:?}");
+    }
+}
+
+/// The AWS SigV4 test suite's `normalize-path` cases, read from the vendored
+/// copy botocore's `test_sigv4.py` runs: each request line's path gives the
+/// `.creq`'s canonical URI and the `.authz`'s signature. `get-space`, which
+/// botocore skips because Python's HTTP parser refuses its request line,
+/// runs here too.
+#[test]
+fn suite_normalize_path_cases() -> Result<(), Box<dyn std::error::Error>> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../aws-cli/tests/unit/botocore/auth/aws4_testsuite/normalize-path");
+    let mut cases = 0;
+    for entry in std::fs::read_dir(&root)? {
+        let directory = entry?.path();
+        if !directory.is_dir() {
+            continue;
+        }
+        let name = directory
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("name")?;
+        let read = |extension: &str| {
+            std::fs::read_to_string(directory.join(format!("{name}.{extension}")))
+                .map(|text| text.replace('\r', ""))
+        };
+        let request = read("req")?;
+        let line = request.lines().next().ok_or("request line")?;
+        let path = line
+            .strip_prefix("GET ")
+            .and_then(|rest| rest.strip_suffix(" HTTP/1.1"))
+            .ok_or("a GET request line")?;
+        let canonical = read("creq")?;
+        let canonical = canonical.lines().nth(1).ok_or("canonical URI")?;
+        assert_eq!(normalize_path(path), canonical, "{name}");
+        let authorization = read("authz")?;
+        let signature = authorization
+            .rsplit("Signature=")
+            .next()
+            .ok_or("signature")?;
+        assert_eq!(
+            suite_signed_path(path).signature,
+            signature.trim(),
+            "{name}"
+        );
+        cases += 1;
+    }
+    assert_eq!(cases, 8);
+    Ok(())
 }
 
 /// Presigns with the access key and secret of the black-box suite, at the

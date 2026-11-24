@@ -442,9 +442,11 @@ class AwsWireProtocol:
     ) -> tuple[Any, dict[str, str]]:
         # A request URI may end in a literal query that tells two operations
         # on one path apart; the operation whose literal query the request
-        # carries in full wins over one that names none.
+        # carries in full wins over one that names none. A greedy label
+        # can take segments another template names, so of two templates the
+        # one with more segments wins.
         method = request.method.upper()
-        best: tuple[int, Any, dict[str, str]] | None = None
+        best: tuple[tuple[int, int], Any, dict[str, str]] | None = None
         for operation_name in operation_names:
             operation_model = service_model.operation_model(operation_name)
             if operation_model.http["method"] != method:
@@ -462,8 +464,9 @@ class AwsWireProtocol:
                 for name, values in required.items()
             ):
                 continue
-            if best is None or len(required) > best[0]:
-                best = (len(required), operation_model, uri_values)
+            score = (len(required), len(template.strip("/").split("/")))
+            if best is None or score > best[0]:
+                best = (score, operation_model, uri_values)
         if best is not None:
             return best[1], best[2]
         raise WireBridgeError(
@@ -503,6 +506,24 @@ class AwsWireProtocol:
     ) -> dict[str, str] | None:
         template_parts = template.strip("/").split("/")
         path_parts = raw_path.strip("/").split("/")
+        greedy = next(
+            (
+                index
+                for index, part in enumerate(template_parts)
+                if part.endswith("+}")
+            ),
+            None,
+        )
+        if greedy is not None and len(path_parts) > len(template_parts):
+            # A greedy label keeps its `/` unencoded (botocore's
+            # `_render_uri_template`), so it takes every segment the
+            # template's other parts leave.
+            end = len(path_parts) - (len(template_parts) - greedy - 1)
+            path_parts = [
+                *path_parts[:greedy],
+                "/".join(path_parts[greedy:end]),
+                *path_parts[end:],
+            ]
         if len(template_parts) != len(path_parts):
             return None
         values: dict[str, str] = {}

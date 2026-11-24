@@ -55,6 +55,11 @@ impl LocalZone {
 
 /// `localtime_r(t).tm_gmtoff`.
 fn gmtoff(at: i64) -> Option<i64> {
+    #[allow(
+        deprecated,
+        reason = "musl's time_t alias carries a notice of its coming 64-bit change; \
+                  localtime_r takes that type, whatever its width"
+    )]
     let time = libc::time_t::try_from(at).ok()?;
     // SAFETY: an all-zero `tm` is a valid value of the plain C struct, which
     // `localtime_r` overwrites.
