@@ -7,7 +7,7 @@ use crate::ServiceSource;
 use crate::testing::{Result, parsed, with_models};
 use cli_core::cli_error::Category;
 
-fn bound(source: &ServiceSource<'_>, argv: &[&str]) -> std::result::Result<Bound, PythonReason> {
+fn bound(source: &ServiceSource<'_>, argv: &[&str]) -> std::result::Result<Binding, PythonReason> {
     let result = parsed(source, argv);
     let table = source
         .models()
@@ -18,7 +18,7 @@ fn bound(source: &ServiceSource<'_>, argv: &[&str]) -> std::result::Result<Bound
 
 fn call(source: &ServiceSource<'_>, argv: &[&str]) -> Call {
     match bound(source, argv) {
-        Ok(Bound::Call(call)) => call,
+        Ok(Binding::Call(call)) => call,
         other => panic!("{argv:?}: {other:?}"),
     }
 }
@@ -29,7 +29,7 @@ fn input(source: &ServiceSource<'_>, argv: &[&str]) -> Value {
 
 fn raised(source: &ServiceSource<'_>, argv: &[&str]) -> String {
     match bound(source, argv) {
-        Ok(Bound::Raised(failure)) => {
+        Ok(Binding::Raised(failure)) => {
             assert_eq!(failure.category, Category::ParamValidation);
             String::from_utf8_lossy(&failure.message).into_owned()
         }

@@ -23,9 +23,9 @@ use client::paginate::PaginationConfig;
 use command::models::{DerivedArgument, Origin, Paging, Table, Unpack};
 use model::value::{Map, Value};
 
-/// What binding decided.
+/// What binding decided: the call, or what a paging handler raised first.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Bound {
+pub enum Binding {
     /// The call to make.
     Call(Call),
     /// `ensure_paging_params_not_set` raised on `operation-args-parsed`,
@@ -52,14 +52,14 @@ pub const MAX_ITEMS_WARNING: &str =
 
 /// The operation's call from the completed `parsed`, or why Python binds
 /// it.
-pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Bound, PythonReason> {
+pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Binding, PythonReason> {
     let paging = table.paging.as_ref();
     let raw = &parsed.args.namespace;
     let mut paginate = paging.is_some() && paginate_global(parsed);
     if let Some(paging) = paging {
         paginate &= !manual_token(paging, raw);
         if !paginate && let Some(failure) = paging_params_set(paging, raw) {
-            return Ok(Bound::Raised(failure));
+            return Ok(Binding::Raised(failure));
         }
     }
     let shadowed = paging
@@ -95,7 +95,7 @@ pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Bound, PythonReas
             .any(|key| paging.tokens.iter().any(|token| &**token == key))
     });
     let pagination = paginate.then(|| pagination_config(input.remove(PAGINATION_CONFIG)));
-    Ok(Bound::Call(Call {
+    Ok(Binding::Call(Call {
         input: Value::Map(input),
         pagination,
         warned,

@@ -4,7 +4,7 @@
 //! decide alone comes first (the protocol, the traits, then the
 //! customizations), so an operation's verdict on those is the same whatever
 //! its arguments; the arguments' binding and validation come last.
-use crate::bind::Bound;
+use crate::bind::Binding;
 use crate::coverage;
 use awscli_argparse::ParseResult;
 use cli_core::cli_error::{CommandFailure, PythonReason};
@@ -87,8 +87,8 @@ pub fn admit(
         raised: None,
     };
     let call = match crate::bind::bind(table, parsed)? {
-        Bound::Call(call) => call,
-        Bound::Raised(failure) => {
+        Binding::Call(call) => call,
+        Binding::Raised(failure) => {
             admitted.raised = Some(failure);
             return Ok(admitted);
         }
