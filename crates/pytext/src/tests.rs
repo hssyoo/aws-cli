@@ -39,3 +39,16 @@ fn reprs_quote_and_escape_as_python_does() {
     assert_eq!(repr::float_repr(0.0001), "0.0001");
     assert_eq!(repr::float_repr(-0.0), "-0.0");
 }
+
+/// What `float()` and `int()` read first: other Unicode whitespace as a
+/// space and other decimal digits as their ASCII digit, ASCII as it is, and
+/// anything else ends the literal invalid.
+#[test]
+fn literals_are_mapped_to_ascii_as_cpython_maps_them() {
+    assert_eq!(number::ascii_literal("12"), "12");
+    assert_eq!(number::ascii_literal("\u{661}\u{662}"), "12");
+    assert_eq!(number::ascii_literal("\u{2000}5\u{85}"), " 5 ");
+    assert_eq!(number::ascii_literal("\u{1c}5"), "\u{1c}5");
+    assert_eq!(number::ascii_literal("5\u{180e}9"), "5?");
+    assert_eq!(number::ascii_literal("\u{7f}"), "?");
+}

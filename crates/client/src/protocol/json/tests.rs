@@ -10,7 +10,8 @@ const MODEL: &str = r#"{
     "In": {"type": "structure", "members": {"When": {"shape": "T"}, "Data": {"shape": "Blob"},
       "N": {"shape": "D"}}},
     "Out": {"type": "structure", "members": {"When": {"shape": "T"}, "Data": {"shape": "Blob"},
-      "Pick": {"shape": "U"}}},
+      "Pick": {"shape": "U"}, "Doc": {"shape": "Document"}}},
+    "Document": {"type": "structure", "members": {}, "document": true},
     "U": {"type": "structure", "union": true, "members": {"A": {"shape": "S"}}},
     "T": {"type": "timestamp"}, "Blob": {"type": "blob"}, "D": {"type": "double"},
       "S": {"type": "string"},
@@ -150,5 +151,93 @@ fn the_cli_s_handlers_keep_the_wire_values() -> Result<(), Box<dyn std::error::E
     assert_eq!(parsed.get("Data"), Some(&Value::String("aGk=".into())));
     let unknown = Value::from_json(br#"{"SDK_UNKNOWN_MEMBER":{"name":"New"}}"#)?;
     assert_eq!(parsed.get("Pick"), Some(&unknown));
+    Ok(())
+}
+
+/// The output of `Go` for `body`, or the parser's error.
+fn output(headers: &[(&str, &str)], body: &[u8]) -> Result<Value, ParseError> {
+    let model = model().ok_or_else(|| ParseError::new("model"))?;
+    let operation = &model.operations()[0];
+    let response = HttpResponse {
+        status: 200,
+        headers: Headers::from_pairs(headers.iter().copied()),
+        body: body.to_vec(),
+    };
+    Json.parse(&model, operation, &response, &ParseOptions::BOTOCORE)
+}
+
+/// A body is `json.loads`' document: `NaN` and the infinities are floats,
+/// which serde's reader refused, so the member was dropped.
+#[test]
+fn a_body_holds_nan_and_the_infinities() -> Result<(), Box<dyn std::error::Error>> {
+    let parsed = output(&[], br#"{"Doc": [NaN, Infinity, -Infinity, 1e400]}"#)?;
+    let Some(Value::List(doc)) = parsed.get("Doc") else {
+        return Err("Doc".into());
+    };
+    assert!(matches!(doc[0], Value::Float(number) if number.is_nan()));
+    assert_eq!(
+        doc[1..],
+        [
+            Value::Float(f64::INFINITY),
+            Value::Float(f64::NEG_INFINITY),
+            Value::Float(f64::INFINITY)
+        ]
+    );
+    Ok(())
+}
+
+/// What the reader cannot hold fails the call, naming the native client's
+/// limit, rather than reading as `{'message': body}` and printing nothing:
+/// a lone surrogate, and nesting past the limit.
+#[test]
+fn a_body_past_the_reader_s_limits_fails_naming_the_limit() {
+    let nested = |depth| format!("{{\"Doc\": {}{}}}", "[".repeat(depth), "]".repeat(depth));
+    for body in [
+        r#"{"Doc": "a\ud800b"}"#.to_owned(),
+        nested(model::pyjson::MAX_DEPTH),
+    ] {
+        let failed = output(&[], body.as_bytes()).err();
+        assert!(
+            failed
+                .as_ref()
+                .is_some_and(|error| error.message.starts_with("native client limit: ")),
+            "{failed:?}"
+        );
+    }
+    assert!(output(&[], br#"{"Doc": [1,}"#).is_ok());
+}
+
+/// A document at the reader's limit parses and drops on a thread with the
+/// default stack, the reader and the structure pass being no deeper.
+#[test]
+fn a_body_at_the_limit_parses_on_a_default_thread() -> Result<(), Box<dyn std::error::Error>> {
+    let depth = model::pyjson::MAX_DEPTH - 1;
+    let body = format!("{{\"Doc\": {}{}}}", "[".repeat(depth), "]".repeat(depth));
+    let parsed = std::thread::spawn(move || output(&[], body.as_bytes()).map(|_| ()))
+        .join()
+        .map_err(|_| "the parse overflowed its stack")?;
+    Ok(parsed?)
+}
+
+/// Headers read as botocore's `HeadersDict` gives them: a repeated one's
+/// values joined; and bytes not UTF-8 fail with CPython's own text.
+#[test]
+fn headers_and_bytes_read_as_botocore_reads_them() -> Result<(), Box<dyn std::error::Error>> {
+    let parsed = output(
+        &[("x-amzn-RequestId", "a"), ("x-amzn-requestid", "b")],
+        b"{}",
+    )?;
+    let id = parsed
+        .get("ResponseMetadata")
+        .and_then(|metadata| metadata.get("RequestId"))
+        .and_then(Value::as_str);
+    assert_eq!(id, Some("a, b"));
+    let failed = output(&[], b"{\"Doc\": \"\xff\"}")
+        .err()
+        .map(|error| error.message);
+    assert_eq!(
+        failed.as_deref(),
+        Some("'utf-8' codec can't decode byte 0xff in position 9: invalid start byte")
+    );
     Ok(())
 }

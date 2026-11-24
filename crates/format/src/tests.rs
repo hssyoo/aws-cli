@@ -17,6 +17,7 @@ const RESPONSES: &str = r#"[
   {"ResponseMetadata": {"RequestId": "r"}},
   {"ResponseMetadata": {"RequestId": "r"}, "Id": "x"},
   {"Name": "flat", "Count": 3, "On": true, "Off": false, "None": null},
+  {"Text": "t", "Doc": [NaN, Infinity, -Infinity], "F": NaN},
   {"Outer": {"Inner": {"Deep": "v", "N": 1}, "Leaf": "l"}, "Top": "t"},
   {"Tags": ["a", "b", "c"], "Empty": [], "EmptyMap": {}},
   {"Items": [{"Name": "a", "Size": 1}, {"Name": "b", "Extra": [1, 2], "Map": {"k": "v"}}]},
@@ -195,7 +196,9 @@ fn rust_row(response: &Value) -> serde_json::Value {
 fn json_and_text_match_awscli_s_formatters() -> Result<()> {
     let corpus = corpus();
     let expected = oracle(&corpus, "UTC")?;
-    let Value::Map(parsed) = Value::from_json(corpus.as_bytes())? else {
+    // `json.loads`, as the oracle reads it: `NaN` and the infinities included.
+    let parsed = model::pyjson::loads(&corpus).map_err(|error| format!("{error:?}"))?;
+    let Value::Map(parsed) = parsed else {
         return Err("corpus".into());
     };
     let Some(Value::List(responses)) = parsed.get("responses") else {
@@ -306,5 +309,29 @@ fn iso8601_timestamps_match_iso_format() -> Result<()> {
             assert_eq!(&actual, wanted, "{zone} {wire:?}");
         }
     }
+    Ok(())
+}
+
+/// A response nested to `json.loads`' limit renders as JSON and as text,
+/// and drops, on a thread with the default stack: the formatters recurse
+/// no deeper than the reader holds.
+#[test]
+fn a_response_at_the_reader_s_limit_renders_on_a_default_thread() -> Result<()> {
+    let rendered = std::thread::spawn(|| {
+        let mut doc = Value::List(Vec::new());
+        for _ in 1..model::pyjson::MAX_DEPTH - 1 {
+            doc = Value::List(vec![doc]);
+        }
+        let mut response = Map::new();
+        response.insert("Doc".into(), doc);
+        let response = Value::Map(response);
+        let json = render(&response, OutputFormat::Json).map(|text| text.len());
+        let text = render(&response, OutputFormat::Text).map(|text| text.len());
+        drop(response);
+        (json.is_ok(), text.is_ok())
+    })
+    .join()
+    .map_err(|_| "rendering overflowed its stack")?;
+    assert_eq!(rendered, (true, true));
     Ok(())
 }

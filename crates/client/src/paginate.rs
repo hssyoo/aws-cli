@@ -20,7 +20,6 @@ use model::pyrepr::{py_repr, py_str};
 use model::shapes::ShapeKind;
 use model::value::{Map, Value};
 
-mod loads;
 mod object;
 mod path;
 mod py;

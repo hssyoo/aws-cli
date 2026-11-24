@@ -8,26 +8,20 @@ use pytext::number;
 use pytext::repr::{bytes_repr, str_repr};
 pub use pytext::repr::{float_repr, is_printable};
 
-/// What CPython's `float()` and `int()` strip before a literal: C's six
-/// from ASCII ([`pytext::number::C_SPACE`]), not the separators U+001C to
-/// U+001F that `str.strip()` also removes, and Unicode whitespace beyond
-/// ASCII (`_PyUnicode_TransformDecimalAndSpaceToASCII`). Unicode's
-/// `White_Space` is exactly that set.
-fn stripped(text: &str) -> &str {
-    text.trim_matches(char::is_whitespace)
-}
-
-/// `float(text)`: [`pytext::number::float`] after [`stripped`].
+/// `float(text)`: [`pytext::number::float`] of the text as CPython reads
+/// it, mapped to ASCII ([`pytext::number::ascii_literal`], Unicode digits
+/// and spaces included) and stripped of C's whitespace.
 pub fn float_from_text(text: &str) -> Option<f64> {
-    number::float(stripped(text))
+    number::float(number::ascii_literal(text).trim_matches(number::C_SPACE))
 }
 
-/// `int(text)` in base 10, after [`stripped`]: an `Integer` or, beyond
-/// `i64`, a `BigInteger`, of at most `sys.get_int_max_str_digits()` digits.
-/// `Err` holds the ValueError's text. Python also reads non-ASCII decimal
-/// digits; those are refused here.
+/// `int(text)` in base 10, read as [`float_from_text`] reads it: an
+/// `Integer` or, beyond `i64`, a `BigInteger`, of at most
+/// `sys.get_int_max_str_digits()` digits. `Err` holds the ValueError's
+/// text.
 pub fn int_from_text(text: &str) -> Result<Value, String> {
-    let body = stripped(text);
+    let ascii = number::ascii_literal(text);
+    let body = ascii.trim_matches(number::C_SPACE);
     let canonical = number::int(body)
         .ok_or_else(|| format!("invalid literal for int() with base 10: {}", str_repr(text)))?;
     let digits = number::digit_count(body);

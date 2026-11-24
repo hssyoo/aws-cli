@@ -1,5 +1,6 @@
 //! `json.dumps` byte for byte, with `sort_keys` off: botocore's JSON request
-//! bodies and the CLI's JSON output are written with it.
+//! bodies and the CLI's JSON output are written with it. And `json.loads`
+//! ([`loads`]), which reads every JSON response body and starting token.
 use crate::pyrepr::float_repr;
 use crate::value::Value;
 use std::fmt::Write as _;
@@ -234,6 +235,9 @@ fn json_float(number: f64) -> String {
         float_repr(number)
     }
 }
+
+mod loads;
+pub use loads::{Limit, LoadError, MAX_DEPTH, loads};
 
 #[cfg(test)]
 mod tests;

@@ -70,11 +70,11 @@ fn add_modeled_parse(
 /// `x-amz-request-id` with `x-amz-id-2` as `HostId`.
 fn response_metadata(headers: &Headers) -> Map {
     let mut metadata = Map::new();
-    if let Some(id) = header(headers, "x-amzn-requestid") {
+    if let Some(id) = common::header(headers, "x-amzn-requestid") {
         metadata.insert("RequestId".into(), Value::String(id));
-    } else if let Some(id) = header(headers, "x-amz-request-id") {
+    } else if let Some(id) = common::header(headers, "x-amz-request-id") {
         metadata.insert("RequestId".into(), Value::String(id));
-        let host = header(headers, "x-amz-id-2").unwrap_or_default();
+        let host = common::header(headers, "x-amz-id-2").unwrap_or_default();
         metadata.insert("HostId".into(), Value::String(host));
     }
     metadata
@@ -103,7 +103,7 @@ fn non_payload_attrs(
             }
             Some("header") => {
                 let name = traits.name.as_deref().unwrap_or(&member.name);
-                let Some(text) = header(&response.headers, name) else {
+                let Some(text) = common::header(&response.headers, name) else {
                     continue;
                 };
                 body.value(member.shape, &Value::String(text))?
@@ -121,7 +121,7 @@ fn header_map(prefix: &str, headers: &Headers) -> Map {
     let prefix = prefix.to_lowercase();
     let skip = prefix.chars().count();
     let mut parsed = Map::new();
-    for (name, value) in distinct(headers) {
+    for (name, value) in common::distinct(headers) {
         if name.to_lowercase().starts_with(&prefix) {
             parsed.insert(name.chars().skip(skip).collect(), Value::String(value));
         }
@@ -151,7 +151,7 @@ fn payload(
     let value = if resolved.traits.is(Flag::EventStream) {
         return Err(ParseError::new("event stream responses are not supported"));
     } else if matches!(resolved.kind, ShapeKind::String | ShapeKind::Blob) {
-        Value::String(decoded(&response.body)?.to_owned())
+        Value::String(common::decoded(&response.body)?.to_owned())
     } else {
         body.parse(member.shape, &body.initial(&response.body)?)?
     };
@@ -198,8 +198,11 @@ fn json_value_of(value: &Value) -> Result<Value, ParseError> {
         ));
     }
     let bytes = pytext::base64::decode(text).map_err(ParseError::new)?;
-    Value::from_json(decoded(&bytes)?.as_bytes())
-        .map_err(|error| ParseError::new(error.to_string()))
+    match model::pyjson::loads(common::decoded(&bytes)?) {
+        Ok(value) => Ok(value),
+        Err(model::pyjson::LoadError::Invalid(message)) => Err(ParseError::new(message)),
+        Err(model::pyjson::LoadError::Limit(limit)) => Err(common::beyond_limit(limit)),
+    }
 }
 
 /// `BaseRestParser._handle_list`'s split: a header list's text as its
@@ -214,52 +217,11 @@ pub(super) fn header_items(shape: &Shape, value: &Value) -> Option<Result<Value,
         Value::String(text) => {
             let parts = text
                 .split(',')
-                .map(|part| Value::String(strip(part).to_owned()));
+                .map(|part| Value::String(pytext::text::strip(part).to_owned()));
             Some(Ok(Value::List(parts.collect())))
         }
         other => Some(Err(no_attribute(other, "split"))),
     }
-}
-
-/// `headers[name]`: every value of `name`, in any case, joined with `, ` as
-/// urllib3 joins a repeated header.
-pub(super) fn header(headers: &Headers, name: &str) -> Option<String> {
-    let values: Vec<&str> = headers.get_all(name).collect();
-    (!values.is_empty()).then(|| values.join(", "))
-}
-
-/// The headers as botocore's `HeadersDict` iterates them: each name once,
-/// spelled as it first came, with [`header`]'s value.
-fn distinct(headers: &Headers) -> Vec<(String, String)> {
-    let mut names: Vec<&str> = Vec::new();
-    for (name, _) in headers.iter() {
-        if !names.iter().any(|seen| seen.eq_ignore_ascii_case(name)) {
-            names.push(name);
-        }
-    }
-    names
-        .into_iter()
-        .map(|name| (name.to_owned(), header(headers, name).unwrap_or_default()))
-        .collect()
-}
-
-/// `bytes.decode('utf-8')`; `Err` holds `UnicodeDecodeError`'s text.
-pub(super) fn decoded(bytes: &[u8]) -> Result<&str, ParseError> {
-    std::str::from_utf8(bytes).map_err(|error| {
-        let start = error.valid_up_to();
-        let first = bytes.get(start).copied().unwrap_or(0);
-        let (end, reason) = match error.error_len() {
-            None => (bytes.len(), "unexpected end of data"),
-            Some(_) if !matches!(first, 0xc2..=0xf4) => (start + 1, "invalid start byte"),
-            Some(len) => (start + len, "invalid continuation byte"),
-        };
-        let at = if end - start == 1 {
-            format!("byte 0x{first:02x} in position {start}")
-        } else {
-            format!("bytes in position {start}-{}", end - 1)
-        };
-        ParseError::new(format!("'utf-8' codec can't decode {at}: {reason}"))
-    })
 }
 
 /// The `AttributeError` of `value.name` on a value without that method.
@@ -268,10 +230,4 @@ pub(super) fn no_attribute(value: &Value, name: &str) -> ParseError {
         "'{}' object has no attribute '{name}'",
         common::short_type(value)
     ))
-}
-
-/// `str.strip()`: Python's whitespace, the separators U+001C to U+001F
-/// that Unicode's `White_Space` omits included.
-fn strip(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
 }

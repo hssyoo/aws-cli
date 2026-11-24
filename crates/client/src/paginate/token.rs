@@ -1,12 +1,12 @@
 //! The tokens the paginator hands out and takes back: `TokenEncoder`,
 //! `TokenDecoder`, `PageIterator._parse_starting_token` and the
 //! `resume_token` setter.
-use super::loads::{LoadError, loads};
 use super::py::{self, type_name};
 use crate::admission::Unsupported;
 use crate::error::CallError;
 use crate::error::PaginationError;
 use model::pyjson::{self, Options};
+use model::pyjson::{LoadError, loads};
 use model::pyrepr::py_repr;
 use model::value::{Map, Value};
 
@@ -91,8 +91,10 @@ fn decode(token: &str) -> Result<Map, DecodeError> {
     let mut decoded = match loads(&text) {
         Ok(Value::Map(map)) => map,
         // `list.pop('boto_encoded_keys', None)` is a `TypeError`.
-        Ok(Value::List(_)) | Err(LoadError::Invalid) => return Err(DecodeError::Deprecated),
-        Err(LoadError::Unsupported(why)) => return Err(DecodeError::Unsupported(why)),
+        Ok(Value::List(_)) | Err(LoadError::Invalid(_)) => return Err(DecodeError::Deprecated),
+        // Nothing has been sent, so what this reader cannot hold is the
+        // Python route's to read.
+        Err(LoadError::Limit(limit)) => return Err(DecodeError::Unsupported(limit.as_str())),
         Ok(other) => {
             return Err(DecodeError::Raised(format!(
                 "'{}' object has no attribute 'pop'",
@@ -267,7 +269,7 @@ fn deprecated(raw: &str, input_token: &[String]) -> Result<StartingToken, Pagina
     let mut parts: Vec<&str> = raw.split("___").collect();
     let mut index = Value::Integer(0);
     if parts.len() == input_token.len() + 1 {
-        match parts.pop().map(py::int_of_str) {
+        match parts.pop().map(model::pyrepr::int_from_text) {
             Some(Ok(number)) => index = number,
             _ => parts = vec![raw],
         }

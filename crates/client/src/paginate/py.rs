@@ -184,7 +184,7 @@ pub(super) fn int(value: &Value) -> Result<Value, PaginationError> {
     match value {
         Value::Integer(_) | Value::BigInteger(_) => Ok(value.clone()),
         Value::Bool(flag) => Ok(Value::Integer(i64::from(*flag))),
-        Value::String(text) => int_of_str(text).map_err(PaginationError::Value),
+        Value::String(text) => model::pyrepr::int_from_text(text).map_err(PaginationError::Value),
         Value::Float(number) => crate::python::int_of_float(*number).map_err(|error| match error {
             FloatToInt::NaN => PaginationError::Value(error.to_string()),
             FloatToInt::Infinite => PaginationError::Other(error.to_string()),
@@ -199,51 +199,4 @@ pub(super) fn int(value: &Value) -> Result<Value, PaginationError> {
 /// The value of an `int` from [`int`], beyond `i128` saturated.
 pub(super) fn int_number(value: &Value) -> i128 {
     int_of(value).unwrap_or(0)
-}
-
-/// The first code point of each run of ten Unicode decimal digits
-/// (`Py_UNICODE_TODECIMAL`, from CPython 3.14.8's `unicodetype_db.h`,
-/// Unicode 16.0.0).
-const DECIMAL_ZEROS: [u32; 76] = [
-    0x30, 0x660, 0x6F0, 0x7C0, 0x966, 0x9E6, 0xA66, 0xAE6, 0xB66, 0xBE6, 0xC66, 0xCE6, 0xD66,
-    0xDE6, 0xE50, 0xED0, 0xF20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0, 0x1A80, 0x1A90,
-    0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0, 0xAA50, 0xABF0, 0xFF10,
-    0x104A0, 0x10D30, 0x10D40, 0x11066, 0x110F0, 0x11136, 0x111D0, 0x112F0, 0x11450, 0x114D0,
-    0x11650, 0x116C0, 0x116D0, 0x116DA, 0x11730, 0x118E0, 0x11950, 0x11BF0, 0x11C50, 0x11D50,
-    0x11DA0, 0x11F50, 0x16130, 0x16A60, 0x16AC0, 0x16B50, 0x16D70, 0x1CCF0, 0x1D7CE, 0x1D7D8,
-    0x1D7E2, 0x1D7EC, 0x1D7F6, 0x1E140, 0x1E2F0, 0x1E4F0, 0x1E5F1, 0x1E950, 0x1FBF0,
-];
-
-/// `Py_UNICODE_TODECIMAL(character)`.
-fn decimal(character: char) -> Option<u32> {
-    let code = u32::from(character);
-    let zero = DECIMAL_ZEROS
-        .partition_point(|zero| *zero <= code)
-        .checked_sub(1)?;
-    let digit = code - DECIMAL_ZEROS.get(zero)?;
-    (digit < 10).then_some(digit)
-}
-
-/// `int(text)` of a `str` (`PyLong_FromUnicodeObject`): each character
-/// past ASCII a space if it is whitespace, else its decimal digit, and the
-/// text cut at the first that is neither
-/// (`_PyUnicode_TransformDecimalAndSpaceToASCII`); then `int()` of that.
-///
-/// # Errors
-/// `int()`'s `ValueError`.
-pub(super) fn int_of_str(text: &str) -> Result<Value, String> {
-    let mut ascii = String::with_capacity(text.len());
-    for character in text.chars() {
-        if character.is_ascii() && character != '\u{7f}' {
-            ascii.push(character);
-        } else if character.is_whitespace() {
-            ascii.push(' ');
-        } else if let Some(digit) = decimal(character) {
-            ascii.extend(char::from_digit(digit, 10));
-        } else {
-            ascii.push('?');
-            break;
-        }
-    }
-    model::pyrepr::int_from_text(&ascii)
 }

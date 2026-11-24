@@ -280,6 +280,12 @@ fn json_value_headers_are_base64_json() -> TestResult {
             "/w==",
             "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
         ),
+        // `json.loads`' own errors, with CPython's text.
+        ("bm9wZQ==", "Expecting value: line 1 column 1 (char 0)"),
+        (
+            "eyJhIjogMSx9",
+            "Illegal trailing comma before end of object: line 1 column 8 (char 7)",
+        ),
     ] {
         assert_eq!(
             output("Go", &[("X-Json", value)], b""),
@@ -306,6 +312,9 @@ fn header_scalars_parse_as_python_converts_them() -> TestResult {
     assert_eq!(parsed.get("Status"), Some(&Value::Integer(200)));
     assert_eq!(parsed.get("Count"), Some(&Value::Integer(12)));
     assert_eq!(parsed.get("Ratio"), Some(&Value::Float(f64::NEG_INFINITY)));
+    // int() reads any Unicode decimal digits, as CPython does.
+    let arabic = output("Go", &[("X-Count", "\u{661}\u{662}")], b"")?;
+    assert_eq!(arabic.get("Count"), Some(&Value::Integer(12)));
     assert_eq!(parsed.get("On"), Some(&Value::Bool(true)));
     assert_eq!(
         parsed.get("Names"),
@@ -322,6 +331,12 @@ fn header_scalars_parse_as_python_converts_them() -> TestResult {
             "invalid literal for int() with base 10: '1.5'",
         ),
         ("X-Count", "", "invalid literal for int() with base 10: ''"),
+        // C's six are stripped, not str.strip()'s separators.
+        (
+            "X-Count",
+            "\u{1c}7",
+            "invalid literal for int() with base 10: '\\x1c7'",
+        ),
         ("X-Ratio", "abc", "could not convert string to float: 'abc'"),
     ] {
         assert_eq!(
@@ -549,5 +564,36 @@ fn response_metadata_comes_before_the_output_s_members() -> TestResult {
         .and_then(Value::as_map)
         .ok_or("metadata")?;
     assert_eq!(metadata.get("HTTPStatusCode"), Some(&Value::Integer(200)));
+    Ok(())
+}
+
+/// A document payload is `json.loads`' document: `NaN` and the infinities
+/// held; a lone surrogate or nesting past the reader's limit fails the call,
+/// naming the native client's limit.
+#[test]
+fn a_document_payload_loads_as_python_s_json_loads() -> TestResult {
+    let parsed = output("Doc", &[], b"[NaN, -Infinity]")?;
+    let Some(Value::List(doc)) = parsed.get("Doc") else {
+        return Err("Doc".into());
+    };
+    assert!(matches!(doc[0], Value::Float(number) if number.is_nan()));
+    assert_eq!(doc[1], Value::Float(f64::NEG_INFINITY));
+    let deep = |depth| format!("{}{}", "[".repeat(depth), "]".repeat(depth));
+    for body in [
+        r#"["\udfff"]"#.to_owned(),
+        deep(model::pyjson::MAX_DEPTH + 1),
+    ] {
+        let failed = output("Doc", &[], body.as_bytes()).err();
+        assert!(
+            failed
+                .as_ref()
+                .is_some_and(|error| error.message.starts_with("native client limit: ")),
+            "{failed:?}"
+        );
+    }
+    let at_limit = deep(model::pyjson::MAX_DEPTH);
+    std::thread::spawn(move || output("Doc", &[], at_limit.as_bytes()).map(|_| ()))
+        .join()
+        .map_err(|_| "the parse overflowed its stack")??;
     Ok(())
 }

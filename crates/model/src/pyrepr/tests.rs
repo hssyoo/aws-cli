@@ -145,6 +145,9 @@ fn float_from_text_reads_what_python_float_reads() {
         ("", None),
         ("0x10", None),
         ("1 2", None),
+        // Other Unicode digits and spaces, as CPython maps them first.
+        ("\u{661}.\u{665}", Some(1.5)),
+        ("\u{3000}2\u{2028}", Some(2.0)),
     ];
     for (text, expected) in cases {
         assert_eq!(float_from_text(text), expected, "{text:?}");
@@ -152,7 +155,7 @@ fn float_from_text_reads_what_python_float_reads() {
     assert!(float_from_text("NaN").is_some_and(f64::is_nan));
 }
 
-/// `int(text)` in CPython 3.14, for the ASCII digits read here, with its
+/// `int(text)` in CPython 3.14, Unicode digits included, with its
 /// ValueError's text.
 #[test]
 fn int_from_text_reads_what_python_int_reads() {
@@ -162,6 +165,8 @@ fn int_from_text_reads_what_python_int_reads() {
         ("+5", Value::Integer(5)),
         ("1_000", Value::Integer(1000)),
         ("007", Value::Integer(7)),
+        ("\u{661}\u{662}", Value::Integer(12)),
+        ("\u{2000}5\u{85}", Value::Integer(5)),
         (
             "-99999999999999999999",
             Value::BigInteger("-99999999999999999999".into()),

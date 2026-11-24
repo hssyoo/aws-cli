@@ -6,7 +6,7 @@ use super::query::method;
 use super::{ParseOptions, Protocol, Serialized};
 use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse};
-use model::pyjson::{Options, dumps};
+use model::pyjson::{LoadError, Options, dumps};
 use model::pyrepr::py_str;
 use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
 use model::value::{Map, Value};
@@ -156,19 +156,25 @@ fn structure(model: &Model, value: &Value, shape: ShapeId) -> Result<Value, Seri
     Ok(Value::Map(out))
 }
 
-/// `BaseJSONParser._parse_body_as_json`: nothing is `{}`, and a body that
-/// is not JSON is `{'message': body}`.
+/// `BaseJSONParser._parse_body_as_json`: nothing is `{}`, the body decoded
+/// as UTF-8 (whose `UnicodeDecodeError` botocore does not catch), and text
+/// `json.loads` refuses is `{'message': body}`. What the reader cannot hold
+/// fails the call, naming the limit: the request was sent, so the Python
+/// route cannot take it over without sending it again.
 pub(super) fn body_json(body: &[u8]) -> Result<Value, ParseError> {
     if body.is_empty() {
         return Ok(Value::Map(Map::new()));
     }
-    let text = std::str::from_utf8(body)
-        .map_err(|error| ParseError::new(format!("'utf-8' codec can't decode bytes: {error}")))?;
-    Ok(Value::from_json(body).unwrap_or_else(|_| {
-        let mut map = Map::new();
-        map.insert("message".into(), Value::String(text.to_owned()));
-        Value::Map(map)
-    }))
+    let text = common::decoded(body)?;
+    match model::pyjson::loads(text) {
+        Ok(value) => Ok(value),
+        Err(LoadError::Invalid(_)) => {
+            let mut map = Map::new();
+            map.insert("message".into(), Value::String(text.to_owned()));
+            Ok(Value::Map(map))
+        }
+        Err(LoadError::Limit(limit)) => Err(common::beyond_limit(limit)),
+    }
 }
 
 /// A subclass's own `_handle_<type>` for `shape`, ahead of
@@ -310,12 +316,12 @@ impl Reader<'_, '_> {
 
 /// `BaseJSONParser._inject_response_metadata`.
 fn request_id(parsed: &mut Map, headers: &Headers) {
-    if let Some(id) = headers.get("x-amzn-requestid") {
+    if let Some(id) = common::header(headers, "x-amzn-requestid") {
         let mut metadata = match parsed.remove("ResponseMetadata") {
             Some(Value::Map(metadata)) => metadata,
             _ => Map::new(),
         };
-        metadata.insert("RequestId".into(), Value::String(id.to_owned()));
+        metadata.insert("RequestId".into(), Value::String(id));
         parsed.insert("ResponseMetadata".into(), Value::Map(metadata));
     }
 }
@@ -372,7 +378,8 @@ impl Family for Json {
             message.unwrap_or_else(|| Value::String(String::new())),
         );
         error.insert("Code".into(), Value::String(String::new()));
-        let query_error = response.headers.get("x-amzn-query-error").unwrap_or("");
+        let query_error =
+            common::header(&response.headers, "x-amzn-query-error").unwrap_or_default();
         let mut code = None;
         if let [first, kind] = query_error.split(';').collect::<Vec<_>>()[..]
             && !first.is_empty()

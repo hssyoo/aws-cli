@@ -350,5 +350,42 @@ pub(super) fn member(model: &Model, shape: ShapeId, key: &str) -> Result<ShapeId
         .ok_or_else(|| SerializeError::new(format!("'{key}'")))
 }
 
+/// `headers[name]` of botocore's `HeadersDict`: every value of `name`, in
+/// any case, joined with `, ` as urllib3 joins a repeated header.
+pub(super) fn header(headers: &Headers, name: &str) -> Option<String> {
+    let values: Vec<&str> = headers.get_all(name).collect();
+    (!values.is_empty()).then(|| values.join(", "))
+}
+
+/// The headers as botocore's `HeadersDict` iterates them: each name once,
+/// spelled as it first came, with [`header`]'s value.
+pub(super) fn distinct(headers: &Headers) -> Vec<(String, String)> {
+    let mut names: Vec<&str> = Vec::new();
+    for (name, _) in headers.iter() {
+        if !names.iter().any(|seen| seen.eq_ignore_ascii_case(name)) {
+            names.push(name);
+        }
+    }
+    names
+        .into_iter()
+        .map(|name| (name.to_owned(), header(headers, name).unwrap_or_default()))
+        .collect()
+}
+
+/// `bytes.decode('utf-8')`, whose `UnicodeDecodeError` the parsers let
+/// through with CPython's text.
+pub(super) fn decoded(bytes: &[u8]) -> Result<&str, ParseError> {
+    pytext::text::decode_utf8(bytes).map_err(ParseError::new)
+}
+
+/// The failure of a call whose response holds what the native client's
+/// JSON reader cannot: its own limit, named, which Python's would not be.
+pub(super) fn beyond_limit(limit: model::pyjson::Limit) -> ParseError {
+    ParseError::new(format!(
+        "native client limit: the response holds {limit}, which the native client does not \
+         represent"
+    ))
+}
+
 #[cfg(test)]
 mod tests;
