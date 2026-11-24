@@ -14,6 +14,7 @@ mod integ;
 mod lint;
 mod packaging;
 mod parity;
+mod perf;
 mod process;
 mod product;
 mod python;
@@ -92,6 +93,7 @@ fn dispatch(root: &Path, args: &[String]) -> Result<(), TaskError> {
         "test" => verification::run(root, rest),
         "blackbox" => blackbox::run(root, rest),
         "parity" => parity::run(root, rest),
+        "perf" => perf::run(root, rest),
         "census" => argparse::census(root, rest),
         "harness-test" => harness::self_test(root, rest),
         "dump-arg-tables" | "check-argparse" | "fuzz-argparse" | "derive-tables" => {
@@ -128,6 +130,7 @@ const COMMANDS: &[&str] = &[
     "test",
     "blackbox",
     "parity",
+    "perf",
     "census",
     "harness-test",
     "dump-arg-tables",
