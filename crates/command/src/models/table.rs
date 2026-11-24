@@ -269,7 +269,7 @@ fn cross_cutting(
     table: &mut Table,
     model: &Model,
     operation: &Operation,
-    pages: Option<&Json>,
+    entry: Option<&Entry>,
     special: &SpecialCases,
 ) {
     if let Some(response_key) = streaming_output(model, operation) {
@@ -286,8 +286,8 @@ fn cross_cutting(
             table.overrides.push((override_option(name), None));
         }
     }
-    if let Some(config) = pages {
-        paging(table, model, operation, config, special);
+    if let Some(entry) = entry {
+        paging(table, model, operation, entry, special);
     }
     if !table.has("outfile") {
         let mut skeleton = plain(
@@ -325,15 +325,11 @@ fn paging(
     table: &mut Table,
     model: &Model,
     operation: &Operation,
-    config: &Json,
+    entry: &Entry,
     special: &SpecialCases,
 ) {
-    let mut tokens: Vec<&str> = match config.get("input_token") {
-        Some(Json::String(token)) => vec![token.as_str()],
-        Some(Json::Array(tokens)) => tokens.iter().filter_map(Json::as_str).collect(),
-        _ => Vec::new(),
-    };
-    let limit_key = config.get("limit_key").and_then(Json::as_str);
+    let mut tokens: Vec<&str> = entry.input_token.iter().map(String::as_str).collect();
+    let limit_key = entry.limit_key.as_deref();
     tokens.extend(limit_key);
     let mut paging = Paging {
         tokens: tokens.iter().map(|&token| token.into()).collect(),
@@ -410,11 +406,11 @@ fn limit_type<'m>(model: &'m Model, operation: &Operation, key: &str) -> Option<
 pub fn derive(
     model: &Model,
     operation: &Operation,
-    pages: Option<&Json>,
+    entry: Option<&Entry>,
     special: &SpecialCases,
 ) -> Table {
     let mut table = members_table(model, operation, special);
-    cross_cutting(&mut table, model, operation, pages, special);
+    cross_cutting(&mut table, model, operation, entry, special);
     table
 }
 

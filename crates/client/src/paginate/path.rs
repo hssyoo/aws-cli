@@ -1,42 +1,42 @@
-//! A paginator expression, a member name or a dotted path of them, as
-//! botocore reads and writes one: `jmespath.compile(expression).search`,
-//! `set_value_from_jmespath` and `merge_dicts` (botocore/utils.py), over
-//! shared [`Object`]s.
+//! The paginator's shared objects ([`Object`]) as paths of names are read
+//! and written through them: [`model::paginators::Expression`]'s
+//! `jmespath.search` and `set_value_from_jmespath` over them, and
+//! `merge_dicts` (botocore/utils.py), which only the full result uses.
 use super::object::Object;
+use model::paginators::{Assign, Lookup, NotADict};
 
-/// `jmespath.compile(expression).search(value)`: the object found, a field
-/// of a non-dict `None`, and so a field holding `None`.
-pub(super) fn search(value: &Object, expression: &str) -> Option<Object> {
-    expression
-        .split('.')
-        .try_fold(value.clone(), |current, name| current.get(name))
-        .filter(|found| !found.is_none())
+impl Lookup for Object {
+    fn lookup(&self, name: &str) -> Option<Self> {
+        self.get(name)
+    }
+    fn is_none(&self) -> bool {
+        Self::is_none(self)
+    }
 }
 
-/// `set_value_from_jmespath(source, expression, value)`: each name but the
-/// last walked into the dict there, an empty one made where it is missing,
-/// and the last set in the dict reached.
-///
-/// # Errors
-/// The `TypeError` of a name to set in something other than a dict.
-pub(super) fn set(source: &Object, expression: &str, value: Object) -> Result<(), String> {
-    let (parents, last) = match expression.rsplit_once('.') {
-        Some((parents, last)) => (Some(parents), last),
-        None => (None, expression),
-    };
-    let mut current = source.clone();
-    for name in parents.into_iter().flat_map(|parents| parents.split('.')) {
-        let child = match current.get(name) {
-            Some(child) => child,
-            None => {
-                let child = Object::dict();
-                current.insert(name, child.clone())?;
-                child
-            }
-        };
-        current = child;
+/// Each dict walked is the object itself, so what is set is seen by every
+/// other reference to it.
+impl Assign for Object {
+    type Item = Self;
+    fn not_a_dict(&self) -> Option<NotADict<'_>> {
+        match self {
+            Self::Dict(_) => None,
+            Self::List(_) => Some(NotADict::List),
+            Self::Value(value) => NotADict::of(value),
+        }
     }
-    current.insert(last, value)
+    fn child(self, name: &str) -> Option<Self> {
+        if let Some(child) = self.get(name) {
+            return Some(child);
+        }
+        let child = Self::dict();
+        self.insert(name, child.clone()).ok()?;
+        Some(child)
+    }
+    fn assign(self, name: &str, value: Self) {
+        // `not_a_dict` found a dict, which takes any key.
+        let _ = self.insert(name, value);
+    }
 }
 
 /// `merge_dicts(dict1, dict2)`: a dict merges into the dict already at its

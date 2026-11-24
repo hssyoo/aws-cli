@@ -133,10 +133,11 @@ fn a_paginator_entry_the_engine_does_not_run_is_refused() -> Result<(), Box<dyn 
     let rules = br#"{"version": "1.0", "parameters": {}, "rules": []}"#.to_vec();
     let data = EndpointData::from_documents(rules, b"{}".to_vec(), None)?;
     let operation = model.operation("Plain").ok_or("Plain")?;
-    let entry = |json: &str| Value::from_json(json.as_bytes());
-    let refusal = |paginator: Option<&Value>| {
-        static_refusal(&model, operation, &data, "zjson", &[], paginator)
+    let entry = |json: &str| {
+        model::value::Value::from_json(json.as_bytes())
+            .map(|entry| model::paginators::Config::from_value(&entry))
     };
+    let refusal = |paginator| static_refusal(&model, operation, &data, "zjson", &[], paginator);
     assert_eq!(refusal(None), None);
     let tokens = r#""input_token": "NextToken", "output_token": "NextToken""#;
     let runs = entry(&format!(r#"{{{tokens}, "result_key": "Items"}}"#))?;
@@ -145,15 +146,15 @@ fn a_paginator_entry_the_engine_does_not_run_is_refused() -> Result<(), Box<dyn 
     assert_eq!(
         refusal(Some(&filtered)),
         Some(Unsupported::Paginator(
-            crate::paginate::Refused::Expression("Items[].Name".into())
+            model::paginators::Refused::Expression("Items[].Name".into())
         ))
     );
     let keyless = entry(&format!("{{{tokens}}}"))?;
     assert!(matches!(
         refusal(Some(&keyless)),
-        Some(Unsupported::Paginator(crate::paginate::Refused::Malformed(
-            _
-        )))
+        Some(Unsupported::Paginator(
+            model::paginators::Refused::Malformed(_)
+        ))
     ));
     Ok(())
 }

@@ -43,7 +43,8 @@ fn table(operation: &str, pages: Option<&Json>) -> Table {
     let operation = model
         .operation(operation)
         .unwrap_or_else(|| panic!("no {operation}"));
-    derive(&model, operation, pages, &special)
+    let entry = pages.map(|json| Entry::from_value(&model::value::Value::from_serde(json)));
+    derive(&model, operation, entry.as_ref(), &special)
 }
 
 fn find<'t>(table: &'t Table, name: &str) -> &'t DerivedArgument {

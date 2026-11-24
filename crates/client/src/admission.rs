@@ -6,9 +6,9 @@
 //! command to Python with the reason each variant names.
 use crate::endpoint::EndpointData;
 use crate::hooks::Customization;
+use model::paginators::{Config, Refused};
 use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
 use model::validate::Undecided;
-use model::value::Value;
 
 /// Why a call is left to the Python route; each variant is one reason the
 /// caller can name.
@@ -52,7 +52,7 @@ pub enum Unsupported {
     StartingToken(&'static str),
     /// The operation's paginator entry, one the native paginator does not
     /// run.
-    Paginator(crate::paginate::Refused),
+    Paginator(Refused),
 }
 
 impl std::fmt::Display for Unsupported {
@@ -71,12 +71,7 @@ impl std::fmt::Display for Unsupported {
             Self::Validation(undecided) => write!(f, "a validation of {undecided:?}"),
             Self::Hook(reason) => write!(f, "a customization: {reason}"),
             Self::StartingToken(why) => write!(f, "a starting token with {why}"),
-            Self::Paginator(crate::paginate::Refused::Expression(expression)) => {
-                write!(f, "a paginator expression {expression}")
-            }
-            Self::Paginator(crate::paginate::Refused::Malformed(why)) => {
-                write!(f, "a paginator entry: {why}")
-            }
+            Self::Paginator(refused) => refused.fmt(f),
         }
     }
 }
@@ -86,7 +81,8 @@ impl std::fmt::Display for Unsupported {
 /// order a caller meets them: the protocol, the operation's traits, its
 /// context parameters, its auth, the rule set's required built-ins and
 /// client context, then `paginator`, the operation's entry in
-/// `paginators-1.json` if it has one (whether or not this call pages, so
+/// `paginators-1.json` as [`model::paginators::Paginators`] parsed it, if it
+/// has one (whether or not this call pages, so
 /// `--no-paginate` changes nothing here). A call this passes can still be
 /// refused by [`crate::call::Client::prepare`] and by the paginator's
 /// reading of a starting token, neither of which needs credentials.
@@ -96,7 +92,7 @@ pub fn static_refusal(
     endpoints: &EndpointData,
     service: &str,
     customizations: &[&'static Customization],
-    paginator: Option<&Value>,
+    paginator: Option<&Result<Config, Refused>>,
 ) -> Option<Unsupported> {
     if crate::protocol::for_model(model).is_none() {
         let name = crate::protocol::resolved_protocol(model.metadata()).unwrap_or_default();
@@ -123,8 +119,10 @@ pub fn static_refusal(
     if let Some(name) = crate::endpoint::missing_client_context(endpoints, model, operation) {
         return Some(Unsupported::ClientContextParam(name));
     }
-    crate::paginate::Config::from_value(paginator?)
+    paginator?
+        .as_ref()
         .err()
+        .cloned()
         .map(Unsupported::Paginator)
 }
 

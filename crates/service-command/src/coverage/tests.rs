@@ -451,14 +451,14 @@ fn static_refusal(command: &str, operation: &str) -> Result<Option<Unsupported>>
         let found = service.operation(operation)?;
         let endpoints =
             EndpointData::load(models.search(), &service.name, service.model.metadata()).ok()?;
-        let entry = crate::admit::paginator_entry(service, found);
+        let entry = service.paginator(&found.name).map(|entry| &entry.config);
         Some(client::admission::static_refusal(
             &service.model,
             found,
             &endpoints,
             &service.name,
             &customizations::TABLE,
-            entry.as_ref(),
+            entry,
         ))
     })
     .map(Option::flatten)

@@ -12,6 +12,7 @@ use crate::patterns::{Match, Patterns, Subject, TableEdit, TableOp};
 use crate::registry::OperationSource;
 use awscli_argparse::tables::RequiredOverride;
 use awscli_argparse::{Argument, CliType, DefaultValue};
+use model::paginators::{Entry, Paginators};
 use model::search::SearchSource;
 use model::shapes::Model;
 use model::source::{Kind, LoadError, Source, load_service_model};
@@ -46,7 +47,7 @@ pub struct Service {
     /// The model is the payload's alone (`SearchSource::packed`), the one
     /// whose client the pack observed.
     pub packed: bool,
-    pages: Option<Json>,
+    pages: Paginators,
     /// Each of `operations`' index in the model's operations.
     indices: Vec<usize>,
     tables: Vec<OnceCell<Table>>,
@@ -65,9 +66,9 @@ impl Service {
         self.position(operation).map(|(_, found)| found)
     }
     /// The paginators file's entry for the model operation `operation`
-    /// (`PaginatorModel.get_paginator`).
-    pub fn paginator(&self, operation: &str) -> Option<&Json> {
-        self.pages.as_ref()?.get(operation)
+    /// (`PaginatorModel.get_paginator`), parsed once as the service loaded.
+    pub fn paginator(&self, operation: &str) -> Option<&Entry> {
+        self.pages.get(operation)
     }
 }
 
@@ -241,9 +242,9 @@ impl<'a> ModelSource<'a> {
             .into_iter()
             .filter_map(|(name, index)| Some((name, index?)))
             .unzip();
-        let pages = load_service_model(&self.models, service, Kind::Paginators)
-            .ok()
-            .and_then(|document| document.json.get("pagination").cloned());
+        // A paginators file that cannot be read leaves the service to
+        // Python, which fails as it reads it.
+        let pages = Paginators::load(&self.models, service).ok()?;
         let tables = operations.iter().map(|_| OnceCell::new()).collect();
         Some(Service {
             customized: self.edits(&[format!("building-command-table.{command}")]),
@@ -285,11 +286,8 @@ impl<'a> ModelSource<'a> {
         let service = self.service(command)?;
         let (index, model_operation) = service.position(operation)?;
         Some(service.tables.get(index)?.get_or_init(|| {
-            let pages = service
-                .pages
-                .as_ref()
-                .and_then(|pages| pages.get(&*model_operation.name));
-            let mut table = table::derive(&service.model, model_operation, pages, &self.special);
+            let entry = service.pages.get(&model_operation.name);
+            let mut table = table::derive(&service.model, model_operation, entry, &self.special);
             let events = [
                 format!("building-command-table.{command}_{operation}"),
                 format!("before-building-argument-table-parser.{command}.{operation}"),

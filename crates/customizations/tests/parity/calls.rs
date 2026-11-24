@@ -282,16 +282,16 @@ fn paginated(
     input: Value,
     pagination: &Json,
 ) -> Result<std::result::Result<Value, CallError>> {
-    use client::paginate::{Config, PageIterator, PaginationConfig};
+    use client::paginate::{PageIterator, PaginationConfig};
     let service = case["service"].as_str().ok_or("service")?;
-    let pages = model::source::load_service_model(&locations(case), service, Kind::Paginators)?;
+    let pages = model::paginators::Paginators::load(&locations(case), service)?;
     let entry = pages
-        .json
-        .get("pagination")
-        .and_then(|pages| pages.get(operation))
+        .get(operation)
         .ok_or("the operation has no paginator")?;
-    let config =
-        Config::from_value(&Value::from_serde(entry)).map_err(|refused| format!("{refused:?}"))?;
+    let config = entry
+        .config
+        .clone()
+        .map_err(|refused| format!("{refused:?}"))?;
     let option = |key: &str| pagination.get(key).map(Value::from_serde);
     let pagination = PaginationConfig {
         max_items: option("MaxItems"),

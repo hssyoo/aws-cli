@@ -11,9 +11,10 @@ use cli_core::cli_error::{CommandFailure, PythonReason};
 use client::admission::Unsupported;
 use client::endpoint::EndpointData;
 use client::hooks::Customization;
-use client::paginate::{Config, PaginationConfig};
-use command::models::{ModelSource, Service};
-use model::shapes::{Model, Operation, ShapeId, ShapeKind};
+use client::paginate::PaginationConfig;
+use command::models::ModelSource;
+use model::paginators::Config;
+use model::shapes::{Model, ShapeId, ShapeKind};
 use model::validate::{Validation, validate_input};
 use model::value::{Map, Value};
 
@@ -64,7 +65,7 @@ pub fn admit(
         return Err(PythonReason::UnsupportedSubcommand);
     };
     let (command, cli_operation) = (&*command.name, &*cli_operation.name);
-    let endpoints = operation(source, customizations, command, cli_operation)?;
+    let decided = operation(source, customizations, command, cli_operation)?;
     let lookup = || {
         let service = source.service(command)?;
         let table = source.table(command, cli_operation)?;
@@ -73,17 +74,13 @@ pub fn admit(
     let Some((service, operation, table)) = lookup() else {
         return Err(PythonReason::UnsupportedSubcommand);
     };
-    // `operation` refused a paginator entry the native paginator does not
-    // run (`client::admission::static_refusal`).
-    let config =
-        paginator_entry(service, operation).and_then(|entry| Config::from_value(&entry).ok());
     let mut admitted = Admitted {
         command: command.to_owned(),
         service: service.name.clone(),
         operation: operation.name.to_string(),
         input: Value::Map(Map::new()),
         validation: Validation::Valid,
-        endpoints,
+        endpoints: decided.endpoints,
         paginated: None,
         warned: false,
         raised: None,
@@ -99,7 +96,8 @@ pub fn admit(
     if matches!(validation, Validation::Undecided(_)) {
         return Err(PythonReason::UnsupportedValue);
     }
-    admitted.paginated = config
+    admitted.paginated = decided
+        .paginator
         .zip(call.pagination)
         .map(|(config, pagination)| Paginated { config, pagination });
     admitted.input = call.input;
@@ -114,14 +112,13 @@ pub fn admit(
 /// protocol, the operation's traits and keys the loader does not interpret,
 /// context parameters, auth, required built-ins), a paginator the native
 /// one does not run (the CLI pages, `CLIOperationCaller._make_client_call`),
-/// then the customizations. Nothing here runs a credential provider. On success,
-/// the endpoint data botocore's client creation loads.
+/// then the customizations. Nothing here runs a credential provider.
 pub fn operation(
     source: &ModelSource<'_>,
     customizations: &[&'static Customization],
     command: &str,
     cli_operation: &str,
-) -> Result<EndpointData, PythonReason> {
+) -> Result<Decided, PythonReason> {
     let lookup = || {
         let service = source.service(command)?;
         let matches = source.matches(command, cli_operation)?;
@@ -133,18 +130,24 @@ pub fn operation(
     let model = &service.model;
     let endpoints = EndpointData::load(source.search(), &service.name, model.metadata())
         .map_err(|_| PythonReason::EndpointData)?;
-    let entry = paginator_entry(service, operation);
+    let entry = service.paginator(&operation.name);
     let refused = client::admission::static_refusal(
         model,
         operation,
         &endpoints,
         &service.name,
         customizations,
-        entry.as_ref(),
+        entry.map(|entry| &entry.config),
     );
     if let Some(unsupported) = refused {
         return Err(reason(&unsupported));
     }
+    let paginator = match entry.map(|entry| &entry.config) {
+        None => None,
+        Some(Ok(config)) => Some(config.clone()),
+        // What `static_refusal` refuses.
+        Some(Err(_)) => return Err(PythonReason::Paginator),
+    };
     // unify_paging_params raises as it builds a table without the paging
     // options.
     let paged = || {
@@ -158,7 +161,19 @@ pub fn operation(
     if coverage::uncovered(&matches, customizations, &service.name, &operation.name).is_some() {
         return Err(PythonReason::UnportedCustomization);
     }
-    Ok(endpoints)
+    Ok(Decided {
+        endpoints,
+        paginator,
+    })
+}
+
+/// What the stages [`operation`] runs leave for the call: the endpoint
+/// data botocore's client creation loads, and the operation's paginator,
+/// parsed once.
+#[derive(Debug, Clone)]
+pub struct Decided {
+    pub endpoints: EndpointData,
+    pub paginator: Option<Config>,
 }
 
 /// The reason the Python route runs a call the client leaves to it, one
@@ -180,12 +195,6 @@ pub fn reason(unsupported: &Unsupported) -> PythonReason {
         Unsupported::StartingToken(_) => PythonReason::StartingToken,
         Unsupported::Paginator(_) => PythonReason::Paginator,
     }
-}
-
-/// The operation's entry in the paginators file, as `client.get_paginator`
-/// reads it; `None` when it has none (`client.can_paginate`).
-pub fn paginator_entry(service: &Service, operation: &Operation) -> Option<Value> {
-    service.paginator(&operation.name).map(Value::from_serde)
 }
 
 /// Whether `shape` reaches a timestamp the wire sends as an epoch, which

@@ -33,7 +33,7 @@ impl Pages for Fetched<'_> {
         }
         Some(page)
     }
-    fn result_keys(&self) -> &[String] {
+    fn result_keys(&self) -> &[model::paginators::Expression] {
         self.pages.result_keys()
     }
     fn non_aggregate_part(&self) -> &Map {

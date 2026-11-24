@@ -3,9 +3,10 @@
 //! `PageIterator`, and the full result the CLI's JSON output builds from
 //! them (`PageIterator.build_full_result`).
 //!
-//! The paginator configuration's expressions are limited to member names
-//! and dotted paths of them; an entry with any other JMESPath expression is
-//! [`Refused`], so admission can leave its operation to Python.
+//! The paginator configuration is the service's typed paginators file
+//! ([`model::paginators`]), whose expressions are member names and dotted
+//! paths of them; an entry with any other JMESPath expression is refused
+//! there, so admission can leave its operation to Python.
 //!
 //! Every Python operation the paginator applies to a page (`len`, slices,
 //! `+`, `set_value_from_jmespath`) fails here as it fails there, with the
@@ -16,6 +17,7 @@
 use crate::call::Client;
 use crate::error::{CallError, PaginationError};
 use cli_core::client_config::user_agent::{Feature, Features};
+use model::paginators::{Config, Expression};
 use model::pyrepr::{py_repr, py_str};
 use model::shapes::ShapeKind;
 use model::value::{Map, Value};
@@ -30,127 +32,6 @@ use object::Object;
 /// The token codec, for the fuzz target over it.
 #[cfg(any(test, feature = "testing"))]
 pub(crate) use token::{TRUNCATE_AMOUNT, parse_starting_token, resume_token};
-
-/// One operation's entry in `paginators-1.json`, as `Paginator` reads it:
-/// every token and key a list, as `_get_input_tokens` and kin make them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Config {
-    pub input_token: Vec<String>,
-    pub output_token: Vec<String>,
-    pub more_results: Option<String>,
-    pub result_key: Vec<String>,
-    pub non_aggregate_keys: Vec<String>,
-    pub limit_key: Option<String>,
-}
-
-/// Why a paginator entry is not one the native paginator runs.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Refused {
-    /// A JMESPath expression beyond a member name or a dotted path.
-    Expression(String),
-    /// An entry botocore itself could not read.
-    Malformed(String),
-}
-
-impl Config {
-    /// The entry `entry`, a value of the file's `pagination` map
-    /// ([`Value::from_serde`] of it), read as `Paginator.__init__` reads
-    /// it: `output_token`, `input_token` and `result_key` a string or a
-    /// list of them, `non_aggregate_keys` a list, `more_results` and
-    /// `limit_key` a string. Each expression `jmespath.compile`s must be a
-    /// name or a dotted path of names, which `set_value_from_jmespath` also
-    /// writes nested. `input_token` and `limit_key` are parameter names,
-    /// which botocore sends as they are.
-    ///
-    /// # Errors
-    /// See [`Refused`]. An entry without `result_key`, or with an empty
-    /// one, is malformed: iterating its pages fails in botocore.
-    pub fn from_value(entry: &Value) -> Result<Self, Refused> {
-        let Value::Map(entry) = entry else {
-            return Err(malformed("the entry is not an object"));
-        };
-        let result_key = expressions(required(entry, "result_key")?)?;
-        if result_key.is_empty() {
-            return Err(malformed("result_key is empty"));
-        }
-        let non_aggregate_keys = match entry.get("non_aggregate_keys") {
-            None => Vec::new(),
-            Some(Value::List(keys)) => keys.iter().map(expression).collect::<Result<_, _>>()?,
-            Some(_) => return Err(malformed("non_aggregate_keys is not a list")),
-        };
-        Ok(Self {
-            input_token: strings(required(entry, "input_token")?)?,
-            output_token: expressions(required(entry, "output_token")?)?,
-            more_results: optional(entry, "more_results")?
-                .map(expression)
-                .transpose()?,
-            result_key,
-            non_aggregate_keys,
-            limit_key: optional(entry, "limit_key")?.map(name).transpose()?,
-        })
-    }
-}
-
-fn malformed(why: &str) -> Refused {
-    Refused::Malformed(why.to_owned())
-}
-
-/// `config[key]`, which botocore requires.
-fn required<'v>(entry: &'v Map, key: &str) -> Result<&'v Value, Refused> {
-    match entry.get(key) {
-        None | Some(Value::Null) => Err(Refused::Malformed(format!("{key} is missing"))),
-        Some(value) => Ok(value),
-    }
-}
-
-/// `config.get(key)`.
-fn optional<'v>(entry: &'v Map, key: &str) -> Result<Option<&'v Value>, Refused> {
-    Ok(entry.get(key).filter(|value| !matches!(value, Value::Null)))
-}
-
-/// A string, or a list of them, as a list.
-fn listed(value: &Value) -> &[Value] {
-    match value {
-        Value::List(items) => items,
-        single => std::slice::from_ref(single),
-    }
-}
-
-fn strings(value: &Value) -> Result<Vec<String>, Refused> {
-    listed(value).iter().map(name).collect()
-}
-
-fn expressions(value: &Value) -> Result<Vec<String>, Refused> {
-    listed(value).iter().map(expression).collect()
-}
-
-/// A parameter name.
-fn name(value: &Value) -> Result<String, Refused> {
-    match value {
-        Value::String(text) => Ok(text.clone()),
-        other => Err(Refused::Malformed(format!(
-            "{} is not a string",
-            py_repr(other)
-        ))),
-    }
-}
-
-/// An expression this paginator runs: JMESPath unquoted identifiers
-/// (`[A-Za-z_][A-Za-z0-9_]*`) joined by dots.
-fn expression(value: &Value) -> Result<String, Refused> {
-    let text = name(value)?;
-    let identifier = |part: &str| {
-        part.chars()
-            .next()
-            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
-            && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    };
-    if text.split('.').all(identifier) {
-        Ok(text)
-    } else {
-        Err(Refused::Expression(text))
-    }
-}
 
 /// `PaginationConfig`: what `--max-items`, `--page-size` and
 /// `--starting-token` set (`PageArgument.add_to_params`), each as the
@@ -248,7 +129,7 @@ impl<'c> PageIterator<'c> {
     }
 
     /// `result_keys`: the configured result keys, as expressions.
-    pub fn result_keys(&self) -> &[String] {
+    pub fn result_keys(&self) -> &[Expression] {
         &self.config.result_key
     }
 
@@ -296,7 +177,7 @@ impl<'c> PageIterator<'c> {
         while let Some(page) = self.next_object() {
             let page = page?;
             for key in &self.config.result_key {
-                if let Some(value) = path::search(&page, key) {
+                if let Some(value) = key.search(page.clone()) {
                     merge(&complete, key, &value).map_err(other)?;
                 }
             }
@@ -313,9 +194,9 @@ impl<'c> PageIterator<'c> {
 
 /// One result key's `value` from a page, merged into `complete`: the first
 /// set as it is, a later list added to it, a later scalar added to it.
-fn merge(complete: &Object, key: &str, value: &Object) -> Result<(), String> {
-    let Some(existing) = path::search(complete, key) else {
-        return path::set(complete, key, value.clone());
+fn merge(complete: &Object, key: &Expression, value: &Object) -> Result<(), String> {
+    let Some(existing) = key.search(complete.clone()) else {
+        return key.set(complete.clone(), value.clone());
     };
     match value {
         Object::List(_) => existing.extend(value),
@@ -327,7 +208,7 @@ fn merge(complete: &Object, key: &str, value: &Object) -> Result<(), String> {
             | Value::String(_)),
         ) => {
             let sum = py::add(&existing.value(), scalar)?;
-            path::set(complete, key, Object::Value(sum))
+            key.set(complete.clone(), Object::Value(sum))
         }
         _ => Ok(()),
     }
@@ -476,8 +357,9 @@ impl PageIterator<'_> {
             progress.first_request = false;
             self.record_non_aggregate_key_values(&page)?;
         }
-        let primary = self.primary();
-        let items = path::search(&page, primary)
+        let items = self
+            .primary()
+            .and_then(|primary| primary.search(page.clone()))
             .map_or(Ok(0), |found| found.len())
             .map_err(other)?;
         let truncate_amount = progress
@@ -537,8 +419,8 @@ impl PageIterator<'_> {
 
     /// The primary result key, `result_keys[0]`, which [`Self::start`]
     /// found.
-    fn primary(&self) -> &str {
-        self.config.result_key.first().map_or("", String::as_str)
+    fn primary(&self) -> Option<&Expression> {
+        self.config.result_key.first()
     }
 }
 
@@ -551,15 +433,15 @@ impl PageIterator<'_> {
         let Some((primary, secondary)) = self.config.result_key.split_first() else {
             return Ok(index);
         };
-        let data = match path::search(page, primary) {
+        let data = match primary.search(page.clone()) {
             Some(all @ (Object::List(_) | Object::Value(Value::String(_)))) => {
                 all.slice_from(&index).map_err(other)?
             }
             _ => Object::NONE,
         };
-        path::set(page, primary, data).map_err(other)?;
+        primary.set(page.clone(), data).map_err(other)?;
         for key in secondary {
-            let empty = match path::search(page, key) {
+            let empty = match key.search(page.clone()) {
                 Some(Object::List(_)) => Object::list(Vec::new()),
                 Some(Object::Value(Value::String(_))) => {
                     Object::Value(Value::String(String::new()))
@@ -571,7 +453,7 @@ impl PageIterator<'_> {
                 ) => number,
                 _ => Object::NONE,
             };
-            path::set(page, key, empty).map_err(other)?;
+            key.set(page.clone(), empty).map_err(other)?;
         }
         Ok(index)
     }
@@ -581,8 +463,8 @@ impl PageIterator<'_> {
     fn record_non_aggregate_key_values(&mut self, page: &Object) -> Result<(), CallError> {
         let part = Object::dict();
         for key in &self.config.non_aggregate_keys {
-            let value = path::search(page, key).unwrap_or(Object::NONE);
-            path::set(&part, key, value).map_err(other)?;
+            let value = key.search(page.clone()).unwrap_or(Object::NONE);
+            key.set(part.clone(), value).map_err(other)?;
         }
         self.non_aggregate = part;
         Ok(())
@@ -599,11 +481,16 @@ impl PageIterator<'_> {
         starting_truncation: &Value,
         mut next_token: Map,
     ) -> Result<(), CallError> {
-        let primary = self.primary().to_owned();
-        let original = path::search(page, &primary).unwrap_or_else(|| Object::list(Vec::new()));
+        // A page is truncated only once its primary result key had items.
+        let Some(primary) = self.primary().cloned() else {
+            return Ok(());
+        };
+        let original = primary
+            .search(page.clone())
+            .unwrap_or_else(|| Object::list(Vec::new()));
         let amount_to_keep = original.len().map_err(other)? - truncate_amount;
         let truncated = original.slice_to(amount_to_keep).map_err(other)?;
-        path::set(page, &primary, truncated).map_err(other)?;
+        primary.set(page.clone(), truncated).map_err(other)?;
         let amount = py::int_add(amount_to_keep, starting_truncation).map_err(other)?;
         next_token.insert(token::TRUNCATE_AMOUNT.into(), amount);
         self.resume_token = Some(token::resume_token(&next_token, &self.config.input_token)?);
@@ -614,7 +501,7 @@ impl PageIterator<'_> {
     /// output token under its input token's name, a false one `None`.
     fn get_next_token(&self, page: &Object) -> Map {
         if let Some(more) = &self.config.more_results
-            && !path::search(page, more).is_some_and(|more| more.truthy())
+            && !more.search(page.clone()).is_some_and(|more| more.truthy())
         {
             return Map::new();
         }
@@ -624,7 +511,7 @@ impl PageIterator<'_> {
             .iter()
             .zip(&config.input_token)
             .map(|(output, input)| {
-                let token = path::search(page, output).filter(Object::truthy);
+                let token = output.search(page.clone()).filter(Object::truthy);
                 (
                     input.clone(),
                     token.map_or(Value::Null, |token| token.value()),
