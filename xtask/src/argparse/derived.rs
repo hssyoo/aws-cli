@@ -9,7 +9,15 @@ use super::*;
 /// zrestjson's on rest-json) and the table editors' removals and `wizard`
 /// (lambda's table).
 pub const DEFAULT_COMMANDS: &[&str] = &[
-    "zquery", "zjson", "zrestjson", "sts", "sns", "dynamodb", "lambda", "s3api", "ec2",
+    "zquery",
+    "zjson",
+    "zrestjson",
+    "sts",
+    "sns",
+    "dynamodb",
+    "lambda",
+    "s3api",
+    "ec2",
 ];
 
 /// Derive the tables of `commands` (the default set when empty) and diff
