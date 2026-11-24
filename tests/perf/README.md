@@ -66,21 +66,46 @@ build again.
 
 **Rounds.** Each round runs every series of both binaries, the two
 binaries back to back for each series and route, and which goes first
-alternates from round to round.
+alternates from round to round. Each run records its position, first or
+second; a comparison needs an even number of rounds (an odd `--runs` is
+refused before anything runs), and a comparison whose runs do not pair up
+round by round, one of each order, is refused rather than paired wrongly.
+
+**The position effect.** Whichever binary runs first of a back-to-back
+pair runs slower, whatever binary it is: on an idle M4 Pro the short
+native series (14 to 35 ms) ran 5 to 6 ms, 15 to 20%, slower first than
+second (`json-pages-100` at 0 ms: 33.7 to 36.2 ms first, 28.3 to 29.3 ms
+second); the Python series (about 100 to 150 ms) differ by about 1%. A
+comparison of the binary with itself shows the same. The likely cause is
+what came before: the first native run of a pair follows the previous
+series' Python-route run, the second follows a native run of the same
+command (a single binary's native runs, which always follow a
+Python-route run, sit in the slower mode, 34 to 36 ms). It was not
+chased further. Because the order alternates, one round's log ratio
+carries the cost with one sign and the next round's with the other: the
+ratios swing by about ±0.2, their deviation is about 0.18, and judged
+round by round the gate reported 5 quick and 21 full series of two builds
+too noisy to judge on an idle machine. The gate therefore judges each
+pair of rounds, one with each order first, by the mean of their two log
+ratios, which cancels any position effect that is the same in both, as a
+crossover trial cancels its period effect. On the same runs that leaves no
+series too noisy, the widest resolution half its tolerance.
 
 **Verdicts.**
 
 | Measurement | Judged |
 |---|---|
 | connections opened, requests made | exactly: equal to the base's in every run. A count has no noise; a changed one (a lost connection pool, an extra request) fails on any machine. |
-| wall time | the median of the per-round log ratios head/base, scaled to the base's median, against the calibrated tolerance |
+| wall time | the crossover estimate: the median over pairs of rounds of the mean log ratio head/base, scaled to the base's median, against the calibrated tolerance |
 | CPU (user + system) | the same, on series without injected latency only: a process that idles through a round trip is rescheduled onto a slower core or a lower clock, so its CPU time follows the machine |
 | peak RSS | the least and the greatest peak of the runs, together (below) |
 | p95, throughputs, output size | reported, not judged |
 
-A ratio whose 95% resolution (twice its standard error, from the median
-absolute deviation of the log ratios) is wider than the tolerance is
-**too noisy to judge**. A series the base refuses (a feature the base did
+An estimate whose 95% resolution (twice its standard error, from the
+median absolute deviation of the pairs' means) is wider than the tolerance
+is **too noisy to judge**; calibration floors each tolerance at one and a
+half times the widest resolution it saw, so a check of as many runs on as
+quiet a machine resolves. A series the base refuses (a feature the base did
 not have) is reported and not judged.
 
 **Peak RSS.** A regression in peak memory (a larger buffer, pages kept
@@ -103,29 +128,23 @@ as **machine loaded**, not judged; its
 counts are still judged. The paired ratios cancel what load does to both
 binaries alike, which the load proof below shows.
 
-**What it catches.** Each check prints the tolerances it judges with.
-The quick calibration taken at 5286fd237 on the reference machine, an Apple
-M4 Pro (12 CPUs), ran under a load average of 1.4 to 16.7 (other work was
-running), and gave:
-
-| Quick comparison | Tolerance | On `json-pages-100` at 0 ms, native (31.8 ms wall, 21.6 ms CPU) |
-|---|---|---|
-| wall | 20%, at least 7.5 ms | +7.5 ms (24%), 75 µs per page |
-| CPU | 1%, at least 5.0 ms | +5.0 ms (23%), 50 µs per page |
-| peak RSS | 1%, at least 3.0 MiB | +3.0 MiB at both ends |
-
-Those bounds reflect the load the calibration saw; a calibration on a
-quiet machine is tighter (two quiet sessions earlier moved medians by 3%
-at most, which this rule makes about 10%). The current numbers are always
-those in the baseline file, which the check prints. On the 14 ms single
-calls the floor is the bound: a native call must slow by 7.5 ms wall or
-5 ms CPU to fail. Counts catch a lost pool or an extra request at any
-size.
+**What it catches.** Each check prints the tolerances it judges with, and
+the platform's baseline file holds them with the calibration they came
+from. The smallest change a series fails on is the larger of its relative
+bound times its base median and its floor. The last quick calibration,
+taken before the crossover estimate on an idle machine (load 0.84 to 1.72),
+gave wall 10% and at least 4.5 ms, CPU 1% and at least 3.5 ms, peak RSS 1%
+and at least 0.5 MiB: on `json-pages-100` at 0 ms native (31.8 ms wall,
+21.6 ms CPU) a change of 4.5 ms wall or 3.5 ms CPU, about 35 to 45 µs per
+page; on a 14 ms single call the floors. A recalibration with the
+crossover estimate and its resolution floor replaces these numbers. Counts
+catch a lost pool or an extra request at any size.
 
 ## Calibration: `--calibrate`
 
 `cargo xtask perf --calibrate` (quick) and `--calibrate --full` run the
-binary against itself, as base and head in the same rounds, 5 times
+binary against a byte-identical copy of itself at another path, as base
+and head in the same rounds, exactly as a check runs two builds, 5 times
 (quick) or 3 times (full; `--repeats N` overrides), and write the tier's
 tolerances into the platform's baseline file,
 `baselines/<os>-<arch>.json`, with the machine, its load range, the
@@ -136,17 +155,19 @@ memory reported only.
 The rule: since the code is the same, every deviation is noise.
 
 - **For the comparison**, each repeat's estimate of the head against the
-  base: the ratio for wall and CPU, the shift both ends of the peaks share
-  for RSS.
+  base: the crossover estimate for wall and CPU, with its resolution, and
+  the shift both ends of the peaks share for RSS.
 - **For the stored baseline**, the spread of every measurement's median:
   both labels of every repeat, both ends for RSS.
 
-Each tolerance is three times the largest deviation. Three, because a
-check sets one estimate against another and a few repeats understate the
-spread. The floor is three times the largest deviation on a series under
-50 ms (for RSS, on any series), rounded up to the next 0.5 ms or 0.5 MiB.
-The relative bound is three times the largest relative deviation the floor
-does not cover, rounded up to the next 1%, and at least 1%.
+Each tolerance covers three times the largest deviation and one and a
+half times the widest resolution. Three, because a check sets one
+estimate against another and a few repeats understate the spread; one and
+a half, so that a check of as many runs on as quiet a machine resolves its
+tolerance. The floor covers the series under 50 ms (for RSS, every
+series), rounded up to the next 0.5 ms or 0.5 MiB; the relative bound
+covers those the floor does not, rounded up to the next 1%, and at least
+1%.
 
 Calibrate on an idle machine: what the calibration sees is what the
 tolerances allow.
@@ -171,12 +192,18 @@ artifact. By default it plants 1.5 times and 0.5 times the smallest
 per-page cost the quick calibration claims to catch on `json-pages-100` at
 0 ms; `--per-page-us N` (must be caught) and `--under-us N` (must pass)
 choose others. The larger must fail the check on paged native series
-only, and the smaller must not fail it. At 5286fd237's calibration:
+only, and the smaller must not fail it. Results so far:
 
-| Planted | Result |
-|---|---|
-| 113 µs per page (1.5×) | failed, exactly on `json-pages-100 https 0 ms native`: wall 43.5 ms against 31.8, CPU 32.8 ms against 21.6; nothing else |
-| 37 µs per page (0.5×) | passed |
+| Calibration and estimate | Planted | Result |
+|---|---|---|
+| 5286fd237, loaded (wall 20%/7.5 ms, CPU 1%/5 ms), per round | 113 µs per page (1.5×) | failed, exactly on `json-pages-100 https 0 ms native`: wall 43.5 ms against 31.8, CPU 32.8 ms against 21.6; nothing else |
+| the same | 37 µs per page (0.5×) | passed |
+| 5c9807aa3, idle (wall 10%/4.5 ms, CPU 1%/3.5 ms), per round | 68 and 22 µs per page | could not judge: 5 and 6 series too noisy, the position effect above |
+| the same runs, judged by the crossover estimate | 68 µs per page | failed on the paged native series: 2 regressed |
+| the same | 22 µs per page | passed |
+
+The last two rows replay the recorded runs with the crossover estimate; a
+fresh run on a recalibrated head replaces them.
 
 **Load.** `prove.py load` checks the default artifact against a copy of
 itself while N busy loops (one per CPU by default) run. The proof holds
@@ -204,6 +231,15 @@ machine's state, which a same-run comparison cancels.
 Each tier is recorded in its own rounds. A series' median depends on the
 series it runs among: short native calls ran 15 to 17% slower inside the
 full tier's rounds than inside the quick tier's.
+
+**The position effect and the stored baseline.** A stored check runs one
+binary, with no pairs: every native run follows a Python-route run, in
+the same place in every round of the record and of the result alike, so
+the effect is a constant offset in both, not noise. Its tolerances rest on
+the spread of each label's medians over the calibration's rounds, where
+each label ran first in half the rounds and second in the other half:
+those medians straddle the two positions and spread more than a single
+binary's do, so the stored check's tolerances are if anything wide.
 
 ## Refreshing
 
