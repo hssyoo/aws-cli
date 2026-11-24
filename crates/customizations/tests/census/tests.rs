@@ -33,6 +33,7 @@ fn row(refusal: &Unsupported) -> (String, String) {
         Unsupported::RegionPattern => named("regionPattern", "-"),
         Unsupported::EndpointData => named("endpointData", "-"),
         Unsupported::Validation(undecided) => named("validation", &format!("{undecided:?}")),
+        Unsupported::StartingToken(why) => named("startingToken", why),
     }
 }
 

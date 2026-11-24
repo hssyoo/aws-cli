@@ -40,6 +40,15 @@ impl<'a> ServiceSource<'a> {
 }
 
 impl Binder for ServiceSource<'_> {
+    /// The paging handlers' (`bind::precedes_unpack_failure`).
+    fn precedes_unpack_failure(&self, parsed: &ParseResult<'_>) -> bool {
+        let [command, operation] = parsed.lineage.as_slice() else {
+            return false;
+        };
+        self.models
+            .table(&command.name, &operation.name)
+            .is_some_and(|table| crate::bind::precedes_unpack_failure(table, parsed))
+    }
     /// Admission, then the invocation.
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission> {
         let admitted = crate::admit::admit(&self.models, self.customizations, parsed)

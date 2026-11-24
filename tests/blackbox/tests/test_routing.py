@@ -179,12 +179,16 @@ async def test_forced_native_refuses_a_python_command_line(
         ({}, "", ["--cli-connect-timeout", "-5", "s3", "ls"],
          "python_only_global"),
         # Model operations: s3's protocol (rest-xml) is not the native
-        # client's; ListTables pages; every dynamodb operation meets the
-        # paginator fix, which no native customization replaces; table is a
-        # format only Python writes; client-side monitoring sends metrics
-        # over UDP; --cli-input-json is an option only Python binds.
+        # client's; DescribeStream's paginator reads its output token with a
+        # JMESPath expression (`StreamDescription.Shards[-1].ShardId`), which
+        # the native paginator does not evaluate; every
+        # dynamodb operation meets the paginator fix, which no native
+        # customization replaces; table is a format only Python writes;
+        # client-side monitoring sends metrics over UDP; --cli-input-json is
+        # an option only Python binds.
         ({}, "", ["s3api", "list-buckets"], "unsupported_protocol"),
-        ({}, "", ["dynamodb", "list-tables"], "paginator"),
+        ({}, "", ["kinesis", "describe-stream", "--stream-name", "s"],
+         "paginator"),
         ({}, "", ["dynamodb", "describe-table", "--table-name", "t"],
          "unported_customization"),
         ({}, "", ["sts", "get-caller-identity", "--output", "table"],

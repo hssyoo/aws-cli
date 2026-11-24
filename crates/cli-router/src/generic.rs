@@ -21,9 +21,7 @@ pub(super) fn route<E: EnvMap>(
     let Resolution::Operation(operation) = config.registry.resolve(&names) else {
         return Verdict::Python(PythonReason::UnsupportedSubcommand);
     };
-    let target = globals::Target::Operation {
-        paginated: operation.paginated(),
-    };
+    let target = globals::Target::Operation;
     if let Some(reason) = globals::route_parsed_unsupported_global(result, target) {
         return Verdict::Python(reason);
     }
@@ -39,6 +37,11 @@ pub(super) fn route<E: EnvMap>(
         // failures to Python too.
         if !config.registry.reproduces_failures(&names) {
             return Verdict::Python(PythonReason::UnsupportedSubcommand);
+        }
+        if result.stage == awscli_argparse::chain::Stage::Unpack
+            && operation.precedes_unpack_failure(result)
+        {
+            return Verdict::Python(PythonReason::UnsupportedValue);
         }
         return session_start(result, config).unwrap_or(Verdict::Failure(failure.clone()));
     }

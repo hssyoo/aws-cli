@@ -38,6 +38,9 @@ pub fn interrupted(stdout: &mut dyn std::io::Write) -> std::io::Result<u8> {
 /// - `ClientError`: `ClientErrorHandler`, 254, with
 ///   `EnhancedErrorFormatter`'s details.
 /// - `KeyboardInterrupt`: 130; see [`interrupted`].
+/// - What the paginator raises (`PaginationError`, a bad starting token's
+///   `ValueError`, and the rest): `GeneralExceptionHandler`, 255,
+///   `str(exception)`.
 /// - Anything else, the endpoint, credential provider, transport, parser,
 ///   serializer and hook failures among them: `GeneralExceptionHandler`,
 ///   255, `str(exception)`.
@@ -68,6 +71,10 @@ pub fn call_failure(error: &CallError, model: &Model) -> CommandFailure {
         },
         CallError::Service(service) => client_error(service, model),
         CallError::Interrupted => CommandFailure::new(Category::Interrupt),
+        CallError::Pagination(error) => CommandFailure {
+            message: error.to_string().into_bytes(),
+            ..CommandFailure::new(Category::General)
+        },
         other => CommandFailure {
             message: other.to_string().into_bytes(),
             ..CommandFailure::new(Category::General)

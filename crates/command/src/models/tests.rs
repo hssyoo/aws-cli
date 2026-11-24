@@ -232,6 +232,63 @@ fn customized_tables_leave_their_failures_to_python() -> Result<()> {
     })
 }
 
+/// A removed operation leaves the table and the operations, so it parses
+/// as an invalid choice and has no derived table; the operations after it
+/// still name their own model operations.
+#[test]
+fn removed_operations_leave_the_derived_tables() -> Result<()> {
+    with_source(None, |source| {
+        for (command, removed) in [
+            ("lambda", "invoke-with-response-stream"),
+            ("ses", "verify-email-address"),
+            ("emr", "run-job-flow"),
+            ("ec2", "import-instance"),
+        ] {
+            let found = source
+                .service(command)
+                .unwrap_or_else(|| panic!("{command}"));
+            let held = |names: &[String]| names.iter().any(|name| name == removed);
+            assert!(
+                !held(&found.choices) && !held(&found.operations),
+                "{removed}"
+            );
+            assert!(source.table(command, removed).is_none(), "{removed}");
+        }
+        let lambda = source.service("lambda").unwrap_or_else(|| panic!("lambda"));
+        let invoke = lambda
+            .operation("invoke")
+            .unwrap_or_else(|| panic!("invoke"));
+        assert_eq!(&*invoke.name, "Invoke");
+        let table = source
+            .table("lambda", "list-functions")
+            .unwrap_or_else(|| panic!("list-functions"));
+        assert!(
+            table
+                .arguments
+                .iter()
+                .any(|argument| &*argument.name == "function-version")
+        );
+    })
+}
+
+/// `wizard` is set after the operations and before `wait`, which the
+/// general event adds, and is no operation.
+#[test]
+fn wizard_is_set_before_wait() -> Result<()> {
+    with_source(None, |source| {
+        let choices = |command| {
+            source
+                .operations(command)
+                .unwrap_or_else(|| panic!("{command}"))
+                .to_vec()
+        };
+        let lambda = choices("lambda");
+        assert_eq!(lambda[lambda.len() - 2..], ["wizard", "wait"]);
+        assert_eq!(choices("events").last(), Some(&"wizard"));
+        assert!(source.table("lambda", "wizard").is_none());
+    })
+}
+
 /// The awscli entries and botocore handlers that touch `[command,
 /// operation]`, by dotted name, each once and in order.
 fn touching(source: &ModelSource<'_>, command: &str, operation: &str) -> Vec<String> {

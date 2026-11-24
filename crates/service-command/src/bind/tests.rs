@@ -5,14 +5,40 @@
 use super::*;
 use crate::ServiceSource;
 use crate::testing::{Result, parsed, with_models};
+use cli_core::cli_error::Category;
 
-fn input(source: &ServiceSource<'_>, argv: &[&str]) -> Value {
+fn bound(source: &ServiceSource<'_>, argv: &[&str]) -> std::result::Result<Bound, PythonReason> {
     let result = parsed(source, argv);
     let table = source
         .models()
         .table(argv[0], argv[1])
         .unwrap_or_else(|| panic!("no table"));
-    bind(table, &result.values).unwrap_or_else(|reason| panic!("{reason:?}"))
+    bind(table, &result)
+}
+
+fn call(source: &ServiceSource<'_>, argv: &[&str]) -> Call {
+    match bound(source, argv) {
+        Ok(Bound::Call(call)) => call,
+        other => panic!("{argv:?}: {other:?}"),
+    }
+}
+
+fn input(source: &ServiceSource<'_>, argv: &[&str]) -> Value {
+    call(source, argv).input
+}
+
+fn raised(source: &ServiceSource<'_>, argv: &[&str]) -> String {
+    match bound(source, argv) {
+        Ok(Bound::Raised(failure)) => {
+            assert_eq!(failure.category, Category::ParamValidation);
+            String::from_utf8_lossy(&failure.message).into_owned()
+        }
+        other => panic!("{argv:?}: {other:?}"),
+    }
+}
+
+fn value(json: &str) -> Value {
+    Value::from_json(json.as_bytes()).unwrap_or_else(|error| panic!("{error}"))
 }
 
 fn keys(value: &Value) -> Vec<&str> {
@@ -66,5 +92,260 @@ fn members_bind_in_model_order_as_add_to_params_stores_them() -> Result<()> {
             &["zjson", "measure", "--unit", "u", "--total", "5"],
         );
         assert_eq!(keys(&value), ["Unit", "Total"]);
+    })
+}
+
+/// The page options go to `PaginationConfig` as argparse typed them, not
+/// to the request, and paging is on with nothing given.
+#[test]
+fn the_page_options_bind_into_the_pagination_config() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let plain = call(&source, &["zjson", "list-things"]);
+        assert_eq!(plain.input, value("{}"));
+        assert_eq!(plain.pagination, Some(PaginationConfig::default()));
+        assert!(!plain.warned);
+        let paged = call(
+            &source,
+            &[
+                "zjson",
+                "list-things",
+                "--max-items",
+                " 1_0 ",
+                "--page-size",
+                "99999999999999999999",
+                "--starting-token",
+                "token",
+            ],
+        );
+        assert_eq!(paged.input, value("{}"));
+        assert_eq!(
+            paged.pagination,
+            Some(PaginationConfig {
+                max_items: Some(Value::Integer(10)),
+                page_size: Some(Value::BigInteger("99999999999999999999".into())),
+                starting_token: Some("token".into()),
+            })
+        );
+    })
+}
+
+/// A string-typed limit key types the page options as strings, which
+/// `add_to_params` keeps; its `int()` of `--max-items` warns for a value
+/// that is not positive and raises, on the Python route, for no integer.
+#[test]
+fn a_string_limit_key_keeps_the_page_options_as_text() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let paged = call(
+            &source,
+            &[
+                "apigatewayv2",
+                "get-apis",
+                "--max-items",
+                " 0 ",
+                "--page-size",
+                "2",
+            ],
+        );
+        assert!(paged.warned);
+        assert_eq!(
+            paged.pagination,
+            Some(PaginationConfig {
+                max_items: Some(Value::String(" 0 ".into())),
+                page_size: Some(Value::String("2".into())),
+                starting_token: None,
+            })
+        );
+        assert_eq!(
+            bound(&source, &["apigatewayv2", "get-apis", "--max-items", "abc"]),
+            Err(PythonReason::UnsupportedValue)
+        );
+    })
+}
+
+/// `PageArgument.add_to_params` warns for a `--max-items` that is not
+/// positive, and pages anyway.
+#[test]
+fn a_max_items_that_is_not_positive_warns() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        for (max_items, warns) in [("0", true), ("-2", true), ("1", false)] {
+            let paged = call(&source, &["zjson", "list-things", "--max-items", max_items]);
+            assert_eq!(paged.warned, warns, "{max_items}");
+            assert!(paged.pagination.is_some());
+        }
+    })
+}
+
+/// `check_should_enable_pagination`: an input token or the limit key given
+/// by its own argument is manual paging, a single call with that member.
+#[test]
+fn a_manual_token_or_limit_turns_paging_off() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let manual = call(&source, &["zjson", "list-things", "--next-token", "x"]);
+        assert_eq!(manual.pagination, None);
+        assert_eq!(manual.input, value(r#"{"NextToken": "x"}"#));
+        let limited = call(&source, &["zjson", "list-things", "--max-results", "2"]);
+        assert_eq!(limited.pagination, None);
+        assert_eq!(limited.input, value(r#"{"MaxResults": 2}"#));
+        let off = call(&source, &["zjson", "list-things", "--no-paginate"]);
+        assert_eq!((off.pagination, off.input), (None, value("{}")));
+    })
+}
+
+/// `ensure_paging_params_not_set`: with paging off, any page option given a
+/// true value raises, named in its fixed order, whether `--no-paginate` or
+/// a manual token turned it off.
+#[test]
+fn page_options_with_paging_off_raise() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let all = [
+            "zjson",
+            "list-things",
+            "--max-items",
+            "3",
+            "--no-paginate",
+            "--page-size",
+            "2",
+            "--starting-token",
+            "x",
+        ];
+        assert_eq!(
+            raised(&source, &all),
+            "Cannot specify --no-paginate along with pagination arguments: \
+             --starting-token, --page-size, --max-items"
+        );
+        assert_eq!(
+            raised(
+                &source,
+                &[
+                    "zjson",
+                    "list-things",
+                    "--next-token",
+                    "x",
+                    "--max-items",
+                    "5"
+                ]
+            ),
+            "Cannot specify --no-paginate along with pagination arguments: --max-items"
+        );
+    })
+}
+
+/// A page option whose value is false as parsed does not raise; it stays in
+/// the request under `PaginationConfig`, which validation then rejects, as
+/// botocore's does for the single call.
+#[test]
+fn a_false_page_option_with_paging_off_stays_in_the_request() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let zero = call(
+            &source,
+            &["zjson", "list-things", "--no-paginate", "--max-items", "0"],
+        );
+        assert!(zero.warned);
+        assert_eq!(zero.pagination, None);
+        assert_eq!(
+            zero.input,
+            value(r#"{"PaginationConfig": {"MaxItems": 0}}"#)
+        );
+        let empty = call(
+            &source,
+            &["zjson", "list-things", "--no-paginate", "--starting-token="],
+        );
+        assert_eq!(
+            empty.input,
+            value(r#"{"PaginationConfig": {"StartingToken": ""}}"#)
+        );
+    })
+}
+
+/// A member a page option shadowed binds again when paging is off: acm's
+/// `MaxItems` limit key under `--no-paginate`, and ssm-quicksetup's
+/// `StartingToken`, an input token whose name is not normalized, so giving
+/// it turns paging off. With paging on, the option binds as a page option.
+#[test]
+fn a_shadowed_member_binds_when_paging_is_off() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let paged = call(&source, &["acm", "list-certificates", "--max-items", "5"]);
+        assert_eq!(paged.input, value("{}"));
+        let max_items = paged.pagination.and_then(|pagination| pagination.max_items);
+        assert_eq!(max_items, Some(Value::Integer(5)));
+        let off = call(
+            &source,
+            &[
+                "acm",
+                "list-certificates",
+                "--no-paginate",
+                "--max-items",
+                "5",
+            ],
+        );
+        assert_eq!(
+            (off.input, off.pagination),
+            (value(r#"{"MaxItems": 5}"#), None)
+        );
+        let manual = call(
+            &source,
+            &[
+                "ssm-quicksetup",
+                "list-configurations",
+                "--starting-token",
+                "x",
+                "--max-items",
+                "3",
+            ],
+        );
+        assert_eq!(manual.pagination, None);
+        assert_eq!(
+            manual.input,
+            value(r#"{"MaxItems": 3, "StartingToken": "x"}"#)
+        );
+    })
+}
+
+/// The limit key `PageSize` is no normalized name: giving `--page-size`,
+/// its shadowing option, is manual paging, a single call with the member.
+#[test]
+fn a_limit_key_named_page_size_is_manual_paging() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let manual = call(
+            &source,
+            &["elbv2", "describe-load-balancers", "--page-size", "5"],
+        );
+        assert_eq!(manual.pagination, None);
+        assert_eq!(manual.input, value(r#"{"PageSize": 5}"#));
+    })
+}
+
+/// An unpack failure is Python's when a paging handler would raise or warn
+/// before `_build_call_parameters` reached it.
+#[test]
+fn a_paging_handler_ahead_of_an_unpack_failure_is_noted() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let precedes = |argv: &[&str]| {
+            let table = source
+                .models()
+                .table(argv[0], argv[1])
+                .unwrap_or_else(|| panic!("no table"));
+            precedes_unpack_failure(table, &parsed(&source, argv))
+        };
+        assert!(precedes(&[
+            "zjson",
+            "list-things",
+            "--no-paginate",
+            "--page-size",
+            "1"
+        ]));
+        assert!(precedes(&["zjson", "list-things", "--max-items", "1"]));
+        assert!(!precedes(&["zjson", "list-things", "--page-size", "1"]));
+        assert!(!precedes(&["zjson", "list-things", "--no-paginate"]));
+        assert!(!precedes(&["zquery", "get-thing", "--thing-id", "a"]));
     })
 }

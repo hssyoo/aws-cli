@@ -5,6 +5,22 @@
       "output_token": "NextToken",
       "limit_key": "MaxResults",
       "result_key": "Things"
+    },
+    "ListKeys": {
+      "limit_key": "Limit",
+      "input_token": "Marker",
+      "output_token": "NextMarker",
+      "more_results": "Truncated",
+      "result_key": "Keys"
+    },
+    "FilterEvents": {
+      "input_token": "nextToken",
+      "output_token": "nextToken",
+      "limit_key": "limit",
+      "result_key": [
+        "events",
+        "searchedLogStreams"
+      ]
     }
   }
 }

@@ -32,11 +32,30 @@ document is:
       "client_handlers": {
         "generic": [[pattern, handler, section], ...],
         "services": [[service, [[pattern, handler, section], ...]], ...]
-      }
+      },
+      "command_table_edits": [
+        [[module, function],
+         [[event, handler, [["set" | "del", name], ...]], ...]], ...
+      ]
     }
 
 in the tables' own order. A handler is named `module.qualname`; a bound
 method by its class and method name, and a callable object by its class.
+
+`command_table_edits` holds the registry initializers whose handlers do
+nothing but edit command tables (`TABLE_EDITORS`): the handlers each
+registers, by event and each event's in the order it registered them,
+and what each does to the table of its event, which is code, not data.
+Only the order within an event decides a table; the order across events
+is the filesystem's where an editor lists a directory
+(`WizardLoader.list_commands_with_wizards`), so it is not kept, and the
+entry's bytes are the same on any filesystem. This script runs each initializer against a
+registry that records what it registers, then runs each handler against
+a table that records the names it sets (`command_table[name] = ...`) and
+deletes (`del command_table[name]`), in its order. The pack refuses an
+initializer that registers anywhere else than a root command's own table
+event, or is listed under any other pattern, and a handler that reads its
+table, so what is recorded is all each does.
 
 A client row's pattern spells the client's own service segment (its
 hyphenized service id, the second chunk) as `{service_id}`. The rows
@@ -56,10 +75,12 @@ here calls into it.
 
 import argparse
 import functools
+import importlib
 import inspect
 import json
 import os
 import sys
+from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -208,6 +229,112 @@ def client_handlers() -> dict[str, Any]:
     }
 
 
+# The initializers whose handlers only edit a root command's table:
+# `register_removals` deletes deprecated or unsupported operations
+# (`CommandRemover`), and `register_wizard_commands` sets `wizard` on each
+# command with wizards (`_register_wizards_for_commands`) and `wizard-dev`
+# on `cli-dev` (`wizard.devcommands.register_dev_commands`).
+TABLE_EDITORS = [
+    ("awscli.customizations.removals", "register_removals"),
+    ("awscli.customizations.wizard.commands", "register_wizard_commands"),
+]
+TABLE_EVENT = "building-command-table"
+
+
+def root_table_event(event: str) -> bool:
+    """Whether `event` is a root command's own table event: one command
+    (`ServiceCommand._create_command_table`), not the main table's and not
+    a subcommand's, whose lineage is `_`-joined
+    (`ServiceOperation._build_subcommand_table`)."""
+    parts = event.split(".")
+    return (
+        len(parts) == 2
+        and parts[0] == TABLE_EVENT
+        and parts[1] not in ("", "main", "*")
+        and "_" not in parts[1]
+    )
+
+
+class RecordingRegistry:
+    """The emitter an initializer is given (`LazyInitEmitter` calls it with
+    itself), keeping each `(event, handler)` it registers, in order."""
+
+    def __init__(self) -> None:
+        self.registered: list[tuple[str, Any]] = []
+
+    def register(self, event_name: str, handler: Any, **kwargs: Any) -> None:
+        if kwargs:
+            raise SystemExit(f"unexpected registration options: {kwargs!r}")
+        self.registered.append((event_name, handler))
+
+    def __getattr__(self, name: str) -> Any:
+        raise SystemExit(f"a table editor uses the emitter's {name}")
+
+
+class RecordingTable(MutableMapping):
+    """A command table that keeps each name a handler sets or deletes, in
+    order, and refuses to be read: a handler's edits are then all it does
+    to the table, whatever the table holds."""
+
+    def __init__(self) -> None:
+        self.edits: list[list[str]] = []
+
+    def __setitem__(self, name: str, value: Any) -> None:
+        self.edits.append(["set", name])
+
+    def __delitem__(self, name: str) -> None:
+        self.edits.append(["del", name])
+
+    def __getitem__(self, name: str) -> Any:
+        raise SystemExit(f"a table editor reads its table: {name!r}")
+
+    def __iter__(self) -> Any:
+        raise SystemExit("a table editor reads its table")
+
+    def __len__(self) -> int:
+        raise SystemExit("a table editor reads its table")
+
+
+class StandIn:
+    """The command whose table is built (`command_object`), by name."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def command_table_edits(registry: Any) -> list[Any]:
+    """Each of `TABLE_EDITORS`: the handlers it registers, by event, and
+    the names each sets and deletes in its event's table, run as
+    `ServiceCommand._create_command_table` emits the event (clidriver.py),
+    with no session."""
+    rows = []
+    for module, function in TABLE_EDITORS:
+        patterns = [
+            pattern
+            for pattern, entries in registry.PLUGIN_REGISTRY.items()
+            if (module, function) in [tuple(entry) for entry in entries]
+        ]
+        if not patterns or not all(root_table_event(pattern) for pattern in patterns):
+            raise SystemExit(f"{module}.{function} is listed under {patterns!r}")
+        recorder = RecordingRegistry()
+        getattr(importlib.import_module(module), function)(recorder)
+        handlers = []
+        for event, handler in recorder.registered:
+            if not root_table_event(event):
+                raise SystemExit(f"{module}.{function} registers on {event}")
+            table = RecordingTable()
+            handler(
+                command_table=table,
+                session=None,
+                command_object=StandIn(event.split(".")[1]),
+            )
+            handlers.append([event, handler_name(handler), table.edits])
+        # A stable sort: each event's handlers keep the order they run in.
+        handlers.sort(key=lambda row: row[0])
+        rows.append([[module, function], handlers])
+    return rows
+
+
 def patterns() -> dict[str, Any]:
     # `awscli` puts its vendored botocore on the import path as `botocore`.
     import awscli  # noqa: F401
@@ -222,6 +349,7 @@ def patterns() -> dict[str, Any]:
         "main_command_table_ops": table_ops(registry),
         "builtin_handlers": builtin_rows(handlers),
         "client_handlers": client_handlers(),
+        "command_table_edits": command_table_edits(registry),
     }
 
 

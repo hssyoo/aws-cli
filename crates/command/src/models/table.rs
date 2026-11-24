@@ -89,6 +89,27 @@ pub struct Table {
     /// the derivation does not reproduce touches the table, or the paging
     /// customization would raise while it builds it.
     pub customized: bool,
+    /// What the paging customization registered for the parse, when it
+    /// built the table without raising.
+    pub paging: Option<Paging>,
+}
+
+/// What `unify_paging_params` hands the handlers it registers,
+/// `check_should_enable_pagination` on `operation-args-parsed` and
+/// `check_should_enable_pagination_call_parameters` on `calling-command`:
+/// the paginator's input tokens and limit key, and the arguments its page
+/// options shadowed, which the first puts back when paging is off.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Paging {
+    /// `_get_all_input_tokens`: the input tokens, then the limit key, as
+    /// the model names them.
+    pub tokens: Vec<Box<str>>,
+    /// `_get_all_cli_input_tokens`: the same through `xform_name`.
+    pub cli_tokens: Vec<Box<str>>,
+    /// `shadowed_args`: each argument a page option replaced
+    /// (`add_paging_argument`), named as the option is, in the order they
+    /// were replaced.
+    pub shadowed: Vec<DerivedArgument>,
 }
 
 impl Table {
@@ -212,6 +233,7 @@ fn members_table(model: &Model, operation: &Operation, special: &SpecialCases) -
         arguments: Vec::new(),
         overrides: Vec::new(),
         customized: false,
+        paging: None,
     };
     let Some(input) = operation.input else {
         return table;
@@ -294,9 +316,11 @@ fn override_option(name: &str) -> &'static str {
 
 /// `unify_paging_params`: the paginator's input tokens and limit key are
 /// hidden, then `--starting-token`, `--page-size` (with a limit key) and
-/// `--max-items` are set, each replacing an argument of its name in place.
-/// A limit key of a type `PageArgument` cannot parse, or a token with no
-/// argument to hide, makes Python raise as it builds the table.
+/// `--max-items` are set, each replacing an argument of its name in place
+/// and keeping it as shadowed. A limit key of a type `PageArgument` cannot
+/// parse, or a token with no argument to hide, makes Python raise as it
+/// builds the table. The page options' values are strings or, through
+/// argparse's `int`, integers, which binding reads as they stand.
 fn paging(
     table: &mut Table,
     model: &Model,
@@ -304,13 +328,19 @@ fn paging(
     config: &Json,
     special: &SpecialCases,
 ) {
-    let tokens: Vec<&str> = match config.get("input_token") {
+    let mut tokens: Vec<&str> = match config.get("input_token") {
         Some(Json::String(token)) => vec![token.as_str()],
         Some(Json::Array(tokens)) => tokens.iter().filter_map(Json::as_str).collect(),
         _ => Vec::new(),
     };
     let limit_key = config.get("limit_key").and_then(Json::as_str);
-    for name in tokens.iter().copied().chain(limit_key) {
+    tokens.extend(limit_key);
+    let mut paging = Paging {
+        tokens: tokens.iter().map(|&token| token.into()).collect(),
+        cli_tokens: Vec::new(),
+        shadowed: Vec::new(),
+    };
+    for name in tokens {
         let cli_name = xform_name(name, "-", special);
         match table
             .arguments
@@ -320,8 +350,11 @@ fn paging(
             Some(argument) => argument.hidden = true,
             None => table.customized = true,
         }
+        paging.cli_tokens.push(cli_name.into());
     }
-    table.insert(plain("starting-token", "string", Origin::StartingToken));
+    let mut starting_token = plain("starting-token", "string", Origin::StartingToken);
+    starting_token.unpack = Unpack::AsIs;
+    shadow(table, &mut paging, starting_token);
     let limit_type = match limit_key {
         None => Some("integer"),
         Some(key) => limit_type(model, operation, key),
@@ -331,14 +364,35 @@ fn paging(
         return;
     };
     let value_type = (type_name != "string").then_some(ValueType::Int);
+    let page_option = |name: &str, origin: Origin| DerivedArgument {
+        value_type,
+        unpack: Unpack::AsIs,
+        ..plain(name, type_name, origin)
+    };
     if limit_key.is_some() {
-        let mut page_size = plain("page-size", type_name, Origin::PageSize);
-        page_size.value_type = value_type;
-        table.insert(page_size);
+        shadow(
+            table,
+            &mut paging,
+            page_option("page-size", Origin::PageSize),
+        );
     }
-    let mut max_items = plain("max-items", type_name, Origin::MaxItems);
-    max_items.value_type = value_type;
-    table.insert(max_items);
+    shadow(
+        table,
+        &mut paging,
+        page_option("max-items", Origin::MaxItems),
+    );
+    if !table.customized {
+        table.paging = Some(paging);
+    }
+}
+
+/// `add_paging_argument`: `option` replaces the argument of its name,
+/// which is kept as shadowed.
+fn shadow(table: &mut Table, paging: &mut Paging, option: DerivedArgument) {
+    if let Some(held) = table.arguments.iter().find(|held| held.name == option.name) {
+        paging.shadowed.push(held.clone());
+    }
+    table.insert(option);
 }
 
 /// The limit key member's type, when `PageArgument.type_map` has it.
