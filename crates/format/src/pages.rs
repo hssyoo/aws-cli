@@ -35,7 +35,9 @@ pub enum Stopped<E> {
 /// `TextFormatter.__call__` for a paginated response: each page's text
 /// handed to `write` as soon as it is formatted, so the output before a
 /// failure is what Python had written by then, and the resume token's
-/// rows after the last page when it is set.
+/// rows after the last page when it is set. A page with no rows is no
+/// write, as `format_text` makes none for it, so it starts no pager
+/// (`LazyStdin`).
 ///
 /// # Errors
 /// See [`Stopped`].
@@ -53,10 +55,7 @@ pub fn text<P: Pages>(
         };
         first = false;
         let (written, failed) = text_page(current, &page, pages.result_keys());
-        write(&written).map_err(Stopped::Write)?;
-        if let Some(error) = failed {
-            return Err(Stopped::Format(error));
-        }
+        written_then(write, &written, failed)?;
     }
     if let Some(token) = pages.resume_token().filter(|token| !token.is_empty()) {
         let mut resume = Map::new();
@@ -64,12 +63,22 @@ pub fn text<P: Pages>(
         let mut outer = Map::new();
         outer.insert("NextToken".into(), Value::Map(resume));
         let (written, failed) = formatted(&Value::Map(outer));
-        write(&written).map_err(Stopped::Write)?;
-        if let Some(error) = failed {
-            return Err(Stopped::Format(error));
-        }
+        written_then(write, &written, failed)?;
     }
     Ok(())
+}
+
+/// `written` handed to `write` unless it is empty, then the failure that
+/// stopped the formatter after it, if any.
+fn written_then<E>(
+    write: &mut dyn FnMut(&str) -> std::io::Result<()>,
+    written: &str,
+    failed: Option<PythonError>,
+) -> Result<(), Stopped<E>> {
+    if !written.is_empty() {
+        write(written).map_err(Stopped::Write)?;
+    }
+    failed.map_or(Ok(()), |error| Err(Stopped::Format(error)))
 }
 
 /// One page's text: each result key's value in `page` set at its
