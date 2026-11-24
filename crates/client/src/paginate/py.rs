@@ -2,36 +2,22 @@
 //! with the exception text CPython raises where it fails: truth, `len`,
 //! slicing, `+`, `==` and `int()`. `Err` holds the text.
 use crate::error::PaginationError;
+use crate::python::FloatToInt;
 use model::value::{Map, Value};
 
-/// `type(value).__name__` as CPython's messages print it (`tp_name`).
+/// The type's name as CPython's messages print it (`tp_name`):
+/// `str(type(value))` without its `<class '...'>`.
 pub(super) fn type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "NoneType",
-        Value::Bool(_) => "bool",
-        Value::Integer(_) | Value::BigInteger(_) => "int",
-        Value::Float(_) => "float",
-        Value::String(_) => "str",
-        Value::Blob(_) => "bytes",
-        Value::Timestamp(_) => "datetime.datetime",
-        Value::List(_) => "list",
-        Value::Map(_) => "dict",
-    }
+    let class = model::pyrepr::py_type(value);
+    class
+        .strip_prefix("<class '")
+        .and_then(|name| name.strip_suffix("'>"))
+        .unwrap_or(class)
 }
 
-/// `bool(value)`.
+/// `bool(value)`, `None` for a value that is not there.
 pub(super) fn truthy(value: Option<&Value>) -> bool {
-    match value {
-        None | Some(Value::Null) => false,
-        Some(Value::Bool(flag)) => *flag,
-        Some(Value::Integer(number)) => *number != 0,
-        Some(Value::Float(number)) => *number != 0.0,
-        Some(Value::String(text)) => !text.is_empty(),
-        Some(Value::Blob(bytes)) => !bytes.is_empty(),
-        Some(Value::List(items)) => !items.is_empty(),
-        Some(Value::Map(map)) => !map.is_empty(),
-        Some(Value::BigInteger(_) | Value::Timestamp(_)) => true,
-    }
+    value.is_some_and(crate::python::truthy)
 }
 
 /// `len(value)`: a `str` counts code points.
@@ -205,33 +191,16 @@ pub(super) fn int(value: &Value) -> Result<Value, PaginationError> {
     match value {
         Value::Integer(_) | Value::BigInteger(_) => Ok(value.clone()),
         Value::Bool(flag) => Ok(Value::Integer(i64::from(*flag))),
-        Value::String(text) => model::pyrepr::int_from_text(text).map_err(PaginationError::Value),
-        Value::Float(number) => float_int(*number),
+        Value::String(text) => int_of_str(text).map_err(PaginationError::Value),
+        Value::Float(number) => crate::python::int_of_float(*number).map_err(|error| match error {
+            FloatToInt::NaN => PaginationError::Value(error.to_string()),
+            FloatToInt::Infinite => PaginationError::Other(error.to_string()),
+        }),
         other => Err(PaginationError::Other(format!(
             "int() argument must be a string, a bytes-like object or a real number, not '{}'",
             type_name(other)
         ))),
     }
-}
-
-/// `int(number)` of a `float`: toward zero.
-fn float_int(number: f64) -> Result<Value, PaginationError> {
-    if number.is_nan() {
-        return Err(PaginationError::Value(
-            "cannot convert float NaN to integer".into(),
-        ));
-    }
-    if number.is_infinite() {
-        return Err(PaginationError::Other(
-            "cannot convert float infinity to integer".into(),
-        ));
-    }
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "int() truncates toward zero"
-    )]
-    let truncated = number.trunc() as i128;
-    Ok(int_value(truncated))
 }
 
 /// The value of an `int` from [`int`], beyond `i128` saturated.

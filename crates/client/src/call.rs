@@ -160,7 +160,7 @@ impl Client {
     ///
     /// # Errors
     /// See [`CallError`].
-    pub fn call_with_features(
+    pub(crate) fn call_with_features(
         &self,
         operation: &str,
         input: Value,
