@@ -3,11 +3,12 @@
 //!
 //! `tests/diff/known-differences.json` is a list of entries, each a
 //! `fingerprint`, the `cases` (row ids, or `"*"` for every row) it holds
-//! for, an optional `mode` (`oracle`, `baseline` or `determinism`; any mode
-//! without one) and the `reason`. A row is identical, known (every
-//! difference has an entry) or mismatched. The run passes when no row is
-//! mismatched. The report proposes an entry for each unknown group, with
-//! its rows and an empty reason, and lists the entries no row used.
+//! for, the `mode` (`oracle`, `baseline` or `determinism`) it holds in, and
+//! the `reason`. A row is identical, known (every difference has an entry)
+//! or mismatched. A timeout or a harness error ([`UNCOVERABLE`]) is never
+//! known: no entry may name one. The run passes when no row is mismatched.
+//! The report proposes an entry for each unknown group, with its rows and
+//! an empty reason, and lists the entries no row used.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -28,8 +29,7 @@ const FORMAT: u32 = 1;
 pub struct Known {
     pub fingerprint: String,
     pub cases: Cases,
-    #[serde(default)]
-    pub mode: Option<String>,
+    pub mode: String,
     pub reason: String,
 }
 
@@ -53,8 +53,17 @@ impl Known {
             Cases::Every(Every::All) => true,
             Cases::Listed(ids) => ids.iter().any(|listed| listed == id),
         };
-        row && self.fingerprint == fingerprint && self.mode.as_deref().is_none_or(|m| m == mode)
+        row && self.fingerprint == fingerprint && self.mode == mode
     }
+}
+
+/// The fingerprints no entry may cover: the run was not seen whole.
+pub const UNCOVERABLE: [&str; 2] = ["timeout:", "harness:"];
+
+fn uncoverable(fingerprint: &str) -> bool {
+    UNCOVERABLE
+        .iter()
+        .any(|prefix| fingerprint.starts_with(prefix))
 }
 
 /// The known differences in `text`.
@@ -68,13 +77,21 @@ pub fn known(text: &str) -> Result<Vec<Known>, TaskError> {
         )));
     }
     let modes = ["oracle", "baseline", "determinism"];
-    let unknown_mode = |entry: &&Known| entry.mode.as_deref().is_some_and(|m| !modes.contains(&m));
-    if let Some(entry) = known.iter().find(unknown_mode) {
+    if let Some(entry) = known
+        .iter()
+        .find(|entry| !modes.contains(&entry.mode.as_str()))
+    {
         return Err(deps::error(format!(
             "the known difference {} has mode {:?}, not one of {}",
             entry.fingerprint,
-            entry.mode.as_deref().unwrap_or_default(),
+            entry.mode,
             modes.join(", ")
+        )));
+    }
+    if let Some(entry) = known.iter().find(|entry| uncoverable(&entry.fingerprint)) {
+        return Err(deps::error(format!(
+            "the known difference {} names a timeout or a harness error, which no entry covers",
+            entry.fingerprint
         )));
     }
     Ok(known)
@@ -145,10 +162,12 @@ pub fn row_diffs(row: &Row, a: &Capture, b: &Capture) -> Vec<Diff> {
 
 fn outcome<'a>(row: &Row, capture: &'a Capture) -> Outcome<'a> {
     Outcome {
+        harness: &capture.harness,
         exit: capture.exit,
         timed_out: capture.timed_out,
         stdout: &capture.stdout,
         stderr: &capture.stderr,
+        connects: &capture.connects,
         requests: normalize::requests(&capture.requests, row.inputs()),
     }
 }
@@ -181,7 +200,8 @@ pub fn build(run: &Run, rows: &[Row], pairs: &[(Capture, Capture)], known: &[Kno
         for diff in &diffs {
             let entry = known
                 .iter()
-                .position(|k| k.covers(mode, &row.id, &diff.fingerprint));
+                .position(|k| k.covers(mode, &row.id, &diff.fingerprint))
+                .filter(|_| !uncoverable(&diff.fingerprint));
             used.extend(entry);
             covered += usize::from(entry.is_some());
             add(&mut groups, &row.id, diff, entry.is_some());
@@ -260,12 +280,18 @@ impl Report {
             .map_err(|error| deps::error(format!("diff report: {error}")))
     }
 
-    /// The groups' fingerprints, in report order.
-    pub fn fingerprints(&self) -> Vec<&str> {
-        self.groups
-            .iter()
-            .map(|group| group.fingerprint.as_str())
-            .collect()
+    /// Each differing row's fingerprints, sorted.
+    pub fn by_row(&self) -> BTreeMap<&str, Vec<&str>> {
+        let mut rows: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        for group in &self.groups {
+            for instance in &group.instances {
+                rows.entry(&instance.id)
+                    .or_default()
+                    .push(&group.fingerprint);
+            }
+        }
+        rows.values_mut().for_each(|names| names.sort_unstable());
+        rows
     }
 
     /// The counts, then a line per group with its first instance.

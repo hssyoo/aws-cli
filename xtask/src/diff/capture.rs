@@ -20,6 +20,11 @@ const FORMAT: u32 = 1;
 pub struct Capture {
     pub id: String,
     pub side: String,
+    /// What the capture could not see whole, each `<kind>: <detail>`: a
+    /// request the stub could not parse, a connection the proxy refused,
+    /// requests the recorder dropped.
+    #[serde(default)]
+    pub harness: Vec<String>,
     /// The exit status, or none when the run timed out.
     pub exit: Option<i32>,
     pub timed_out: bool,
@@ -27,6 +32,9 @@ pub struct Capture {
     pub stdout: Vec<u8>,
     #[serde(deserialize_with = "latin1")]
     pub stderr: Vec<u8>,
+    /// The host of each CONNECT the proxy accepted, sorted.
+    #[serde(default)]
+    pub connects: Vec<String>,
     pub requests: Vec<Request>,
 }
 
@@ -41,6 +49,9 @@ pub struct Request {
     pub headers: Vec<(String, String)>,
     #[serde(deserialize_with = "latin1")]
     pub body: Vec<u8>,
+    /// A chunked body's chunk-size lines, then its trailer lines.
+    #[serde(default)]
+    pub framing: Option<Vec<String>>,
     pub complete: bool,
 }
 

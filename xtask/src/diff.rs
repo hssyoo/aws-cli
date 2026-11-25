@@ -31,6 +31,7 @@ use crate::{TaskError, deps, harness, process};
 mod capture;
 mod compare;
 mod corpus;
+mod json;
 mod normalize;
 mod options;
 mod report;
@@ -160,6 +161,13 @@ fn side(root: &Path, spec: &SideSpec, aws_binary: &[String]) -> Result<Side, Tas
 
 /// Runs `run` and writes its report beside the job and captures.
 pub fn execute(root: &Path, run: &Run) -> Result<report::Report, TaskError> {
+    // An earlier run's report must not outlive a capture that fails.
+    for stale in ["report.json", "captures.jsonl"] {
+        match fs::remove_file(run.out.join(stale)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error.into()),
+            _ => {}
+        }
+    }
     let rows = corpus::load(root, &run.corpus, run.filter.as_deref())?;
     let known = match &run.known {
         Some(path) => report::known(&fs::read_to_string(root.join(path))?)?,

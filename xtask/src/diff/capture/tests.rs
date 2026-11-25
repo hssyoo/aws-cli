@@ -70,3 +70,29 @@ fn each_row_pairs_its_run_on_a_with_its_run_on_b() -> Result<(), TaskError> {
     );
     Ok(())
 }
+
+#[test]
+fn a_run_records_harness_errors_connects_and_framing() -> Result<(), TaskError> {
+    let text = CAPTURE
+        .replacen(
+            "\"exit\"",
+            "\"harness\": [\"protocol_error: x\"], \"connects\": [\"h\"], \"exit\"",
+            1,
+        )
+        .replacen(
+            "\"complete\"",
+            "\"framing\": [\"5\", \"0\"], \"complete\"",
+            1,
+        );
+    let capture = parse(&text)?
+        .pop()
+        .ok_or_else(|| deps::error("no capture"))?;
+    assert_eq!(capture.harness, ["protocol_error: x"]);
+    assert_eq!(capture.connects, ["h"]);
+    let framing = capture
+        .requests
+        .first()
+        .and_then(|request| request.framing.clone());
+    assert_eq!(framing, Some(vec!["5".to_owned(), "0".to_owned()]));
+    Ok(())
+}

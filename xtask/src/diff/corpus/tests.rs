@@ -38,27 +38,47 @@ fn a_row_takes_defaults_for_what_it_leaves_out() -> Result<(), TaskError> {
     assert_eq!(reply, Some((200, headers)));
     assert_eq!(
         row.inputs().collect::<Vec<_>>(),
-        ["sts", "get-caller-identity", "1"]
+        ["sts", "get-caller-identity", "1", "1", "2", "{}"]
     );
     Ok(())
 }
 
 #[test]
 fn a_malformed_row_is_named_by_its_line() {
-    assert!(
-        failure("{\"id\":\"r\",\"argv\":[\"x\"],\"responses\":[],\"stdin\":\"\"}")
-            .starts_with("rows.jsonl:1: unknown field `stdin`")
-    );
+    let row = |fields: &str| format!("{{\"id\":\"r\",\"argv\":[\"x\"],\"responses\":[]{fields}}}");
+    assert!(failure(&row(",\"stdin\":\"\"")).starts_with("rows.jsonl:1: unknown field `stdin`"));
     assert_eq!(
         failure("\n{\"id\":\"r\",\"argv\":[],\"responses\":[]}"),
-        "rows.jsonl:2: row r has no argv"
+        "rows.jsonl:2: row r: no argv"
     );
     assert_eq!(
         failure(
             "{\"id\":\"r\",\"argv\":[\"x\"],\"responses\":[{\"body\":\"\",\"body_base64\":\"\"}]}"
         ),
-        "rows.jsonl:1: a reply of row r has both body and body_base64"
+        "rows.jsonl:1: row r: a reply has both body and body_base64"
     );
+    assert_eq!(
+        failure(&row(",\"timeout_s\":0")),
+        "rows.jsonl:1: row r: timeout_s must be at least 1"
+    );
+    for name in OWNED {
+        let owned = row(&format!(",\"env\":{{\"{name}\":\"x\"}}"));
+        assert_eq!(
+            failure(&owned),
+            format!("rows.jsonl:1: row r: the harness owns {name}")
+        );
+    }
+}
+
+#[test]
+fn a_reply_the_cli_may_echo_is_an_input() -> Result<(), TaskError> {
+    let text = "{\"id\":\"r\",\"argv\":[\"x\"],\"responses\":[\
+                {\"headers\":[[\"N\",\"h\"]],\"body\":\"b\"},\
+                {\"body_base64\":\"YQ==\"}]}";
+    let rows = parse("rows.jsonl", text)?;
+    let inputs: Vec<&str> = rows.iter().flat_map(Row::inputs).collect();
+    assert_eq!(inputs, ["x", "h", "b"]);
+    Ok(())
 }
 
 #[test]

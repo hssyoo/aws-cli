@@ -1,25 +1,28 @@
-//! What varies from run to run, replaced alike on both sides. Nothing else
-//! is touched: header names, order and case, Content-Length, SignedHeaders,
-//! stdout and stderr are compared as captured.
+//! What varies from run to run, replaced alike on both sides, each only
+//! when it has the form it should; a value of another form stays as sent.
+//! Nothing else is touched: header names, order and case, Content-Length,
+//! SignedHeaders, stdout and stderr are compared as captured.
 //!
-//! - `Authorization`: the `Signature=` value becomes `<sig>` and the
-//!   credential scope's date `<date>`; in a query, `X-Amz-Signature`,
-//!   `X-Amz-Date` and the `X-Amz-Credential` date alike.
-//! - `X-Amz-Date` becomes `<amz-date>`.
-//! - `amz-sdk-invocation-id` becomes `<invocation-id:k>`, k numbering the
-//!   run's distinct ids by first appearance, so a retry that keeps its id
-//!   still matches only one that does.
-//! - `amz-sdk-request`: only `ttl=` becomes `<ttl>`; `attempt=` and `max=`
-//!   are deterministic and compared.
-//! - `User-Agent`, token by token: the host's tokens `os/<family>#<release>`,
-//!   and `os/other` with the `md/<system>#<release>` after it, become
-//!   `os/<os>`, `md/arch#*` `md/arch#<arch>`, `md/distrib#*`
-//!   `md/distrib#<distrib>`, and the CRT's `platform/*` `platform/<platform>`;
-//!   the Python route's telemetry session `sid/*` becomes `sid/<sid>`, and
-//!   the `m/` feature codes are sorted, as Python joins them from a set.
+//! - `Authorization`: a 64-digit lowercase hexadecimal `Signature=` becomes
+//!   `<sig>`, and the credential scope's eight-digit date `<date>`; in a
+//!   query, `X-Amz-Signature`, `X-Amz-Date` and the `X-Amz-Credential` date
+//!   alike.
+//! - `X-Amz-Date` of the form `YYYYMMDDTHHMMSSZ` becomes `<amz-date>`.
+//! - A version 4 UUID `amz-sdk-invocation-id` becomes `<invocation-id:k>`, k
+//!   numbering the run's distinct ids by first appearance, so a retry that
+//!   keeps its id still matches only one that does.
+//! - `amz-sdk-request`: only a `ttl=` date becomes `<ttl>`; `attempt=` and
+//!   `max=` are deterministic and compared.
+//! - `User-Agent`, token by token: the host's release in `os/<family>#*`, and
+//!   in the `md/<system>#*` after `os/other`, becomes `<release>`, and the
+//!   version in `md/distrib#<id>.*` `<version>`; family, system, id and
+//!   `md/arch` stay, as both sides run on one host. The Python route's
+//!   telemetry session `sid/<hex>` becomes `sid/<sid>`, and the `m/` feature
+//!   codes are sorted, as Python joins them from a set.
 //! - Version 4 UUIDs in a body or a query value, the idempotency tokens the
-//!   CLI generates, become `<uuid:k>` by first appearance, unless the row's
-//!   own arguments or variables hold them.
+//!   CLI generates, become `<uuid:k>` by first appearance, unless the row
+//!   itself holds them: its arguments, variables, or replies, which the CLI
+//!   may echo.
 
 use std::collections::BTreeSet;
 
@@ -31,12 +34,47 @@ pub struct Normal {
     pub method: String,
     pub version: String,
     pub host: String,
+    /// The target as sent, its query values normalized.
+    pub target: String,
     pub path: String,
-    pub query: Vec<(String, String)>,
+    /// The query after `?`, normalized; none without a `?`.
+    pub query: Option<String>,
     /// In wire order, each name as sent and its value normalized.
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// A chunked body's chunk-size lines, then its trailers.
+    pub framing: Option<Vec<String>>,
     pub complete: bool,
+}
+
+/// A query's or a form's `&`-separated fields: each name with its value,
+/// none for a field without `=`, and where empty fields fall.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Fields {
+    pub pairs: Vec<(String, Option<String>)>,
+    /// An empty first field, an empty last one, and the empty ones between.
+    pub empty: (bool, bool, usize),
+}
+
+/// The fields of `text`; the empty text has none.
+pub fn fields(text: &str) -> Fields {
+    let mut fields = Fields::default();
+    if text.is_empty() {
+        return fields;
+    }
+    let count = text.split('&').count();
+    for (index, field) in text.split('&').enumerate() {
+        match (field.is_empty(), index) {
+            (true, 0) => fields.empty.0 = true,
+            (true, last) if last + 1 == count => fields.empty.1 = true,
+            (true, _) => fields.empty.2 += 1,
+            (false, _) => fields.pairs.push(match field.split_once('=') {
+                Some((name, value)) => (name.to_owned(), Some(value.to_owned())),
+                None => (field.to_owned(), None),
+            }),
+        }
+    }
+    fields
 }
 
 /// The run's distinct values of one kind, numbered by first appearance.
@@ -66,8 +104,8 @@ struct State {
     exempt: BTreeSet<String>,
 }
 
-/// The run's requests, normalized; `inputs` are the row's arguments and
-/// variables, whose UUIDs stay.
+/// The run's requests, normalized; `inputs` are the texts the row holds,
+/// whose UUIDs stay.
 pub fn requests<'a>(
     requests: &[Request],
     inputs: impl IntoIterator<Item = &'a str>,
@@ -92,37 +130,48 @@ pub fn requests<'a>(
 }
 
 fn normal(request: &Request, state: &mut State) -> Normal {
-    let (host, rest) = match split_absolute(&request.target) {
-        Some((authority, rest)) => (authority.to_owned(), rest),
-        None => (
-            header_value(&request.headers, "host").to_owned(),
-            request.target.as_str(),
-        ),
+    let (prefix, host, rest) = match split_absolute(&request.target) {
+        Some((prefix, authority, rest)) => (prefix, authority.to_owned(), rest),
+        None => {
+            let host = header_value(&request.headers, "host").to_owned();
+            ("", host, request.target.as_str())
+        }
     };
-    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let (path, query) = match rest.split_once('?') {
+        Some((path, query)) => (path, Some(query_values(query, state))),
+        None => (rest, None),
+    };
     let headers = request
         .headers
         .iter()
         .map(|(name, value)| (name.clone(), header(name, value, &mut state.ids)))
         .collect();
+    let query_text = query
+        .as_ref()
+        .map_or_else(String::new, |query| format!("?{query}"));
     Normal {
         method: request.method.clone(),
         version: request.version.clone(),
         host,
+        target: format!("{prefix}{path}{query_text}"),
         path: path.to_owned(),
-        query: query_pairs(query, state),
+        query,
         headers,
         body: replace_uuids(&request.body, state),
+        framing: request.framing.clone(),
         complete: request.complete,
     }
 }
 
-/// An absolute-form target's authority and the rest, from `/` on.
-fn split_absolute(target: &str) -> Option<(&str, &str)> {
-    let rest = target
-        .strip_prefix("http://")
-        .or_else(|| target.strip_prefix("https://"))?;
-    Some(rest.find('/').map_or((rest, "/"), |at| rest.split_at(at)))
+/// An absolute-form target's scheme and authority, its authority, and the
+/// rest, from `/` on.
+fn split_absolute(target: &str) -> Option<(&str, &str, &str)> {
+    let scheme = ["http://", "https://"]
+        .into_iter()
+        .find(|scheme| target.starts_with(scheme))?;
+    let rest = &target[scheme.len()..];
+    let end = scheme.len() + rest.find('/').unwrap_or(rest.len());
+    Some((&target[..end], &target[scheme.len()..end], &target[end..]))
 }
 
 fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> &'a str {
@@ -134,29 +183,44 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> &'a str {
 
 fn header(name: &str, value: &str, ids: &mut Numbering) -> String {
     match name.to_ascii_lowercase().as_str() {
-        "authorization" => scope_date(&after_marker(value, "Signature=", "<sig>")),
-        "x-amz-date" => "<amz-date>".to_owned(),
-        "amz-sdk-invocation-id" => ids.label("invocation-id", value),
+        "authorization" => scope_date(&signature(value)),
+        "x-amz-date" if is_amz_date(value) => "<amz-date>".to_owned(),
+        "amz-sdk-invocation-id" if is_uuid(value.as_bytes()) => ids.label("invocation-id", value),
         "amz-sdk-request" => sdk_request(value),
         "user-agent" => user_agent(value),
         _ => value.to_owned(),
     }
 }
 
-/// `value` with the hexadecimal run after `marker` replaced.
-fn after_marker(value: &str, marker: &str, placeholder: &str) -> String {
+/// `YYYYMMDDTHHMMSSZ`.
+fn is_amz_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let digits = |range: std::ops::Range<usize>| bytes[range].iter().all(u8::is_ascii_digit);
+    bytes.len() == 16 && bytes[8] == b'T' && bytes[15] == b'Z' && digits(0..8) && digits(9..15)
+}
+
+/// Sixty-four lowercase hexadecimal digits.
+fn is_signature(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// `value` with the signature after `Signature=` replaced.
+fn signature(value: &str) -> String {
+    let marker = "Signature=";
     let Some(start) = value.find(marker).map(|at| at + marker.len()) else {
         return value.to_owned();
     };
     let length = value[start..]
         .bytes()
-        .take_while(u8::is_ascii_hexdigit)
+        .take_while(u8::is_ascii_alphanumeric)
         .count();
-    format!(
-        "{}{placeholder}{}",
-        &value[..start],
-        &value[start + length..]
-    )
+    if !is_signature(&value[start..start + length]) {
+        return value.to_owned();
+    }
+    format!("{}<sig>{}", &value[..start], &value[start + length..])
 }
 
 /// `value` with its first credential scope date, eight digits between
@@ -183,10 +247,11 @@ fn sdk_request(value: &str) -> String {
         .split(';')
         .map(|part| {
             let trimmed = part.trim_start();
-            if trimmed.starts_with("ttl=") {
-                format!("{}ttl=<ttl>", &part[..part.len() - trimmed.len()])
-            } else {
-                part.to_owned()
+            match trimmed.strip_prefix("ttl=") {
+                Some(date) if is_amz_date(date) => {
+                    format!("{}ttl=<ttl>", &part[..part.len() - trimmed.len()])
+                }
+                _ => part.to_owned(),
             }
         })
         .collect();
@@ -199,50 +264,66 @@ fn user_agent(value: &str) -> String {
     for token in value.split(' ') {
         let system = previous_other && token.starts_with("md/") && !token.starts_with("md/arch");
         previous_other = token == "os/other";
-        if system {
-            continue;
-        }
-        tokens.push(user_agent_token(token));
+        tokens.push(if system {
+            release(token)
+        } else {
+            user_agent_token(token)
+        });
     }
     tokens.join(" ")
 }
 
+/// `token` with the value after its `#` as `<release>`.
+fn release(token: &str) -> String {
+    match token.split_once('#') {
+        Some((name, value)) if !value.is_empty() => format!("{name}#<release>"),
+        _ => token.to_owned(),
+    }
+}
+
 fn user_agent_token(token: &str) -> String {
-    let placeholder = |prefix: &str, name: &str| {
-        token
-            .starts_with(prefix)
-            .then(|| format!("{prefix}<{name}>"))
-    };
     if let Some(codes) = token.strip_prefix("m/") {
         let mut codes: Vec<&str> = codes.split(',').collect();
         codes.sort_unstable();
         return format!("m/{}", codes.join(","));
     }
-    placeholder("os/", "os")
-        .or_else(|| placeholder("md/arch#", "arch"))
-        .or_else(|| placeholder("md/distrib#", "distrib"))
-        .or_else(|| placeholder("platform/", "platform"))
-        .or_else(|| placeholder("sid/", "sid"))
-        .unwrap_or_else(|| token.to_owned())
+    if token.starts_with("os/") {
+        return release(token);
+    }
+    let distribution = token
+        .strip_prefix("md/distrib#")
+        .and_then(|rest| rest.rsplit_once('.'));
+    if let Some((id, _)) = distribution.filter(|(_, version)| !version.is_empty()) {
+        return format!("md/distrib#{id}.<version>");
+    }
+    match token.strip_prefix("sid/") {
+        Some(hex) if !hex.is_empty() && hex.bytes().all(|byte| byte.is_ascii_hexdigit()) => {
+            "sid/<sid>".to_owned()
+        }
+        _ => token.to_owned(),
+    }
 }
 
-fn query_pairs(query: &str, state: &mut State) -> Vec<(String, String)> {
-    if query.is_empty() {
-        return Vec::new();
-    }
-    query
+/// `query` with each field's value normalized, its fields and framing as
+/// sent.
+fn query_values(query: &str, state: &mut State) -> String {
+    let fields: Vec<String> = query
         .split('&')
-        .map(|pair| {
-            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-            let value = match name {
-                "X-Amz-Signature" => "<sig>".to_owned(),
-                "X-Amz-Date" => "<amz-date>".to_owned(),
-                "X-Amz-Credential" => scope_date(value),
-                _ => String::from_utf8_lossy(&replace_uuids(value.as_bytes(), state)).into_owned(),
-            };
-            (name.to_owned(), value)
+        .map(|field| match field.split_once('=') {
+            Some((name, value)) => format!("{name}={}", query_value(name, value, state)),
+            None => field.to_owned(),
         })
-        .collect()
+        .collect();
+    fields.join("&")
+}
+
+fn query_value(name: &str, value: &str, state: &mut State) -> String {
+    match name {
+        "X-Amz-Signature" if is_signature(value) => "<sig>".to_owned(),
+        "X-Amz-Date" if is_amz_date(value) => "<amz-date>".to_owned(),
+        "X-Amz-Credential" => scope_date(value),
+        _ => String::from_utf8_lossy(&replace_uuids(value.as_bytes(), state)).into_owned(),
+    }
 }
 
 fn replace_uuids(text: &[u8], state: &mut State) -> Vec<u8> {
@@ -281,15 +362,16 @@ fn uuids(text: &[u8]) -> Vec<usize> {
 }
 
 fn is_uuid(candidate: &[u8]) -> bool {
-    candidate
-        .iter()
-        .enumerate()
-        .all(|(index, byte)| match index {
-            8 | 13 | 18 | 23 => *byte == b'-',
-            14 => *byte == b'4',
-            19 => matches!(byte, b'8' | b'9' | b'a' | b'b' | b'A' | b'B'),
-            _ => byte.is_ascii_hexdigit(),
-        })
+    candidate.len() == 36
+        && candidate
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| match index {
+                8 | 13 | 18 | 23 => *byte == b'-',
+                14 => *byte == b'4',
+                19 => matches!(byte, b'8' | b'9' | b'a' | b'b' | b'A' | b'B'),
+                _ => byte.is_ascii_hexdigit(),
+            })
 }
 
 #[cfg(test)]

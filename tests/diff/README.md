@@ -10,7 +10,7 @@ cargo xtask build                    # the candidate: the default artifact, pres
 cargo xtask diff                     # candidate:native against itself (determinism)
 cargo xtask diff --a candidate:native --b candidate:python
 cargo xtask diff --a path/to/old/aws:native --b candidate:native
-cargo xtask diff --self-test         # the harness must catch a seeded defect
+cargo xtask diff --self-test         # the harness must catch a seeded defect, and see a stand-in whole
 ```
 
 A side is `candidate` (the default artifact, or `--aws-binary PATH`) or a
@@ -39,36 +39,55 @@ paths for every run, and stdin empty. Runs time out after 60 s.
 | `id` | unique across the files read |
 | `source` | what the row was made from (optional) |
 | `argv` | the arguments after `aws` |
-| `env` | variables over the base environment; `null` removes one. The harness owns HOME, the proxy and CA variables, the AWS config and credentials file variables, AWS_DATA_PATH and AWS_CLI_NATIVE_ROUTER |
+| `env` | variables over the base environment; `null` removes one. The harness owns HOME, every proxy variable (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`, each in either case), AWS_CA_BUNDLE, the AWS config and credentials file variables, AWS_DATA_PATH and AWS_CLI_NATIVE_ROUTER |
 | `data_path` | AWS_DATA_PATH, relative to the repository root (`tests/models` for the fake models), or absent |
-| `responses` | the stub's reply to the run's n-th request: `status` (200), `headers` as ordered pairs, `body` or `body_base64`. The last repeats; past 64 requests the stub closes the connection instead |
-| `timeout_s` | overrides the 60 s timeout (optional) |
+| `responses` | the stub's reply to the run's n-th request: `status` (200), `headers` as ordered pairs, `body` or `body_base64`. The last repeats; from the 65th request on the stub closes each connection unanswered |
+| `timeout_s` | overrides the 60 s timeout; at least 1 (optional) |
 
 `seed.jsonl` holds three rows (json, rest-json and query on the fake
-models) that the self-test uses.
+models) that the self-test uses. `standin.jsonl`, outside the corpus,
+holds the self-test's rows for `standin.py`, a stand-in CLI that drives the
+capture's other paths: a timeout, a request the stub cannot parse, the
+environment, the reply sequence, the request limit and a chunked body.
 
 ## What is normalized, and fingerprints
 
-Both sides alike, and nothing else: the SigV4 signature and scope date, the
-`X-Amz-Date`, the `amz-sdk-invocation-id` (numbered by first appearance),
-the `ttl=` of `amz-sdk-request`, the User-Agent's host tokens (`os/`,
-`md/arch`, `md/distrib`, the CRT's `platform/`), the Python route's
-`sid/` and the order of its `m/` codes, and generated version 4 UUIDs in
-bodies and queries (numbered; those the row gives stay).
-`xtask/src/diff/normalize.rs` lists each.
+Both sides alike, each value only when it has its expected form, and
+nothing else: the SigV4 signature (64 lowercase hex digits) and scope date,
+an `X-Amz-Date` of the form `YYYYMMDDTHHMMSSZ`, a UUID
+`amz-sdk-invocation-id` (numbered by first appearance), a `ttl=` date in
+`amz-sdk-request`, the host's release and distribution version in the
+User-Agent (`os/linux#<release>`; the family, `md/arch` and the rest stay),
+the Python route's `sid/` and the order of its `m/` codes, and generated
+version 4 UUIDs in bodies and queries (numbered; those the row gives, in its
+arguments, variables or replies, stay). `xtask/src/diff/normalize.rs` lists
+each.
 
-A difference is named by its stage and first differing field, such as
-`exit:0->255`, `stdout:$.Items[].When`, `request[*].header:user-agent:lang`
-or `request[*].body:Tags.member.#.Key`. `xtask/src/diff/compare.rs` lists
-every form.
+A difference is named by its stage and a differing field, such as
+`exit:0->255`, `stdout:$.Items[].When`, `stdout:$:order`,
+`request[*].header:user-agent:lang` or `request[*].body:Tags.member.#.Key`.
+Every check of a stage runs every time on what both sides share (order,
+layout, repeats, empty query or form fields), and a stage whose bytes
+differ with no check naming why is named `:format`, so one known
+difference never hides another and a differing byte always shows.
+`xtask/src/diff/compare.rs` lists every form.
+
+A run the capture could not see whole is named `harness:<side>:<kind>`: a
+request the stub could not parse (`protocol_error`), a connection the proxy
+refused, requests its recorder dropped, a warning the stub logged, output a
+stray process held open. Each request also records the hosts the CLI
+asked the proxy to CONNECT to (`connects:`) and a chunked body's chunk
+sizes and trailers (`body:framing`).
 
 ## Known differences
 
 `known-differences.json` lists the differences accepted: each entry has a
-`fingerprint`, the `cases` it holds for (row ids, or `"*"`), an optional
-`mode` and a `reason`. It starts empty. A run's `report.json` proposes an
-entry, with an empty reason, for each group no entry covers; adding one is
-a reviewed change, never the harness's.
+`fingerprint`, the `cases` it holds for (row ids, or `"*"`), the `mode` it
+holds in (`oracle`, `baseline` or `determinism`) and a `reason`. It starts
+empty. No entry may name a timeout or a harness error: a row with one is
+always mismatched. A run's `report.json` proposes an entry, with an empty
+reason, for each group no entry covers; adding one is a reviewed change,
+never the harness's.
 
 ## Output
 

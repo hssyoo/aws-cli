@@ -1,37 +1,52 @@
 //! Fingerprints: what differs between two runs of a row, each named by its
-//! stage and first differing field, so one fingerprint names one cause
-//! however many rows show it.
+//! stage and a differing field, so one fingerprint names one cause however
+//! many rows show it. Every check of a stage runs every time, on what both
+//! sides share, so knowing one difference never hides another; and when two
+//! texts differ but no check names why, the stage's `:format` does, so a
+//! differing byte always shows.
 //!
-//! - `timeout:a|b|both`, and `exit:<a>-><b>`.
+//! - `harness:a|b:<kind>` (the capture could not see the run whole) and
+//!   `timeout:a|b|both`; no known difference covers these. `exit:<a>-><b>`.
 //! - `stdout:` and `stderr:`: when both sides are JSON, each differing path,
 //!   array indices as `[]` (`stdout:$.Items[].When`), with `:missing` when B
-//!   lacks a member A has and `:extra` for the reverse, `:length` for arrays,
-//!   or `json-format` when only the text differs; otherwise `text:` and the
-//!   first differing line, its digits masked, cut at 48 characters.
+//!   lacks a member A has and `:extra` for the reverse, `:length` for an
+//!   array, `:order` for the order of an object's shared keys, and
+//!   `json-format` for the whitespace around shared tokens. Scalars compare
+//!   as their text, so `1.0` and `1` differ. Otherwise, each differing line
+//!   (after the lines both share at either end), as `text:<A>-><B>` with
+//!   digits masked.
+//! - `connects:count|host`: the hosts each run asked the proxy for.
 //! - `requests:count`, then per request (its index collapsed to `[*]`):
-//!   `request[*].line:method|version|host|path`, `request[*].line:query:<name>`
-//!   or `query-order`; `request[*].header:<name>:missing|extra|value|case`
-//!   (lowercase name), or `request[*].header-order`; the User-Agent token by
-//!   token, `request[*].header:user-agent:<token key>` (`lang`, `md/fallback`,
-//!   ...) or `:order`; `request[*].body:` and the body's JSON path, form
-//!   field, XML element path (`/Root/Child`), or `bytes`, and `:complete`.
+//!   - `request[*].line:method|version|host|path`, `request[*].line:query:<name>`
+//!     (a field without `=` differs from one with an empty value),
+//!     `line:query-order` and `line:query-format` (a `?` with no query, or
+//!     empty fields);
+//!   - `request[*].header:<name>:missing|extra|value|count|split|case`, where
+//!     `count` is how many times the name appears and `split` the same
+//!     values cut differently, and `request[*].header-order`. The User-Agent
+//!     compares token by token, `request[*].header:user-agent:<token key>`
+//!     (`lang`, `md/fallback`, ...) and `:order`;
+//!   - `request[*].body:` the JSON forms as for stdout, a form's fields as
+//!     for a query (`-order`, `-format`), each differing XML token's element
+//!     path (`/Root/Child`), or `bytes`; and `:complete` and `:framing`
+//!     (chunk sizes and trailers).
 //!
 //! A row yields each fingerprint once, with its first instance.
 
-use std::collections::BTreeSet;
-
 use serde::Serialize;
-use serde_json::Value;
 
-use super::normalize::Normal;
+use super::json::{self, Document, Element, Kind, Member, Node};
+use super::normalize::{self, Fields, Normal};
 
 const REQUEST: &str = "request[*]";
 /// The longest excerpt of either side a difference keeps.
 const EXCERPT_CHARS: usize = 120;
 /// Bytes shown on each side of a body's first difference.
 const CONTEXT_BYTES: usize = 40;
-/// The characters of a line a text fingerprint keeps.
+/// The characters of a line a text fingerprint keeps of each side.
 const LINE_CHARS: usize = 48;
+/// The differing lines or XML tokens a stage names before `...`.
+const SPAN_MAX: usize = 16;
 
 /// One difference: its fingerprint, the request it is in, and excerpts of
 /// both sides.
@@ -47,10 +62,13 @@ pub struct Diff {
 /// What a run did, as compared.
 #[derive(Debug)]
 pub struct Outcome<'a> {
+    /// What the capture could not see, each `<kind>: <detail>`.
+    pub harness: &'a [String],
     pub exit: Option<i32>,
     pub timed_out: bool,
     pub stdout: &'a [u8],
     pub stderr: &'a [u8],
+    pub connects: &'a [String],
     pub requests: Vec<Normal>,
 }
 
@@ -58,10 +76,13 @@ pub struct Outcome<'a> {
 struct Found {
     diffs: Vec<Diff>,
     request: Option<usize>,
+    /// The differences named so far, repeats included.
+    noted: usize,
 }
 
 impl Found {
     fn add(&mut self, fingerprint: String, a: &str, b: &str) {
+        self.noted += 1;
         if self
             .diffs
             .iter()
@@ -76,6 +97,15 @@ impl Found {
             b: excerpt(b),
         });
     }
+
+    /// Names `<stage>:format` for texts that differ when no check since
+    /// `mark` named a difference.
+    fn backstop(&mut self, mark: usize, stage: &str, a: &[u8], b: &[u8]) {
+        if a != b && self.noted == mark {
+            let at = common_prefix(a, b);
+            self.add(format!("{stage}:format"), &around(a, at), &around(b, at));
+        }
+    }
 }
 
 fn excerpt(text: &str) -> String {
@@ -89,9 +119,16 @@ fn excerpt(text: &str) -> String {
 /// The differences between run `a` and run `b` of one row.
 pub fn diffs(a: &Outcome<'_>, b: &Outcome<'_>) -> Vec<Diff> {
     let mut found = Found::default();
+    for (side, outcome) in [("a", a), ("b", b)] {
+        for error in outcome.harness {
+            let kind = error.split(':').next().unwrap_or_default();
+            found.add(format!("harness:{side}:{kind}"), error, "");
+        }
+    }
     status(a, b, &mut found);
     stream("stdout", a.stdout, b.stdout, &mut found);
     stream("stderr", a.stderr, b.stderr, &mut found);
+    connects(a.connects, b.connects, &mut found);
     requests(&a.requests, &b.requests, &mut found);
     found.diffs
 }
@@ -121,83 +158,198 @@ fn stream(stage: &str, a: &[u8], b: &[u8], found: &mut Found) {
     if a == b {
         return;
     }
-    if let (Some(x), Some(y)) = (json(a), json(b)) {
-        return structured(stage, (&x, &y), (a, b), found);
+    let mark = found.noted;
+    match (read_json(a), read_json(b)) {
+        (Some(x), Some(y)) => documents(stage, &x, &y, found),
+        _ => lines(stage, a, b, found),
     }
-    let (x, y) = first_line_difference(a, b);
-    let shown = if x.is_empty() { &y } else { &x };
-    found.add(format!("{stage}:text:{}", mask(shown, LINE_CHARS)), &x, &y);
+    found.backstop(mark, stage, a, b);
 }
 
-fn json(bytes: &[u8]) -> Option<Value> {
-    serde_json::from_slice(bytes).ok()
+fn read_json(bytes: &[u8]) -> Option<Document<'_>> {
+    std::str::from_utf8(bytes).ok().and_then(json::read)
 }
 
-/// Each differing JSON path of `values`, or `json-format` when only the
-/// texts `raw` differ.
-fn structured(stage: &str, values: (&Value, &Value), raw: (&[u8], &[u8]), found: &mut Found) {
-    let mut paths = Vec::new();
-    json_paths("$", values.0, values.1, &mut paths);
-    if paths.is_empty() {
-        let (x, y) = first_line_difference(raw.0, raw.1);
-        found.add(format!("{stage}:json-format"), &x, &y);
+/// The differences two JSON documents' walk finds.
+#[derive(Debug, Default)]
+struct Walk {
+    paths: Vec<(String, String, String)>,
+    layout: bool,
+}
+
+fn documents(stage: &str, x: &Document<'_>, y: &Document<'_>, found: &mut Found) {
+    let mut walk = Walk {
+        layout: x.before != y.before || x.after != y.after,
+        ..Walk::default()
+    };
+    nodes("$", &x.root, &y.root, &mut walk);
+    for (path, l, r) in walk.paths {
+        found.add(format!("{stage}:{path}"), &l, &r);
     }
-    for (path, x, y) in paths {
-        found.add(format!("{stage}:{path}"), &x, &y);
+    if walk.layout {
+        let (l, r) = (x.root.text.as_bytes(), y.root.text.as_bytes());
+        let at = common_prefix(l, r);
+        found.add(
+            format!("{stage}:json-format"),
+            &around(l, at),
+            &around(r, at),
+        );
     }
 }
 
-type Paths = Vec<(String, String, String)>;
-
-fn json_paths(path: &str, a: &Value, b: &Value, out: &mut Paths) {
-    match (a, b) {
-        (Value::Object(x), Value::Object(y)) => objects(path, x, y, out),
-        (Value::Array(x), Value::Array(y)) => {
-            if x.len() != y.len() {
-                out.push((
-                    format!("{path}:length"),
-                    x.len().to_string(),
-                    y.len().to_string(),
-                ));
-            }
-            let child = format!("{path}[]");
-            for (l, r) in x.iter().zip(y) {
-                json_paths(&child, l, r, out);
-            }
+fn nodes(path: &str, x: &Node<'_>, y: &Node<'_>, walk: &mut Walk) {
+    match (&x.kind, &y.kind) {
+        (Kind::Object(l, l_close), Kind::Object(r, r_close)) => {
+            members(path, l, r, walk);
+            walk.layout |= l.is_empty() == r.is_empty() && l_close != r_close;
         }
-        _ if a != b => out.push((path.to_owned(), a.to_string(), b.to_string())),
-        _ => {}
+        (Kind::Array(l, l_close), Kind::Array(r, r_close)) => {
+            elements(path, l, r, walk);
+            walk.layout |= l.is_empty() == r.is_empty() && l_close != r_close;
+        }
+        _ if x.text == y.text => {}
+        _ => walk
+            .paths
+            .push((path.to_owned(), x.text.to_owned(), y.text.to_owned())),
     }
 }
 
-type Object = serde_json::Map<String, Value>;
-
-fn objects(path: &str, x: &Object, y: &Object, out: &mut Paths) {
-    let keys: BTreeSet<&String> = x.keys().chain(y.keys()).collect();
-    for key in keys {
-        let child = format!("{path}.{key}");
-        match (x.get(key), y.get(key)) {
-            (Some(l), Some(r)) => json_paths(&child, l, r, out),
-            (Some(l), None) => out.push((format!("{child}:missing"), l.to_string(), String::new())),
-            (None, Some(r)) => out.push((format!("{child}:extra"), String::new(), r.to_string())),
-            (None, None) => {}
+fn members(path: &str, x: &[Member<'_>], y: &[Member<'_>], walk: &mut Walk) {
+    let child = |member: &Member<'_>| {
+        let key = member.key;
+        format!(
+            "{path}.{}",
+            key.get(1..key.len().saturating_sub(1)).unwrap_or(key)
+        )
+    };
+    let x_keys = occurrences(x.iter().map(|member| member.key));
+    let y_keys = occurrences(y.iter().map(|member| member.key));
+    for (member, key) in x.iter().zip(&x_keys) {
+        match y_keys
+            .iter()
+            .position(|other| other == key)
+            .map(|at| &y[at])
+        {
+            Some(other) => {
+                walk.layout |= member.layout != other.layout
+                    || both_differ(member.before_comma, other.before_comma);
+                nodes(&child(member), &member.value, &other.value, walk);
+            }
+            None => walk.paths.push((
+                format!("{}:missing", child(member)),
+                member.value.text.to_owned(),
+                String::new(),
+            )),
         }
     }
+    for (member, key) in y.iter().zip(&y_keys) {
+        if !x_keys.contains(key) {
+            walk.paths.push((
+                format!("{}:extra", child(member)),
+                String::new(),
+                member.value.text.to_owned(),
+            ));
+        }
+    }
+    let (l, r) = (shared(&x_keys, &y_keys), shared(&y_keys, &x_keys));
+    if l != r {
+        let keys = |keys: &[&(&str, usize)]| {
+            keys.iter()
+                .map(|(key, _)| *key)
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        walk.paths
+            .push((format!("{path}:order"), keys(&l), keys(&r)));
+    }
 }
 
-/// The first line on which `a` and `b` differ, from each.
-fn first_line_difference(a: &[u8], b: &[u8]) -> (String, String) {
-    let lines = |text: &[u8]| {
+fn both_differ(x: Option<&str>, y: Option<&str>) -> bool {
+    matches!((x, y), (Some(l), Some(r)) if l != r)
+}
+
+fn elements(path: &str, x: &[Element<'_>], y: &[Element<'_>], walk: &mut Walk) {
+    if x.len() != y.len() {
+        walk.paths.push((
+            format!("{path}:length"),
+            x.len().to_string(),
+            y.len().to_string(),
+        ));
+    }
+    let child = format!("{path}[]");
+    for (l, r) in x.iter().zip(y) {
+        walk.layout |= l.before != r.before || both_differ(l.before_comma, r.before_comma);
+        nodes(&child, &l.value, &r.value, walk);
+    }
+}
+
+/// Each item with the count of the same item before it, so a repeated
+/// name pairs with its own repeat.
+fn occurrences<'a, T: PartialEq + Copy + 'a>(items: impl Iterator<Item = T>) -> Vec<(T, usize)> {
+    let mut seen: Vec<T> = Vec::new();
+    items
+        .map(|item| {
+            let count = seen.iter().filter(|other| **other == item).count();
+            seen.push(item);
+            (item, count)
+        })
+        .collect()
+}
+
+/// The items of `x` that `y` holds too, in `x`'s order.
+fn shared<'a, T: PartialEq>(x: &'a [T], y: &[T]) -> Vec<&'a T> {
+    x.iter().filter(|item| y.contains(item)).collect()
+}
+
+/// Each differing line, after the lines both share at either end.
+fn lines(stage: &str, a: &[u8], b: &[u8], found: &mut Found) {
+    let split = |text: &'_ [u8]| {
         text.split(|byte| *byte == b'\n')
-            .map(<[u8]>::to_vec)
+            .map(lossy)
             .collect::<Vec<_>>()
     };
-    let (x, y) = (lines(a), lines(b));
-    let index = (0..x.len().max(y.len()))
-        .find(|index| x.get(*index) != y.get(*index))
-        .unwrap_or(0);
-    let text = |line: Option<&Vec<u8>>| line.map_or_else(String::new, |line| lossy(line));
-    (text(x.get(index)), text(y.get(index)))
+    let (x, y) = (split(a), split(b));
+    for (index, (p, q)) in differing(&x, &y).into_iter().enumerate() {
+        if index == SPAN_MAX {
+            found.add(format!("{stage}:text:..."), "", "");
+            break;
+        }
+        let (p, q) = (
+            p.cloned().unwrap_or_default(),
+            q.cloned().unwrap_or_default(),
+        );
+        let fingerprint = format!(
+            "{stage}:text:{}->{}",
+            mask(&p, LINE_CHARS),
+            mask(&q, LINE_CHARS)
+        );
+        found.add(fingerprint, &p, &q);
+    }
+}
+
+/// The items at each place between what `x` and `y` share at the start
+/// and the end that differ, either absent past its side's end.
+fn differing<'s, T: PartialEq>(x: &'s [T], y: &'s [T]) -> Vec<(Option<&'s T>, Option<&'s T>)> {
+    let (l, r) = span(x, y);
+    let pairs = (0..l.len().max(r.len())).map(|index| (l.get(index), r.get(index)));
+    pairs.filter(|(p, q)| p != q).collect()
+}
+
+/// What lies between the items `x` and `y` share at the start and the end.
+fn span<'s, T: PartialEq>(x: &'s [T], y: &'s [T]) -> (&'s [T], &'s [T]) {
+    let prefix = x.iter().zip(y).take_while(|(l, r)| l == r).count();
+    let (x, y) = (&x[prefix..], &y[prefix..]);
+    let suffix = x
+        .iter()
+        .rev()
+        .zip(y.iter().rev())
+        .take_while(|(l, r)| l == r)
+        .count();
+    (&x[..x.len() - suffix], &y[..y.len() - suffix])
+}
+
+fn common_prefix(a: &[u8], b: &[u8]) -> usize {
+    a.iter().zip(b).take_while(|(l, r)| l == r).count()
 }
 
 fn lossy(bytes: &[u8]) -> String {
@@ -218,6 +370,19 @@ fn mask(text: &str, chars: usize) -> String {
         .collect()
 }
 
+fn connects(a: &[String], b: &[String], found: &mut Found) {
+    if a.len() != b.len() {
+        found.add(
+            "connects:count".to_owned(),
+            &a.len().to_string(),
+            &b.len().to_string(),
+        );
+    }
+    if a.iter().zip(b).any(|(l, r)| l != r) {
+        found.add("connects:host".to_owned(), &a.join(" "), &b.join(" "));
+    }
+}
+
 fn requests(a: &[Normal], b: &[Normal], found: &mut Found) {
     if a.len() != b.len() {
         found.add(
@@ -236,58 +401,80 @@ fn requests(a: &[Normal], b: &[Normal], found: &mut Found) {
 }
 
 fn line(x: &Normal, y: &Normal, found: &mut Found) {
-    let fields = [
+    let mark = found.noted;
+    let parts = [
         ("method", &x.method, &y.method),
         ("version", &x.version, &y.version),
         ("host", &x.host, &y.host),
         ("path", &x.path, &y.path),
     ];
-    for (name, l, r) in fields {
+    for (name, l, r) in parts {
         if l != r {
             found.add(format!("{REQUEST}.line:{name}"), l, r);
         }
     }
-    pairs(&format!("{REQUEST}.line:query"), &x.query, &y.query, found);
+    let query = |normal: &Normal| normalize::fields(normal.query.as_deref().unwrap_or_default());
+    fields(
+        &format!("{REQUEST}.line:query"),
+        &query(x),
+        &query(y),
+        found,
+    );
+    if x.query.is_some() != y.query.is_some() {
+        found.add(format!("{REQUEST}.line:query-format"), &x.target, &y.target);
+    }
+    let stage = format!("{REQUEST}.line:target");
+    found.backstop(mark, &stage, x.target.as_bytes(), y.target.as_bytes());
 }
 
-/// Name and value pairs, a query's or a form's: each name whose values
-/// differ, digits masked, or `-order` when only the order does.
-fn pairs(stage: &str, x: &[(String, String)], y: &[(String, String)], found: &mut Found) {
-    if x == y {
-        return;
-    }
-    let values = |pairs: &[(String, String)], name: &str| {
-        let matching = pairs.iter().filter(|(key, _)| key == name);
-        matching.map(|(_, value)| value.clone()).collect::<Vec<_>>()
+/// A query's or a form's fields: each name whose fields differ, digits
+/// masked, then `-order` for the shared fields' order and `-format` for
+/// empty fields.
+fn fields(stage: &str, x: &Fields, y: &Fields, found: &mut Found) {
+    let render = |fields: &Fields, name: &str| {
+        let matching = fields.pairs.iter().filter(|(key, _)| key == name);
+        let shown = matching
+            .map(|(key, value)| value.as_ref().map_or(key.clone(), |v| format!("{key}={v}")));
+        shown.collect::<Vec<_>>().join("&")
     };
-    let mut differing = false;
-    for name in union(
-        x.iter().map(|(key, _)| key.clone()),
-        y.iter().map(|(key, _)| key.clone()),
-    ) {
-        let (l, r) = (values(x, &name), values(y, &name));
+    let names = |fields: &Fields| {
+        fields
+            .pairs
+            .iter()
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>()
+    };
+    for name in union(names(x), names(y)) {
+        let (l, r) = (render(x, &name), render(y, &name));
         if l != r {
-            let stage = format!("{stage}:{}", mask(&name, usize::MAX));
-            found.add(stage, &l.join(", "), &r.join(", "));
-            differing = true;
+            found.add(format!("{stage}:{}", mask(&name, usize::MAX)), &l, &r);
         }
     }
-    if !differing {
-        let names = |pairs: &[(String, String)]| {
-            pairs
-                .iter()
-                .map(|(key, _)| key.as_str())
+    let x_keys = occurrences(x.pairs.iter().map(|(key, _)| key.as_str()));
+    let y_keys = occurrences(y.pairs.iter().map(|(key, _)| key.as_str()));
+    let (l, r) = (shared(&x_keys, &y_keys), shared(&y_keys, &x_keys));
+    if l != r {
+        let keys = |keys: &[&(&str, usize)]| {
+            keys.iter()
+                .map(|(key, _)| *key)
                 .collect::<Vec<_>>()
                 .join("&")
         };
-        found.add(format!("{stage}-order"), &names(x), &names(y));
+        found.add(format!("{stage}-order"), &keys(&l), &keys(&r));
+    }
+    if x.empty != y.empty {
+        found.add(
+            format!("{stage}-format"),
+            &format!("{:?}", x.empty),
+            &format!("{:?}", y.empty),
+        );
     }
 }
 
 /// The distinct items of `x` then of `y`, each where it first appears.
-fn union(x: impl Iterator<Item = String>, y: impl Iterator<Item = String>) -> Vec<String> {
+fn union(x: Vec<String>, y: Vec<String>) -> Vec<String> {
     let mut seen = Vec::new();
-    for item in x.chain(y) {
+    for item in x.into_iter().chain(y) {
         if !seen.contains(&item) {
             seen.push(item);
         }
@@ -298,6 +485,7 @@ fn union(x: impl Iterator<Item = String>, y: impl Iterator<Item = String>) -> Ve
 type Headers = [(String, String)];
 
 fn headers(x: &Headers, y: &Headers, found: &mut Found) {
+    let mark = found.noted;
     let lower = |headers: &Headers| {
         headers
             .iter()
@@ -305,20 +493,34 @@ fn headers(x: &Headers, y: &Headers, found: &mut Found) {
             .collect::<Vec<_>>()
     };
     let (x_names, y_names) = (lower(x), lower(y));
-    for name in union(x_names.iter().cloned(), y_names.iter().cloned()) {
+    for name in union(x_names.clone(), y_names.clone()) {
         header(&name, &entries(x, &name), &entries(y, &name), found);
     }
-    let sorted = |mut names: Vec<String>| {
-        names.sort();
-        names
-    };
-    if x_names != y_names && sorted(x_names.clone()) == sorted(y_names.clone()) {
-        found.add(
-            format!("{REQUEST}.header-order"),
-            &x_names.join(" "),
-            &y_names.join(" "),
-        );
+    let x_order = occurrences(x_names.iter().map(String::as_str));
+    let y_order = occurrences(y_names.iter().map(String::as_str));
+    let (l, r) = (shared(&x_order, &y_order), shared(&y_order, &x_order));
+    if l != r {
+        let names = |names: &[&(&str, usize)]| {
+            names
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        found.add(format!("{REQUEST}.header-order"), &names(&l), &names(&r));
     }
+    let flat = |headers: &Headers| {
+        headers
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}\n"))
+            .collect::<String>()
+    };
+    found.backstop(
+        mark,
+        &format!("{REQUEST}.header"),
+        flat(x).as_bytes(),
+        flat(y).as_bytes(),
+    );
 }
 
 fn entries<'a>(headers: &'a Headers, name: &str) -> Vec<&'a (String, String)> {
@@ -331,24 +533,14 @@ fn entries<'a>(headers: &'a Headers, name: &str) -> Vec<&'a (String, String)> {
 type Entries<'a> = [&'a (String, String)];
 
 /// One header name's entries on each side: absent on one, or its values,
-/// or the case of its name.
+/// how many times it appears and how its values are cut, and the case of
+/// its name.
 fn header(name: &str, x: &Entries<'_>, y: &Entries<'_>, found: &mut Found) {
-    let values = |entries: &Entries<'_>| {
-        entries
-            .iter()
-            .map(|(_, value)| value.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    let names = |entries: &Entries<'_>| {
-        entries
-            .iter()
-            .map(|(name, _)| name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
+    fn values<'a>(entries: &Entries<'a>) -> Vec<&'a str> {
+        entries.iter().map(|(_, value)| value.as_str()).collect()
+    }
     let stage = format!("{REQUEST}.header:{name}");
-    let (l, r) = (values(x), values(y));
+    let (l, r) = (values(x).join(", "), values(y).join(", "));
     match (x.is_empty(), y.is_empty()) {
         (false, true) => return found.add(format!("{stage}:missing"), &l, ""),
         (true, false) => return found.add(format!("{stage}:extra"), "", &r),
@@ -359,9 +551,28 @@ fn header(name: &str, x: &Entries<'_>, y: &Entries<'_>, found: &mut Found) {
     } else if l != r {
         found.add(format!("{stage}:value"), &l, &r);
     }
-    let (l, r) = (names(x), names(y));
-    if l != r {
-        found.add(format!("{stage}:case"), &l, &r);
+    if x.len() != y.len() {
+        found.add(
+            format!("{stage}:count"),
+            &x.len().to_string(),
+            &y.len().to_string(),
+        );
+    } else if l == r && values(x) != values(y) {
+        found.add(
+            format!("{stage}:split"),
+            &values(x).join(" | "),
+            &values(y).join(" | "),
+        );
+    }
+    if x.iter().zip(y).any(|((l, _), (r, _))| l != r) {
+        let names = |entries: &Entries<'_>| {
+            entries
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        found.add(format!("{stage}:case"), &names(x), &names(y));
     }
 }
 
@@ -369,25 +580,26 @@ fn user_agent(a: &str, b: &str, found: &mut Found) {
     if a == b {
         return;
     }
-    let tokens = |value: &str| value.split(' ').map(str::to_owned).collect::<Vec<_>>();
-    let (x, y) = (tokens(a), tokens(b));
-    let keyed = |tokens: &[String], key: &str| {
+    let (x, y): (Vec<&str>, Vec<&str>) = (a.split(' ').collect(), b.split(' ').collect());
+    let keyed = |tokens: &[&str], key: &str| {
         let matching = tokens.iter().filter(|token| token_key(token) == key);
-        matching.cloned().collect::<Vec<_>>().join(" ")
+        matching.copied().collect::<Vec<_>>().join(" ")
     };
-    let keys = union(
-        x.iter().map(|token| token_key(token).to_owned()),
-        y.iter().map(|token| token_key(token).to_owned()),
-    );
-    let mut differing = false;
-    for key in keys {
+    let keys = |tokens: &[&str]| {
+        tokens
+            .iter()
+            .map(|token| token_key(token).to_owned())
+            .collect::<Vec<_>>()
+    };
+    for key in union(keys(&x), keys(&y)) {
         let (l, r) = (keyed(&x, &key), keyed(&y, &key));
         if l != r {
             found.add(format!("{REQUEST}.header:user-agent:{key}"), &l, &r);
-            differing = true;
         }
     }
-    if !differing {
+    let x_keys = occurrences(x.iter().map(|token| token_key(token)));
+    let y_keys = occurrences(y.iter().map(|token| token_key(token)));
+    if shared(&x_keys, &y_keys) != shared(&y_keys, &x_keys) {
         found.add(format!("{REQUEST}.header:user-agent:order"), a, b);
     }
 }
@@ -413,32 +625,33 @@ fn body(x: &Normal, y: &Normal, found: &mut Found) {
             &y.complete.to_string(),
         );
     }
+    if x.framing != y.framing {
+        found.add(
+            format!("{stage}:framing"),
+            &format!("{:?}", x.framing),
+            &format!("{:?}", y.framing),
+        );
+    }
     if x.body == y.body {
         return;
     }
-    if let (Some(l), Some(r)) = (json(&x.body), json(&y.body)) {
-        return structured(&stage, (&l, &r), (&x.body, &y.body), found);
-    }
-    if is_form(x) && is_form(y) {
-        return pairs(&stage, &form(&x.body), &form(&y.body), found);
-    }
-    let at = x
-        .body
-        .iter()
-        .zip(&y.body)
-        .take_while(|(l, r)| l == r)
-        .count();
-    let xml = |body: &[u8]| body.trim_ascii_start().starts_with(b"<");
-    let field = if xml(&x.body) && xml(&y.body) {
-        xml_path(&x.body, at)
+    let mark = found.noted;
+    if let (Some(l), Some(r)) = (read_json(&x.body), read_json(&y.body)) {
+        documents(&stage, &l, &r, found);
+    } else if is_form(x) && is_form(y) {
+        let form = |normal: &Normal| normalize::fields(&lossy(&normal.body));
+        fields(&stage, &form(x), &form(y), found);
+    } else if is_xml(&x.body) && is_xml(&y.body) {
+        xml(&stage, &x.body, &y.body, found);
     } else {
-        "bytes".to_owned()
-    };
-    found.add(
-        format!("{stage}:{field}"),
-        &around(&x.body, at),
-        &around(&y.body, at),
-    );
+        let at = common_prefix(&x.body, &y.body);
+        found.add(
+            format!("{stage}:bytes"),
+            &around(&x.body, at),
+            &around(&y.body, at),
+        );
+    }
+    found.backstop(mark, &stage, &x.body, &y.body);
 }
 
 fn is_form(request: &Normal) -> bool {
@@ -451,43 +664,61 @@ fn is_form(request: &Normal) -> bool {
         })
 }
 
-fn form(body: &[u8]) -> Vec<(String, String)> {
-    let text = lossy(body);
-    let pairs = text.split('&').filter(|pair| !pair.is_empty());
-    pairs
-        .map(|pair| {
-            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (name.to_owned(), value.to_owned())
-        })
-        .collect()
+fn is_xml(body: &[u8]) -> bool {
+    body.trim_ascii_start().starts_with(b"<")
 }
 
-/// The elements open at byte `offset` of an XML document, outermost first.
-fn xml_path(body: &[u8], offset: usize) -> String {
-    let mut open: Vec<String> = Vec::new();
-    let mut at = 0;
-    while let Some(start) = body[at..offset]
-        .iter()
-        .position(|byte| *byte == b'<')
-        .map(|i| at + i)
-    {
-        let end = body[start..]
-            .iter()
-            .position(|byte| *byte == b'>')
-            .map_or(body.len(), |i| start + i);
-        let tag = &body[start + 1..end];
-        if tag.starts_with(b"/") {
-            open.pop();
-        } else if !(tag.starts_with(b"?") || tag.starts_with(b"!") || tag.ends_with(b"/")) {
-            let name = tag
-                .split(u8::is_ascii_whitespace)
-                .next()
-                .unwrap_or_default();
-            open.push(lossy(name));
+/// Each differing XML token, a tag or the text between tags, named by the
+/// path of the elements open at it.
+fn xml(stage: &str, a: &[u8], b: &[u8], found: &mut Found) {
+    let (x, y) = (xml_tokens(a), xml_tokens(b));
+    for (index, (p, q)) in differing(&x, &y).into_iter().enumerate() {
+        if index == SPAN_MAX {
+            found.add(format!("{stage}:..."), "", "");
+            break;
         }
-        at = (end + 1).min(offset);
+        let path = p.or(q).map_or("/", |(path, _)| path.as_str());
+        let text = |token: Option<&(String, &[u8])>| {
+            token.map_or_else(String::new, |(_, bytes)| lossy(bytes))
+        };
+        found.add(format!("{stage}:{path}"), &text(p), &text(q));
     }
-    format!("/{}", open.join("/"))
+}
+
+fn xml_tokens(body: &[u8]) -> Vec<(String, &[u8])> {
+    let mut open: Vec<String> = Vec::new();
+    let mut tokens = Vec::new();
+    let mut at = 0;
+    while at < body.len() {
+        let end = if body[at] == b'<' {
+            body[at..]
+                .iter()
+                .position(|byte| *byte == b'>')
+                .map_or(body.len(), |i| at + i + 1)
+        } else {
+            body[at..]
+                .iter()
+                .position(|byte| *byte == b'<')
+                .map_or(body.len(), |i| at + i)
+        };
+        let token = &body[at..end];
+        let closing = token.starts_with(b"</");
+        let opening = token.starts_with(b"<")
+            && !closing
+            && !token.starts_with(b"<?")
+            && !token.starts_with(b"<!");
+        if opening {
+            let name =
+                token[1..].split(|byte| byte.is_ascii_whitespace() || matches!(byte, b'>' | b'/'));
+            open.push(lossy(name.into_iter().next().unwrap_or_default()));
+        }
+        tokens.push((format!("/{}", open.join("/")), token));
+        if closing || (opening && token.ends_with(b"/>")) {
+            open.pop();
+        }
+        at = end;
+    }
+    tokens
 }
 
 /// The bytes around `at`, as text.

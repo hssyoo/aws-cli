@@ -6,7 +6,8 @@
 //! relative to the repository root, for fake models), the `responses` the
 //! stub gives the run's requests in order (the last repeating), each a
 //! `status`, `headers` as ordered pairs, and a `body` or `body_base64`, and
-//! an optional `timeout_s`.
+//! an optional `timeout_s` of at least a second. A row cannot set the
+//! variables the harness owns ([`OWNED`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -33,10 +34,19 @@ pub struct Row {
 }
 
 impl Row {
-    /// The texts the row itself gives the CLI: its arguments and variables.
+    /// The texts the row itself gives the CLI: its arguments, its variables,
+    /// and its replies' headers and text bodies, which the CLI may echo.
     pub fn inputs(&self) -> impl Iterator<Item = &str> {
         let values = self.env.values().filter_map(Option::as_deref);
-        self.argv.iter().map(String::as_str).chain(values)
+        let replies = self.responses.iter().flat_map(|reply| {
+            let headers = reply.headers.iter().map(|(_, value)| value.as_str());
+            headers.chain(reply.body.as_deref())
+        });
+        self.argv
+            .iter()
+            .map(String::as_str)
+            .chain(values)
+            .chain(replies)
     }
 }
 
@@ -105,22 +115,50 @@ pub fn parse(name: &str, text: &str) -> Result<Vec<Row>, TaskError> {
         }
         let at = |detail: String| deps::error(format!("{name}:{}: {detail}", index + 1));
         let row: Row = serde_json::from_str(line).map_err(|error| at(error.to_string()))?;
-        if row.argv.is_empty() {
-            return Err(at(format!("row {} has no argv", row.id)));
-        }
-        if row
-            .responses
-            .iter()
-            .any(|reply| reply.body.is_some() && reply.body_base64.is_some())
-        {
-            return Err(at(format!(
-                "a reply of row {} has both body and body_base64",
-                row.id
-            )));
-        }
+        check(&row).map_err(|detail| at(format!("row {}: {detail}", row.id)))?;
         rows.push(row);
     }
     Ok(rows)
+}
+
+/// The variables the harness sets, which a row cannot: its HOME and files,
+/// the route, the fake models, and every proxy variable, so that nothing
+/// leaves the machine (`tests/diff/capture.py` refuses them too).
+pub const OWNED: [&str; 14] = [
+    "HOME",
+    "AWS_CONFIG_FILE",
+    "AWS_SHARED_CREDENTIALS_FILE",
+    "AWS_CA_BUNDLE",
+    "AWS_DATA_PATH",
+    "AWS_CLI_NATIVE_ROUTER",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+];
+
+fn check(row: &Row) -> Result<(), String> {
+    if row.argv.is_empty() {
+        return Err("no argv".to_owned());
+    }
+    if let Some(name) = row.env.keys().find(|name| OWNED.contains(&name.as_str())) {
+        return Err(format!("the harness owns {name}"));
+    }
+    if row.timeout_s == Some(0) {
+        return Err("timeout_s must be at least 1".to_owned());
+    }
+    if row
+        .responses
+        .iter()
+        .any(|reply| reply.body.is_some() && reply.body_base64.is_some())
+    {
+        return Err("a reply has both body and body_base64".to_owned());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

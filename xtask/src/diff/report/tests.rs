@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
+use serde_json::{Value, json};
+
 use super::*;
-use crate::diff::capture::Request;
+use crate::diff::capture;
 use crate::diff::corpus;
 use crate::diff::options::Route;
 
@@ -32,32 +34,45 @@ fn rows(ids: &[&str]) -> Result<Vec<Row>, TaskError> {
     corpus::parse("rows", &lines.join("\n"))
 }
 
-/// A run that printed `stdout` and sent one request with `target`.
-fn capture(id: &str, stdout: &str, target: &str, date: &str) -> Capture {
-    let header = |name: &str, value: &str| (name.to_owned(), value.to_owned());
-    Capture {
-        id: id.to_owned(),
-        side: String::new(),
-        exit: Some(0),
-        timed_out: false,
-        stdout: stdout.as_bytes().to_vec(),
-        stderr: Vec::new(),
-        requests: vec![Request {
-            method: "POST".to_owned(),
-            target: "/".to_owned(),
-            version: "1.1".to_owned(),
-            headers: vec![header("X-Amz-Target", target), header("X-Amz-Date", date)],
-            body: b"{}".to_vec(),
-            complete: true,
-        }],
+/// A request as the capture writes it.
+fn request(target: &str, headers: &[(&str, &str)], body: &str) -> Value {
+    let headers: Vec<[&str; 2]> = headers
+        .iter()
+        .map(|(name, value)| [*name, *value])
+        .collect();
+    json!({"method": "POST", "target": target, "version": "1.1", "headers": headers,
+           "body": body, "complete": true})
+}
+
+/// A run as the capture writes it, with `fields` over a run that exits 0
+/// and prints and sends nothing.
+fn run_of(id: &str, fields: Value) -> Result<Capture, TaskError> {
+    let mut value = json!({"id": id, "side": "a", "exit": 0, "timed_out": false,
+                           "stdout": "", "stderr": "", "requests": []});
+    if let (Some(value), Some(fields)) = (value.as_object_mut(), fields.as_object()) {
+        value.extend(fields.clone());
     }
+    capture::parse(&value.to_string())?
+        .pop()
+        .ok_or_else(|| deps::error("no capture"))
+}
+
+/// A run that printed `stdout` and sent one request with `target`.
+fn capture(id: &str, stdout: &str, target: &str, date: &str) -> Result<Capture, TaskError> {
+    let headers = [("X-Amz-Target", target), ("X-Amz-Date", date)];
+    run_of(
+        id,
+        json!({"stdout": stdout, "requests": [request("/", &headers, "{}")]}),
+    )
 }
 
 const KNOWN: &str = r#"[
-  {"fingerprint": "stdout:$.A", "cases": ["known"], "reason": "a documented difference"},
+  {"fingerprint": "stdout:$.A", "cases": ["known"], "mode": "determinism", "reason": "documented"},
   {"fingerprint": "stdout:$.A", "cases": "*", "mode": "oracle", "reason": "only between routes"},
-  {"fingerprint": "exit:0->1", "cases": "*", "reason": "never seen"}
+  {"fingerprint": "exit:0->1", "cases": "*", "mode": "determinism", "reason": "never seen"}
 ]"#;
+
+const DATE: &str = "20261125T120000Z";
 
 /// Rows `same`, `known` and `new`: the first identical but for the
 /// normalized date, the others differing in stdout and in a header.
@@ -65,35 +80,41 @@ fn report(b: Route) -> Result<Report, TaskError> {
     let rows = rows(&["same", "known", "new"])?;
     let pairs = vec![
         (
-            capture("same", "{}", "T.A", "1"),
-            capture("same", "{}", "T.A", "2"),
+            capture("same", "{}", "T.A", DATE)?,
+            capture("same", "{}", "T.A", "20261125T120001Z")?,
         ),
         (
-            capture("known", "{\"A\": 1}", "T.A", "1"),
-            capture("known", "{\"A\": 2}", "T.A", "1"),
+            capture("known", "{\"A\": 1}", "T.A", DATE)?,
+            capture("known", "{\"A\": 2}", "T.A", DATE)?,
         ),
         (
-            capture("new", "{\"A\": 1}", "T.A", "1"),
-            capture("new", "{\"A\": 2}", "T.B", "1"),
+            capture("new", "{\"A\": 1}", "T.A", DATE)?,
+            capture("new", "{\"A\": 2}", "T.B", DATE)?,
         ),
     ];
     Ok(build(&run(b), &rows, &pairs, &known(KNOWN)?))
 }
 
+fn fingerprints(report: &Report) -> Vec<&str> {
+    report
+        .groups
+        .iter()
+        .map(|group| group.fingerprint.as_str())
+        .collect()
+}
+
 #[test]
 fn rows_are_identical_known_or_mismatched() -> Result<(), TaskError> {
     let report = report(Route::Native)?;
-    assert_eq!(
-        (
-            report.rows,
-            report.identical,
-            report.known,
-            report.mismatched
-        ),
-        (3, 1, 1, 1)
+    let counts = (
+        report.rows,
+        report.identical,
+        report.known,
+        report.mismatched,
     );
+    assert_eq!(counts, (3, 1, 1, 1));
     assert_eq!(
-        report.fingerprints(),
+        fingerprints(&report),
         ["stdout:$.A", "request[*].header:x-amz-target:value"]
     );
     let groups: Vec<_> = report
@@ -107,17 +128,24 @@ fn rows_are_identical_known_or_mismatched() -> Result<(), TaskError> {
         .iter()
         .map(|p| (p.fingerprint.as_str(), p.cases.clone()))
         .collect();
+    let new = vec!["new".to_owned()];
     assert_eq!(
         proposed,
         [
-            ("stdout:$.A", vec!["new".to_owned()]),
-            (
-                "request[*].header:x-amz-target:value",
-                vec!["new".to_owned()]
-            ),
+            ("stdout:$.A", new.clone()),
+            ("request[*].header:x-amz-target:value", new)
         ]
     );
     assert_eq!(report.unused_known, ["stdout:$.A", "exit:0->1"]);
+    Ok(())
+}
+
+#[test]
+fn the_verdict_and_summary_follow_the_rows() -> Result<(), TaskError> {
+    let report = report(Route::Native)?;
+    let rows = report.by_row();
+    assert_eq!(rows.get("new").map(Vec::len), Some(2));
+    assert_eq!(rows.get("same"), None);
     assert_eq!(
         report
             .verdict()
@@ -131,17 +159,13 @@ fn rows_are_identical_known_or_mismatched() -> Result<(), TaskError> {
         summary.contains("diff: 3 rows: 1 identical, 1 known, 1 mismatched\n"),
         "{summary}"
     );
-    assert!(
-        summary.contains(
-            "     1 NEW   request[*].header:x-amz-target:value  new: \"T.A\" vs \"T.B\"\n"
-        ),
-        "{summary}"
-    );
+    let line = "     1 NEW   request[*].header:x-amz-target:value  new: \"T.A\" vs \"T.B\"\n";
+    assert!(summary.contains(line), "{summary}");
     Ok(())
 }
 
 #[test]
-fn an_entry_with_a_mode_holds_only_in_it() -> Result<(), TaskError> {
+fn an_entry_holds_only_in_its_mode() -> Result<(), TaskError> {
     let report = report(Route::Python)?;
     assert_eq!(report.mode, "oracle");
     assert_eq!(
@@ -149,16 +173,16 @@ fn an_entry_with_a_mode_holds_only_in_it() -> Result<(), TaskError> {
         (1, 1, 1)
     );
     assert_eq!(
-        report.fingerprints(),
+        fingerprints(&report),
         ["request[*].header:x-amz-target:value", "stdout:$.A"]
     );
     assert_eq!(report.groups.last().map(|group| group.known), Some(true));
-    assert_eq!(report.unused_known, ["exit:0->1"]);
+    assert_eq!(report.unused_known, ["stdout:$.A", "exit:0->1"]);
     Ok(())
 }
 
 #[test]
-fn the_known_differences_need_cases_and_a_reason() {
+fn the_known_differences_need_cases_a_mode_and_a_reason() {
     let failure = |text: &str| {
         known(text)
             .err()
@@ -167,7 +191,7 @@ fn the_known_differences_need_cases_and_a_reason() {
     };
     assert_eq!(known("[]").ok(), Some(Vec::new()));
     assert_eq!(
-        failure(r#"[{"fingerprint": "f", "cases": "*", "reason": " "}]"#),
+        failure(r#"[{"fingerprint": "f", "cases": "*", "mode": "oracle", "reason": " "}]"#),
         "the known difference f gives no reason"
     );
     assert_eq!(
@@ -175,9 +199,10 @@ fn the_known_differences_need_cases_and_a_reason() {
         "the known difference f has mode \"route\", not one of oracle, baseline, determinism"
     );
     for text in [
-        r#"[{"fingerprint": "f", "cases": "all", "reason": "r"}]"#,
-        r#"[{"fingerprint": "f", "reason": "r"}]"#,
-        r#"[{"fingerprint": "f", "cases": "*", "reason": "r", "why": ""}]"#,
+        r#"[{"fingerprint": "f", "cases": "all", "mode": "oracle", "reason": "r"}]"#,
+        r#"[{"fingerprint": "f", "mode": "oracle", "reason": "r"}]"#,
+        r#"[{"fingerprint": "f", "cases": "*", "reason": "r"}]"#,
+        r#"[{"fingerprint": "f", "cases": "*", "mode": "oracle", "reason": "r", "why": ""}]"#,
     ] {
         assert!(failure(text).starts_with("known differences: "), "{text}");
     }
@@ -185,7 +210,7 @@ fn the_known_differences_need_cases_and_a_reason() {
 
 #[test]
 fn the_report_is_json() -> Result<(), TaskError> {
-    let value: serde_json::Value = serde_json::from_str(&report(Route::Native)?.json()?)
+    let value: Value = serde_json::from_str(&report(Route::Native)?.json()?)
         .map_err(|error| deps::error(error.to_string()))?;
     assert_eq!(value["format"], 1);
     assert_eq!(value["mode"], "determinism");
@@ -193,5 +218,221 @@ fn the_report_is_json() -> Result<(), TaskError> {
     assert_eq!(value["groups"][0]["instances"][0]["id"], "known");
     assert_eq!(value["groups"][0]["instances"][0]["known"], true);
     assert_eq!(value["proposed"][0]["reason"], "");
+    Ok(())
+}
+
+// The countermeasures for gap G-018: each test fails on 22426dbf3.
+
+/// The fingerprints of row `r`'s runs `a` and `b`.
+fn named(a: &Capture, b: &Capture) -> Result<Vec<String>, TaskError> {
+    let rows = rows(&["r"])?;
+    let row = rows.first().ok_or_else(|| deps::error("no row"))?;
+    Ok(row_diffs(row, a, b)
+        .into_iter()
+        .map(|diff| diff.fingerprint)
+        .collect())
+}
+
+/// `text` with each byte in turn doubled, deleted, and flipped in its
+/// lowest bit.
+fn mutations(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    for at in 0..bytes.len() {
+        let (mut doubled, mut deleted, mut flipped) =
+            (bytes.to_vec(), bytes.to_vec(), bytes.to_vec());
+        doubled.insert(at, bytes[at]);
+        deleted.remove(at);
+        flipped[at] ^= 1;
+        found.extend(
+            [doubled, deleted, flipped].map(|text| String::from_utf8_lossy(&text).into_owned()),
+        );
+    }
+    found
+}
+
+/// What builds a run's fields from one text.
+type Field<'a> = dyn Fn(&str) -> Value + 'a;
+
+#[test]
+fn every_byte_outside_the_normalized_spans_shows() -> Result<(), TaskError> {
+    let host = [("Host", "zjson.us-west-2.amazonaws.com")];
+    let form = [
+        ("Host", "h"),
+        ("Content-Type", "application/x-www-form-urlencoded"),
+    ];
+    let target = |target: &str| json!({"requests": [request(target, &host, "")]});
+    let json_body = |body: &str| json!({"requests": [request("/", &host, body)]});
+    let form_body = |body: &str| json!({"requests": [request("/", &form, body)]});
+    let stdout = |stdout: &str| json!({"stdout": stdout});
+    let cases: [(&Field<'_>, &str); 6] = [
+        (&target, "/things/t-1?Action=Get&flag&empty=&x=1"),
+        (&json_body, "{\"A\": [1, \"b\"], \"C\": {}}"),
+        (&form_body, "Action=Get&Tags.member.1.Key=k&flag"),
+        (&json_body, "<R a=\"1\"><B>t</B><C/></R>"),
+        (&stdout, "{\n    \"A\": 1,\n    \"B\": \"x\"\n}\n"),
+        (&stdout, "first line\nsecond 2\n"),
+    ];
+    for (field, text) in cases {
+        let a = run_of("r", field(text))?;
+        for mutated in mutations(text) {
+            let found = named(&a, &run_of("r", field(&mutated))?)?;
+            assert!(
+                !found.is_empty(),
+                "{text:?} -> {mutated:?} shows no difference"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Asserts each pair of runs, given by their fields, differs by both
+/// fingerprints named.
+fn both_named(cases: &[(Value, Value, [&str; 2])]) -> Result<(), TaskError> {
+    for (a, b, expected) in cases {
+        let found = named(&run_of("r", a.clone())?, &run_of("r", b.clone())?)?;
+        for fingerprint in expected {
+            assert!(
+                found.iter().any(|name| name == fingerprint),
+                "{fingerprint} not in {found:?}"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn printing(stdout: &str) -> Value {
+    json!({"stdout": stdout})
+}
+
+fn sending(headers: &[(&str, &str)], target: &str, body: &str) -> Value {
+    json!({"requests": [request(target, headers, body)]})
+}
+
+#[test]
+fn two_causes_in_the_output_are_two_fingerprints() -> Result<(), TaskError> {
+    both_named(&[
+        (
+            printing("{\"A\": 1, \"B\": \"x\"}"),
+            printing("{\"B\": \"y\", \"A\": 1}"),
+            ["stdout:$.B", "stdout:$:order"],
+        ),
+        (
+            printing("{\n    \"A\": 1\n}"),
+            printing("{\"A\": 2}"),
+            ["stdout:$.A", "stdout:json-format"],
+        ),
+        (
+            printing("a\nb 1\nc\nd 2\n"),
+            printing("a\nb 5\nc\nd 6 more\n"),
+            ["stdout:text:b #->b #", "stdout:text:d #->d # more"],
+        ),
+    ])
+}
+
+#[test]
+fn two_causes_in_a_request_are_two_fingerprints() -> Result<(), TaskError> {
+    let host = ("Host", "h");
+    let form = [host, ("Content-Type", "application/x-www-form-urlencoded")];
+    let agent = |value| sending(&[("User-Agent", value)], "/", "");
+    both_named(&[
+        (
+            sending(&[host], "/", "{\"T\": \"t\", \"L\": 1.0}"),
+            sending(&[host], "/", "{\"L\": 1, \"T\": \"t\"}"),
+            ["request[*].body:$.L", "request[*].body:$:order"],
+        ),
+        (
+            sending(&[host, ("X-T", "a"), ("C", "c")], "/", ""),
+            sending(&[("C", "c"), ("X-T", "a"), host, ("Expect", "e")], "/", ""),
+            ["request[*].header:expect:extra", "request[*].header-order"],
+        ),
+        (
+            sending(&[("X-M", "1, 2")], "/", ""),
+            sending(&[("x-m", "1"), ("x-m", "2")], "/", ""),
+            ["request[*].header:x-m:count", "request[*].header:x-m:case"],
+        ),
+        (
+            agent("aws-cli/2 lang/rust#1 ua/2.1 m/E"),
+            agent("aws-cli/2 m/E ua/2.1 lang/python#3"),
+            [
+                "request[*].header:user-agent:lang",
+                "request[*].header:user-agent:order",
+            ],
+        ),
+        (
+            sending(&[host], "/p?a=1&b=2", ""),
+            sending(&[host], "/p?b=2&a=9", ""),
+            ["request[*].line:query:a", "request[*].line:query-order"],
+        ),
+        (
+            sending(&[host], "/p?k&a=1", ""),
+            sending(&[host], "/p?k=&a=2", ""),
+            ["request[*].line:query:k", "request[*].line:query:a"],
+        ),
+        (
+            sending(&form, "/", "Action=A&x=1"),
+            sending(&form, "/", "&Action=A&x=2"),
+            ["request[*].body:x", "request[*].body-format"],
+        ),
+        (
+            sending(&[host], "/", "<R n=\"a\"><B>1</B></R>"),
+            sending(&[host], "/", "<R n=\"b\"><B>2</B></R>"),
+            ["request[*].body:/R", "request[*].body:/R/B"],
+        ),
+    ])
+}
+
+/// Known differences of one entry for every row.
+fn entry(fingerprint: &str, mode: &str) -> String {
+    format!(
+        r#"[{{"fingerprint": "{fingerprint}", "cases": "*", "mode": "{mode}", "reason": "r"}}]"#
+    )
+}
+
+#[test]
+fn a_known_cause_does_not_cover_another_in_its_stage() -> Result<(), TaskError> {
+    let agent = |value: &str| {
+        run_of(
+            "r",
+            json!({"requests": [request("/", &[("User-Agent", value)], "")]}),
+        )
+    };
+    let pairs = [(
+        agent("aws-cli/2 lang/rust#1 ua/2.1")?,
+        agent("ua/2.1 aws-cli/2 lang/python#3")?,
+    )];
+    let known: Vec<Known> =
+        serde_json::from_str(&entry("request[*].header:user-agent:lang", "oracle"))
+            .map_err(|error| deps::error(error.to_string()))?;
+    let report = build(&run(Route::Python), &rows(&["r"])?, &pairs, &known);
+    assert_eq!((report.known, report.mismatched), (0, 1));
+    Ok(())
+}
+
+#[test]
+fn timeouts_and_harness_errors_are_never_known() -> Result<(), TaskError> {
+    let text = entry("timeout:both", "determinism");
+    assert!(known(&text).is_err(), "an entry for a timeout was accepted");
+    let entries: Vec<Known> =
+        serde_json::from_str(&text).map_err(|error| deps::error(error.to_string()))?;
+    let hung = || run_of("r", json!({"exit": null, "timed_out": true}));
+    let report = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[(hung()?, hung()?)],
+        &entries,
+    );
+    assert_eq!((report.known, report.mismatched), (0, 1));
+    let unparsed = json!({"harness": ["protocol_error: a connection closed in request_headers"]});
+    let found = named(&run_of("r", unparsed.clone())?, &run_of("r", unparsed)?)?;
+    assert_eq!(
+        found,
+        ["harness:a:protocol_error", "harness:b:protocol_error"]
+    );
+    let harness = entry("harness:a:protocol_error", "oracle");
+    assert!(
+        known(&harness).is_err(),
+        "an entry for a harness error was accepted"
+    );
     Ok(())
 }
