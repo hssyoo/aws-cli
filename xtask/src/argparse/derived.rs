@@ -79,27 +79,45 @@ pub fn build_tool(
 }
 
 /// Build one of `model-tools`' binaries, a target the product build never
-/// compiles, with the native dependencies its crates' client links.
+/// compiles, with the native dependencies its crates' client links, linked
+/// as the product's executables are.
 fn build_bin(
     root: &Path,
     environment: &deps::NativeEnvironment,
     bin: &str,
 ) -> Result<PathBuf, TaskError> {
+    let mut build = build_command(root, bin);
+    environment.apply(&mut build);
+    environment.apply_link(&mut build);
+    process::run(&mut build)?;
+    Ok(built_bin(&product::target_dir(root), bin))
+}
+
+/// The build of `bin` for the target the CLI ships for, so its tables and
+/// census are the shipped CLI's: on Linux that is musl, the only target
+/// whose static link `crt-sys` accepts, not the glibc host.
+pub(super) fn build_command(root: &Path, bin: &str) -> Command {
     let mut build = Command::new("cargo");
     build.current_dir(root).args([
         "build",
         "--locked",
+        "--target",
+        deps::TARGET,
         "--package",
         "model-tools",
         "--bin",
         bin,
     ]);
-    environment.apply(&mut build);
-    process::run(&mut build)?;
-    Ok(product::target_dir(root)
+    build
+}
+
+/// Where [`build_command`] leaves `bin` under the Cargo `target_dir`.
+pub(super) fn built_bin(target_dir: &Path, bin: &str) -> PathBuf {
+    target_dir
+        .join(deps::TARGET)
         .join("debug")
         .join(bin)
-        .with_extension(std::env::consts::EXE_EXTENSION))
+        .with_extension(std::env::consts::EXE_EXTENSION)
 }
 
 /// `cargo xtask census`: the eligibility census over the shipped models

@@ -118,3 +118,32 @@ fn check_failures_combine_so_drift_does_not_hide_the_replay() {
     let drift = combine([Err(TaskError::Io(io::Error::other("drift"))), Ok(())]);
     assert!(matches!(drift, Err(TaskError::Io(error)) if error.to_string() == "drift"));
 }
+
+#[test]
+fn model_tools_build_for_the_shipped_target_and_are_found_under_it() {
+    let root = Path::new("/workspace");
+    let command = derived::build_command(root, "eligibility");
+    assert_eq!(command.get_program(), "cargo");
+    assert_eq!(
+        command.get_args().collect::<Vec<_>>(),
+        [
+            "build",
+            "--locked",
+            "--target",
+            deps::TARGET,
+            "--package",
+            "model-tools",
+            "--bin",
+            "eligibility",
+        ]
+    );
+    assert_eq!(command.get_current_dir(), Some(root));
+    assert_eq!(command.get_envs().count(), 0);
+    assert_eq!(
+        derived::built_bin(Path::new("/cargo-target"), "derive-tables"),
+        Path::new("/cargo-target")
+            .join(deps::TARGET)
+            .join("debug/derive-tables")
+            .with_extension(std::env::consts::EXE_EXTENSION)
+    );
+}
