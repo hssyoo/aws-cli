@@ -8,19 +8,16 @@ import json
 import os
 import re
 import uuid
-from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Final
 
 import pytest
-import pytest_asyncio
 
 from apihelpers import (
     ApiSession,
     Reply,
-    api_session,
     attempt_limit,
-    fake_model_protocol,
+    fake_models_fixture,
     retries_clause,
 )
 from harness_plugin import FORCED_NATIVE, MAIN_USAGE
@@ -28,21 +25,11 @@ from localstub import HTTPResponse
 
 pytestmark = pytest.mark.asyncio
 
-MODELS: Final = Path(__file__).resolve().parents[3] / "models"
-SERVICES: Final = ("zjson", "zjson11", "zquery", "zglobal", "zrestjson")
 USAGE: Final = "\n" + MAIN_USAGE
 
 
 
-@pytest_asyncio.fixture
-async def models(aws_cli: str, tmp_path: Path) -> AsyncIterator[ApiSession]:
-    async with api_session(aws_cli, tmp_path) as session:
-        session.env["AWS_DATA_PATH"] = str(MODELS)
-        # A zone without daylight-saving time, which iso8601 output of an
-        # epoch needs on the native route.
-        session.env["TZ"] = "UTC"
-        session.protocol = fake_model_protocol(MODELS, SERVICES)
-        yield session
+models = fake_models_fixture("zjson", "zjson11", "zquery", "zglobal", "zrestjson")
 
 
 async def test_scalar_members_bind_in_model_order(models: ApiSession) -> None:

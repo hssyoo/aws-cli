@@ -12,20 +12,15 @@ route checks the expectations against Python.
 """
 
 import asyncio
-from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Any, Final
 
 import pytest
-import pytest_asyncio
 from localstub import AsyncHTTPTestServer
 
-from apihelpers import ApiSession, api_session, fake_model_protocol
+from apihelpers import ApiSession, fake_models_fixture
 
 pytestmark = pytest.mark.asyncio
 
-MODELS: Final = Path(__file__).resolve().parents[3] / "models"
-SERVICES: Final = ("zjson", "zquery", "zrestjson")
 # How long the stub may take to record the closes of the connections a
 # finished command leaves, and how long it is then given to record any
 # further, request-less one.
@@ -33,12 +28,7 @@ CLOSE_SECONDS: Final = 5.0
 STRAGGLER_SECONDS: Final = 0.2
 
 
-@pytest_asyncio.fixture
-async def models(aws_cli: str, tmp_path: Path) -> AsyncIterator[ApiSession]:
-    async with api_session(aws_cli, tmp_path) as session:
-        session.env["AWS_DATA_PATH"] = str(MODELS)
-        session.protocol = fake_model_protocol(MODELS, SERVICES)
-        yield session
+models = fake_models_fixture("zjson", "zquery", "zrestjson")
 
 
 async def connections(server: AsyncHTTPTestServer, requests: int) -> int:
