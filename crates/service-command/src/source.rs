@@ -51,8 +51,13 @@ impl Binder for ServiceSource<'_> {
             .is_some_and(|table| crate::bind::precedes_unpack_failure(table, parsed))
     }
     /// Admission, then the invocation: the call's, or one that reports what
-    /// a paging handler raised, which makes no client and so reads no
-    /// client settings.
+    /// a paging handler raised. That one makes no client, but the router
+    /// judges the client settings before any invocation runs, so a setting
+    /// the native route cannot honour (a non-integer `max_attempts`, a
+    /// missing `ca_bundle`, an unknown `s3.addressing_style`) still routes
+    /// the command first: to Python, which reports the paging error, so the
+    /// output is the same, or, on a run forcing the native route, to a
+    /// refusal.
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission> {
         let outcome = crate::admit::admit(&self.models, self.customizations, parsed)
             .map_err(Admission::Python)?;
