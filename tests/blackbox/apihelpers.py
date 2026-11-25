@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
+import pytest_asyncio
 from localstub import (
     AsyncHTTPTestServer,
     HTTPResponse,
@@ -406,3 +407,27 @@ async def api_session(
             single_attempt=single_attempt,
         )
         yield ApiSession(aws_cli, server, env, cwd)
+
+
+# The repository's fake service models (tests/models), which the CLI
+# loads through `AWS_DATA_PATH`.
+FAKE_MODELS: Final = Path(__file__).resolve().parents[1] / "models"
+
+
+def fake_models_fixture(*services: str) -> Any:
+    """A fixture: a session over the fake models of `services`, whose
+    requests and replies go through those models (`fake_model_protocol`),
+    with `AWS_DATA_PATH` naming them and `TZ` a zone without
+    daylight-saving time, which iso8601 output of an epoch timestamp needs
+    on the native route. A suite binds it to the fixture's name:
+    `models = fake_models_fixture("zjson", "zquery")`."""
+
+    @pytest_asyncio.fixture
+    async def session(aws_cli: str, tmp_path: Path) -> AsyncIterator[ApiSession]:
+        async with api_session(aws_cli, tmp_path) as session:
+            session.env["AWS_DATA_PATH"] = str(FAKE_MODELS)
+            session.env["TZ"] = "UTC"
+            session.protocol = fake_model_protocol(FAKE_MODELS, services)
+            yield session
+
+    return session

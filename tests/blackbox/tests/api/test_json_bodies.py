@@ -11,23 +11,19 @@ Python's own printing limit.
 """
 
 import json
-from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Final
 
 import pytest
-import pytest_asyncio
-from harness_plugin import COMMAND_ENVIRONMENT
+from harness_plugin import PYTHON_ROUTE
 from localstub import HTTPResponse
 
-from apihelpers import ApiSession, api_session, fake_model_protocol
+from apihelpers import ApiSession, fake_models_fixture
 
 pytestmark = pytest.mark.asyncio
 
-MODELS: Final = Path(__file__).resolve().parents[3] / "models"
 # The run forcing the Python route answers as Python; every other run
 # sends these commands natively, which cannot hand a sent request to Python.
-PYTHON: Final = COMMAND_ENVIRONMENT.get("AWS_CLI_NATIVE_ROUTER") == "python"
+PYTHON: Final = PYTHON_ROUTE
 
 # The deepest nesting the native reader holds (model::pyjson::MAX_DEPTH),
 # counting the response's own object; the CLI's Python prints a response
@@ -39,15 +35,7 @@ SURROGATE_FAILURE: Final = "surrogates not allowed"
 LIMIT: Final = "native client limit: the response holds "
 
 
-@pytest_asyncio.fixture
-async def models(aws_cli: str, tmp_path: Path) -> AsyncIterator[ApiSession]:
-    async with api_session(aws_cli, tmp_path) as session:
-        session.env["AWS_DATA_PATH"] = str(MODELS)
-        # A zone without daylight-saving time, so the native route takes
-        # zjson's describe, which reaches epoch timestamps.
-        session.env["TZ"] = "UTC"
-        session.protocol = fake_model_protocol(MODELS, ("zjson", "zrestjson"))
-        yield session
+models = fake_models_fixture("zjson", "zrestjson")
 
 
 # Each service's command that returns a document member, the member order

@@ -31,20 +31,16 @@ native route, which the other tests of ListJobs skip.
 
 import base64
 import json
-from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Any, Final
 
 import pytest
-import pytest_asyncio
 
 from apihelpers import (
     ApiSession,
     Call,
     CommandRun,
     Reply,
-    api_session,
-    fake_model_protocol,
+    fake_models_fixture,
     printed,
     retries_clause,
 )
@@ -56,18 +52,10 @@ pytestmark = pytest.mark.asyncio
 # refuses as test_each_paginated_command_s_route checks.
 PYTHON_PAGINATOR: Final = "query-expression-token"
 
-MODELS: Final = Path(__file__).resolve().parents[3] / "models"
-SERVICES: Final = ("zjson", "zquery", "zrestjson")
 USAGE: Final = "\n" + MAIN_USAGE
 
 
-@pytest_asyncio.fixture
-async def paged(aws_cli: str, tmp_path: Path) -> AsyncIterator[ApiSession]:
-    async with api_session(aws_cli, tmp_path) as session:
-        session.env["AWS_DATA_PATH"] = str(MODELS)
-        session.env["TZ"] = "UTC"
-        session.protocol = fake_model_protocol(MODELS, SERVICES)
-        yield session
+paged = fake_models_fixture("zjson", "zquery", "zrestjson")
 
 
 def token(**keys: Any) -> str:

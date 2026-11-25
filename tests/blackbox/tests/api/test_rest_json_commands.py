@@ -15,12 +15,9 @@ other tests sending one skip that run.
 """
 
 import json
-from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Final
 
 import pytest
-import pytest_asyncio
 from harness_plugin import FORCED_NATIVE, refusal
 from localstub import HTTPResponse
 
@@ -28,9 +25,8 @@ from apihelpers import (
     ApiSession,
     Call,
     CommandRun,
-    api_session,
     attempt_limit,
-    fake_model_protocol,
+    fake_models_fixture,
     printed,
     retries_clause,
 )
@@ -42,7 +38,6 @@ COLLECTIONS_REFUSED: Final = (
     "as test_each_command_s_route checks"
 )
 
-MODELS: Final = Path(__file__).resolve().parents[3] / "models"
 HOST: Final = "zrestjson.us-east-1.amazonaws.com"
 # The headers whose values change with each request; the Authorization
 # header's SignedHeaders are compared on their own.
@@ -51,15 +46,7 @@ VOLATILE: Final = frozenset(
 )
 
 
-@pytest_asyncio.fixture
-async def restjson(aws_cli: str, tmp_path: Path) -> AsyncIterator[ApiSession]:
-    async with api_session(aws_cli, tmp_path) as session:
-        session.env["AWS_DATA_PATH"] = str(MODELS)
-        # A zone without daylight-saving time, which iso8601 output of an
-        # epoch needs on the native route.
-        session.env["TZ"] = "UTC"
-        session.protocol = fake_model_protocol(MODELS, ("zrestjson",))
-        yield session
+restjson = fake_models_fixture("zrestjson")
 
 
 def headers(session: ApiSession, **modelled: str) -> dict[str, str]:
