@@ -24,6 +24,17 @@ mod calls;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// `json.dumps(value, indent=4, default=json_encoder, ensure_ascii=False)`,
+/// as text: the parity cases' values print UTF-8 only.
+fn dumped(value: &Value) -> String {
+    let options = model::pyjson::Options {
+        ensure_ascii: false,
+        ..model::pyjson::Options::indented(4)
+    };
+    let text = model::pyjson::dumps_wtf8(value, &options, Some(&format::json::json_encoder));
+    String::from_utf8_lossy(&text.unwrap_or_default()).into_owned()
+}
+
 fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -126,7 +137,7 @@ fn outcome(
         return match protocol.parse_error(model, operation, response, options) {
             Ok(error) => {
                 let text = error.to_string();
-                json!({ "error": text, "details": format::json::dump(&details(error)) })
+                json!({ "error": text, "details": dumped(&details(error)) })
             }
             Err(error) => json!({ "parse_error": error.message }),
         };
@@ -135,7 +146,7 @@ fn outcome(
         Ok(parsed) => parsed,
         Err(error) => return json!({ "parse_error": error.message }),
     };
-    let mut result = json!({ "parsed": format::json::dump(&parsed) });
+    let mut result = json!({ "parsed": dumped(&parsed) });
     if name != "botocore" {
         result["json"] = rendered(&parsed, OutputFormat::Json);
         result["text"] = rendered(&parsed, OutputFormat::Text);

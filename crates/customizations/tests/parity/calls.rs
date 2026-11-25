@@ -262,8 +262,7 @@ pub fn layer_b(case: &Json) -> Result<Json> {
     let mut vector = json!({ "requests": requests });
     match outcome {
         Ok(value) => {
-            let dumped = format::json::dump(&value);
-            vector["parsed"] = Json::String(String::from_utf8_lossy(&dumped).into_owned());
+            vector["parsed"] = Json::String(super::dumped(&value));
         }
         Err(error) => {
             let model = Model::load(&locations(case), case["service"].as_str().unwrap_or(""))?;
