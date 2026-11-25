@@ -44,7 +44,7 @@ fn the_cli_encoder_handles_datetimes_and_bytes() {
 #[test]
 fn a_response_python_cannot_search_fails_as_the_formatter_does() {
     let error = crate::render(
-        &Value::Null,
+        Value::Null,
         crate::OutputFormat::Json,
         pytext::codec::Errors::SurrogateEscape,
     )
@@ -56,7 +56,7 @@ fn a_response_python_cannot_search_fails_as_the_formatter_does() {
     );
     assert_eq!(
         crate::render(
-            &Value::Null,
+            Value::Null,
             crate::OutputFormat::Off,
             pytext::codec::Errors::SurrogateEscape
         ),
