@@ -107,22 +107,63 @@ pub fn dumps_wtf8(
     options: &Options,
     fallback: Option<Fallback<'_>>,
 ) -> Result<Vec<u8>, DumpError> {
+    let mut out = Vec::new();
+    let mut sink = |chunk: &[u8]| -> Result<(), std::convert::Infallible> {
+        out.extend_from_slice(chunk);
+        Ok(())
+    };
+    match dump_chunks(value, options, fallback, &mut sink) {
+        Ok(()) => Ok(out),
+        Err(ChunkError::Dump(error)) => Err(error),
+        Err(ChunkError::Write(never)) => match never {},
+    }
+}
+
+/// Why [`dump_chunks`] stopped: the dump's own error, or the sink's.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ChunkError<E> {
+    Dump(DumpError),
+    Write(E),
+}
+
+/// `json.dump(value, fp, ...)`: each chunk `JSONEncoder.iterencode` yields
+/// (`_make_iterencode`, as `json.dump` never takes the one-shot C encoder)
+/// handed to `sink` as `fp.write` takes it, in `pytext::wtf8`'s encoding.
+/// So an error in a later chunk, the sink's or the dump's, finds the
+/// earlier ones written, and a position the sink reports is within its
+/// chunk, as Python's are.
+///
+/// The chunks: a scalar a list holds joined to the text before it (`[`
+/// and the indentation, or the separator); a container or a value
+/// `default` converts after that text, alone; a dict's key, its separator
+/// and a scalar value each alone; the closing indentation and bracket
+/// apart.
+///
+/// # Errors
+/// The dump's `TypeError`, or the first error `sink` returns.
+pub fn dump_chunks<E>(
+    value: &Value,
+    options: &Options,
+    fallback: Option<Fallback<'_>>,
+    sink: &mut dyn FnMut(&[u8]) -> Result<(), E>,
+) -> Result<(), ChunkError<E>> {
     let (item, key) = options.separators();
     let mut writer = Writer {
-        out: Vec::new(),
+        chunk: Vec::new(),
+        sink,
         indent: options.indent.as_deref(),
         item,
         key,
         ensure_ascii: options.ensure_ascii,
         fallback,
     };
-    writer.value(value, 0)?;
-    Ok(writer.out)
+    writer.value(value, 0)
 }
 
-struct Writer<'a> {
-    /// Text in `pytext::wtf8`'s encoding.
-    out: Vec<u8>,
+struct Writer<'a, 's, E> {
+    /// The chunk being built, in `pytext::wtf8`'s encoding.
+    chunk: Vec<u8>,
+    sink: &'s mut dyn FnMut(&[u8]) -> Result<(), E>,
     indent: Option<&'a str>,
     item: &'a str,
     key: &'a str,
@@ -130,13 +171,22 @@ struct Writer<'a> {
     fallback: Option<Fallback<'a>>,
 }
 
-impl Writer<'_> {
+impl<E> Writer<'_, '_, E> {
     fn put(&mut self, text: &str) {
-        self.out.extend_from_slice(text.as_bytes());
+        self.chunk.extend_from_slice(text.as_bytes());
     }
 
-    /// `_make_iterencode._iterencode`.
-    fn value(&mut self, value: &Value, level: usize) -> Result<(), DumpError> {
+    /// `yield`: the chunk built so far, to the sink.
+    fn emit(&mut self) -> Result<(), ChunkError<E>> {
+        let result = (self.sink)(&self.chunk);
+        self.chunk.clear();
+        result.map_err(ChunkError::Write)
+    }
+
+    /// Adds `value` to the chunk if it is a scalar, which
+    /// `_iterencode_list` joins to the text before it; `false` for a
+    /// container or a value `default` converts.
+    fn scalar(&mut self, value: &Value) -> bool {
         match value {
             Value::Null => self.put("null"),
             Value::Bool(true) => self.put("true"),
@@ -146,66 +196,93 @@ impl Writer<'_> {
             Value::Float(number) => self.put(&json_float(*number)),
             Value::String(text) => self.string(text.as_bytes()),
             Value::PyString(text) => self.string(text.as_bytes()),
-            Value::List(items) => self.list(items, level)?,
-            Value::Map(map) => self.map(map, level)?,
-            Value::Blob(_) | Value::Timestamp(_) => {
-                let converted = match self.fallback {
-                    Some(fallback) => fallback(value)?,
-                    None => return Err(DumpError::unserializable(value)),
-                };
-                self.value(&converted, level)?;
+            Value::List(_) | Value::Map(_) | Value::Blob(_) | Value::Timestamp(_) => {
+                return false;
             }
         }
-        Ok(())
+        true
     }
 
-    fn list(&mut self, items: &[Value], level: usize) -> Result<(), DumpError> {
+    /// `_make_iterencode._iterencode`, with nothing in the chunk.
+    fn value(&mut self, value: &Value, level: usize) -> Result<(), ChunkError<E>> {
+        if self.scalar(value) {
+            return self.emit();
+        }
+        match value {
+            Value::List(items) => self.list(items, level),
+            Value::Map(map) => self.map(map, level),
+            other => {
+                let converted = match self.fallback {
+                    Some(fallback) => fallback(other).map_err(ChunkError::Dump)?,
+                    None => return Err(ChunkError::Dump(DumpError::unserializable(other))),
+                };
+                self.value(&converted, level)
+            }
+        }
+    }
+
+    /// `_iterencode_list`.
+    fn list(&mut self, items: &[Value], level: usize) -> Result<(), ChunkError<E>> {
         if items.is_empty() {
             self.put("[]");
-            return Ok(());
+            return self.emit();
         }
         self.put("[");
         for (index, item) in items.iter().enumerate() {
-            self.separator(index, level + 1);
-            self.value(item, level + 1)?;
+            if index > 0 {
+                let separator = self.item;
+                self.put(separator);
+            }
+            self.newline(level + 1);
+            if !self.scalar(item) {
+                self.emit()?;
+                self.value(item, level + 1)?;
+                continue;
+            }
+            self.emit()?;
         }
-        self.close(level);
+        if self.indent.is_some() {
+            self.newline(level);
+            self.emit()?;
+        }
         self.put("]");
-        Ok(())
+        self.emit()
     }
 
-    fn map(&mut self, map: &Map, level: usize) -> Result<(), DumpError> {
+    /// `_iterencode_dict`, with `sort_keys` off.
+    fn map(&mut self, map: &Map, level: usize) -> Result<(), ChunkError<E>> {
         if map.is_empty() {
             self.put("{}");
-            return Ok(());
+            return self.emit();
         }
         self.put("{");
+        self.emit()?;
         for (index, (key, value)) in map.iter().enumerate() {
-            self.separator(index, level + 1);
+            if index > 0 {
+                let separator = self.item;
+                self.put(separator);
+            }
+            self.newline(level + 1);
+            // `item_separator`, or the first item's `newline_indent`.
+            if index > 0 || self.indent.is_some() {
+                self.emit()?;
+            }
             self.string(key.as_bytes());
+            self.emit()?;
             let separator = self.key;
             self.put(separator);
+            self.emit()?;
             self.value(value, level + 1)?;
         }
-        self.close(level);
-        self.put("}");
-        Ok(())
-    }
-
-    /// The item separator before every item but the first, then the newline
-    /// and indentation of `level` when indenting.
-    fn separator(&mut self, index: usize, level: usize) {
-        if index > 0 {
-            let item = self.item;
-            self.put(item);
+        if self.indent.is_some() {
+            self.newline(level);
+            self.emit()?;
         }
-        self.newline(level);
+        self.put("}");
+        self.emit()
     }
 
-    fn close(&mut self, level: usize) {
-        self.newline(level);
-    }
-
+    /// The newline and indentation of `level`, when indenting.
     fn newline(&mut self, level: usize) {
         if let Some(indent) = self.indent {
             self.put("\n");
@@ -229,9 +306,9 @@ impl Writer<'_> {
                 0x09 => self.put("\\t"),
                 0x08 => self.put("\\b"),
                 0x0C => self.put("\\f"),
-                0x20..=0x7E => pytext::wtf8::push_code_point(&mut self.out, point),
-                _ if point < 0x20 || self.ensure_ascii => escape_utf16(&mut self.out, point),
-                _ => pytext::wtf8::push_code_point(&mut self.out, point),
+                0x20..=0x7E => pytext::wtf8::push_code_point(&mut self.chunk, point),
+                _ if point < 0x20 || self.ensure_ascii => escape_utf16(&mut self.chunk, point),
+                _ => pytext::wtf8::push_code_point(&mut self.chunk, point),
             }
         }
         self.put("\"");

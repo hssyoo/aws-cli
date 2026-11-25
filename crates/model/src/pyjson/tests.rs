@@ -148,3 +148,140 @@ sys.stdout.write(json.dumps(out))
     }
     Ok(())
 }
+
+/// Each chunk as hex of its bytes, a lone surrogate as UTF-8's three-byte
+/// form (`surrogatepass`).
+fn chunks(value: &Value, options: &Options, fallback: Option<Fallback<'_>>) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    let mut sink = |chunk: &[u8]| -> std::result::Result<(), ()> {
+        out.push(chunk.iter().map(|byte| format!("{byte:02x}")).collect());
+        Ok(())
+    };
+    dump_chunks(value, options, fallback, &mut sink).map_err(|error| format!("{error:?}"))?;
+    Ok(out)
+}
+
+const CHUNK_ORACLE: &str = r#"
+import json, sys
+def default(o):
+    if isinstance(o, bytes):
+        return o.hex()
+    raise TypeError(f'Object of type {type(o).__name__} is not JSON serializable')
+def blobs(o):
+    if isinstance(o, dict):
+        if list(o) == ['$blob']:
+            return bytes.fromhex(o['$blob'])
+        return {k: blobs(v) for k, v in o.items()}
+    if isinstance(o, list):
+        return [blobs(v) for v in o]
+    return o
+value = blobs(json.loads(sys.stdin.read()))
+out = []
+for indent in (None, 0, 4):
+    for separators in (None, (',', ':'), ('', ': ')):
+        for ensure_ascii in (True, False):
+            encoder = json.JSONEncoder(indent=indent, separators=separators,
+                                       ensure_ascii=ensure_ascii, default=default)
+            out.append([c.encode('utf-8', 'surrogatepass').hex()
+                        for c in encoder.iterencode(value)])
+sys.stdout.write(json.dumps(out))
+"#;
+
+/// `{"$blob": hex}` as the bytes, which the fallback writes as hex again.
+fn with_blobs(value: Value) -> Value {
+    match value {
+        Value::Map(map) if map.len() == 1 && map.contains_key("$blob") => {
+            let hex = map.get("$blob").and_then(Value::as_str).unwrap_or("");
+            Value::Blob(
+                (0..hex.len())
+                    .step_by(2)
+                    .filter_map(|at| u8::from_str_radix(&hex[at..at + 2], 16).ok())
+                    .collect(),
+            )
+        }
+        Value::Map(map) => Value::Map(map.into_iter().map(|(k, v)| (k, with_blobs(v))).collect()),
+        Value::List(items) => Value::List(items.into_iter().map(with_blobs).collect()),
+        other => other,
+    }
+}
+
+fn hex_fallback(value: &Value) -> std::result::Result<Value, DumpError> {
+    match value {
+        Value::Blob(bytes) => Ok(Value::String(
+            bytes.iter().map(|byte| format!("{byte:02x}")).collect(),
+        )),
+        other => Err(DumpError::unserializable(other)),
+    }
+}
+
+/// `json.dump` writes each chunk `iterencode` yields; ours are the same
+/// chunks, under each option set, a lone surrogate and a converted value
+/// included.
+#[test]
+fn dump_chunks_are_iterencode_s() -> Result<()> {
+    let corpus = r#"{"a": 1, "s": "x\ud800y\udc80", "\udcff": [1, "t", [], {}, [2.5, null],
+        {"k": true}, {"$blob": "0102"}, false], "e": {}, "l": [], "n": {"m": [{"$blob": ""}]},
+        "b": {"$blob": "ff"}, "z": "é😀"}"#;
+    let expected = testing::python(CHUNK_ORACLE, corpus.as_bytes())?;
+    let expected: Vec<Vec<String>> = serde_json::from_slice(&expected)?;
+    let value = with_blobs(loads(corpus).map_err(|error| format!("{error:?}"))?);
+    let mut actual = Vec::new();
+    for indent in [None, Some(0), Some(4)] {
+        for separators in [None, Some((",", ":")), Some(("", ": "))] {
+            for ensure_ascii in [true, false] {
+                let options = Options {
+                    indent: indent.map(|width| " ".repeat(width)),
+                    separators: separators.map(|(item, key)| (item.to_owned(), key.to_owned())),
+                    ensure_ascii,
+                };
+                actual.push(chunks(&value, &options, Some(&hex_fallback))?);
+            }
+        }
+    }
+    assert_eq!(actual.len(), expected.len());
+    for (index, (actual, expected)) in actual.iter().zip(&expected).enumerate() {
+        assert_eq!(actual, expected, "option set {index}");
+    }
+    Ok(())
+}
+
+/// A sink's error stops the dump, the chunks before it written; a value
+/// nothing converts fails after the chunks before it.
+#[test]
+fn dump_chunks_stops_at_the_first_error() {
+    let mut map = Map::new();
+    map.insert("Text".into(), Value::String("x".into()));
+    map.insert("At".into(), Value::Blob(vec![1]));
+    let value = Value::Map(map);
+    let options = Options::indented(4);
+    let mut written = Vec::new();
+    let mut sink = |chunk: &[u8]| -> std::result::Result<(), &'static str> {
+        if written.len() == 3 {
+            return Err("full");
+        }
+        written.push(String::from_utf8_lossy(chunk).into_owned());
+        Ok(())
+    };
+    assert_eq!(
+        dump_chunks(&value, &options, None, &mut sink),
+        Err(ChunkError::Write("full"))
+    );
+    assert_eq!(written, ["{", "\n    ", "\"Text\""]);
+    let mut written = Vec::new();
+    let mut sink = |chunk: &[u8]| -> std::result::Result<(), ()> {
+        written.push(String::from_utf8_lossy(chunk).into_owned());
+        Ok(())
+    };
+    assert_eq!(
+        dump_chunks(&value, &options, None, &mut sink),
+        Err(ChunkError::Dump(DumpError::unserializable(&Value::Blob(
+            vec![1]
+        ))))
+    );
+    assert_eq!(
+        written,
+        [
+            "{", "\n    ", "\"Text\"", ": ", "\"x\"", ",\n    ", "\"At\"", ": "
+        ]
+    );
+}

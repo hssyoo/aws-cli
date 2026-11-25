@@ -187,25 +187,38 @@ fn a_body_holds_nan_and_the_infinities() -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
-/// What the reader cannot hold fails the call, naming the native client's
-/// limit, rather than reading as `{'message': body}` and printing nothing:
-/// a lone surrogate, and nesting past the limit.
+/// Valid nesting past the reader's limit fails the call, naming the
+/// native client's limit, rather than reading as `{'message': body}` and
+/// printing nothing. Invalid text that deep is `{'message': body}`, as in
+/// Python, and a lone surrogate is kept.
 #[test]
-fn a_body_past_the_reader_s_limits_fails_naming_the_limit() {
+fn a_body_past_the_reader_s_limit_fails_naming_the_limit() -> Result<(), Box<dyn std::error::Error>>
+{
     let nested = |depth| format!("{{\"Doc\": {}{}}}", "[".repeat(depth), "]".repeat(depth));
-    for body in [
-        r#"{"Doc": "a\ud800b"}"#.to_owned(),
-        nested(model::pyjson::MAX_DEPTH),
-    ] {
-        let failed = output(&[], body.as_bytes()).err();
-        assert!(
-            failed
-                .as_ref()
-                .is_some_and(|error| error.message.starts_with("native client limit: ")),
-            "{failed:?}"
-        );
-    }
+    let failed = output(&[], nested(model::pyjson::MAX_DEPTH).as_bytes()).err();
+    assert!(
+        failed
+            .as_ref()
+            .is_some_and(|error| error.message.starts_with("native client limit: ")),
+        "{failed:?}"
+    );
     assert!(output(&[], br#"{"Doc": [1,}"#).is_ok());
+    let invalid = format!("{{\"Doc\": {}1,]", "[".repeat(model::pyjson::MAX_DEPTH));
+    assert_eq!(
+        body_json(invalid.as_bytes())?,
+        Value::Map(Map::from_iter([(
+            "message".to_owned(),
+            Value::String(invalid)
+        )]))
+    );
+    let lone = body_json(br#"{"Doc": "a\ud800b"}"#)?;
+    assert_eq!(
+        lone.get("Doc"),
+        Some(&Value::from_text(model::value::Wtf8Buf::from_code_points(
+            [0x61, 0xD800, 0x62]
+        )))
+    );
+    Ok(())
 }
 
 /// A document at the reader's limit parses and drops on a thread with the

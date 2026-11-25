@@ -381,8 +381,10 @@ pub(super) fn decoded(bytes: &[u8]) -> Result<&str, ParseError> {
     pytext::text::decode_utf8(bytes).map_err(ParseError::new)
 }
 
-/// The failure of a call whose response holds what the native client's
-/// JSON reader cannot: its own limit, named, which Python's would not be.
+/// The failure of a call whose response is valid JSON nested deeper than
+/// the native client's reader holds ([`model::pyjson::MAX_DEPTH`]): its own
+/// limit, named, where Python would read it. Invalid text that deep is not
+/// the limit: it is `{'message': body}`, as in Python.
 pub(super) fn beyond_limit(limit: model::pyjson::Limit) -> ParseError {
     ParseError::new(format!(
         "native client limit: the response holds {limit}, which the native client does not \

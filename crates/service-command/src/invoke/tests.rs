@@ -146,18 +146,18 @@ fn a_failing_credential_chain_is_reported_before_invalid_input() -> crate::testi
 }
 
 /// A starting token only Python reads is refused before any provider
-/// runs: `{"NextToken": "\ud800"}`, whose lone surrogate no
-/// native string holds.
+/// runs: `{"NextToken":  [[...]]}`, nested 903 deep, past the native
+/// reader's limit (base64 `[[[` is `W1tb`, `]]]` is `XV1d`).
 #[test]
 #[cfg(unix)]
 fn a_starting_token_only_python_reads_runs_no_provider() -> crate::testing::Result<()> {
     let process = FailingProcess::new("python-token")?;
-    let argv = [
-        "zjson",
-        "list-things",
-        "--starting-token",
-        "eyJOZXh0VG9rZW4iOiAiXHVkODAwIn0=",
-    ];
+    let token = format!(
+        "eyJOZXh0VG9rZW4iOiAg{}{}fQ==",
+        "W1tb".repeat(301),
+        "XV1d".repeat(301)
+    );
+    let argv = ["zjson", "list-things", "--starting-token", &token];
     let verdict = crate::testing::route(&argv, &[], &process.files)?;
     let cli_router::Verdict::Run(run) = verdict else {
         return Err(format!("not native: {verdict:?}").into());

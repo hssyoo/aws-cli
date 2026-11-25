@@ -332,11 +332,13 @@ fn a_new_token_is_json_loads_python_s() -> TestResult {
         let parsed = parse_starting_token(&token, &input)?;
         assert_eq!(parsed.token, map(vec![("Marker", Value::String(token))]));
     }
+    let lone = parse_starting_token(&b64(r#"{"Marker": "\ud800"}"#), &input)?;
     assert_eq!(
-        parse_starting_token(&b64(r#"{"Marker": "\ud800"}"#), &input),
-        Err(CallError::Unsupported(Unsupported::StartingToken(
-            "a string with a lone surrogate"
-        )))
+        lone.token,
+        map(vec![(
+            "Marker",
+            Value::from_text(model::value::Wtf8Buf::from_code_points([0xD800]))
+        )])
     );
     Ok(())
 }
