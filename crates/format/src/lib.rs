@@ -63,12 +63,12 @@ pub struct Partial {
 /// # Errors
 /// What the formatter raised, after the output it wrote before.
 pub fn render(
-    response: &Value,
+    mut response: Value,
     format: OutputFormat,
     errors: pytext::codec::Errors,
 ) -> Result<Vec<u8>, Partial> {
     if format != OutputFormat::Off
-        && let Some(class) = not_iterable(response)
+        && let Some(class) = not_iterable(&response)
     {
         // `'ResponseMetadata' in response_data` raises for these, with
         // CPython 3.14's text.
@@ -80,16 +80,11 @@ pub fn render(
             },
         });
     }
-    let trimmed;
-    let response = match response {
-        Value::Map(map) if map.contains_key("ResponseMetadata") => {
-            let mut map = map.clone();
-            map.remove("ResponseMetadata");
-            trimmed = Value::Map(map);
-            &trimmed
-        }
-        other => other,
-    };
+    // `_remove_request_id` pops it from the dict, which no one reads after.
+    if let Value::Map(map) = &mut response {
+        map.remove("ResponseMetadata");
+    }
+    let response = &response;
     let mut out = stream::Encoded::new(errors);
     let formatted = match format {
         OutputFormat::Json => json::json(response, &mut out),

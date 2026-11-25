@@ -185,7 +185,8 @@ fn tagged(map: &Map) -> Option<Value> {
 }
 
 fn rust_row(response: &Value) -> serde_json::Value {
-    let cell = |format| match render(response, format, pytext::codec::Errors::SurrogateEscape) {
+    let errors = pytext::codec::Errors::SurrogateEscape;
+    let cell = |format| match render(response.clone(), format, errors) {
         Ok(text) => serde_json::json!({ "ok": String::from_utf8_lossy(&text) }),
         Err(partial) => serde_json::json!({ "error": partial.error.message }),
     };
@@ -332,13 +333,13 @@ fn a_response_at_the_reader_s_limit_renders_on_a_default_thread() -> Result<()> 
         response.insert("Doc".into(), doc);
         let response = Value::Map(response);
         let json = render(
-            &response,
+            response.clone(),
             OutputFormat::Json,
             pytext::codec::Errors::SurrogateEscape,
         )
         .map(|text| text.len());
         let text = render(
-            &response,
+            response.clone(),
             OutputFormat::Text,
             pytext::codec::Errors::SurrogateEscape,
         )

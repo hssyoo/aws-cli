@@ -158,7 +158,7 @@ fn outcome(
 /// print UTF-8 only, which a lone surrogate's byte would not be.
 fn rendered(value: &Value, format: OutputFormat) -> Json {
     let stdout = pytext::codec::Errors::SurrogateEscape;
-    match format::render(value, format, stdout) {
+    match format::render(value.clone(), format, stdout) {
         Ok(text) => Json::String(String::from_utf8_lossy(&text).into_owned()),
         Err(partial) => json!({
             "written": String::from_utf8_lossy(&partial.written),

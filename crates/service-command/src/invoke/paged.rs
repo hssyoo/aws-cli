@@ -75,7 +75,7 @@ pub(super) fn run(
     };
     scope.leave();
     match full {
-        Ok(Some(full)) => invocation.print(cx, ready, &full),
+        Ok(Some(full)) => invocation.print(cx, ready, full),
         Ok(None) => Ok(0),
         Err(error) => invocation.call_failed(cx, error),
     }

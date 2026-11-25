@@ -186,7 +186,7 @@ impl Invocation for ServiceInvocation {
         };
         scope.leave();
         match called {
-            Ok(output) => self.print(cx, ready, &output.value),
+            Ok(output) => self.print(cx, ready, output.value),
             Err(error) => self.call_failed(cx, error),
         }
     }
@@ -225,7 +225,7 @@ impl ServiceInvocation {
         &self,
         cx: &mut Context<'_>,
         ready: &Ready,
-        response: &Value,
+        response: Value,
     ) -> Result<u8, CommandFailure> {
         let errors = ready.destination.errors();
         let text = match format::render(response, ready.format, errors) {
