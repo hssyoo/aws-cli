@@ -353,13 +353,6 @@ pub(super) fn member(model: &Model, shape: ShapeId, key: &Key) -> Result<ShapeId
         .ok_or_else(|| SerializeError::new(format!("'{}'", key.text())))
 }
 
-/// `headers[name]` of botocore's `HeadersDict`: every value of `name`, in
-/// any case, joined with `, ` as urllib3 joins a repeated header.
-pub(super) fn header(headers: &Headers, name: &str) -> Option<String> {
-    let values: Vec<&str> = headers.get_all(name).collect();
-    (!values.is_empty()).then(|| values.join(", "))
-}
-
 /// The headers as botocore's `HeadersDict` iterates them: each name once,
 /// spelled as it first came, with [`header`]'s value.
 pub(super) fn distinct(headers: &Headers) -> Vec<(String, String)> {
@@ -371,7 +364,7 @@ pub(super) fn distinct(headers: &Headers) -> Vec<(String, String)> {
     }
     names
         .into_iter()
-        .map(|name| (name.to_owned(), header(headers, name).unwrap_or_default()))
+        .map(|name| (name.to_owned(), headers.joined(name).unwrap_or_default()))
         .collect()
 }
 

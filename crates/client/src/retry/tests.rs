@@ -199,6 +199,18 @@ fn retry_after_raises_the_delay_within_five_seconds() {
     assert_eq!(retry_after(&Headers::new()), None);
 }
 
+/// Two `x-amz-retry-after` headers are one `HeadersDict` value,
+/// `'100, 200'`, which `int()` refuses, so neither raises the delay.
+#[test]
+fn two_retry_after_headers_are_one_value_python_cannot_read() {
+    let headers = Headers::from_pairs([("x-amz-retry-after", "100"), ("X-Amz-Retry-After", "200")]);
+    assert_eq!(
+        headers.joined("x-amz-retry-after").as_deref(),
+        Some("100, 200")
+    );
+    assert_eq!(retry_after(&headers), None);
+}
+
 /// The quota: 14 per transient retry, 5 per throttling one; no retry once
 /// it runs out; a success gives back the last retry's cost, or 1.
 #[test]

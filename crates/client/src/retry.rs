@@ -119,12 +119,14 @@ fn is_modeled(model: &Model, operation: &Operation, code: &str) -> bool {
 }
 
 /// `ExponentialBackoff._get_retry_after_delay`: `x-amz-retry-after` in
-/// milliseconds, `int(value) / 1000.0`, as Python's `int()` reads it;
+/// milliseconds, `int(value) / 1000.0`, as Python's `int()` reads it (the
+/// `HeadersDict` value, so a repeated header's values joined, which no
+/// `int()` reads);
 /// `None` for a value it cannot read, a negative one, or one beyond a
 /// float (`OverflowError`). A value beyond a `Duration` is the longest
 /// one, which the delay's cap at `t_i + 5` makes equal to any other.
 pub fn retry_after(headers: &crate::http::Headers) -> Option<Duration> {
-    let value = model::pyrepr::int_from_text(headers.get("x-amz-retry-after")?).ok()?;
+    let value = model::pyrepr::int_from_text(&headers.joined("x-amz-retry-after")?).ok()?;
     match value {
         model::value::Value::Integer(millis) => {
             u64::try_from(millis).ok().map(Duration::from_millis)

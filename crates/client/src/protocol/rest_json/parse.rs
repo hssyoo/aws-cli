@@ -167,7 +167,7 @@ fn float(value: &Value) -> Result<Value, ParseError> {
 /// what precedes the last `#`. `None`, which leaves `BaseJSONParser`'s code,
 /// when there is none or it is `null`.
 fn injected_code(body: &Value, headers: &Headers) -> Option<Value> {
-    let code = match crate::protocol::common::header(headers, "x-amzn-errortype") {
+    let code = match headers.joined("x-amzn-errortype") {
         Some(code) => Value::String(code),
         None => match body {
             Value::Map(body) => body.get("code").or_else(|| body.get("Code"))?.clone(),

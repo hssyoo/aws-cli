@@ -320,7 +320,7 @@ impl Reader<'_, '_> {
 
 /// `BaseJSONParser._inject_response_metadata`.
 fn request_id(parsed: &mut Map, headers: &Headers) {
-    if let Some(id) = common::header(headers, "x-amzn-requestid") {
+    if let Some(id) = headers.joined("x-amzn-requestid") {
         let mut metadata = match parsed.remove("ResponseMetadata") {
             Some(Value::Map(metadata)) => metadata,
             _ => Map::new(),
@@ -382,8 +382,10 @@ impl Family for Json {
             message.unwrap_or_else(|| Value::String(String::new())),
         );
         error.insert("Code".into(), Value::String(String::new()));
-        let query_error =
-            common::header(&response.headers, "x-amzn-query-error").unwrap_or_default();
+        let query_error = response
+            .headers
+            .joined("x-amzn-query-error")
+            .unwrap_or_default();
         let mut code = None;
         if let [first, kind] = query_error.split(';').collect::<Vec<_>>()[..]
             && !first.is_empty()
