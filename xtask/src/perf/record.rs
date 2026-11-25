@@ -223,7 +223,8 @@ pub(super) struct Binary {
     /// the default artifact (which must be current), `--commit` for an
     /// explicit one.
     pub(super) commit: Option<String>,
-    /// Whether the worktree had uncommitted changes to tracked files.
+    /// Whether the worktree had uncommitted changes to tracked files other
+    /// than the platform's baseline file.
     pub(super) dirty: Option<bool>,
 }
 
