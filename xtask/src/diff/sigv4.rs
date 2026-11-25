@@ -8,7 +8,9 @@
 //! whitespace collapsed and repeats joined by `,`; the signed header list;
 //! and `X-Amz-Content-SHA256`, or the body's SHA-256. The string to sign
 //! takes the request's `X-Amz-Date` and the credential scope, and the key
-//! is derived from the secret, the scope's date, region and service.
+//! is derived from the secret, the scope's date, region and service. A
+//! scope date that is not `X-Amz-Date`'s, or a hex `X-Amz-Content-SHA256`
+//! that is not the body's hash, is bad, as AWS rejects either.
 //!
 //! Only `AWS4-HMAC-SHA256` header signatures are verified. Another scheme
 //! (SigV4a), a query signature or a run without a secret key is
@@ -17,6 +19,7 @@
 use sha2::{Digest, Sha256};
 
 use super::capture::Request;
+use super::normalize::is_amz_date;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
@@ -90,7 +93,11 @@ pub fn verify(request: &Request, secret: Option<&str>) -> Verdict {
     let Some(canonical) = canonical_request(request, &auth, &header) else {
         return Verdict::Bad;
     };
-    let Some(&amz_date) = header("x-amz-date").first() else {
+    // AWS rejects a request whose scope date is not its `X-Amz-Date`'s.
+    let Some(&amz_date) = header("x-amz-date")
+        .first()
+        .filter(|date| is_amz_date(date) && date[..8] == *auth.date)
+    else {
         return Verdict::Bad;
     };
     let digest = hex(&Sha256::digest(canonical.as_bytes()));
@@ -106,7 +113,8 @@ pub fn verify(request: &Request, secret: Option<&str>) -> Verdict {
     }
 }
 
-/// The canonical request, or none when a signed header is absent.
+/// The canonical request, or none when a signed header is absent or the
+/// payload hash is not the body's.
 fn canonical_request<'a>(
     request: &Request,
     auth: &Authorization<'_>,
@@ -142,12 +150,20 @@ fn canonical_request<'a>(
     }
     lines.push(String::new());
     lines.push(auth.signed.to_owned());
-    let payload = header("x-amz-content-sha256").first().map_or_else(
-        || hex(&Sha256::digest(&request.body)),
-        |value| (*value).to_owned(),
-    );
+    // A hex payload hash must be the body's; another value (`UNSIGNED-PAYLOAD`,
+    // a streaming scheme) is signed as it is.
+    let digest = hex(&Sha256::digest(&request.body));
+    let payload = match header("x-amz-content-sha256").first() {
+        None => digest,
+        Some(value) if is_sha256(value) && *value != digest => return None,
+        Some(value) => (*value).to_owned(),
+    };
     lines.push(payload);
     Some(lines.join("\n"))
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// `quote(path, safe='/~')`: every byte but the unreserved ones and `/`

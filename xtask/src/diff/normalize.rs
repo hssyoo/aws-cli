@@ -207,7 +207,7 @@ fn header(name: &str, value: &str, verdict: Verdict, ids: &mut Numbering) -> Str
 }
 
 /// `YYYYMMDDTHHMMSSZ`.
-fn is_amz_date(value: &str) -> bool {
+pub(super) fn is_amz_date(value: &str) -> bool {
     let bytes = value.as_bytes();
     let digits = |range: std::ops::Range<usize>| bytes[range].iter().all(u8::is_ascii_digit);
     bytes.len() == 16 && bytes[8] == b'T' && bytes[15] == b'Z' && digits(0..8) && digits(9..15)

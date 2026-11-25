@@ -122,3 +122,83 @@ fn hmac_matches_rfc_4231() {
         "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
     );
 }
+
+/// Whether the harness sees `defect`: its signature is not ok, or it
+/// normalizes to another request than the correct get-vanilla.
+fn seen(defect: &Request) -> bool {
+    let normal = |request: &Request| {
+        super::super::normalize::requests(std::slice::from_ref(request), [], Some(SECRET))
+    };
+    verify(defect, Some(SECRET)) != Verdict::Ok || normal(defect) != normal(&vanilla(VANILLA))
+}
+
+/// get-vanilla with `from` in its credential scope replaced by `to`.
+fn rescoped(signature: &str, from: &str, to: &str) -> Request {
+    let mut request = vanilla(signature);
+    request.headers[2].1 = request.headers[2].1.replace(from, to);
+    request
+}
+
+#[test]
+fn a_seeded_defect_in_each_signature_input_is_seen() {
+    // Signatures an independent SigV4 (Python's hmac and hashlib) gives each
+    // defect, signed consistently over what the request then claims.
+    let defects = [
+        // The scope's date is the day before X-Amz-Date's, which AWS rejects.
+        rescoped(
+            "3e5fdc7dd4cd335b98ffe621fe0c2e59ca0ee2a5295f71c6d17d01f12b5ce572",
+            "/20150830/",
+            "/20150829/",
+        ),
+        // The scope rewritten after signing: its key is not the signer's.
+        rescoped(VANILLA, "/us-east-1/", "/us-west-2/"),
+        rescoped(VANILLA, "/service/", "/other/"),
+        // Signed for another region or service: ok, but not the request.
+        rescoped(
+            "bdc5c4e5ade41573206e0b8decfdf406ba72a2187cba71a9488254716bfbd450",
+            "/us-east-1/",
+            "/us-west-2/",
+        ),
+        rescoped(
+            "c6de6e4ec743dc53b900218097a0a2fa36dc76db87621894b435e7cbe56b7ceb",
+            "/service/",
+            "/other/",
+        ),
+    ];
+    for (index, defect) in defects.iter().enumerate() {
+        assert!(seen(defect), "defect {index} passes as get-vanilla");
+    }
+    let skewed = &defects[0];
+    assert_eq!(verify(skewed, Some(SECRET)), Verdict::Bad);
+    // The clock read twice: X-Amz-Date a second after the signed one.
+    let mut reread = vanilla(VANILLA);
+    reread.headers[1].1 = "20150830T123601Z".to_owned();
+    assert_eq!(verify(&reread, Some(SECRET)), Verdict::Bad);
+    let mut malformed = vanilla(VANILLA);
+    malformed.headers[1].1 = "20150830".to_owned();
+    assert_eq!(verify(&malformed, Some(SECRET)), Verdict::Bad);
+}
+
+#[test]
+fn a_payload_hash_that_is_not_the_bodys_is_bad() {
+    let mut post = signed(
+        "POST",
+        "/",
+        "example.amazonaws.com",
+        "service",
+        "host;x-amz-content-sha256;x-amz-date",
+        "3ad5e249949a59b862eedd9f1bf1ece4693c3042bf860ef5e3351b8925316f98",
+    );
+    post.headers
+        .push(("X-Amz-Content-SHA256".to_owned(), EMPTY_SHA256.to_owned()));
+    post.body = b"{\"x\":1}".to_vec();
+    // Signed over the empty body's hash the header claims, with a body.
+    assert_eq!(verify(&post, Some(SECRET)), Verdict::Bad);
+    // The same hash over the empty body is right.
+    post.body.clear();
+    assert_eq!(verify(&post, Some(SECRET)), Verdict::Ok);
+    // Without the header, the body's own hash is signed.
+    let mut unheaded = vanilla(VANILLA);
+    unheaded.body = b"{\"x\":1}".to_vec();
+    assert_eq!(verify(&unheaded, Some(SECRET)), Verdict::Bad);
+}
