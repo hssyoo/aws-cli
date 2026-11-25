@@ -7,6 +7,7 @@ mod blackbox;
 mod ci;
 mod coverage;
 mod deps;
+mod diff;
 mod file_lock;
 mod fuzzing;
 mod harness;
@@ -93,6 +94,7 @@ fn dispatch(root: &Path, args: &[String]) -> Result<(), TaskError> {
         "test" => verification::run(root, rest),
         "blackbox" => blackbox::run(root, rest),
         "parity" => parity::run(root, rest),
+        "diff" => diff::run(root, rest),
         "perf" => perf::run(root, rest),
         "census" => argparse::census(root, rest),
         "harness-test" => harness::self_test(root, rest),
@@ -130,6 +132,7 @@ const COMMANDS: &[&str] = &[
     "test",
     "blackbox",
     "parity",
+    "diff",
     "perf",
     "census",
     "harness-test",
