@@ -22,8 +22,7 @@ pub fn float_from_text(text: &str) -> Option<f64> {
 pub fn int_from_text(text: &str) -> Result<Value, String> {
     let ascii = number::ascii_literal(text);
     let body = ascii.trim_matches(number::C_SPACE);
-    let canonical = number::int(body)
-        .ok_or_else(|| format!("invalid literal for int() with base 10: {}", str_repr(text)))?;
+    let canonical = number::int(body).ok_or_else(|| invalid_int_literal(text.as_bytes()))?;
     let digits = number::digit_count(body);
     if digits > number::INT_MAX_STR_DIGITS {
         return Err(number::digit_limit_message(digits));
@@ -32,6 +31,26 @@ pub fn int_from_text(text: &str) -> Result<Value, String> {
         Ok(value) => Value::Integer(value),
         Err(_) => Value::BigInteger(canonical.into()),
     })
+}
+
+/// [`int_from_text`] of any `str`, in `pytext::wtf8`'s encoding: one with
+/// a lone surrogate is never a number.
+pub fn int_from_py_text(text: &[u8]) -> Result<Value, String> {
+    match std::str::from_utf8(text) {
+        Ok(text) => int_from_text(text),
+        Err(_) => Err(invalid_int_literal(text)),
+    }
+}
+
+/// [`float_from_text`] of any `str`, as [`int_from_py_text`] takes it.
+pub fn float_from_py_text(text: &[u8]) -> Option<f64> {
+    std::str::from_utf8(text).ok().and_then(float_from_text)
+}
+
+/// `int()`'s `ValueError`, whose `%.200R` cuts the repr to 200 characters.
+fn invalid_int_literal(text: &[u8]) -> String {
+    let repr: String = str_repr_text(text).chars().take(200).collect();
+    format!("invalid literal for int() with base 10: {repr}")
 }
 
 /// `repr(value)` for the Python object the value stands for.

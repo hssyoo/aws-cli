@@ -233,7 +233,8 @@ fn merge(complete: &Object, key: &Expression, value: &Object) -> Result<(), Stri
             | Value::BigInteger(_)
             | Value::Float(_)
             | Value::Bool(_)
-            | Value::String(_)),
+            | Value::String(_)
+            | Value::PyString(_)),
         ) => {
             let sum = py::add(&existing.value(), scalar)?;
             key.set(complete.clone(), Object::Value(sum))
@@ -294,7 +295,7 @@ fn page_size(
         return Ok(Some(py::int(size)?));
     }
     Ok(Some(match size {
-        Value::String(_) => size.clone(),
+        Value::String(_) | Value::PyString(_) => size.clone(),
         size => Value::String(py_str(size)),
     }))
 }
@@ -471,16 +472,16 @@ impl<C: Borrow<Client>> PageIterator<C> {
             return Ok(index);
         };
         let data = match primary.search(page.clone()) {
-            Some(all @ (Object::List(_) | Object::Value(Value::String(_)))) => {
-                all.slice_from(&index).map_err(other)?
-            }
+            Some(
+                all @ (Object::List(_) | Object::Value(Value::String(_) | Value::PyString(_))),
+            ) => all.slice_from(&index).map_err(other)?,
             _ => Object::NONE,
         };
         primary.set(page.clone(), data).map_err(other)?;
         for key in secondary {
             let empty = match key.search(page.clone()) {
                 Some(Object::List(_)) => Object::list(Vec::new()),
-                Some(Object::Value(Value::String(_))) => {
+                Some(Object::Value(Value::String(_) | Value::PyString(_))) => {
                     Object::Value(Value::String(String::new()))
                 }
                 Some(

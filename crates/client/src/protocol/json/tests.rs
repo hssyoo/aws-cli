@@ -133,7 +133,7 @@ fn json_error_codes_and_modelled_members_are_botocore_s() -> Result<(), Box<dyn 
 fn the_cli_s_handlers_keep_the_wire_values() -> Result<(), Box<dyn std::error::Error>> {
     let model = model().ok_or("model")?;
     let wire = |value: &Value| Ok(value.clone());
-    let text = |text: &str| Ok(Value::String(text.to_owned()));
+    let text = |text: &Value| Ok(text.clone());
     let options = ParseOptions {
         timestamp: &wire,
         blob: &text,

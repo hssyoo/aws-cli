@@ -70,11 +70,11 @@ fn add_modeled_parse(
 /// `x-amz-request-id` with `x-amz-id-2` as `HostId`.
 fn response_metadata(headers: &Headers) -> Map {
     let mut metadata = Map::new();
-    if let Some(id) = common::header(headers, "x-amzn-requestid") {
+    if let Some(id) = headers.joined("x-amzn-requestid") {
         metadata.insert("RequestId".into(), Value::String(id));
-    } else if let Some(id) = common::header(headers, "x-amz-request-id") {
+    } else if let Some(id) = headers.joined("x-amz-request-id") {
         metadata.insert("RequestId".into(), Value::String(id));
-        let host = common::header(headers, "x-amz-id-2").unwrap_or_default();
+        let host = headers.joined("x-amz-id-2").unwrap_or_default();
         metadata.insert("HostId".into(), Value::String(host));
     }
     metadata
@@ -103,7 +103,7 @@ fn non_payload_attrs(
             }
             Some("header") => {
                 let name = traits.name.as_deref().unwrap_or(&member.name);
-                let Some(text) = common::header(&response.headers, name) else {
+                let Some(text) = response.headers.joined(name) else {
                     continue;
                 };
                 body.value(member.shape, &Value::String(text))?

@@ -54,7 +54,7 @@ pub(super) fn request(
     let partitioned = partition(model, shape, params)?;
     let url_path = render_uri_template(template()?, &partitioned.uri)?;
     let (path, uri_query) = split_uri(&url_path);
-    let query = joined_query(uri_query, &partitioned.query);
+    let query = joined_query(uri_query, &partitioned.query)?;
     let mut headers = partitioned.headers;
     let payload = Payload::of(model, shape)?;
     let body = body(model, shape, payload, params, &partitioned.body)?;
@@ -206,6 +206,9 @@ fn serialize_header_map(
     };
     // An input's keys are the CLI's: Rust text.
     for (key, item) in map.iter() {
+        if matches!(item, Value::PyString(_)) || key.as_str().is_none() {
+            return Err(lone_surrogate_header());
+        }
         headers.set(&format!("{prefix}{}", key.text()), py_str(item));
     }
     Ok(())
@@ -245,6 +248,7 @@ fn convert_header_value(
                 .filter(|item| **item != Value::Null)
                 .map(|item| match item {
                     Value::String(text) if strings => Ok(escape_header_list_string(text)),
+                    Value::PyString(_) if strings => Err(lone_surrogate_header()),
                     other if strings => Err(SerializeError::new(format!(
                         "argument of type '{}' is not iterable",
                         common::short_type(other)
@@ -264,8 +268,22 @@ fn convert_header_value(
         }
         ShapeKind::Boolean => Ok(py_str(value).to_lowercase()),
         ShapeKind::Float | ShapeKind::Double => Ok(py_str(&common::special_float(value))),
+        // Python sends the `str` on to `http.client`, whose latin-1 encode
+        // fails inside the HTTP layer; no paginator puts a token in a
+        // header, so only a starting token's key naming a header member
+        // gets here.
+        _ if matches!(value, Value::PyString(_)) => Err(lone_surrogate_header()),
         _ => Ok(py_str(value)),
     }
+}
+
+/// The refusal of a header value holding a lone surrogate, which the
+/// native client does not send as Python's HTTP layer fails on it.
+fn lone_surrogate_header() -> SerializeError {
+    SerializeError::new(
+        "native client limit: a header value holding a lone surrogate, which the native client \
+         does not send",
+    )
 }
 
 /// `_escape_header_list_string`: a string holding `"` or `,` in double
@@ -298,7 +316,7 @@ fn render_uri_template(template: &str, labels: &Map) -> Result<String, Serialize
         let value = labels
             .get(name)
             .ok_or_else(|| SerializeError::new(format!("'{name}'")))?;
-        rendered.push_str(&percent_encode(value, safe));
+        rendered.push_str(&percent_encode(value, safe)?);
         rest = &rest[start + length + 1..];
     }
     rendered.push_str(rest);
@@ -318,41 +336,56 @@ fn split_uri(url_path: &str) -> (&str, Option<&str>) {
 /// [`percent_encode_sequence`]d after the `requestUri`'s own query and a
 /// `&`. A query string with names but no pairs (an empty list) still adds
 /// the `&`.
-fn joined_query(uri_query: Option<&str>, query: &Map) -> String {
-    match (uri_query, query.is_empty()) {
+///
+/// # Errors
+/// [`percent_encode`]'s.
+fn joined_query(uri_query: Option<&str>, query: &Map) -> Result<String, SerializeError> {
+    Ok(match (uri_query, query.is_empty()) {
         (Some(own), true) => own.to_owned(),
-        (Some(own), false) => format!("{own}&{}", percent_encode_sequence(query)),
+        (Some(own), false) => format!("{own}&{}", percent_encode_sequence(query)?),
         (None, true) => String::new(),
-        (None, false) => percent_encode_sequence(query),
-    }
+        (None, false) => percent_encode_sequence(query)?,
+    })
 }
 
 /// `percent_encode_sequence`: `name=value` pairs joined by `&`, both
 /// percent-encoded, a list giving one pair per item.
-fn percent_encode_sequence(query: &Map) -> String {
+///
+/// # Errors
+/// [`percent_encode`]'s, a name's before its values'.
+fn percent_encode_sequence(query: &Map) -> Result<String, SerializeError> {
     let mut pairs = Vec::new();
     for (name, value) in query.iter() {
-        let name = encode_bytes(name.as_bytes(), b"");
+        let name = percent_encode(&name.to_value(), b"")?;
         match value {
             Value::List(items) => {
                 for item in items {
-                    pairs.push(format!("{name}={}", percent_encode(item, b"")));
+                    pairs.push(format!("{name}={}", percent_encode(item, b"")?));
                 }
             }
-            other => pairs.push(format!("{name}={}", percent_encode(other, b""))),
+            other => pairs.push(format!("{name}={}", percent_encode(other, b"")?)),
         }
     }
-    pairs.join("&")
+    Ok(pairs.join("&"))
 }
 
 /// `percent_encode`: bytes as they are, text as UTF-8, anything else as
 /// its `str()`; then `urllib.parse.quote` with `safe`.
-fn percent_encode(value: &Value, safe: &[u8]) -> String {
-    match value {
+///
+/// # Errors
+/// `str.encode('utf-8')`'s `UnicodeEncodeError` for text with a lone
+/// surrogate, its position within that text.
+fn percent_encode(value: &Value, safe: &[u8]) -> Result<String, SerializeError> {
+    Ok(match value {
         Value::Blob(bytes) => encode_bytes(bytes, safe),
         Value::String(text) => encode_bytes(text.as_bytes(), safe),
+        Value::PyString(text) => {
+            let bytes = pytext::codec::encode_utf8(text.as_bytes(), pytext::codec::Errors::Strict)
+                .map_err(|error| SerializeError::new(error.to_string()))?;
+            encode_bytes(&bytes, safe)
+        }
         other => encode_bytes(py_str(other).as_bytes(), safe),
-    }
+    })
 }
 
 /// `urllib.parse.quote(bytes, safe)`: every byte but letters, digits,
@@ -440,6 +473,12 @@ fn encode_payload(value: &Value) -> Result<Vec<u8>, SerializeError> {
     match value {
         Value::Blob(bytes) => Ok(bytes.clone()),
         Value::String(text) => Ok(text.as_bytes().to_vec()),
+        // `text.encode('utf-8')`.
+        Value::PyString(text) => {
+            pytext::codec::encode_utf8(text.as_bytes(), pytext::codec::Errors::Strict)
+                .map(std::borrow::Cow::into_owned)
+                .map_err(|error| SerializeError::new(error.to_string()))
+        }
         other => Err(SerializeError::new(format!(
             "a bytes-like object is required, not '{}'",
             common::short_type(other)

@@ -189,8 +189,8 @@ fn cli_timestamp(
     }
 }
 
-fn identity_blob(text: &str) -> std::result::Result<Value, ParseError> {
-    Ok(Value::String(text.to_owned()))
+fn identity_blob(text: &Value) -> std::result::Result<Value, ParseError> {
+    Ok(text.clone())
 }
 
 /// Layer A for one case, as the JSON `oracle.py` wrote for it.

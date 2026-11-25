@@ -45,8 +45,8 @@ fn wire_timestamp(value: &Value) -> Result<Value, ParseError> {
     Ok(value.clone())
 }
 
-fn wire_blob(text: &str) -> Result<Value, ParseError> {
-    Ok(Value::String(text.to_owned()))
+fn wire_blob(text: &Value) -> Result<Value, ParseError> {
+    Ok(text.clone())
 }
 
 /// A response for one of `models`' operations from any bytes, read by the

@@ -59,10 +59,7 @@ impl std::error::Error for EncodeError {}
 /// # Errors
 /// The first run of surrogates `errors` cannot write.
 pub fn encode_utf8(text: &[u8], errors: Errors) -> Result<Cow<'_, [u8]>, EncodeError> {
-    if !text
-        .windows(2)
-        .any(|pair| pair[0] == 0xED && pair[1] >= 0xA0)
-    {
+    if !has_surrogate(text) {
         return Ok(Cow::Borrowed(text));
     }
     let mut out = Vec::with_capacity(text.len());
@@ -113,6 +110,19 @@ pub fn encode_utf8(text: &[u8], errors: Errors) -> Result<Cow<'_, [u8]>, EncodeE
         }
     }
     Ok(Cow::Owned(out))
+}
+
+/// Whether `text` holds a surrogate: in this encoding, an `ED` byte
+/// followed by `A0` or more, which no other code point has.
+fn has_surrogate(text: &[u8]) -> bool {
+    let mut rest = text;
+    while let Some(lead) = rest.iter().position(|byte| *byte == 0xED) {
+        if rest.get(lead + 1).is_some_and(|byte| *byte >= 0xA0) {
+            return true;
+        }
+        rest = &rest[lead + 1..];
+    }
+    false
 }
 
 /// `text.encode('utf-8', 'backslashreplace')`, which never fails, as Rust

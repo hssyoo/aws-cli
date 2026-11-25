@@ -29,6 +29,12 @@ impl Headers {
             .find(|(other, _)| other.eq_ignore_ascii_case(name))
             .map(|(_, value)| value.as_str())
     }
+    /// `headers[name]` of botocore's `HeadersDict`: every value of `name`,
+    /// in any case, joined with `, ` as urllib3 joins a repeated header.
+    pub fn joined(&self, name: &str) -> Option<String> {
+        let values: Vec<&str> = self.get_all(name).collect();
+        (!values.is_empty()).then(|| values.join(", "))
+    }
     /// Every value of `name`, in order.
     pub fn get_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
         self.0

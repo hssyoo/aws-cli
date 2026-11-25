@@ -809,9 +809,10 @@ impl Client {
     }
 }
 
-/// A response's `Date`, as `_calculate_ttl` reads it.
+/// A response's `Date`, as `_calculate_ttl` reads it from the
+/// `HeadersDict`: a repeated header's values joined, which no date reads.
 fn date_of(response: &HttpResponse) -> Option<timestamp::Timestamp> {
-    timestamp::Timestamp::parse_rfc822(response.headers.get("Date")?)
+    timestamp::Timestamp::parse_rfc822(&response.headers.joined("Date")?)
 }
 
 #[cfg(test)]

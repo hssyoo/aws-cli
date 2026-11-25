@@ -294,39 +294,78 @@ impl<E> Writer<'_, '_, E> {
 
     /// `py_encode_basestring_ascii` or `py_encode_basestring` of `text`, in
     /// `pytext::wtf8`'s encoding: a lone surrogate is `\udXXX` with
-    /// `ensure_ascii`, and raw without.
+    /// `ensure_ascii`, and raw without. Runs of bytes that need no escape
+    /// are copied whole; only an escaped character is looked at alone.
     fn string(&mut self, text: &[u8]) {
-        self.put("\"");
-        for point in pytext::wtf8::code_points(text) {
-            match point {
-                0x22 => self.put("\\\""),
-                0x5C => self.put("\\\\"),
-                0x0A => self.put("\\n"),
-                0x0D => self.put("\\r"),
-                0x09 => self.put("\\t"),
-                0x08 => self.put("\\b"),
-                0x0C => self.put("\\f"),
-                0x20..=0x7E => pytext::wtf8::push_code_point(&mut self.chunk, point),
-                _ if point < 0x20 || self.ensure_ascii => escape_utf16(&mut self.chunk, point),
-                _ => pytext::wtf8::push_code_point(&mut self.chunk, point),
+        self.chunk.push(b'"');
+        let mut start = 0;
+        let mut at = 0;
+        while let Some(&byte) = text.get(at) {
+            let plain = match byte {
+                b'"' | b'\\' | 0x00..=0x1F => false,
+                // DEL and past ASCII: `ensure_ascii` escapes what is not
+                // printable ASCII.
+                0x7F.. => !self.ensure_ascii,
+                _ => true,
+            };
+            if plain {
+                at += 1;
+                continue;
             }
+            self.chunk.extend_from_slice(&text[start..at]);
+            at += match byte {
+                b'"' => self.put_len("\\\"", 1),
+                b'\\' => self.put_len("\\\\", 1),
+                b'\n' => self.put_len("\\n", 1),
+                b'\r' => self.put_len("\\r", 1),
+                b'\t' => self.put_len("\\t", 1),
+                0x08 => self.put_len("\\b", 1),
+                0x0C => self.put_len("\\f", 1),
+                0x00..=0x1F | 0x7F => {
+                    escape_utf16(&mut self.chunk, u32::from(byte));
+                    1
+                }
+                // A code point past ASCII, `ensure_ascii` escaping it.
+                _ => {
+                    let length = match byte {
+                        0xF0.. => 4,
+                        0xE0.. => 3,
+                        _ => 2,
+                    }
+                    .min(text.len() - at);
+                    let point = pytext::wtf8::code_points(&text[at..at + length])
+                        .next()
+                        .unwrap_or(0xFFFD);
+                    escape_utf16(&mut self.chunk, point);
+                    length
+                }
+            };
+            start = at;
         }
-        self.put("\"");
+        self.chunk.extend_from_slice(&text[start..]);
+        self.chunk.push(b'"');
+    }
+
+    /// Adds `escape`, the text of `length` bytes of the input.
+    fn put_len(&mut self, escape: &str, length: usize) -> usize {
+        self.put(escape);
+        length
     }
 }
 
 /// `\uXXXX` of each UTF-16 unit of `point`: a pair for one past U+FFFF, and
 /// a lone surrogate as itself.
 fn escape_utf16(out: &mut Vec<u8>, point: u32) {
-    let units = match point {
-        0x10000.. => {
-            let offset = point - 0x10000;
-            vec![0xD800 + (offset >> 10), 0xDC00 + (offset & 0x3FF)]
-        }
-        _ => vec![point],
-    };
-    for unit in units {
-        let _ = write!(out, "\\u{unit:04x}");
+    if point >= 0x10000 {
+        let offset = point - 0x10000;
+        let _ = write!(
+            out,
+            "\\u{:04x}\\u{:04x}",
+            0xD800 + (offset >> 10),
+            0xDC00 + (offset & 0x3FF)
+        );
+    } else {
+        let _ = write!(out, "\\u{point:04x}");
     }
 }
 

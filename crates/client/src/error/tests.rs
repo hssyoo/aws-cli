@@ -46,6 +46,29 @@ fn a_service_error_reads_as_botocore_s_client_error() {
     );
 }
 
+/// `MSG_TEMPLATE.format` takes `str()` of whatever the code and message
+/// are: a lone surrogate kept (and written as stderr writes it), a number
+/// as its digits, `None` as `None`.
+#[test]
+fn a_service_error_formats_any_code_and_message() {
+    let mut error = service_error(None, None);
+    error.error.insert(
+        "Code".into(),
+        Value::from_text(model::value::Wtf8Buf::from_code_points([0x41, 0xDC80])),
+    );
+    error.error.insert("Message".into(), Value::Integer(7));
+    assert_eq!(error.code(), None);
+    let mut code = b"A".to_vec();
+    pytext::wtf8::push_code_point(&mut code, 0xDC80);
+    assert_eq!(*error.field_text("Code"), *code);
+    assert_eq!(
+        error.to_string(),
+        "An error occurred (A\\udc80) when calling the GetCallerIdentity operation: 7"
+    );
+    error.error.insert("Message".into(), Value::Null);
+    assert!(error.to_string().ends_with("operation: None"));
+}
+
 /// Each failure reads as the exception botocore raises for it.
 #[test]
 fn call_errors_read_as_botocore_s_exceptions() {
