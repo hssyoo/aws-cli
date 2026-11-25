@@ -132,14 +132,15 @@ fn error_info(error: &ServiceError, model: &Model) -> Map {
     }
     let is_modeled = |key: &str| modeled.iter().any(|name| *name == key.to_lowercase());
     let mut info = Map::new();
+    // A key with a lone surrogate matches no model's member name.
     for (key, value) in error.error.iter() {
-        if is_modeled(key) {
-            info.insert(key.to_owned(), value.clone());
+        if is_modeled(&key.text()) {
+            info.insert_key(key.clone(), value.clone());
         }
     }
     for (key, value) in error.members.iter() {
-        if !error.error.contains_key(key) && is_modeled(key) {
-            info.insert(key.to_owned(), value.clone());
+        if error.error.get_key(key).is_none() && is_modeled(&key.text()) {
+            info.insert_key(key.clone(), value.clone());
         }
     }
     info
@@ -157,6 +158,9 @@ fn details(info: &Map) -> Option<Vec<u8>> {
     let mut lines = String::new();
     let mut complex = false;
     for (key, value) in info.iter() {
+        // stderr writes a lone surrogate as `\udXXX` (backslashreplace),
+        // which `text` gives.
+        let key = key.text();
         if matches!(key.to_lowercase().as_str(), "code" | "message") {
             continue;
         }
@@ -188,6 +192,7 @@ fn is_simple(value: &Value) -> bool {
     matches!(
         value,
         Value::String(_)
+            | Value::PyString(_)
             | Value::Integer(_)
             | Value::BigInteger(_)
             | Value::Float(_)
@@ -209,7 +214,7 @@ fn inline(value: &Value) -> Option<String> {
         {
             let items: Vec<String> = map
                 .iter()
-                .map(|(key, item)| format!("{key}: {}", model::pyrepr::py_str(item)))
+                .map(|(key, item)| format!("{}: {}", key.text(), model::pyrepr::py_str(item)))
                 .collect();
             Some(format!("{{{}}}", items.join(", ")))
         }

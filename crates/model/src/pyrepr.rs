@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use timestamp::Timestamp;
 
 use pytext::number;
-use pytext::repr::{bytes_repr, str_repr};
+use pytext::repr::{bytes_repr, str_repr, str_repr_text};
 pub use pytext::repr::{float_repr, is_printable};
 
 /// `float(text)`: [`pytext::number::float`] of the text as CPython reads
@@ -42,12 +42,26 @@ pub fn py_repr(value: &Value) -> String {
 }
 
 /// `str(value)`: a string is itself, a datetime its `isoformat(' ')`, and
-/// everything else its `repr`.
+/// everything else its `repr`. As Rust text, a `str`'s lone surrogates are
+/// `\udXXX`, as stderr's `backslashreplace` prints them: text for a
+/// message. Text that must keep them (output, a request) is
+/// [`py_str_text`]'s.
 pub fn py_str(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
+        Value::PyString(text) => pytext::codec::backslashreplace(text.as_bytes()).into_owned(),
         Value::Timestamp(at) => datetime_str(*at),
         other => py_repr(other),
+    }
+}
+
+/// `str(value)` exactly, in `pytext::wtf8`'s encoding: a `str`'s lone
+/// surrogates kept.
+pub fn py_str_text(value: &Value) -> std::borrow::Cow<'_, [u8]> {
+    match value {
+        Value::String(text) => std::borrow::Cow::Borrowed(text.as_bytes()),
+        Value::PyString(text) => std::borrow::Cow::Borrowed(text.as_bytes()),
+        other => std::borrow::Cow::Owned(py_str(other).into_bytes()),
     }
 }
 
@@ -72,7 +86,7 @@ pub fn py_type(value: &Value) -> &'static str {
         Value::Bool(_) => "<class 'bool'>",
         Value::Integer(_) | Value::BigInteger(_) => "<class 'int'>",
         Value::Float(_) => "<class 'float'>",
-        Value::String(_) => "<class 'str'>",
+        Value::String(_) | Value::PyString(_) => "<class 'str'>",
         Value::Blob(_) => "<class 'bytes'>",
         Value::Timestamp(_) => "<class 'datetime.datetime'>",
         Value::List(_) => "<class 'list'>",
@@ -89,6 +103,7 @@ fn write_repr(out: &mut String, value: &Value) {
         Value::BigInteger(text) => out.push_str(text),
         Value::Float(number) => out.push_str(&float_repr(*number)),
         Value::String(text) => out.push_str(&str_repr(text)),
+        Value::PyString(text) => out.push_str(&str_repr_text(text.as_bytes())),
         Value::Blob(bytes) => out.push_str(&bytes_repr(bytes)),
         Value::Timestamp(at) => datetime_repr(out, *at),
         Value::List(items) => {
@@ -107,7 +122,7 @@ fn write_repr(out: &mut String, value: &Value) {
                 if index > 0 {
                     out.push_str(", ");
                 }
-                out.push_str(&str_repr(key));
+                out.push_str(&str_repr_text(key.as_bytes()));
                 out.push_str(": ");
                 write_repr(out, item);
             }

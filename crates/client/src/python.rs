@@ -11,6 +11,8 @@ pub(crate) fn truthy(value: &Value) -> bool {
         Value::BigInteger(_) | Value::Timestamp(_) => true,
         Value::Float(number) => *number != 0.0,
         Value::String(text) => !text.is_empty(),
+        // A `str` with a lone surrogate holds at least that one.
+        Value::PyString(_) => true,
         Value::Blob(bytes) => !bytes.is_empty(),
         Value::List(items) => !items.is_empty(),
         Value::Map(map) => !map.is_empty(),

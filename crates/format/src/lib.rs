@@ -99,7 +99,9 @@ fn not_iterable(value: &Value) -> Option<&'static str> {
         Value::Integer(_) | Value::BigInteger(_) => Some("int"),
         Value::Float(_) => Some("float"),
         Value::Timestamp(_) => Some("datetime"),
-        Value::String(_) | Value::Blob(_) | Value::List(_) | Value::Map(_) => None,
+        Value::String(_) | Value::PyString(_) | Value::Blob(_) | Value::List(_) | Value::Map(_) => {
+            None
+        }
     }
 }
 

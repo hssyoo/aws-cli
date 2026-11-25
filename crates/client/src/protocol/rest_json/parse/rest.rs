@@ -165,7 +165,7 @@ fn update(parsed: &mut Map, members: Value) -> Result<(), ParseError> {
     match members {
         Value::Map(members) => {
             for (key, value) in members {
-                parsed.insert(key, value);
+                parsed.insert_key(key, value);
             }
             Ok(())
         }

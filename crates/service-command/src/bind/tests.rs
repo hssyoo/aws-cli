@@ -45,7 +45,7 @@ fn value(json: &str) -> Value {
 fn keys(value: &Value) -> Vec<&str> {
     value
         .as_map()
-        .map(|map| map.keys().collect())
+        .map(|map| map.keys().filter_map(model::value::Key::as_str).collect())
         .unwrap_or_else(|| panic!("{value:?}"))
 }
 

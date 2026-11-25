@@ -39,13 +39,42 @@ enum After {
     CloseAtOnce,
 }
 
+/// A count a test waits on: how many times something happened on the
+/// server's threads.
+#[derive(Debug, Default)]
+struct Signal {
+    count: Mutex<usize>,
+    changed: Condvar,
+}
+
+impl Signal {
+    fn raise(&self) {
+        *self.count.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        self.changed.notify_all();
+    }
+    /// Waits until it was raised `count` times.
+    fn wait(&self, count: usize, what: &'static str) -> Result<(), &'static str> {
+        let guard = self.count.lock().unwrap_or_else(PoisonError::into_inner);
+        let (guard, _) = self
+            .changed
+            .wait_timeout_while(guard, PATIENCE, |raised| *raised < count)
+            .unwrap_or_else(PoisonError::into_inner);
+        if *guard < count {
+            return Err(what);
+        }
+        Ok(())
+    }
+}
+
 /// A loopback HTTP server that serves each connection on a thread of its
 /// own and counts what it accepted, answered and closed.
 struct Server {
     port: u16,
     accepted: Arc<AtomicUsize>,
     answered: Arc<AtomicUsize>,
-    closed: Arc<(Mutex<usize>, Condvar)>,
+    closed: Arc<Signal>,
+    /// Raised once the server has written bytes nobody asked for.
+    unasked: Arc<Signal>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -57,13 +86,15 @@ impl Server {
         let port = listener.local_addr()?.port();
         let accepted = Arc::new(AtomicUsize::new(0));
         let answered = Arc::new(AtomicUsize::new(0));
-        let closed = Arc::new((Mutex::new(0), Condvar::new()));
+        let closed = Arc::new(Signal::default());
+        let unasked = Arc::new(Signal::default());
         let stop = Arc::new(AtomicBool::new(false));
         let thread = {
-            let (accepted, answered, closed, stop) = (
+            let (accepted, answered, closed, sent, stop) = (
                 accepted.clone(),
                 answered.clone(),
                 closed.clone(),
+                unasked.clone(),
                 stop.clone(),
             );
             std::thread::spawn(move || {
@@ -72,12 +103,11 @@ impl Server {
                     match listener.accept() {
                         Ok((stream, _)) => {
                             let index = accepted.fetch_add(1, Ordering::SeqCst);
-                            let (answered, closed) = (answered.clone(), closed.clone());
+                            let (answered, closed, sent) =
+                                (answered.clone(), closed.clone(), sent.clone());
                             std::thread::spawn(move || {
-                                serve(stream, after, index, &answered);
-                                let (count, changed) = &*closed;
-                                *count.lock().unwrap_or_else(PoisonError::into_inner) += 1;
-                                changed.notify_all();
+                                serve(stream, after, index, &answered, &sent);
+                                closed.raise();
                             });
                         }
                         Err(_) => std::thread::sleep(Duration::from_millis(2)),
@@ -90,6 +120,7 @@ impl Server {
             accepted,
             answered,
             closed,
+            unasked,
             stop,
             thread: Some(thread),
         })
@@ -102,15 +133,8 @@ impl Server {
     }
     /// Waits until the server has closed `count` connections.
     fn wait_closed(&self, count: usize) -> Result<(), &'static str> {
-        let (closed, changed) = &*self.closed;
-        let guard = closed.lock().unwrap_or_else(PoisonError::into_inner);
-        let (guard, _) = changed
-            .wait_timeout_while(guard, PATIENCE, |closed| *closed < count)
-            .unwrap_or_else(PoisonError::into_inner);
-        if *guard < count {
-            return Err("the server did not close the connection");
-        }
-        Ok(())
+        self.closed
+            .wait(count, "the server did not close the connection")
     }
 }
 
@@ -127,7 +151,13 @@ const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
 
 /// Answers each request on `stream`, the server's `index`th connection, as
 /// `after` says, until the client closes or the server does.
-fn serve(mut stream: TcpStream, after: After, index: usize, answered: &AtomicUsize) {
+fn serve(
+    mut stream: TcpStream,
+    after: After,
+    index: usize,
+    answered: &AtomicUsize,
+    unasked: &Signal,
+) {
     let idle = match after {
         After::IdleClose(idle) => idle,
         _ => PATIENCE,
@@ -148,7 +178,7 @@ fn serve(mut stream: TcpStream, after: After, index: usize, answered: &AtomicUsi
             return;
         }
         answered.fetch_add(1, Ordering::SeqCst);
-        if !keep(&mut stream, after, request) {
+        if !keep(&mut stream, after, request, unasked) {
             break;
         }
         request += 1;
@@ -158,11 +188,12 @@ fn serve(mut stream: TcpStream, after: After, index: usize, answered: &AtomicUsi
 
 /// What follows the `request`th response: whether the connection stays open
 /// for another, after any unasked bytes `after` sends.
-fn keep(stream: &mut TcpStream, after: After, request: usize) -> bool {
+fn keep(stream: &mut TcpStream, after: After, request: usize, unasked: &Signal) -> bool {
     match after {
         After::Close | After::Http10 => false,
         After::SendGarbage if request == 0 => {
             let _ = stream.write_all(b"garbage nobody asked for");
+            unasked.raise();
             true
         }
         _ => true,
@@ -330,9 +361,11 @@ fn a_connection_with_unasked_data_waiting_is_not_reused() -> TestResult {
     let runtime = http_runtime(crate::runtime::Trust::Platform)?;
     let client = runtime.http_client();
     ok(client.send_pooled(&get(server.port), POOL))?;
-    // Long enough for the bytes to arrive; whether the connection notices
-    // them first or the check does, it is not reused.
-    std::thread::sleep(Duration::from_millis(50));
+    // Once written on loopback, the bytes are the client's to read: whether
+    // the connection notices them first or the check does, it is not reused.
+    server
+        .unasked
+        .wait(1, "the server did not send its unasked bytes")?;
     ok(client.send_pooled(&get(server.port), POOL))?;
     assert_eq!((server.accepted(), server.answered()), (2, 2));
     Ok(())

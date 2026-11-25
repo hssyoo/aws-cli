@@ -20,7 +20,7 @@ use cli_core::client_config::user_agent::{Feature, Features};
 use model::paginators::{Config, Expression};
 use model::pyrepr::{py_repr, py_str};
 use model::shapes::ShapeKind;
-use model::value::{Map, Value};
+use model::value::{Key, Map, Value};
 use std::borrow::Borrow;
 
 mod object;
@@ -351,7 +351,7 @@ impl<C: Borrow<Client>> PageIterator<C> {
             inject(&mut kwargs, &starting.token);
         }
         if let (Some(size), Some(limit_key)) = (&self.page_size, &self.config.limit_key) {
-            insert(&mut kwargs, limit_key, size.clone());
+            insert(&mut kwargs, &Key::from(limit_key.as_str()), size.clone());
         }
         Ok(Progress {
             starting_index: starting.map(|starting| starting.index),
@@ -565,23 +565,25 @@ fn inject(input: &mut Value, token: &Map) {
         let unset = match value {
             Value::Null => true,
             Value::String(text) => text == "None",
+            // A `str` with a lone surrogate is not `'None'`.
+            Value::PyString(_) => false,
             _ => false,
         };
         if !unset {
             insert(input, name, value.clone());
         } else if let Value::Map(map) = input {
-            map.remove(name);
+            map.remove_key(name);
         }
     }
 }
 
-/// `op_kwargs[name] = value`.
-fn insert(input: &mut Value, name: &str, value: Value) {
+/// `op_kwargs[name] = value`: a starting token's name as the token gave it.
+fn insert(input: &mut Value, name: &Key, value: Value) {
     match input {
         Value::Map(map) => {
-            map.insert(name.to_owned(), value);
+            map.insert_key(name.clone(), value);
         }
-        other => *other = Value::Map(Map::from_iter([(name.to_owned(), value)])),
+        other => *other = Value::Map(Map::from_iter([(name.clone(), value)])),
     }
 }
 

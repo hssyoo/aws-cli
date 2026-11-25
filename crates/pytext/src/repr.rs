@@ -73,7 +73,17 @@ pub fn quote_for(text: &[u8]) -> char {
 /// `text` as it appears between `quote`s in its repr: a character outside
 /// ASCII as is when printable, else `\xNN`, `\uNNNN` or `\UNNNNNNNN`.
 pub fn write_escaped(out: &mut String, text: &str, quote: char) {
-    for character in text.chars() {
+    write_escaped_points(out, text.chars().map(u32::from), quote);
+}
+
+/// [`write_escaped`] of code points, a lone surrogate among them, which is
+/// not printable and so is `\udXXX`.
+fn write_escaped_points(out: &mut String, points: impl Iterator<Item = u32>, quote: char) {
+    for code in points {
+        let Some(character) = char::from_u32(code) else {
+            let _ = write!(out, "\\u{code:04x}");
+            continue;
+        };
         match character {
             c if c == quote || c == '\\' => {
                 out.push('\\');
@@ -83,11 +93,10 @@ pub fn write_escaped(out: &mut String, text: &str, quote: char) {
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             c if c < ' ' || c == '\u{7f}' => {
-                let _ = write!(out, "\\x{:02x}", u32::from(c));
+                let _ = write!(out, "\\x{code:02x}");
             }
             c if c.is_ascii() || is_printable(c) => out.push(c),
-            c => {
-                let code = u32::from(c);
+            _ => {
                 let _ = match code {
                     0..=0xff => write!(out, "\\x{code:02x}"),
                     0x100..=0xffff => write!(out, "\\u{code:04x}"),
@@ -100,10 +109,16 @@ pub fn write_escaped(out: &mut String, text: &str, quote: char) {
 
 /// `repr(text)` for a `str`.
 pub fn str_repr(text: &str) -> String {
-    let quote = quote_for(text.as_bytes());
+    str_repr_text(text.as_bytes())
+}
+
+/// `repr(text)` for a `str` in `crate::wtf8`'s encoding, lone surrogates
+/// included: always ASCII-safe Rust text, as a repr escapes them.
+pub fn str_repr_text(text: &[u8]) -> String {
+    let quote = quote_for(text);
     let mut out = String::with_capacity(text.len() + 2);
     out.push(quote);
-    write_escaped(&mut out, text, quote);
+    write_escaped_points(&mut out, crate::wtf8::code_points(text), quote);
     out.push(quote);
     out
 }

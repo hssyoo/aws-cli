@@ -9,7 +9,7 @@ use crate::http::{Headers, HttpResponse};
 use model::pyjson::{LoadError, Options, dumps};
 use model::pyrepr::py_str;
 use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
-use model::value::{Map, Value};
+use model::value::{Key, Map, Value};
 
 /// The `json` protocol.
 #[derive(Debug)]
@@ -104,7 +104,7 @@ pub(super) fn serialized(
                 } else {
                     serialized(model, entry, *item)?
                 };
-                out.insert(key.to_owned(), entry);
+                out.insert_key(key.clone(), entry);
             }
             Ok(Value::Map(out))
         }
@@ -150,8 +150,10 @@ fn structure(model: &Model, value: &Value, shape: ShapeId) -> Result<Value, Seri
     let mut out = Map::with_capacity(map.len());
     for (key, item) in map.iter() {
         let member = common::member(model, shape, key)?;
-        let name = model.shape(member).traits.name.as_deref().unwrap_or(key);
-        out.insert(name.to_owned(), serialized(model, item, member)?);
+        // A member's key is its name, which `member` found.
+        let name = model.shape(member).traits.name.as_deref();
+        let name = name.map_or_else(|| key.clone(), Key::from);
+        out.insert_key(name, serialized(model, item, member)?);
     }
     Ok(Value::Map(out))
 }
@@ -226,7 +228,7 @@ impl Reader<'_, '_> {
                 )));
             }
         };
-        let present: Vec<&str> = map
+        let present: Vec<&Key> = map
             .iter()
             .filter(|(_, v)| **v != Value::Null)
             .map(|(k, _)| k)
@@ -267,16 +269,17 @@ impl Reader<'_, '_> {
         };
         let mut parsed = Map::with_capacity(map.len());
         for (key, item) in map.iter() {
-            let key = match self.shape(key_shape, &Value::String(key.to_owned()))? {
-                Value::String(key) => key,
-                other => py_str(&other),
+            let key = match self.shape(key_shape, &key.to_value())? {
+                Value::String(key) => Key::Str(key),
+                Value::PyString(key) => Key::Py(key),
+                other => Key::Str(py_str(&other)),
             };
             let item = if *item == Value::Null {
                 Value::Null
             } else {
                 self.shape(value_shape, item)?
             };
-            parsed.insert(key, item);
+            parsed.insert_key(key, item);
         }
         Ok(Value::Map(parsed))
     }

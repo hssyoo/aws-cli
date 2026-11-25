@@ -7,7 +7,7 @@ use crate::http::{Headers, HttpResponse, Method};
 use crate::xml::{self, Element};
 use model::pyrepr::{float_from_text, int_from_text, py_repr, py_str};
 use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
-use model::value::{Map, Value};
+use model::value::{Key, Map, Value};
 
 /// The `query` protocol.
 #[derive(Debug)]
@@ -168,7 +168,9 @@ impl Form {
         };
         for (key, item) in map.iter() {
             let member = common::member(model, shape, key)?;
-            let name = model.shape(member).traits.name.as_deref().unwrap_or(key);
+            // `member` found it, so the key is a member's name.
+            let key = key.text();
+            let name = model.shape(member).traits.name.as_deref().unwrap_or(&key);
             let member_prefix = if prefix.is_empty() {
                 name.to_owned()
             } else {
@@ -247,7 +249,7 @@ impl Form {
             .unwrap_or("value");
         for (index, (key, item)) in map.iter().enumerate() {
             let number = index + 1;
-            let key_value = Value::String(key.to_owned());
+            let key_value = key.to_value();
             self.value(
                 model,
                 &key_value,
@@ -359,7 +361,12 @@ impl Reader<'_, '_> {
             node.clone()
         };
         let mapping = by_name(&node);
-        let present: Vec<&str> = mapping.iter().map(|(name, _)| name.as_str()).collect();
+        // XML names are Rust text: an XML document holds no lone surrogate.
+        let names: Vec<Key> = mapping
+            .iter()
+            .map(|(name, _)| Key::from(name.as_str()))
+            .collect();
+        let present: Vec<&Key> = names.iter().collect();
         if let Some(tag) = common::unknown_union_member(model, shape, &present)? {
             return Ok(common::unknown_member_value(tag));
         }
@@ -567,7 +574,7 @@ impl Family for Query {
                 ));
             };
             for (key, value) in errors {
-                parsed.insert(key, value);
+                parsed.insert_key(key, value);
             }
         }
         if let Some(id) = parsed.remove("RequestId") {

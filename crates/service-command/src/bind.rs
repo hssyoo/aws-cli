@@ -89,7 +89,7 @@ pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Binding, PythonRe
     paginate &= !paging.is_some_and(|paging| {
         input
             .keys()
-            .any(|key| paging.tokens.iter().any(|token| &*token.model == key))
+            .any(|key| paging.tokens.iter().any(|token| *key == *token.model))
     });
     let pagination = paginate.then(|| pagination_config(input.remove(PAGINATION_CONFIG)));
     Ok(Binding::Call(Call {

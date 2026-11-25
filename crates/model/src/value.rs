@@ -1,5 +1,6 @@
 //! The dynamic value every request input and response output passes through:
 //! the Python objects botocore's serializers take and its parsers build.
+pub use pytext::wtf8::Wtf8Buf;
 use timestamp::Timestamp;
 
 /// A Python value as botocore sees one.
@@ -7,6 +8,8 @@ use timestamp::Timestamp;
 /// Integers are unbounded in Python; those beyond `i64` keep their decimal
 /// text. `Float` is Python's `float`. `Timestamp` stands for an aware
 /// `datetime.datetime` in `datetime.timezone.utc`, `Blob` for `bytes`.
+/// A `str` is `String`, or `PyString` when it holds a lone surrogate, which
+/// a server's JSON can send and a Rust `String` cannot hold.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Null,
@@ -16,19 +19,112 @@ pub enum Value {
     BigInteger(Box<str>),
     Float(f64),
     String(String),
+    /// A `str` holding at least one lone surrogate; never one a `String`
+    /// could hold, so the two variants never stand for the same text.
+    PyString(Wtf8Buf),
     Blob(Vec<u8>),
     Timestamp(Timestamp),
     List(Vec<Value>),
     Map(Map),
 }
 
+/// A `dict` key: a `str`, which holds lone surrogates as a value's may.
+/// Keys a model or the CLI makes are always `Str`. Keys order as Python
+/// sorts `str`s, by code point, whichever variant each is.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Key {
+    Str(String),
+    /// A key holding at least one lone surrogate, as [`Value::PyString`].
+    Py(Wtf8Buf),
+}
+
+impl Key {
+    /// The key as Rust text; `None` for one with a lone surrogate.
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::Str(text) => Some(text),
+            Self::Py(_) => None,
+        }
+    }
+
+    /// The key's text in `pytext::wtf8`'s encoding.
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Str(text) => text.as_bytes(),
+            Self::Py(text) => text.as_bytes(),
+        }
+    }
+
+    /// The key as Rust text for a message: a lone surrogate as `\udXXX`,
+    /// as stderr's `backslashreplace` prints it.
+    pub fn text(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            Self::Str(text) => std::borrow::Cow::Borrowed(text),
+            Self::Py(text) => pytext::codec::backslashreplace(text.as_bytes()),
+        }
+    }
+
+    /// The key as the `str` value it is.
+    pub fn to_value(&self) -> Value {
+        match self {
+            Self::Str(text) => Value::String(text.clone()),
+            Self::Py(text) => Value::PyString(text.clone()),
+        }
+    }
+}
+
+impl PartialOrd for Key {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// By code point: the bytes of `pytext::wtf8`'s encoding order as the code
+/// points do.
+impl Ord for Key {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_bytes().cmp(other.as_bytes())
+    }
+}
+
+impl From<String> for Key {
+    fn from(text: String) -> Self {
+        Self::Str(text)
+    }
+}
+
+impl From<&str> for Key {
+    fn from(text: &str) -> Self {
+        Self::Str(text.to_owned())
+    }
+}
+
+impl From<Wtf8Buf> for Key {
+    fn from(text: Wtf8Buf) -> Self {
+        Self::Py(text)
+    }
+}
+
+impl From<pytext::wtf8::Text> for Key {
+    fn from(text: pytext::wtf8::Text) -> Self {
+        text.map_or_else(Self::Py, Self::Str)
+    }
+}
+
+impl PartialEq<str> for Key {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == Some(other)
+    }
+}
+
 /// A string-keyed map in insertion order, as a Python `dict` keeps it.
 ///
 /// Lookups are linear: maps here are request and response structures, which
-/// are small.
+/// are small. A key is compared as the `str` it is: one with a lone
+/// surrogate is never equal to a Rust `&str`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Map {
-    entries: Vec<(String, Value)>,
+    entries: Vec<(Key, Value)>,
 }
 
 impl Map {
@@ -47,6 +143,11 @@ impl Map {
     /// `dict[key] = value`: a present key keeps its position and returns the
     /// value it had; a new key goes last.
     pub fn insert(&mut self, key: String, value: Value) -> Option<Value> {
+        self.insert_key(Key::Str(key), value)
+    }
+
+    /// [`Self::insert`] of any key, a lone surrogate's included.
+    pub fn insert_key(&mut self, key: Key, value: Value) -> Option<Value> {
         match self.entries.iter_mut().find(|(k, _)| *k == key) {
             Some((_, old)) => Some(std::mem::replace(old, value)),
             None => {
@@ -56,7 +157,13 @@ impl Map {
         }
     }
 
+    /// `dict.get(key)` of a key without a lone surrogate.
     pub fn get(&self, key: &str) -> Option<&Value> {
+        self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    /// `dict.get(key)` of any key.
+    pub fn get_key(&self, key: &Key) -> Option<&Value> {
         self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
 
@@ -77,6 +184,12 @@ impl Map {
         Some(self.entries.remove(index).1)
     }
 
+    /// [`Self::remove`] of any key.
+    pub fn remove_key(&mut self, key: &Key) -> Option<Value> {
+        let index = self.entries.iter().position(|(k, _)| k == key)?;
+        Some(self.entries.remove(index).1)
+    }
+
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -85,18 +198,18 @@ impl Map {
         self.entries.is_empty()
     }
 
-    pub fn keys(&self) -> impl Iterator<Item = &str> {
-        self.entries.iter().map(|(k, _)| k.as_str())
+    pub fn keys(&self) -> impl Iterator<Item = &Key> {
+        self.entries.iter().map(|(k, _)| k)
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &Value)> {
-        self.entries.iter().map(|(k, v)| (k.as_str(), v))
+    pub fn iter(&self) -> impl Iterator<Item = (&Key, &Value)> {
+        self.entries.iter().map(|(k, v)| (k, v))
     }
 }
 
 impl IntoIterator for Map {
-    type Item = (String, Value);
-    type IntoIter = std::vec::IntoIter<(String, Value)>;
+    type Item = (Key, Value);
+    type IntoIter = std::vec::IntoIter<(Key, Value)>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.entries.into_iter()
@@ -108,6 +221,16 @@ impl FromIterator<(String, Value)> for Map {
         let mut map = Self::new();
         for (key, value) in items {
             map.insert(key, value);
+        }
+        map
+    }
+}
+
+impl FromIterator<(Key, Value)> for Map {
+    fn from_iter<I: IntoIterator<Item = (Key, Value)>>(items: I) -> Self {
+        let mut map = Self::new();
+        for (key, value) in items {
+            map.insert_key(key, value);
         }
         map
     }
@@ -126,6 +249,12 @@ impl std::fmt::Display for JsonError {
 impl std::error::Error for JsonError {}
 
 impl Value {
+    /// The `str` value of `text`: a `String`, or a `PyString` for text with
+    /// a lone surrogate.
+    pub fn from_text(text: pytext::wtf8::Text) -> Self {
+        text.map_or_else(Self::PyString, Self::String)
+    }
+
     /// A map's value for `key`, as `dict.get` reads it; `None` when absent
     /// or when this is not a map.
     pub fn get(&self, key: &str) -> Option<&Self> {

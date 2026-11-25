@@ -172,7 +172,7 @@ pub(super) fn map_eq(left: &Map, right: &Map) -> bool {
     left.len() == right.len()
         && left
             .iter()
-            .all(|(key, value)| right.get(key).is_some_and(|other| eq(value, other)))
+            .all(|(key, value)| right.get_key(key).is_some_and(|other| eq(value, other)))
 }
 
 /// `int(value)`, as `_extract_paging_params` reads `MaxItems` and

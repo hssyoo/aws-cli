@@ -1,5 +1,6 @@
 use super::*;
 use crate::protocol::ParseOptions;
+use model::value::Key;
 
 const MODEL: &str = r#"{
   "metadata": {"apiVersion": "2020-01-01", "protocol": "query"},
@@ -116,7 +117,7 @@ fn a_query_error_keeps_botocore_s_error_dict() -> Result<(), ParseError> {
         &response(400, body),
         &ParseOptions::BOTOCORE,
     )?;
-    let keys: Vec<&str> = error.error.keys().collect();
+    let keys: Vec<&str> = error.error.keys().filter_map(Key::as_str).collect();
     assert_eq!(keys, ["Type", "Code", "Message", "Detail"]);
     assert_eq!(
         error.error.get("Type"),

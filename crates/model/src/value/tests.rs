@@ -37,8 +37,8 @@ fn objects_keep_insertion_order_and_the_last_duplicate() -> Result<()> {
     let Value::Map(map) = value else {
         return Err("not a map".into());
     };
-    let keys: Vec<&str> = map.keys().collect();
-    assert_eq!(keys, ["b", "a", "c"]);
+    let keys: Vec<Option<&str>> = map.keys().map(Key::as_str).collect();
+    assert_eq!(keys, [Some("b"), Some("a"), Some("c")]);
     assert_eq!(map.get("b"), Some(&Value::Integer(2)));
     assert_eq!(map.get("c"), Some(&Value::String("é😀".into())));
     let Some(Value::Map(inner)) = map.get("a") else {
@@ -65,15 +65,15 @@ fn maps_replace_in_place_and_remove_keeping_order() {
     assert!(empty);
     assert_eq!(inserted, [None, None, Some(Value::Integer(1))]);
     assert_eq!(
-        (map.keys().collect::<Vec<_>>(), map.len()),
-        (vec!["a", "b"], 2)
+        (map.keys().map(Key::as_str).collect::<Vec<_>>(), map.len()),
+        (vec![Some("a"), Some("b")], 2)
     );
     assert_eq!(map.remove("a"), Some(Value::Integer(3)));
     if let Some(value) = map.get_mut("b") {
         *value = Value::Null;
     }
-    let entries: Vec<(&str, &Value)> = map.iter().collect();
-    assert_eq!(entries, [("b", &Value::Null)]);
+    let entries: Vec<(&Key, &Value)> = map.iter().collect();
+    assert_eq!(entries, [(&Key::Str("b".into()), &Value::Null)]);
 }
 
 #[test]
@@ -104,4 +104,38 @@ fn accessors_read_their_kind_and_nothing_else() -> Result<()> {
     assert_eq!((number.as_str(), number.as_map()), (None, None));
     assert!(number.get("x").is_none() && value.get("missing").is_none());
     Ok(())
+}
+
+/// A `str` with a lone surrogate is a `PyString` value and a `Py` key, each
+/// equal only to itself: never to a Rust `&str`, so `get` cannot find it,
+/// `get_key` can, and it keeps its place as any key does.
+#[test]
+fn a_lone_surrogate_s_str_is_a_value_and_a_key_of_its_own() -> Result<()> {
+    let Err(text) = Wtf8Buf::from_code_points([0x61, 0xD800]) else {
+        return Err("a surrogate makes no String".into());
+    };
+    let mut map = Map::new();
+    map.insert("a".into(), Value::Integer(1));
+    map.insert_key(Key::Py(text.clone()), Value::PyString(text.clone()));
+    map.insert("b".into(), Value::Integer(2));
+    assert_eq!(map.get("a\u{fffd}"), None);
+    assert_eq!(
+        map.get_key(&Key::Py(text.clone())),
+        Some(&Value::PyString(text.clone()))
+    );
+    let keys: Vec<Option<&str>> = map.keys().map(Key::as_str).collect();
+    assert_eq!(keys, [Some("a"), None, Some("b")]);
+    assert_eq!(Key::Py(text.clone()).text(), "a\\ud800");
+    assert_eq!(Key::Py(text.clone()).to_value(), Value::PyString(text));
+    Ok(())
+}
+
+/// The second representation costs the common path nothing: a value, a
+/// key and a map's entry are no larger than before it (32, 24 and 56 bytes
+/// on 64-bit targets).
+#[test]
+fn values_and_keys_keep_their_size() {
+    assert_eq!(std::mem::size_of::<Value>(), 32);
+    assert_eq!(std::mem::size_of::<Key>(), std::mem::size_of::<String>());
+    assert_eq!(std::mem::size_of::<(Key, Value)>(), 56);
 }

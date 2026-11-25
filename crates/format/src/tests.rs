@@ -174,7 +174,8 @@ fn tagged(map: &Map) -> Option<Value> {
     if map.len() != 1 {
         return None;
     }
-    match map.iter().next()? {
+    let (key, value) = map.iter().next()?;
+    match (key.as_str()?, value) {
         ("$bytes", Value::String(text)) => pytext::base64::decode(text).ok().map(Value::Blob),
         ("$datetime", Value::Integer(micros)) => {
             Timestamp::from_unix_micros(*micros).map(Value::Timestamp)

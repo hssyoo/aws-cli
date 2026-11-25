@@ -1,5 +1,6 @@
 use super::*;
 use crate::protocol::Protocol;
+use model::value::Key;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -557,7 +558,7 @@ fn response_metadata_comes_before_the_output_s_members() -> TestResult {
     let Value::Map(parsed) = parsed else {
         return Err("not a map".into());
     };
-    let keys: Vec<&str> = parsed.keys().collect();
+    let keys: Vec<&str> = parsed.keys().filter_map(Key::as_str).collect();
     assert_eq!(keys.first(), Some(&"ResponseMetadata"), "{keys:?}");
     let metadata = parsed
         .get("ResponseMetadata")
