@@ -10,6 +10,7 @@ mod deps;
 mod diff;
 mod file_lock;
 mod fuzzing;
+mod guard;
 mod harness;
 mod integ;
 mod lint;
@@ -95,6 +96,7 @@ fn dispatch(root: &Path, args: &[String]) -> Result<(), TaskError> {
         "blackbox" => blackbox::run(root, rest),
         "parity" => parity::run(root, rest),
         "diff" => diff::run(root, rest),
+        "guard" => guard::run(root, rest),
         "perf" => perf::run(root, rest),
         "census" => argparse::census(root, rest),
         "harness-test" => harness::self_test(root, rest),
@@ -133,6 +135,7 @@ const COMMANDS: &[&str] = &[
     "blackbox",
     "parity",
     "diff",
+    "guard",
     "perf",
     "census",
     "harness-test",

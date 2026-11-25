@@ -1,0 +1,23 @@
+# Paths that hold the oracles a change is judged by: the expected results,
+# the recorded upstream data, the lint and format settings, the pins and
+# manifests, and the harnesses that run them. `cargo xtask guard` reports
+# every change to one; such a change needs approval and lands on its own.
+# One glob per line: `*` matches within a path segment, `**` across them.
+tests/parity/**
+tests/blackbox/failures.txt
+tests/blackbox/upstream-failures.txt
+tests/integ/integ_expected_failures.txt
+tests/argparse/**
+tests/models/**
+tests/diff/known-differences.json
+tests/diff/corpus/**
+aws-cli/tests/**
+clippy.toml
+rustfmt.toml
+xtask/**
+.github/**
+deps/pins.toml
+Cargo.lock
+**/Cargo.toml
+**/AGENTS.md
+**/CLAUDE.md
