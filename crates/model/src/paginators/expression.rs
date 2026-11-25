@@ -109,7 +109,8 @@ pub trait Assign: Sized {
 /// read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NotADict<'a> {
-    Str(&'a str),
+    /// A `str`, in `pytext::wtf8`'s encoding: a lone surrogate's too.
+    Str(&'a [u8]),
     Bytes,
     List,
     /// Anything else, by its type's name (`tp_name`).
@@ -121,7 +122,8 @@ impl<'a> NotADict<'a> {
     pub fn of(value: &'a Value) -> Option<Self> {
         match value {
             Value::Map(_) => None,
-            Value::String(text) => Some(Self::Str(text)),
+            Value::String(text) => Some(Self::Str(text.as_bytes())),
+            Value::PyString(text) => Some(Self::Str(text.as_bytes())),
             Value::Blob(_) => Some(Self::Bytes),
             Value::List(_) => Some(Self::List),
             other => Some(Self::Other(py_type_name(other))),
@@ -135,7 +137,9 @@ impl<'a> NotADict<'a> {
 fn type_error(found: &NotADict<'_>, name: &str, more: bool) -> String {
     match found {
         NotADict::List => "list indices must be integers or slices, not str".to_owned(),
-        NotADict::Str(text) if more && text.contains(name) => {
+        // `name in text`: `name` is Rust text, which matches no part of a
+        // surrogate's three bytes, so a byte search finds what Python does.
+        NotADict::Str(text) if more && contains(text, name.as_bytes()) => {
             "string indices must be integers, not 'str'".to_owned()
         }
         NotADict::Bytes if more => "a bytes-like object is required, not 'str'".to_owned(),
@@ -146,6 +150,10 @@ fn type_error(found: &NotADict<'_>, name: &str, more: bool) -> String {
         }
         NotADict::Other(class) => format!("'{class}' object does not support item assignment"),
     }
+}
+
+fn contains(text: &[u8], needle: &[u8]) -> bool {
+    needle.is_empty() || text.windows(needle.len()).any(|window| window == needle)
 }
 
 impl Lookup for &Value {

@@ -52,12 +52,22 @@ fn set_makes_the_dicts_it_walks_and_raises_on_the_rest() -> Result<(), crate::va
     let mut page = Value::from_json(br#"{"L": [], "S": "xBx", "T": "x", "I": 1, "Y": "eA="}"#)?;
     if let Value::Map(map) = &mut page {
         map.insert("Y".into(), Value::Blob(vec![1]));
+        // A `str` holding a lone surrogate is a `str` like any other.
+        let lone = |points: &[u32]| {
+            Value::from_text(crate::value::Wtf8Buf::from_code_points(
+                points.iter().copied(),
+            ))
+        };
+        map.insert("P".into(), lone(&[0xDC80, 0x42]));
+        map.insert("Q".into(), lone(&[0xDC80]));
     }
     for (text, error) in [
         ("L.B", "list indices must be integers or slices, not str"),
         ("S.B.C", "string indices must be integers, not 'str'"),
         ("T.B.C", "'str' object does not support item assignment"),
         ("S.B", "'str' object does not support item assignment"),
+        ("P.B.C", "string indices must be integers, not 'str'"),
+        ("Q.B.C", "'str' object does not support item assignment"),
         ("Y.B.C", "a bytes-like object is required, not 'str'"),
         ("Y.B", "'bytes' object does not support item assignment"),
         (
