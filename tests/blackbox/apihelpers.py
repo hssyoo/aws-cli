@@ -335,9 +335,11 @@ class ApiSession:
         stdout, stderr, rc = await run_command(
             [self.aws_cli, *argv], self.env, cwd=self.cwd, stdin=stdin
         )
+        # A byte that is no UTF-8, as a lone surrogate printed with
+        # surrogateescape writes, reads back as that surrogate.
         result = CommandRun(
-            stdout.decode(),
-            stderr.decode(),
+            stdout.decode("utf-8", "surrogateescape"),
+            stderr.decode("utf-8", "surrogateescape"),
             rc,
             tuple(responder.calls),
         )
