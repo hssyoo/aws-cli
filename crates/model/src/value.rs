@@ -275,12 +275,14 @@ impl Value {
         }
     }
 
-    /// `json.loads(text)`, with Python's number rules: a number with a
-    /// fraction or exponent is a `float` (`1.50` is `1.5`, `1e400` is
-    /// infinity), any other is an `int` of any size.
+    /// The reader for trusted JSON bundled with the CLI (endpoint rule sets
+    /// and properties, paginator files), with Python's number rules for
+    /// what such data holds: a number with a fraction or exponent is a
+    /// `float`, any other an `int` of any size.
     ///
-    /// Two inputs Python accepts are refused here: the `NaN` and `Infinity`
-    /// literals, and lone surrogate escapes, which no Rust string can hold.
+    /// It is not `json.loads`: it refuses the `NaN` and `Infinity` literals
+    /// and lone surrogate escapes, and has no 4300-digit limit. Anything a
+    /// server or a user sends is read with [`crate::pyjson::loads`].
     pub fn from_json(text: &[u8]) -> Result<Self, JsonError> {
         let json: serde_json::Value = serde_json::from_slice(text).map_err(JsonError)?;
         Ok(Self::from_serde(&json))
