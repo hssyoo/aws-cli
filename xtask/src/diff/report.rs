@@ -5,9 +5,10 @@
 //! `fingerprint`, the `cases` (row ids, or `"*"` for every row) it holds
 //! for, the `mode` (`oracle`, `baseline` or `determinism`) it holds in, and
 //! the `reason`. A row is identical, known (every difference has an entry)
-//! or mismatched, or not native ([`admission`]). A timeout, a harness error
-//! or a changed admission ([`UNCOVERABLE`]) is never known: no entry may
-//! name one. A text difference is covered only by an entry naming its full
+//! or mismatched, or not native ([`admission`]). A timeout, a harness error,
+//! a changed admission, a bad signature on either side ([`UNCOVERABLE`]) or
+//! a stage's overflow past its named differences ([`OVERFLOW`]) is never
+//! known: no entry may name one. A text difference is covered only by an entry naming its full
 //! lines (its `key`), and a `:bytes` one only for listed rows. The run
 //! passes when no row is mismatched. The report also counts each side's
 //! signatures by verdict ([`sigv4`]).
@@ -64,13 +65,19 @@ impl Known {
     }
 }
 
-/// The fingerprints no entry may cover: the run was not seen whole.
-pub const UNCOVERABLE: [&str; 3] = ["timeout:", "harness:", "admission-changed:"];
+/// The fingerprints no entry may cover: the run was not seen whole, or a
+/// request's signature is bad.
+pub const UNCOVERABLE: [&str; 4] = ["timeout:", "harness:", "admission-changed:", "sig:bad:"];
+
+/// The end of a stage's fingerprint past its last named difference, which
+/// stands for any number of others, so no entry may cover it either.
+pub const OVERFLOW: &str = ":...";
 
 fn uncoverable(fingerprint: &str) -> bool {
-    UNCOVERABLE
-        .iter()
-        .any(|prefix| fingerprint.starts_with(prefix))
+    fingerprint.ends_with(OVERFLOW)
+        || UNCOVERABLE
+            .iter()
+            .any(|prefix| fingerprint.starts_with(prefix))
 }
 
 /// The known differences in `text`.
@@ -97,8 +104,8 @@ pub fn known(text: &str) -> Result<Vec<Known>, TaskError> {
     }
     if let Some(entry) = known.iter().find(|entry| uncoverable(&entry.fingerprint)) {
         return Err(deps::error(format!(
-            "the known difference {} names a timeout, a harness error or an admission change, \
-             which no entry covers",
+            "the known difference {} names a timeout, a harness error, an admission change, \
+             a bad signature or an overflow, which no entry covers",
             entry.fingerprint
         )));
     }
@@ -143,14 +150,27 @@ struct Signatures {
 }
 
 impl Signatures {
-    fn count(&mut self, capture: &Capture) {
-        for request in &capture.requests {
+    /// Counts `capture`'s signatures, and gives a `sig:bad:<side>`
+    /// difference at its first bad one.
+    fn count(&mut self, side: &str, capture: &Capture) -> Option<Diff> {
+        let mut first_bad = None;
+        for (index, request) in capture.requests.iter().enumerate() {
             match sigv4::verify(request, capture.secret_key.as_deref()) {
                 Verdict::Ok => self.ok += 1,
-                Verdict::Bad => self.bad += 1,
+                Verdict::Bad => {
+                    self.bad += 1;
+                    first_bad.get_or_insert(index);
+                }
                 Verdict::Unverified => self.unverified += 1,
             }
         }
+        first_bad.map(|index| Diff {
+            fingerprint: format!("sig:bad:{side}"),
+            key: None,
+            request: Some(index),
+            a: String::new(),
+            b: String::new(),
+        })
     }
 }
 
@@ -245,12 +265,24 @@ pub fn build(run: &Run, rows: &[Row], pairs: &[(Capture, Capture)], known: &[Kno
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     let mut used = BTreeSet::new();
     for (row, (a, b)) in rows.iter().zip(pairs) {
-        report.signatures.entry("a").or_default().count(a);
-        report.signatures.entry("b").or_default().count(b);
-        let Some(diffs) = admission::diffs(run, row, (a, b), &mut report.refusals) else {
-            report.not_native += 1;
-            continue;
+        // A bad signature fails the row even where both sides share it, or
+        // a native side declined the row.
+        let bad: Vec<Diff> = [("a", a), ("b", b)]
+            .into_iter()
+            .filter_map(|(side, capture)| {
+                let counted = report.signatures.entry(side).or_default();
+                counted.count(side, capture)
+            })
+            .collect();
+        let mut diffs = match admission::diffs(run, row, (a, b), &mut report.refusals) {
+            Some(diffs) => diffs,
+            None if bad.is_empty() => {
+                report.not_native += 1;
+                continue;
+            }
+            None => Vec::new(),
         };
+        diffs.extend(bad);
         let mut covered = 0;
         for diff in &diffs {
             let entry = known

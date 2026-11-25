@@ -610,3 +610,75 @@ fn admission_changes_and_opaque_bodies_for_every_row_are_never_known() -> Result
     );
     Ok(())
 }
+
+// B3.2 round 2: each test fails on dd9030286.
+
+#[test]
+fn a_bad_signature_on_both_sides_is_a_mismatch_no_entry_covers() -> Result<(), TaskError> {
+    let tampered = "6fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31";
+    let pairs = [(vanilla(tampered)?, vanilla(tampered)?)];
+    let report = build(&run(Route::Native), &rows(&["r"])?, &pairs, &[]);
+    assert_eq!((report.identical, report.mismatched), (0, 1));
+    assert_eq!(fingerprints(&report), ["sig:bad:a", "sig:bad:b"]);
+    assert!(known(&entry("sig:bad:a", "determinism")).is_err());
+    // A bad signature fails a row a native side declined, too.
+    let stderr = "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable \
+                  (unsupported_option); Python fallback disabled\n";
+    let declined = run_of("r", json!({"exit": 255, "stderr": stderr}))?;
+    let pairs = [(declined, vanilla(tampered)?)];
+    let report = build(&run(Route::Python), &rows(&["r"])?, &pairs, &[]);
+    assert_eq!((report.not_native, report.mismatched), (0, 1));
+    assert_eq!(fingerprints(&report), ["sig:bad:b"]);
+    Ok(())
+}
+
+#[test]
+fn no_entry_covers_the_differences_past_the_named_ones() -> Result<(), TaskError> {
+    let lines = |last: &str| {
+        let mut text: String = (1..=20).map(|n| format!("line {n} a\n")).collect();
+        text.push_str(last);
+        text
+    };
+    let other: String = (1..=20).map(|n| format!("line {n} b\n")).collect();
+    let pair = |last: &str| -> Result<(Capture, Capture), TaskError> {
+        Ok((
+            run_of("r", printing(&lines(last)))?,
+            run_of("r", printing(&format!("{other}reached max retries: 1\n")))?,
+        ))
+    };
+    let first = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[pair("reached max retries: 1\n")?],
+        &[],
+    );
+    assert!(fingerprints(&first).contains(&"stdout:text:..."));
+    let proposed: Vec<String> = first
+        .proposed
+        .iter()
+        .map(|proposal| proposal.fingerprint.clone())
+        .collect();
+    let accepted: Vec<String> = proposed
+        .iter()
+        .map(|fingerprint| {
+            let fields = r#""cases": ["r"], "mode": "determinism", "reason": "r""#;
+            format!(r#"{{"fingerprint": {fingerprint:?}, {fields}}}"#)
+        })
+        .collect();
+    let text = format!("[{}]", accepted.join(","));
+    assert!(
+        known(&text).is_err(),
+        "an entry for an overflow was accepted"
+    );
+    let entries: Vec<Known> =
+        serde_json::from_str(&text).map_err(|error| deps::error(error.to_string()))?;
+    let report = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[pair("reached max retries: 4\n")?],
+        &entries,
+    );
+    assert_eq!((report.known, report.mismatched), (0, 1));
+    assert!(known(&entry("request[*].body:...", "determinism")).is_err());
+    Ok(())
+}
