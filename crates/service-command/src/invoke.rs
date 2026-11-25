@@ -227,16 +227,10 @@ impl ServiceInvocation {
         ready: &Ready,
         response: &Value,
     ) -> Result<u8, CommandFailure> {
-        let text = match format::render(response, ready.format) {
+        let errors = ready.destination.errors();
+        let text = match format::render(response, ready.format, errors) {
             Ok(text) => text,
-            Err(partial) => {
-                // TextFormatter flushes what it wrote before raising.
-                let _ = cx
-                    .stdout
-                    .write_all(partial.written.as_bytes())
-                    .and_then(|()| cx.stdout.flush());
-                return Err(general(partial.error.message.into_bytes()));
-            }
+            Err(partial) => return self.partial(cx, ready, partial),
         };
         let interrupt = cli_core::interrupt::process_state();
         match format::deliver(
@@ -255,6 +249,37 @@ impl ServiceInvocation {
             Ok(Delivered::Stdout(Ok(())) | Delivered::Paged(Outcome::Exited)) => Ok(0),
             Err(error) => Err(service_errors::pager_failure(&error)),
         }
+    }
+
+    /// What the formatter wrote before it raised, delivered where its stream
+    /// went, then the failure: on stdout, flushed as `TextFormatter` flushes
+    /// it; through the pager, which the first write started, whatever it
+    /// wrote, and which is waited for before the failure is reported, as
+    /// `get_pager_stream`'s `communicate()` waits.
+    fn partial(
+        &self,
+        cx: &mut Context<'_>,
+        ready: &Ready,
+        partial: format::Partial,
+    ) -> Result<u8, CommandFailure> {
+        match &ready.destination {
+            Destination::Stdout => {
+                let _ = cx
+                    .stdout
+                    .write_all(&partial.written)
+                    .and_then(|()| cx.stdout.flush());
+            }
+            Destination::Pager(argv) if partial.started => {
+                let interrupt = cli_core::interrupt::process_state();
+                match format::pager::run(argv, &ready.pager_env, &partial.written, interrupt) {
+                    Ok(Outcome::Interrupted) => return Ok(interrupted(cx)),
+                    Ok(Outcome::Exited) => {}
+                    Err(error) => return Err(service_errors::pager_failure(&error)),
+                }
+            }
+            Destination::Pager(_) => {}
+        }
+        Err(general(partial.error.message.into_bytes()))
     }
 
     /// What a failed call ends with: `KeyboardInterrupt`'s status, or the

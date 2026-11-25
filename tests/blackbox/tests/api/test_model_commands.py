@@ -4,6 +4,7 @@ claims, with the output, failures and request the Python route gives.
 A run forcing the Python route checks every expectation against Python.
 """
 
+import base64
 import json
 import os
 import re
@@ -454,19 +455,33 @@ async def test_a_paginated_operation_runs_the_credential_process_once(
 async def test_a_starting_token_only_python_reads_runs_the_process_once(
     models: ApiSession,
 ) -> None:
-    # The token's lone surrogate is refused before any provider runs, so
-    # only Python's chain runs the process; a forced-native run refuses it
-    # and runs nothing.
+    # A token whose JSON nests past what the native reader follows is
+    # refused before any provider runs, so only Python's chain runs the
+    # process; a forced-native run refuses it and runs nothing.
     runs = counting_process(models)
-    token = "eyJOZXh0VG9rZW4iOiAiXHVkODAwIn0="
+    deep = '{"NextToken": ' + "[" * 1000 + "]" * 1000 + "}"
+    token = base64.b64encode(deep.encode()).decode()
     command = ["zjson", "list-things", "--starting-token", token]
     if FORCED_NATIVE:
         run = await models.run(command, expected_rc=255)
         assert "(starting_token)" in run.stderr, run.describe()
         assert runs_of(runs) == 0, run.describe()
         return
-    run = await models.run(command, replies={"Things": ["a"]})
+    run = await models.run(command, expected_rc=None)
     assert runs_of(runs) == 1, run.describe()
+
+
+async def test_a_starting_token_holding_a_lone_surrogate_is_sent_as_python_sends_it(
+    models: ApiSession,
+) -> None:
+    # The token's JSON holds a lone surrogate, which the request body's
+    # json.dumps writes as its escape.
+    token = base64.b64encode(json.dumps({"NextToken": "a\ud800"}).encode()).decode()
+    run = await models.run(
+        ["zjson", "list-things", "--starting-token", token], replies={"Things": ["x"]}
+    )
+    assert [call.params for call in run.calls] == [{"NextToken": "a\ud800"}], run.describe()
+    assert json.loads(run.stdout) == {"Things": ["x"]}, run.describe()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="the process is a POSIX shell command")

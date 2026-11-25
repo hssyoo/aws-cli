@@ -3,9 +3,9 @@ use model::value::Value;
 
 fn text(json: &str) -> Result<String, String> {
     let value = Value::from_json(json.as_bytes()).map_err(|e| e.to_string())?;
-    let mut out = String::new();
+    let mut out = Encoded::new(pytext::codec::Errors::SurrogateEscape);
     format_text(&value, &mut out).map_err(|error| error.message)?;
-    Ok(out)
+    Ok(String::from_utf8_lossy(&out.into_bytes()).into_owned())
 }
 
 #[test]
@@ -37,9 +37,9 @@ fn bare_lists_and_nested_lists_print_as_text_format_does() {
 #[test]
 fn a_list_mixing_structures_and_scalars_fails_as_python_does() {
     let value = Value::from_json(br#"{"a":1,"x":[{"k":1},"s"]}"#).unwrap_or(Value::Null);
-    let mut out = String::new();
+    let mut out = Encoded::new(pytext::codec::Errors::SurrogateEscape);
     let error = format_text(&value, &mut out).err();
-    assert_eq!(out, "1\n");
+    assert_eq!(out.into_bytes(), b"1\n");
     let message = error.map(|error| error.message);
     assert_eq!(
         message.as_deref(),

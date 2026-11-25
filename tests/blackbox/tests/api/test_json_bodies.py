@@ -1,13 +1,14 @@
 """JSON response bodies as `json.loads` reads them, on the json and rest-json
 fake models (tests/models, through `AWS_DATA_PATH`): `NaN` and the
-infinities print as Python prints them, and what the native client's
-reader cannot hold, a lone surrogate or nesting past its limit, fails the
-call naming that limit, since a request already sent cannot go to Python.
+infinities print as Python prints them; a lone surrogate is kept, and
+prints, fails or escapes as Python's streams write it (stdout with
+surrogateescape, the pager's pipe strictly, stderr with backslashreplace);
+valid nesting past the native reader's limit fails the call naming that
+limit, since a request already sent cannot go to Python.
 
-The tests after the first group are the known differences: where the
-native route fails and the Python route exits 0, because the value it
-cannot hold is never printed, or nests between the native limit and
-Python's own printing limit.
+The known differences are the depth ones: where the native route fails
+and the Python route exits 0, because the value nests between the native
+limit and Python's own printing limit, or is never printed.
 """
 
 import json
@@ -17,7 +18,13 @@ import pytest
 from harness_plugin import PYTHON_ROUTE
 from localstub import HTTPResponse
 
-from apihelpers import ApiSession, fake_models_fixture
+from apihelpers import (
+    ApiSession,
+    fake_models_fixture,
+    general_failure,
+    json_chunks,
+    written_by_python,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -87,13 +94,149 @@ async def test_nan_and_the_infinities_print_as_python_prints_them(
     )
 
 
+def text_json(text: str) -> str:
+    """`text` as a JSON string, a lone surrogate written as its escape."""
+    return json.dumps(text)
+
+
+# A lone surrogate in a string a service sends is kept. Printed to stdout,
+# which writes with surrogateescape, U+DC80-U+DCFF becomes its byte; any
+# other fails as Python's encoder fails, after what was written before it.
+
+
 @pytest.mark.parametrize("service", COMMANDS)
-async def test_a_printed_lone_surrogate_fails_the_call_on_either_route(
+@pytest.mark.parametrize("char", ["\udc80", "\udcff"])
+async def test_an_escapable_lone_surrogate_prints_as_its_byte(
+    models: ApiSession, service: str, char: str
+) -> None:
+    text = f"a{char}b"
+    reply = body(service, text_json(text), "[]")
+    printed = await run(models, service, reply, rc=0)
+    assert printed.stdout == json_output(service, text, []), printed.describe()
+    rows = await run(models, service, reply, "--output", "text", rc=0)
+    assert rows.stdout == f"{text}\n", rows.describe()
+
+
+@pytest.mark.parametrize("service", COMMANDS)
+@pytest.mark.parametrize("text", ["a\ud800b", "a\udc80\ud800b", "\udfff"])
+async def test_a_lone_surrogate_it_cannot_escape_fails_as_python_s_encoder_does(
+    models: ApiSession, service: str, text: str
+) -> None:
+    reply = body(service, text_json(text), "[]")
+    _, (first, member), _ = COMMANDS[service]
+    expected, error = written_by_python(json_chunks({first: text, member: []}))
+    assert error is not None
+    printed = await run(models, service, reply, rc=255)
+    assert (printed.stdout, printed.stderr) == (expected, general_failure(error)), (
+        printed.describe()
+    )
+    # The text formatter writes the row of scalars with one write.
+    rows_expected, rows_error = written_by_python([text, "\n"])
+    assert rows_error is not None
+    rows = await run(models, service, reply, "--output", "text", rc=255)
+    assert (rows.stdout, rows.stderr) == (rows_expected, general_failure(rows_error)), (
+        rows.describe()
+    )
+
+
+@pytest.mark.parametrize("service", COMMANDS)
+async def test_a_lone_surrogate_in_a_map_key_prints_as_its_value_does(
     models: ApiSession, service: str
 ) -> None:
-    printed = await run(models, service, body(service, '"a\\ud800b"', "null"), rc=255)
-    failure = SURROGATE_FAILURE if PYTHON else LIMIT + "a string with a lone surrogate"
-    assert failure in printed.stderr, printed.describe()
+    doc = {"k\udc80": "v", "K\ud800": "w"}
+    reply = body(service, '"t"', json.dumps(doc))
+    _, (first, member), _ = COMMANDS[service]
+    expected, error = written_by_python(json_chunks({first: "t", member: doc}))
+    assert error is not None
+    printed = await run(models, service, reply, rc=255)
+    assert (printed.stdout, printed.stderr) == (expected, general_failure(error)), (
+        printed.describe()
+    )
+    escapable = body(service, '"t"', json.dumps({"k\udc80": "v"}))
+    shown = await run(models, service, escapable, "--output", "text", rc=0)
+    assert shown.stdout == f"t\n{member.upper()}\tv\n", shown.describe()
+
+
+# What is never printed, or printed to stderr, which writes with
+# backslashreplace, takes no part.
+
+
+@pytest.mark.parametrize("service", COMMANDS)
+async def test_a_lone_surrogate_never_printed_takes_no_part(
+    models: ApiSession, service: str
+) -> None:
+    reply = body(service, '"t"', text_json("\ud800"))
+    off = await run(models, service, reply, "--output", "off", rc=0)
+    assert (off.stdout, off.stderr) == ("", ""), off.describe()
+    _, (first, _), content_type = COMMANDS[service]
+    dropped = HTTPResponse(
+        status=200,
+        headers={"Content-Type": content_type, "x-amzn-RequestId": "r"},
+        body=f'{{"{first}": "t", "Unmodelled": {text_json("\ud800")}}}'.encode(),
+    )
+    shown = await run(models, service, dropped, rc=0)
+    assert shown.stdout == json.dumps({first: "t"}, indent=4) + "\n", shown.describe()
+
+
+ERROR_OPERATIONS: Final = {"zjson": "Describe", "zrestjson": "GetDocument"}
+
+
+@pytest.mark.parametrize("service", COMMANDS)
+async def test_a_lone_surrogate_in_an_error_prints_backslash_escaped(
+    models: ApiSession, service: str
+) -> None:
+    _, _, content_type = COMMANDS[service]
+    message = text_json("no\ud800 way \udc80")
+    reply = HTTPResponse(
+        status=400,
+        headers={"Content-Type": content_type, "x-amzn-RequestId": "r"},
+        body=f'{{"__type": "Unknown", "message": {message}, "Detail": "\\ud800"}}'.encode(),
+    )
+    printed = await run(models, service, reply, rc=254)
+    prefix = (
+        "\naws: [ERROR]: An error occurred (Unknown) when calling the "
+        f"{ERROR_OPERATIONS[service]} operation"
+    )
+    assert printed.stderr.startswith(prefix), printed.describe()
+    assert printed.stderr.endswith(": no\\ud800 way \\udc80\n"), printed.describe()
+    assert printed.stdout == "", printed.describe()
+
+
+# A paginated call writes text page by page, so the pages before the one
+# that fails stay written; JSON output writes the full result.
+
+PAGES: Final = ("zjson list-things", ("Things", "NextToken"), "application/x-amz-json-1.0")
+
+
+def page(things: list[str], token: str | None) -> HTTPResponse:
+    content: dict[str, object] = {"Things": things}
+    if token is not None:
+        content["NextToken"] = token
+    return HTTPResponse(
+        status=200,
+        headers={"Content-Type": PAGES[2], "x-amzn-RequestId": "r"},
+        body=json.dumps(content).encode(),
+    )
+
+
+@pytest.mark.parametrize("char, rc", [("\udc80", 0), ("\ud800", 255)])
+async def test_a_lone_surrogate_in_a_later_page_fails_after_the_pages_before_it(
+    models: ApiSession, char: str, rc: int
+) -> None:
+    replies = [page(["a"], "t1"), page([f"b{char}"], None)]
+    command = PAGES[0].split()
+    rows = await models.run([*command, "--output", "text"], replies=replies, expected_rc=rc)
+    rows_expected, rows_error = written_by_python(["THINGS\ta\n", f"THINGS\tb{char}\n"])
+    assert rows.stdout == rows_expected, rows.describe()
+    assert rows.stderr == ("" if rows_error is None else general_failure(rows_error)), (
+        rows.describe()
+    )
+    printed = await models.run(command, replies=replies, expected_rc=rc)
+    expected, error = written_by_python(json_chunks({"Things": ["a", f"b{char}"]}))
+    assert printed.stdout == expected, printed.describe()
+    assert printed.stderr == ("" if error is None else general_failure(error)), (
+        printed.describe()
+    )
 
 
 @pytest.mark.parametrize("service", COMMANDS)
@@ -139,7 +282,6 @@ async def test_known_difference_nesting_between_the_limits(
     [
         # `--query` is the Python route's on either run (a Python-only
         # global), so a value it leaves out makes no difference.
-        ("surrogate-output-off", '"\\ud800"', ("--output", "off")),
         ("deep-output-off", nested(PYTHON_DEPTH + 100), ("--output", "off")),
     ],
 )
@@ -155,7 +297,7 @@ async def test_known_difference_a_value_never_printed(
 
 
 @pytest.mark.parametrize("service", COMMANDS)
-@pytest.mark.parametrize("doc", ['"\\ud800"', nested(PYTHON_DEPTH + 100)])
+@pytest.mark.parametrize("doc", [nested(PYTHON_DEPTH + 100)])
 async def test_known_difference_a_member_the_output_shape_drops(
     models: ApiSession, service: str, doc: str
 ) -> None:
@@ -176,7 +318,7 @@ async def test_known_difference_a_member_the_output_shape_drops(
 
 
 @pytest.mark.parametrize("service", COMMANDS)
-@pytest.mark.parametrize("detail", ['"\\ud800"', nested(PYTHON_DEPTH + 100)])
+@pytest.mark.parametrize("detail", [nested(PYTHON_DEPTH + 100)])
 async def test_known_difference_an_error_response_holding_the_value(
     models: ApiSession, service: str, detail: str
 ) -> None:
@@ -195,20 +337,17 @@ async def test_known_difference_an_error_response_holding_the_value(
 
 
 @pytest.mark.parametrize("service", COMMANDS)
-async def test_known_difference_invalid_json_nested_past_the_limit(
+async def test_invalid_json_nested_past_the_limit_is_read_as_python_reads_it(
     models: ApiSession, service: str
 ) -> None:
-    # Python's json.loads fails at the end, so botocore reads the body as
-    # {'message': body} and prints nothing of it.
+    # json.loads fails at the end, so botocore reads the body as
+    # {'message': body} and prints nothing of it, on either route: the
+    # native reader scans on past its depth without building values.
     _, (first, _), content_type = COMMANDS[service]
     reply = HTTPResponse(
         status=200,
         headers={"Content-Type": content_type, "x-amzn-RequestId": "r"},
         body=f'{{"{first}": "t", "Doc": {nested(NATIVE_DEPTH + 10)},}}'.encode(),
     )
-    printed = await run(models, service, reply, rc=None)
-    if PYTHON:
-        assert (printed.rc, printed.stdout) == (0, ""), printed.describe()
-    else:
-        assert printed.rc == 255, printed.describe()
-        assert LIMIT in printed.stderr, printed.describe()
+    printed = await run(models, service, reply, rc=0)
+    assert (printed.stdout, printed.stderr) == ("", ""), printed.describe()

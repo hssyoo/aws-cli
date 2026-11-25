@@ -49,6 +49,18 @@ pub enum Destination {
     Pager(Vec<String>),
 }
 
+impl Destination {
+    /// How the stream writes a lone surrogate: stdout with surrogateescape;
+    /// the pager's stdin, a `Popen` text pipe (`universal_newlines=True`),
+    /// strictly.
+    pub const fn errors(&self) -> pytext::codec::Errors {
+        match self {
+            Self::Stdout => pytext::codec::Errors::SurrogateEscape,
+            Self::Pager(_) => pytext::codec::Errors::Strict,
+        }
+    }
+}
+
 /// A pager setting only the Python route handles, known before any request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NeedsPython {

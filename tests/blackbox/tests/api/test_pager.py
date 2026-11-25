@@ -22,7 +22,15 @@ from typing import Final
 
 import pytest
 
-from apihelpers import ApiSession, _protocol, _Responder
+from apihelpers import (
+    ApiSession,
+    _protocol,
+    _Responder,
+    fake_models_fixture,
+    general_failure,
+    json_chunks,
+    written_by_python,
+)
 from harness_plugin import FORCED_NATIVE, command_environment, refusal
 
 pytestmark = [
@@ -192,11 +200,12 @@ def run_paged_blocking(
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-    text = (shown if terminal else stdout).decode()
+    # A byte that is no UTF-8 reads back as the surrogate that wrote it.
+    text = (shown if terminal else stdout).decode("utf-8", "surrogateescape")
     # The terminal's line discipline writes each newline as CRLF.
     return PagedRun(
         terminal=text.replace("\r\n", "\n"),
-        stderr=stderr.decode(),
+        stderr=stderr.decode("utf-8", "surrogateescape"),
         returncode=process.returncode,
         record=read_record(record),
     )
@@ -342,3 +351,22 @@ async def test_the_pager_s_library_path_is_the_original(
     assert run.record["LD_LIBRARY_PATH_ORIG"] == given.get("LD_LIBRARY_PATH_ORIG", "<unset>")
     assert run.record["PYINSTALLER_RESET_ENVIRONMENT"] == "1", run.describe()
     assert run.record["LESS"] == "FRX", run.describe()
+
+
+models = fake_models_fixture("zjson")
+
+
+async def test_the_pager_s_pipe_is_strict_with_a_lone_surrogate(
+    models: ApiSession, pagers: Path
+) -> None:
+    # The pager reads a `Popen` text pipe, which encodes strictly, where
+    # stdout writes with surrogateescape: even U+DC80 fails there, after
+    # the writes before it reached the pager.
+    env = pager_environment(models, pagers, {"AWS_PAGER": "pager-a"})
+    reply = {"Text": "a\udc80b", "Doc": []}
+    run = await run_paged(models, pagers, ["zjson", "describe"], env, replies=reply)
+    expected, error = written_by_python(json_chunks(reply), errors="strict")
+    assert error is not None
+    assert (run.returncode, run.terminal, run.stderr) == (255, expected, general_failure(error)), (
+        run.describe()
+    )

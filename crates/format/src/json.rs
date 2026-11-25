@@ -1,32 +1,45 @@
 //! `JSONFormatter`: `json.dump(response, indent=4, default=json_encoder,
 //! ensure_ascii=False)` and a newline, nothing for an empty response.
-use model::pyjson::{DumpError, Options, dumps};
+use crate::stream::Encoded;
+use crate::text::PythonError;
+use model::pyjson::{ChunkError, DumpError, Options, dump_chunks};
 use model::value::Value;
 
-/// What `JSONFormatter._format_response` writes for `response`.
-pub fn json(response: &Value) -> String {
+/// What `JSONFormatter._format_response` writes for `response`, to `out`:
+/// `json.dump`'s chunks, each its own write, then the newline.
+///
+/// # Errors
+/// The `UnicodeEncodeError` of a lone surrogate `out` cannot write, after
+/// the writes before it.
+pub fn json(response: &Value, out: &mut Encoded) -> Result<(), PythonError> {
     if matches!(response, Value::Map(map) if map.is_empty()) {
-        return String::new();
+        return Ok(());
     }
-    let mut text = dump(response);
-    text.push('\n');
-    text
-}
-
-/// `json.dumps(value, indent=4, default=json_encoder, ensure_ascii=False)`.
-pub fn dump(value: &Value) -> String {
     let options = Options {
         ensure_ascii: false,
         ..Options::indented(4)
     };
-    // json_encoder converts the only two values JSON cannot hold, so the
-    // dump cannot fail.
-    dumps(value, &options, Some(&json_encoder)).unwrap_or_default()
+    match dump_chunks(response, &options, Some(&json_encoder), &mut |chunk| {
+        out.write(chunk)
+    }) {
+        Ok(()) => {}
+        Err(ChunkError::Write(error)) => return Err(error),
+        // json_encoder converts the only two values JSON cannot hold.
+        Err(ChunkError::Dump(error)) => {
+            return Err(PythonError {
+                message: error.to_string(),
+            });
+        }
+    }
+    out.write(b"\n")
 }
 
 /// awscli's `utils.json_encoder`: a datetime as its `isoformat()` (an
 /// aware UTC one, so with `+00:00`), bytes as their base64 text.
-fn json_encoder(value: &Value) -> Result<Value, DumpError> {
+///
+/// # Errors
+/// `JSONEncoder.default`'s `TypeError` for any other value.
+pub fn json_encoder(value: &Value) -> Result<Value, DumpError> {
     match value {
         Value::Timestamp(at) => Ok(Value::String(
             at.zoned(0)
