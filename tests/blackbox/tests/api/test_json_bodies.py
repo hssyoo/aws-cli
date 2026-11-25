@@ -1,13 +1,14 @@
 """JSON response bodies as `json.loads` reads them, on the json and rest-json
 fake models (tests/models, through `AWS_DATA_PATH`): `NaN` and the
-infinities print as Python prints them, and what the native client's
-reader cannot hold, a lone surrogate or nesting past its limit, fails the
-call naming that limit, since a request already sent cannot go to Python.
+infinities print as Python prints them; a lone surrogate is kept, and
+prints, fails or escapes as Python's streams write it (stdout with
+surrogateescape, the pager's pipe strictly, stderr with backslashreplace);
+valid nesting past the native reader's limit fails the call naming that
+limit, since a request already sent cannot go to Python.
 
-The tests after the first group are the known differences: where the
-native route fails and the Python route exits 0, because the value it
-cannot hold is never printed, or nests between the native limit and
-Python's own printing limit.
+The known differences are the depth ones: where the native route fails
+and the Python route exits 0, because the value nests between the native
+limit and Python's own printing limit, or is never printed.
 """
 
 import json
@@ -336,20 +337,17 @@ async def test_known_difference_an_error_response_holding_the_value(
 
 
 @pytest.mark.parametrize("service", COMMANDS)
-async def test_known_difference_invalid_json_nested_past_the_limit(
+async def test_invalid_json_nested_past_the_limit_is_read_as_python_reads_it(
     models: ApiSession, service: str
 ) -> None:
-    # Python's json.loads fails at the end, so botocore reads the body as
-    # {'message': body} and prints nothing of it.
+    # json.loads fails at the end, so botocore reads the body as
+    # {'message': body} and prints nothing of it, on either route: the
+    # native reader scans on past its depth without building values.
     _, (first, _), content_type = COMMANDS[service]
     reply = HTTPResponse(
         status=200,
         headers={"Content-Type": content_type, "x-amzn-RequestId": "r"},
         body=f'{{"{first}": "t", "Doc": {nested(NATIVE_DEPTH + 10)},}}'.encode(),
     )
-    printed = await run(models, service, reply, rc=None)
-    if PYTHON:
-        assert (printed.rc, printed.stdout) == (0, ""), printed.describe()
-    else:
-        assert printed.rc == 255, printed.describe()
-        assert LIMIT in printed.stderr, printed.describe()
+    printed = await run(models, service, reply, rc=0)
+    assert (printed.stdout, printed.stderr) == ("", ""), printed.describe()
