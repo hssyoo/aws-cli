@@ -179,10 +179,11 @@ impl Validator<'_> {
             | Value::Integer(_)
             | Value::BigInteger(_)
             | Value::Float(_)
-            | Value::String(_) => {}
+            | Value::String(_)
+            | Value::PyString(_) => {}
             Value::Map(map) => {
                 for (key, value) in map.iter() {
-                    self.document(value, key);
+                    self.document(value, &key.text());
                 }
             }
             Value::List(items) => {
@@ -236,17 +237,18 @@ impl Validator<'_> {
         }
         let mut known = Vec::with_capacity(map.len());
         for (key, value) in map.iter() {
-            match members.iter().find(|member| &*member.name == key) {
+            match members.iter().find(|member| *key == *member.name) {
                 Some(member) => known.push((key, value, member.shape)),
                 None => self.error(format!(
-                    "Unknown parameter in {}: \"{key}\", must be one of: {}",
+                    "Unknown parameter in {}: \"{}\", must be one of: {}",
                     display_name(name),
+                    key.text(),
                     member_names().join(", ")
                 )),
             }
         }
         for (key, value, member) in known {
-            self.check(value, member, &format!("{name}.{key}"))?;
+            self.check(value, member, &format!("{name}.{}", key.text()))?;
         }
         Ok(())
     }
@@ -271,9 +273,10 @@ impl Validator<'_> {
             return Ok(());
         };
         for (entry_key, entry_value) in map.iter() {
-            let key_value = Value::String(entry_key.to_owned());
-            self.check(&key_value, key, &format!("{name} (key: {entry_key})"))?;
-            self.check(entry_value, value, &format!("{name}.{entry_key}"))?;
+            let key_value = entry_key.to_value();
+            let shown = entry_key.text();
+            self.check(&key_value, key, &format!("{name} (key: {shown})"))?;
+            self.check(entry_value, value, &format!("{name}.{shown}"))?;
         }
         Ok(())
     }
@@ -282,6 +285,8 @@ impl Validator<'_> {
     fn string(&mut self, params: &Value, shape: ShapeId, name: &str) -> Checked {
         if let Value::String(text) = params {
             self.length(text.chars().count(), shape, name);
+        } else if let Value::PyString(text) = params {
+            self.length(text.len(), shape, name);
         } else {
             self.invalid_type(params, name, "<class 'str'>");
         }
@@ -315,7 +320,10 @@ impl Validator<'_> {
 
     /// `_validate_blob`: `bytes`, `bytearray` and `str` pass.
     fn blob(&mut self, params: &Value, name: &str) {
-        if !matches!(params, Value::Blob(_) | Value::String(_)) {
+        if !matches!(
+            params,
+            Value::Blob(_) | Value::String(_) | Value::PyString(_)
+        ) {
             let types = "<class 'bytes'>, <class 'bytearray'>, file-like object";
             self.invalid_type(params, name, types);
         }

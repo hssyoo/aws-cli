@@ -13,7 +13,7 @@ use crate::protocol::{Serialized, common, json};
 use model::pyjson::{Options, dumps};
 use model::pyrepr::py_str;
 use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
-use model::value::{Map, Value};
+use model::value::{Key, Map, Value};
 
 /// `BaseRestSerializer.serialize_to_request` with `RestJSONSerializer`'s
 /// body: `requestUri` with its labels filled in, the query string after
@@ -110,7 +110,9 @@ fn partition(model: &Model, shape: ShapeId, params: &Map) -> Result<Partitioned,
         }
         let member = common::member(model, shape, name)?;
         let resolved = model.shape(member);
-        let key = resolved.traits.name.as_deref().unwrap_or(name);
+        // `member` found it, so the key is a member's name.
+        let name_text = name.text();
+        let key = resolved.traits.name.as_deref().unwrap_or(&name_text);
         match resolved.traits.location.as_deref() {
             Some("uri") => {
                 parts
@@ -128,7 +130,7 @@ fn partition(model: &Model, shape: ShapeId, params: &Map) -> Result<Partitioned,
             }
             Some("headers") => serialize_header_map(key, value, &mut parts.headers)?,
             _ => {
-                parts.body.insert(name.to_owned(), value.clone());
+                parts.body.insert_key(name.clone(), value.clone());
             }
         }
     }
@@ -149,7 +151,7 @@ fn query_param(
     match (value, &model.shape(member).kind) {
         (Value::Map(map), _) => {
             for (name, item) in map.iter() {
-                query.insert(name.to_owned(), item.clone());
+                query.insert_key(name.clone(), item.clone());
             }
         }
         (_, ShapeKind::List { member: item }) => {
@@ -202,8 +204,9 @@ fn serialize_header_map(
     let Value::Map(map) = value else {
         return Err(no_items(value));
     };
+    // An input's keys are the CLI's: Rust text.
     for (key, item) in map.iter() {
-        headers.set(&format!("{prefix}{key}"), py_str(item));
+        headers.set(&format!("{prefix}{}", key.text()), py_str(item));
     }
     Ok(())
 }
@@ -380,7 +383,7 @@ impl<'a> Payload<'a> {
         let Some(name) = model.shape(shape).traits.payload.as_deref() else {
             return Ok(None);
         };
-        let member = common::member(model, shape, name)?;
+        let member = common::member(model, shape, &Key::from(name))?;
         let raw = matches!(
             model.shape(member).kind,
             ShapeKind::Blob | ShapeKind::String

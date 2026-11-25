@@ -27,6 +27,9 @@ pub(super) fn accepted(value: &Value) -> Result<bool, Undecided> {
         Value::Float(seconds) => epoch(*seconds, value),
         Value::BigInteger(_) => Err(undecided(value)),
         Value::String(text) => text_accepted(text, value),
+        // Timestamp text is ASCII: dateutil's parser refuses a lone
+        // surrogate as it refuses any text it cannot read.
+        Value::PyString(_) => Ok(false),
         Value::Blob(bytes) => match std::str::from_utf8(bytes) {
             Ok(text) => text_accepted(text, value),
             Err(_) => Err(undecided(value)),

@@ -1,7 +1,7 @@
 //! `awscli.text.format_text`: tab-separated rows, scalar keys sorted, each
 //! nested structure or list on rows of its own named by its key.
 use model::pyrepr::{py_short_type_name, py_str};
-use model::value::{Map, Value};
+use model::value::{Key, Map, Value};
 
 /// An exception `format_text` raises, with Python's `str()` of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +22,7 @@ fn item(
     value: &Value,
     out: &mut String,
     identifier: Option<&str>,
-    keys: Option<&[&str]>,
+    keys: Option<&[&Key]>,
 ) -> Written {
     match value {
         Value::Map(map) => dict(map, out, identifier, keys),
@@ -85,7 +85,7 @@ fn scalar_list(elements: &[&Value], out: &mut String, identifier: Option<&str>) 
 }
 
 /// `_format_dict`.
-fn dict(map: &Map, out: &mut String, identifier: Option<&str>, keys: Option<&[&str]>) -> Written {
+fn dict(map: &Map, out: &mut String, identifier: Option<&str>, keys: Option<&[&Key]>) -> Written {
     let (mut scalars, compounds) = partition_dict(map, keys);
     if !scalars.is_empty() {
         if let Some(identifier) = identifier {
@@ -95,14 +95,14 @@ fn dict(map: &Map, out: &mut String, identifier: Option<&str>, keys: Option<&[&s
         out.push('\n');
     }
     for (key, value) in compounds {
-        item(value, out, Some(key), None)?;
+        item(value, out, Some(&key.text()), None)?;
     }
     Ok(())
 }
 
 /// `_all_scalar_keys`: every element's `.items()`, so an element that is
 /// not a dict raises `AttributeError`.
-fn all_scalar_keys(items: &[Value]) -> Result<Vec<&str>, PythonError> {
+fn all_scalar_keys(items: &[Value]) -> Result<Vec<&Key>, PythonError> {
     let mut keys = Vec::new();
     for element in items {
         let Value::Map(map) = element else {
@@ -126,9 +126,9 @@ fn no_items(value: &Value) -> PythonError {
 /// in key order, or in `keys`' order when a list gave its columns.
 fn partition_dict<'a>(
     map: &'a Map,
-    keys: Option<&[&str]>,
-) -> (Vec<String>, Vec<(&'a str, &'a Value)>) {
-    let mut entries: Vec<(&str, &Value)> = map.iter().collect();
+    keys: Option<&[&Key]>,
+) -> (Vec<String>, Vec<(&'a Key, &'a Value)>) {
+    let mut entries: Vec<(&Key, &Value)> = map.iter().collect();
     entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
     let Some(keys) = keys else {
         let (scalars, compounds): (Vec<_>, Vec<_>) =
@@ -140,7 +140,7 @@ fn partition_dict<'a>(
     };
     let scalars = keys
         .iter()
-        .map(|key| map.get(key).map_or_else(String::new, py_str))
+        .map(|key| map.get_key(key).map_or_else(String::new, py_str))
         .collect();
     let compounds = entries
         .into_iter()

@@ -46,9 +46,9 @@ impl Assign for Object {
 /// The `TypeError` of a dict to merge into something other than a dict.
 pub(super) fn merge_dicts(dict1: &Object, dict2: &Object) -> Result<(), String> {
     for (key, value) in dict2.entries() {
-        match (&value, dict1.get(&key)) {
+        match (&value, dict1.get_key(&key)) {
             (Object::Dict(_), Some(existing)) => merge_dicts(&existing, &value)?,
-            _ => dict1.insert(&key, value)?,
+            _ => dict1.insert_key(key, value)?,
         }
     }
     Ok(())

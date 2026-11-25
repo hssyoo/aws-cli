@@ -8,7 +8,7 @@ use crate::error::PaginationError;
 use model::pyjson::{self, Options};
 use model::pyjson::{LoadError, loads};
 use model::pyrepr::py_repr;
-use model::value::{Map, Value};
+use model::value::{Key, Map, Value, Wtf8Buf};
 
 /// The key a truncated page's token carries its offset in.
 pub(crate) const TRUNCATE_AMOUNT: &str = "boto_truncate_amount";
@@ -43,10 +43,10 @@ fn encode_bytes(data: &Value, path: &mut Vec<Value>, encoded: &mut Vec<Value>) -
         Value::Map(map) => Value::Map(
             map.iter()
                 .map(|(key, value)| {
-                    path.push(Value::String(key.to_owned()));
+                    path.push(key.to_value());
                     let value = encode_bytes(value, path, encoded);
                     path.pop();
-                    (key.to_owned(), value)
+                    (key.clone(), value)
                 })
                 .collect(),
         ),
@@ -121,8 +121,13 @@ fn decode(token: &str) -> Result<Map, DecodeError> {
 fn iterate(value: &Value) -> Result<Vec<Value>, DecodeError> {
     match value {
         Value::List(items) => Ok(items.clone()),
-        Value::Map(map) => Ok(map.keys().map(|key| Value::String(key.into())).collect()),
+        Value::Map(map) => Ok(map.keys().map(Key::to_value).collect()),
         Value::String(text) => Ok(text.chars().map(|c| Value::String(c.into())).collect()),
+        // Each code point a `str` of its own, a lone surrogate's one too.
+        Value::PyString(text) => Ok(text
+            .code_points()
+            .map(|point| Value::from_text(Wtf8Buf::from_code_points([point])))
+            .collect()),
         _ => Err(DecodeError::Deprecated),
     }
 }
@@ -295,14 +300,17 @@ fn deprecated(raw: &str, input_token: &[String]) -> Result<StartingToken, Pagina
 /// `ValueError("Bad starting token: ...")` for other keys, and
 /// [`encode`]'s error.
 pub(crate) fn resume_token(value: &Map, input_token: &[String]) -> Result<String, PaginationError> {
-    let mut expected: Vec<&str> = input_token.iter().map(String::as_str).collect();
+    let mut expected: Vec<Key> = input_token
+        .iter()
+        .map(|name| Key::from(name.as_str()))
+        .collect();
     if value.contains_key(TRUNCATE_AMOUNT) {
-        expected.push(TRUNCATE_AMOUNT);
+        expected.push(Key::from(TRUNCATE_AMOUNT));
     }
     expected.sort_unstable();
-    let mut keys: Vec<&str> = value.keys().collect();
+    let mut keys: Vec<&Key> = value.keys().collect();
     keys.sort_unstable();
-    if expected != keys {
+    if !keys.iter().copied().eq(expected.iter()) {
         return Err(PaginationError::Value(format!(
             "Bad starting token: {}",
             py_repr(&Value::Map(value.clone()))

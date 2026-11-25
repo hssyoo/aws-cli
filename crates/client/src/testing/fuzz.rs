@@ -114,11 +114,14 @@ pub fn starting_token(bytes: &[u8]) {
     let Ok(parsed) = first else {
         return;
     };
-    let mut keys: Vec<&str> = parsed.token.keys().collect();
+    let mut keys: Vec<&model::value::Key> = parsed.token.keys().collect();
     keys.sort_unstable();
-    let mut expected: Vec<&str> = names.iter().map(String::as_str).collect();
+    let mut expected: Vec<model::value::Key> = names
+        .iter()
+        .map(|name| model::value::Key::from(name.as_str()))
+        .collect();
     expected.sort_unstable();
-    if keys != expected {
+    if !keys.iter().copied().eq(expected.iter()) {
         return;
     }
     let mut value = parsed.token.clone();

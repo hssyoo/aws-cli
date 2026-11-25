@@ -1,5 +1,6 @@
 use super::*;
 use crate::protocol::ParseOptions;
+use model::value::Key;
 
 const MODEL: &str = r#"{
   "metadata": {"apiVersion": "2020-01-01", "protocol": "json", "jsonVersion": "1.0",
@@ -110,7 +111,7 @@ fn json_error_codes_and_modelled_members_are_botocore_s() -> Result<(), Box<dyn 
         )?;
         assert_eq!(error.code(), Some(code), "{body}");
         assert_eq!(error.error.keys().collect::<Vec<_>>(), ["Message", "Code"]);
-        let members: Vec<&str> = error.members.keys().collect();
+        let members: Vec<&str> = error.members.keys().filter_map(Key::as_str).collect();
         let expected: &[&str] = if code == "Bad" { &["Detail"] } else { &[] };
         assert_eq!(members, expected, "{body}");
     }

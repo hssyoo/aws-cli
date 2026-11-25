@@ -7,7 +7,7 @@ use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse};
 use model::pyrepr::{float_from_text, py_str};
 use model::shapes::{Flag, Model, Operation, ShapeId};
-use model::value::{Map, Value};
+use model::value::{Key, Map, Value};
 use timestamp::Timestamp;
 
 /// One protocol family's parse steps (`_do_parse`, `_do_error_parse`,
@@ -102,7 +102,7 @@ pub(super) fn parse_error(
             return Err(ParseError::new("'NoneType' object is not iterable"));
         };
         for (key, value) in modelled {
-            parsed.insert(key, value);
+            parsed.insert_key(key, value);
         }
     }
     Ok(service_error(&operation.name, response, parsed))
@@ -113,16 +113,16 @@ fn service_error(operation: &str, response: &HttpResponse, parsed: Map) -> Servi
     let mut error = ServiceError::new(operation, response.status);
     error.headers = response.headers.clone();
     for (key, value) in parsed {
-        match (key.as_str(), value) {
-            ("Error", Value::Map(map)) => error.error = map,
-            ("ResponseMetadata", Value::Map(metadata)) => {
+        match value {
+            Value::Map(map) if key == *"Error" => error.error = map,
+            Value::Map(metadata) if key == *"ResponseMetadata" => {
                 error.request_id = metadata
                     .get("RequestId")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
             }
-            (_, value) => {
-                error.members.insert(key, value);
+            value => {
+                error.members.insert_key(key, value);
             }
         }
     }
@@ -194,15 +194,15 @@ fn lowercase_headers(headers: &Headers) -> Map {
 pub(super) fn unknown_union_member(
     model: &Model,
     shape: ShapeId,
-    present: &[&str],
-) -> Result<Option<String>, ParseError> {
+    present: &[&Key],
+) -> Result<Option<Key>, ParseError> {
     if !model.shape(shape).traits.is(Flag::Union) {
         return Ok(None);
     }
-    let present: Vec<&str> = present
+    let present: Vec<&Key> = present
         .iter()
         .copied()
-        .filter(|name| *name != "__type")
+        .filter(|name| **name != *"__type")
         .collect();
     let [tag] = present[..] else {
         return Err(ParseError::new(format!(
@@ -211,21 +211,21 @@ pub(super) fn unknown_union_member(
         )));
     };
     let known = model.members(shape).iter().any(|member| {
-        model
+        let name = model
             .shape(member.shape)
             .traits
             .name
             .as_deref()
-            .unwrap_or(&member.name)
-            == tag
+            .unwrap_or(&member.name);
+        *tag == *name
     });
-    Ok((!known).then(|| tag.to_owned()))
+    Ok((!known).then(|| tag.clone()))
 }
 
-/// `_handle_unknown_tagged_union_member`.
-pub(super) fn unknown_member_value(tag: String) -> Map {
+/// `_handle_unknown_tagged_union_member`: the tag as the `str` it is.
+pub(super) fn unknown_member_value(tag: Key) -> Map {
     let mut name = Map::new();
-    name.insert("name".into(), Value::String(tag));
+    name.insert("name".into(), tag.to_value());
     let mut parsed = Map::new();
     parsed.insert("SDK_UNKNOWN_MEMBER".into(), Value::Map(name));
     parsed
@@ -341,13 +341,16 @@ pub(super) fn host_prefix(
 }
 
 /// The member of `shape` named `key`, as `shape.members[key]` finds it.
-pub(super) fn member(model: &Model, shape: ShapeId, key: &str) -> Result<ShapeId, SerializeError> {
+/// `shape.members[key]`: the member's shape, else the `KeyError`'s text. An
+/// input's keys are the CLI's, so a key with a lone surrogate is only ever
+/// such a `KeyError`, as it is in Python.
+pub(super) fn member(model: &Model, shape: ShapeId, key: &Key) -> Result<ShapeId, SerializeError> {
     model
         .members(shape)
         .iter()
-        .find(|member| &*member.name == key)
+        .find(|member| *key == *member.name)
         .map(|member| member.shape)
-        .ok_or_else(|| SerializeError::new(format!("'{key}'")))
+        .ok_or_else(|| SerializeError::new(format!("'{}'", key.text())))
 }
 
 /// `headers[name]` of botocore's `HeadersDict`: every value of `name`, in

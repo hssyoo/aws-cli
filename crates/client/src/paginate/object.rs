@@ -9,12 +9,12 @@
 //! No borrow of an object is held while another is borrowed, so the same
 //! object reached twice is never borrowed against itself.
 use super::py;
-use model::value::{Map, Value};
+use model::value::{Key, Map, Value};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 /// A dict's entries, in insertion order.
-type Entries = Vec<(String, Object)>;
+type Entries = Vec<(Key, Object)>;
 
 /// A Python object.
 #[derive(Clone, Debug)]
@@ -107,6 +107,11 @@ impl Object {
 
     /// `self[key]` of a dict, the object itself.
     pub(super) fn get(&self, key: &str) -> Option<Self> {
+        self.get_key(&Key::from(key))
+    }
+
+    /// [`Self::get`] of any key, a lone surrogate's included.
+    pub(super) fn get_key(&self, key: &Key) -> Option<Self> {
         let Self::Dict(entries) = self else {
             return None;
         };
@@ -122,6 +127,14 @@ impl Object {
     /// # Errors
     /// The `TypeError` of anything else.
     pub(super) fn insert(&self, key: &str, value: Self) -> Result<(), String> {
+        self.insert_key(Key::from(key), value)
+    }
+
+    /// [`Self::insert`] of any key.
+    ///
+    /// # Errors
+    /// As [`Self::insert`].
+    pub(super) fn insert_key(&self, key: Key, value: Self) -> Result<(), String> {
         let Self::Dict(entries) = self else {
             return Err(format!(
                 "'{}' object does not support item assignment",
@@ -129,9 +142,9 @@ impl Object {
             ));
         };
         let mut entries = entries.borrow_mut();
-        match entries.iter_mut().find(|(name, _)| name == key) {
+        match entries.iter_mut().find(|(name, _)| *name == key) {
             Some((_, old)) => *old = value,
-            None => entries.push((key.to_owned(), value)),
+            None => entries.push((key, value)),
         }
         Ok(())
     }

@@ -43,16 +43,18 @@ fn decode(value: Value) -> Result<Value> {
         Value::Map(map)
             if map.len() == 1 && (map.contains_key("$blob") || map.contains_key("$datetime")) =>
         {
-            match map.iter().next() {
-                Some(("$blob", Value::String(text))) => Value::Blob(pytext::base64::decode(text)?),
-                Some(("$datetime", Value::String(text))) => Value::Timestamp(instant(text)?),
+            match map.iter().next().map(|(key, value)| (key.as_str(), value)) {
+                Some((Some("$blob"), Value::String(text))) => {
+                    Value::Blob(pytext::base64::decode(text)?)
+                }
+                Some((Some("$datetime"), Value::String(text))) => Value::Timestamp(instant(text)?),
                 _ => return Err("tag".into()),
             }
         }
         Value::Map(map) => {
             let mut decoded = Map::new();
             for (key, item) in map {
-                decoded.insert(key, decode(item)?);
+                decoded.insert_key(key, decode(item)?);
             }
             Value::Map(decoded)
         }
@@ -152,7 +154,7 @@ fn details(error: ServiceError) -> Value {
     let mut details = Map::new();
     details.insert("Error".into(), Value::Map(error.error));
     for (key, value) in error.members {
-        details.insert(key, value);
+        details.insert_key(key, value);
     }
     let id = error.request_id.map_or(Value::Null, Value::String);
     details.insert("RequestId".into(), id);

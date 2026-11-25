@@ -172,12 +172,13 @@ fn partition(value: &Value, prefix: &str) -> Partition {
     let endpoints = match service.and_then(|service| service.get("endpoints")) {
         Some(Value::Map(map)) => map
             .iter()
-            .map(|(name, data)| (name.to_owned(), variants(Some(data))))
+            // Bundled data, which `Value::from_json` reads into `Str` keys.
+            .map(|(name, data)| (name.text().into_owned(), variants(Some(data))))
             .collect(),
         _ => Vec::new(),
     };
     let regions = match value.get("regions") {
-        Some(Value::Map(map)) => map.keys().map(str::to_owned).collect(),
+        Some(Value::Map(map)) => map.keys().map(|key| key.text().into_owned()).collect(),
         _ => Vec::new(),
     };
     Partition {

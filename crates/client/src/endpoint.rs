@@ -191,7 +191,8 @@ fn parameter_defs(rules: &[u8]) -> Result<Vec<ParamDef>, DataError> {
     Ok(parameters
         .iter()
         .map(|(name, def)| ParamDef {
-            name: name.to_owned(),
+            // Bundled data, which `Value::from_json` reads into `Str` keys.
+            name: name.text().into_owned(),
             builtin: match def.get("builtIn") {
                 Some(Value::String(builtin)) => Some(builtin.clone()),
                 _ => None,

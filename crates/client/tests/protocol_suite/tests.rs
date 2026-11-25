@@ -46,7 +46,7 @@ fn python_eq(a: &Value, b: &Value) -> bool {
         (Value::Map(x), Value::Map(y)) => {
             x.len() == y.len()
                 && x.iter()
-                    .all(|(k, v)| y.get(k).is_some_and(|w| python_eq(v, w)))
+                    .all(|(k, v)| y.get_key(k).is_some_and(|w| python_eq(v, w)))
         }
         (Value::List(x), Value::List(y)) => {
             x.len() == y.len() && x.iter().zip(y).all(|(v, w)| python_eq(v, w))
@@ -374,12 +374,12 @@ fn output_case(protocol_name: &str, suite: &JsonDoc, case: &JsonDoc) -> Result<(
         let kept: Map = error
             .error
             .iter()
-            .filter(|(k, _)| matches!(*k, "Code" | "Message"))
-            .map(|(k, v)| (k.to_owned(), v.clone()))
+            .filter(|(k, _)| matches!(k.as_str(), Some("Code" | "Message")))
+            .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
         parsed.insert("Error".into(), Value::Map(kept));
         for (key, value) in error.members {
-            parsed.insert(key, value);
+            parsed.insert_key(key, value);
         }
         (parsed, expected_error(case))
     } else {
@@ -415,7 +415,7 @@ fn expected_error(case: &JsonDoc) -> Value {
     expected.insert("Error".into(), Value::Map(error));
     if let Value::Map(members) = Value::from_serde(&case["error"]) {
         for (key, value) in members {
-            expected.insert(key, value);
+            expected.insert_key(key, value);
         }
     }
     Value::Map(expected)
