@@ -1442,8 +1442,8 @@ fn a_scalar_within_a_non_aggregate_key_is_the_first_page_s() -> TestResult {
 }
 
 /// A `NaN` offset is `json.loads`' float, which the first page cannot be
-/// sliced from (kms `ListAliases`, on the Python route); a token only
-/// Python can read is unsupported before any request.
+/// sliced from (kms `ListAliases`, on the Python route); a token holding a
+/// lone surrogate is held and sent, as Python's `json.dumps` writes it.
 #[test]
 fn a_token_python_reads_differently_is_read_as_python_does() -> TestResult {
     let f = fixture()?;
@@ -1457,14 +1457,10 @@ fn a_token_python_reads_differently_is_read_as_python_does() -> TestResult {
         "slice indices must be integers or None or have an __index__ method"
     );
     assert_eq!(f.bodies(), [r#"{"Marker": "m1"}"#]);
-    let mut lone = f.pages(MARKER, starting(&b64(r#"{"Marker": "\ud800"}"#)))?;
-    assert!(matches!(
-        lone.prepare(),
-        Err(CallError::Unsupported(
-            crate::admission::Unsupported::StartingToken(_)
-        ))
-    ));
-    assert_eq!(f.bodies().len(), 1);
+    f.respond(&[r#"{"Users": ["c"]}"#]);
+    let lone = f.pages(MARKER, starting(&b64(r#"{"Marker": "\ud800"}"#)))?;
+    assert_eq!(bare(all(lone)?), [json(r#"{"Users": ["c"]}"#)?]);
+    assert_eq!(f.bodies()[1..], [r#"{"Marker": "\ud800"}"#]);
     Ok(())
 }
 

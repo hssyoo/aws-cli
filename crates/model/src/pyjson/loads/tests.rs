@@ -26,12 +26,14 @@ const CORPUS: &[&str] = &[
     r#"{"a": 1, "a": 2, "b": 3}"#,
     "[true, false, null, {}, []]",
     "[\"\\u00e9\", \"\u{1f600}\"]",
-    // Lone surrogates: a limit here, kept by Python.
+    // Lone surrogates, kept, in values and keys.
     r#""\ud800""#,
     r#""\udc00""#,
     r#""\ud800A""#,
     r#""\ud800\udbff""#,
     r#"{"Marker": "m\udfff"}"#,
+    r#"{"\udc80": 1, "\udc80": 2, "a\ud800": [3]}"#,
+    r#""\udc80\ud800\u00e9\ud83d""#,
     // A failure after a lone surrogate is Python's error.
     r#""\ud800" x"#,
     r#""\ud800\u12""#,
@@ -65,6 +67,9 @@ const CORPUS: &[&str] = &[
     "\"\t\"",
     r#""\x""#,
     r#""\u12""#,
+    // A `\u` escape whose digits end the text.
+    r#""\u0041"#,
+    r#""\ud800\udc00"#,
     r#""\U00e9""#,
     r#""abc"#,
     "\"abc\\",
@@ -76,22 +81,13 @@ const CORPUS: &[&str] = &[
 ];
 
 /// What CPython gives for each input on stdin (one JSON-encoded list of
-/// texts): `json.dumps` of the value, `LIMIT` for a value holding a lone
-/// surrogate, or the error's class and text.
+/// texts): `json.dumps` of the value, or the error's class and text.
 const ORACLE: &str = r#"
 import json, sys
-def lone(value):
-    if isinstance(value, str):
-        return any(0xD800 <= ord(c) <= 0xDFFF for c in value)
-    if isinstance(value, list):
-        return any(lone(item) for item in value)
-    if isinstance(value, dict):
-        return any(lone(k) or lone(v) for k, v in value.items())
-    return False
 for text in json.loads(sys.stdin.read()):
     try:
         value = json.loads(text)
-        print('LIMIT a string with a lone surrogate' if lone(value) else 'OK ' + json.dumps(value))
+        print('OK ' + json.dumps(value))
     except ValueError as error:
         print('ValueError ' + str(error))
 "#;
@@ -154,8 +150,47 @@ fn an_int_of_more_than_4300_digits_is_a_value_error() {
     );
 }
 
-/// Nesting up to [`MAX_DEPTH`] loads; one more is the limit, met without
-/// recursing past it, however deep the text goes.
+/// Text nested past [`MAX_DEPTH`] that Python refuses fails with Python's
+/// error at its position, found without building or recursing past the
+/// limit.
+#[test]
+fn invalid_text_nested_past_the_limit_fails_as_cpython_s() -> Result {
+    let deep = MAX_DEPTH + 1;
+    let open = "[".repeat(deep);
+    let objects = "{\"a\": ".repeat(deep);
+    let texts = [
+        format!("{open}x"),
+        format!("{open}1,]"),
+        format!("{open}1 2"),
+        format!("{open}\"\\x\""),
+        format!("{open}{}", "1".repeat(4301)),
+        format!("{objects}1, }}"),
+        format!("{objects}{{1: 2}}"),
+        format!("{objects}[1] 2"),
+        format!("{objects}{{\"b\" 1}}"),
+        format!("{objects}{{}}, \"\\ud800\" 1"),
+        format!("{}{}]", "[".repeat(100_000), "]".repeat(100_000)),
+        format!("{}{} x", "[".repeat(deep), "]".repeat(deep)),
+    ];
+    let input = dumps(
+        &Value::List(
+            texts
+                .iter()
+                .map(|text| Value::String(text.clone()))
+                .collect(),
+        ),
+        &Options::default(),
+        None,
+    )?;
+    let expected = String::from_utf8(testing::python(ORACLE, input.as_bytes())?)?;
+    let expected: Vec<&str> = expected.lines().collect();
+    let actual: Vec<String> = texts.iter().map(|text| ours(text)).collect();
+    assert_eq!(actual, expected);
+    Ok(())
+}
+
+/// Nesting up to [`MAX_DEPTH`] loads; valid text nested deeper is the
+/// limit, met without recursing past it, however deep the text goes.
 #[test]
 fn nesting_past_the_limit_is_a_limit() {
     let nested = |depth| format!("{}{}", "[".repeat(depth), "]".repeat(depth));

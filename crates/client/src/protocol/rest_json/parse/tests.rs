@@ -568,8 +568,8 @@ fn response_metadata_comes_before_the_output_s_members() -> TestResult {
     Ok(())
 }
 
-/// A document payload is `json.loads`' document: `NaN` and the infinities
-/// held; a lone surrogate or nesting past the reader's limit fails the call,
+/// A document payload is `json.loads`' document: `NaN`, the infinities and
+/// a lone surrogate held; nesting past the reader's limit fails the call,
 /// naming the native client's limit.
 #[test]
 fn a_document_payload_loads_as_python_s_json_loads() -> TestResult {
@@ -579,19 +579,21 @@ fn a_document_payload_loads_as_python_s_json_loads() -> TestResult {
     };
     assert!(matches!(doc[0], Value::Float(number) if number.is_nan()));
     assert_eq!(doc[1], Value::Float(f64::NEG_INFINITY));
+    let lone = output("Doc", &[], br#"["\udfff"]"#)?;
+    assert_eq!(
+        lone.get("Doc"),
+        Some(&Value::List(vec![Value::from_text(
+            model::value::Wtf8Buf::from_code_points([0xDFFF])
+        )]))
+    );
     let deep = |depth| format!("{}{}", "[".repeat(depth), "]".repeat(depth));
-    for body in [
-        r#"["\udfff"]"#.to_owned(),
-        deep(model::pyjson::MAX_DEPTH + 1),
-    ] {
-        let failed = output("Doc", &[], body.as_bytes()).err();
-        assert!(
-            failed
-                .as_ref()
-                .is_some_and(|error| error.message.starts_with("native client limit: ")),
-            "{failed:?}"
-        );
-    }
+    let failed = output("Doc", &[], deep(model::pyjson::MAX_DEPTH + 1).as_bytes()).err();
+    assert!(
+        failed
+            .as_ref()
+            .is_some_and(|error| error.message.starts_with("native client limit: ")),
+        "{failed:?}"
+    );
     let at_limit = deep(model::pyjson::MAX_DEPTH);
     std::thread::spawn(move || output("Doc", &[], at_limit.as_bytes()).map(|_| ()))
         .join()

@@ -160,9 +160,10 @@ fn structure(model: &Model, value: &Value, shape: ShapeId) -> Result<Value, Seri
 
 /// `BaseJSONParser._parse_body_as_json`: nothing is `{}`, the body decoded
 /// as UTF-8 (whose `UnicodeDecodeError` botocore does not catch), and text
-/// `json.loads` refuses is `{'message': body}`. What the reader cannot hold
-/// fails the call, naming the limit: the request was sent, so the Python
-/// route cannot take it over without sending it again.
+/// `json.loads` refuses is `{'message': body}`. A lone surrogate is kept.
+/// Valid text nested past the reader's depth limit fails the call, naming
+/// the limit: the request was sent, so the Python route cannot take it
+/// over without sending it again.
 pub(super) fn body_json(body: &[u8]) -> Result<Value, ParseError> {
     if body.is_empty() {
         return Ok(Value::Map(Map::new()));
