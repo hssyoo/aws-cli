@@ -211,7 +211,6 @@ def measure(binary: Path, plan: list[Setting], counts: tuple[int, int], env: Env
             "scheme": setting.scheme,
             "latency_ms": setting.latency_ms,
             "route": route,
-            "pages": setting.case.pages,
             "runs": recorded[(index, route)],
         }
         for index, setting in enumerate(plan)
@@ -237,7 +236,9 @@ def cpu_model() -> str:
     return platform.processor() or "unknown"
 
 
-def prepare(scratch: Path, models: Path) -> Environment:
+def prepare(scratch: Path, models: Path, schemes: set[str]) -> Environment:
+    """The scratch files, the test CA, and a stub for each scheme a case
+    uses."""
     for directory in ("home", "work"):
         (scratch / directory).mkdir(parents=True, exist_ok=True)
     (scratch / "config").write_text(CONFIG, encoding="utf-8")
@@ -247,14 +248,14 @@ def prepare(scratch: Path, models: Path) -> Environment:
     authority.cert_pem.write_to_path(str(ca_bundle))
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     authority.issue_cert("127.0.0.1", "localhost").configure_cert(context)
-    stubs = {"http": Stub(None), "https": Stub(context)}
+    stubs = {scheme: Stub(context if scheme == "https" else None) for scheme in schemes}
     return Environment(scratch, models, ca_bundle, stubs)
 
 
 def main() -> None:
     args = parse_args()
     data, plan = settings(args.cases)
-    env = prepare(args.scratch, args.models.resolve())
+    env = prepare(args.scratch, args.models.resolve(), {setting.scheme for setting in plan})
     series = measure(args.aws_binary, plan, (data["warmup"], data["runs"]), env)
     samples = {
         "format": FORMAT,

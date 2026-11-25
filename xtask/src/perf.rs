@@ -3,14 +3,14 @@
 //! services. It informs; it judges nothing.
 //!
 //! `tests/perf/run.py` provisions its venv and runs `tests/perf/measure.py`,
-//! which starts an HTTP and an HTTPS stub (`tests/perf/stub.py`, with a
-//! test CA the CLI trusts through `AWS_CA_BUNDLE`) and runs each case of
-//! `tests/perf/cases.json` on both routes, round-robin, after warm-up
-//! rounds. No command can reach anything but the stubs: each runs with the
-//! stub as `--endpoint-url` and `AWS_ENDPOINT_URL`, fake keys and a scratch
-//! HOME. A run that exits non-zero or makes other than its case's page
-//! count of requests stops the measurement, since its numbers would not be
-//! of the command meant.
+//! which starts a stub for each scheme the cases use (`tests/perf/stub.py`;
+//! over HTTPS with a test CA the CLI trusts through `AWS_CA_BUNDLE`) and
+//! runs each case of `tests/perf/cases.json` on both routes, round-robin,
+//! after warm-up rounds. No command can reach anything but the stubs: each
+//! runs with the stub as `--endpoint-url` and `AWS_ENDPOINT_URL`, fake keys
+//! and a scratch HOME. A run that exits non-zero or makes other than its
+//! case's page count of requests stops the measurement, since its numbers
+//! would not be of the command meant.
 //!
 //! The binary is the default artifact, which must be present and current
 //! as for `blackbox` (`harness::binary`), or `--aws-binary PATH`. The
