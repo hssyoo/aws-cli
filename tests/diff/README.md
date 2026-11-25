@@ -53,7 +53,10 @@ argument per input member, settings as arguments and variables, the canned
 replies as they are. Regenerate it with `run.py --venv target/diff/venv
 --aws-cli-source aws-cli convert_parity.py --aws-cli-source aws-cli --cases
 tests/parity/cases --models tests/models --out corpus/parity.jsonl`;
-`--check-corpus` fails when it drifts. `standin.jsonl`, outside the corpus,
+`--check-corpus` fails when it drifts. Either run also replays each row on
+the in-tree CLI, in process, and fails unless it sends what its case's
+call in `tests/parity/oracle.py` sends, so a member that never reaches the
+wire (one a paging option shadows, say) fails the conversion. `standin.jsonl`, outside the corpus,
 holds the self-test's rows for `standin.py`, a stand-in CLI that drives the
 capture's other paths: a timeout, a request the stub cannot parse, the
 environment, the reply sequence, the request limit and a chunked body.
@@ -64,7 +67,8 @@ Both sides alike, each value only when it has its expected form, and
 nothing else: the SigV4 signature (64 lowercase hex digits), which becomes
 its verdict, `<sig:ok>` or `<sig:bad>`, as recomputed from the request's
 own bytes and the run's fake secret key (`<sig:unverified>` for SigV4a or
-a run without a key), and the scope date,
+a run without a key; a scope date that is not `X-Amz-Date`'s, or a hex
+`X-Amz-Content-SHA256` that is not the body's hash, is bad), and the scope date,
 an `X-Amz-Date` of the form `YYYYMMDDTHHMMSSZ`, a UUID
 `amz-sdk-invocation-id` (numbered by first appearance), a `ttl=` date in
 `amz-sdk-request`, the host's release and distribution version in the
@@ -99,14 +103,16 @@ lists the rows each reason declined. When two native sides disagree (one
 declines, or for another reason) the admission changed:
 `admission-changed:a|b|reason`, a mismatch no entry covers. Against
 another route (the oracle) a refusal is only counted. The report also
-counts each side's signatures by verdict.
+counts each side's signatures by verdict, and a bad one on either side, the
+row native or not, is `sig:bad:<side>`, a mismatch no entry covers.
 
 ## Known differences
 
 `known-differences.json` lists the differences accepted: each entry has a
 `fingerprint`, the `cases` it holds for (row ids, or `"*"`), the `mode` it
 holds in (`oracle`, `baseline` or `determinism`) and a `reason`. It starts
-empty. No entry may name a timeout, a harness error or an admission change:
+empty. No entry may name a timeout, a harness error, an admission change,
+a bad signature or a stage's overflow past its named differences (`:...`):
 a row with one is always mismatched. A text difference is grouped by a
 masked fingerprint, but an entry covers it only by naming its full lines,
 digits and all (the instance's `key`), so a known message never hides
