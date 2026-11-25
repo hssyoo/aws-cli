@@ -100,7 +100,8 @@ fn text_to_stdout(
     mut scope: Scope<'_>,
 ) -> Result<u8, CommandFailure> {
     let stdout = &mut *cx.stdout;
-    let written = format::pages::text(fetched, &mut |text| {
+    let errors = Destination::Stdout.errors();
+    let written = format::pages::text(fetched, errors, &mut |text| {
         format::write_stdout(stdout, text, line_buffered)
     });
     // TextFormatter flushes the stream however the pages ended, passing
@@ -129,7 +130,8 @@ fn text_to_pager(
 ) -> Result<u8, CommandFailure> {
     let mut pager = format::pager::Stream::new(argv, &ready.pager_env);
     let mut unstarted = None;
-    let written = format::pages::text(fetched, &mut |text| match pager.write(text.as_bytes()) {
+    let errors = ready.destination.errors();
+    let written = format::pages::text(fetched, errors, &mut |text| match pager.write(text) {
         Ok(true) => Ok(()),
         Ok(false) => Err(std::io::ErrorKind::BrokenPipe.into()),
         Err(error) => {

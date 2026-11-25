@@ -12,6 +12,7 @@ use model::value::Value;
 pub mod json;
 pub mod pager;
 pub mod pages;
+pub mod stream;
 pub mod text;
 pub mod timestamps;
 
@@ -49,20 +50,31 @@ impl OutputFormat {
 /// Output the formatter wrote before raising.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Partial {
-    pub written: String,
+    pub written: Vec<u8>,
+    /// A write was made, even the one that failed, which starts the pager.
+    pub started: bool,
     pub error: PythonError,
 }
 
 /// What the formatter for `format` writes for a non-paginated `response`,
-/// after `Formatter._remove_request_id` drops its `ResponseMetadata`.
-pub fn render(response: &Value, format: OutputFormat) -> Result<String, Partial> {
+/// after `Formatter._remove_request_id` drops its `ResponseMetadata`, to a
+/// stream encoding with `errors` ([`Destination::errors`]).
+///
+/// # Errors
+/// What the formatter raised, after the output it wrote before.
+pub fn render(
+    response: &Value,
+    format: OutputFormat,
+    errors: pytext::codec::Errors,
+) -> Result<Vec<u8>, Partial> {
     if format != OutputFormat::Off
         && let Some(class) = not_iterable(response)
     {
         // `'ResponseMetadata' in response_data` raises for these, with
         // CPython 3.14's text.
         return Err(Partial {
-            written: String::new(),
+            written: Vec::new(),
+            started: false,
             error: PythonError {
                 message: format!("argument of type '{class}' is not a container or iterable"),
             },
@@ -78,16 +90,19 @@ pub fn render(response: &Value, format: OutputFormat) -> Result<String, Partial>
         }
         other => other,
     };
-    match format {
-        OutputFormat::Json => Ok(json::json(response)),
-        OutputFormat::Off => Ok(String::new()),
-        OutputFormat::Text => {
-            let mut written = String::new();
-            match text::format_text(response, &mut written) {
-                Ok(()) => Ok(written),
-                Err(error) => Err(Partial { written, error }),
-            }
-        }
+    let mut out = stream::Encoded::new(errors);
+    let formatted = match format {
+        OutputFormat::Json => json::json(response, &mut out),
+        OutputFormat::Off => Ok(()),
+        OutputFormat::Text => text::format_text(response, &mut out),
+    };
+    match formatted {
+        Ok(()) => Ok(out.into_bytes()),
+        Err(error) => Err(Partial {
+            started: out.wrote(),
+            written: out.into_bytes(),
+            error,
+        }),
     }
 }
 
@@ -113,10 +128,10 @@ fn not_iterable(value: &Value) -> Option<&'static str> {
 /// The write failed.
 pub fn write_stdout(
     stdout: &mut dyn std::io::Write,
-    text: &str,
+    text: &[u8],
     line_buffered: bool,
 ) -> std::io::Result<()> {
-    stdout.write_all(text.as_bytes())?;
+    stdout.write_all(text)?;
     if line_buffered {
         stdout.flush()?;
     }
@@ -144,7 +159,7 @@ pub enum Delivered {
 pub fn deliver(
     destination: &Destination,
     env: &[(std::ffi::OsString, std::ffi::OsString)],
-    output: &str,
+    output: &[u8],
     stdout: &mut dyn std::io::Write,
     line_buffered: bool,
     interrupt: &cli_core::interrupt::State,
@@ -156,9 +171,7 @@ pub fn deliver(
             Ok(Delivered::Stdout(written))
         }
         Destination::Pager(_) if output.is_empty() => Ok(Delivered::Paged(Outcome::Exited)),
-        Destination::Pager(argv) => {
-            pager::run(argv, env, output.as_bytes(), interrupt).map(Delivered::Paged)
-        }
+        Destination::Pager(argv) => pager::run(argv, env, output, interrupt).map(Delivered::Paged),
     }
 }
 

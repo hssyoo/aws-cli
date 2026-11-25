@@ -71,11 +71,12 @@ impl Pages for Listed {
 }
 
 fn written(pages: &mut Listed) -> (String, Option<String>) {
-    let mut out = String::new();
-    let result = text(pages, &mut |text| {
-        out.push_str(text);
+    let mut bytes = Vec::new();
+    let result = text(pages, pytext::codec::Errors::SurrogateEscape, &mut |text| {
+        bytes.extend_from_slice(text);
         Ok(())
     });
+    let out = String::from_utf8_lossy(&bytes).into_owned();
     let error = match result {
         Ok(()) => None,
         Err(Stopped::Page(error)) => Some(error),
@@ -185,18 +186,26 @@ fn pages_with_no_rows_write_nothing() {
         &["Keys"],
     );
     let mut writes = 0;
-    let result = text(&mut pages, &mut |_| {
-        writes += 1;
-        Ok(())
-    });
+    let result = text(
+        &mut pages,
+        pytext::codec::Errors::SurrogateEscape,
+        &mut |_| {
+            writes += 1;
+            Ok(())
+        },
+    );
     assert!(result.is_ok());
     assert_eq!(writes, 0);
     let mut failing = Listed::new(vec![value(r#"{"Mixed": [{"k": 1}, "s"]}"#)], &["Mixed"]);
     let mut writes = 0;
-    let result = text(&mut failing, &mut |_| {
-        writes += 1;
-        Ok(())
-    });
+    let result = text(
+        &mut failing,
+        pytext::codec::Errors::SurrogateEscape,
+        &mut |_| {
+            writes += 1;
+            Ok(())
+        },
+    );
     assert!(matches!(result, Err(Stopped::Format(_))));
     assert_eq!(writes, 0);
 }

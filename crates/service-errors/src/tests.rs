@@ -170,3 +170,27 @@ fn a_pagination_failure_is_the_general_handler_s() -> Result<(), Box<dyn std::er
     }
     Ok(())
 }
+
+/// stderr writes with `backslashreplace`: a lone surrogate in a detail, or
+/// in a small collection of them, prints as its `\udXXX` escape.
+#[test]
+fn a_lone_surrogate_in_a_detail_prints_backslash_escaped() {
+    let points = "no\u{0} way \u{0}".chars().map(u32::from);
+    let points = points.enumerate().map(|(at, point)| match at {
+        2 => 0xd800,
+        8 => 0xdc80,
+        _ => point,
+    });
+    let text = Value::from_text(model::value::Wtf8Buf::from_code_points(points));
+    assert!(matches!(text, Value::PyString(_)), "{text:?}");
+    assert_eq!(
+        shown(vec![
+            ("Reason", text.clone()),
+            ("Items", Value::List(vec![text])),
+        ]),
+        concat!(
+            "\nAdditional error details:\n",
+            "Reason: no\\ud800 way \\udc80\nItems: [no\\ud800 way \\udc80]\n"
+        )
+    );
+}

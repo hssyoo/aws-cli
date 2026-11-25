@@ -14,6 +14,7 @@ use cli_core::cli_error::{Category, CommandFailure, Details};
 use client::error::{CallError, ServiceError};
 use model::shapes::Model;
 use model::value::{Map, Value};
+use std::borrow::Cow;
 
 /// `InterruptExceptionHandler`: a newline on stdout, flushed, and 130.
 ///
@@ -107,13 +108,24 @@ pub fn pager_failure(error: &format::pager::SpawnError) -> CommandFailure {
 /// error's other modeled fields.
 fn client_error(error: &ServiceError, model: &Model) -> CommandFailure {
     CommandFailure {
-        code: error.code().unwrap_or("Unknown").to_owned(),
+        code: stderr_text(error, "Code").into_owned(),
         operation: error.operation.clone(),
-        message: error.message().unwrap_or("Unknown").as_bytes().to_vec(),
+        message: stderr_text(error, "Message").as_bytes().to_vec(),
         retries_exhausted: error.max_attempts_reached.then_some(error.retry_attempts),
         details: details(&error_info(error, model)).map(|block| Box::new(Details(block))),
         http_status: i32::from(error.status),
         ..CommandFailure::new(Category::ClientError)
+    }
+}
+
+/// `parsed['Error'][key]` as stderr writes it, whose `backslashreplace`
+/// writes a lone surrogate as its `\udXXX` escape; `Unknown` when it is no
+/// string (`.get(key, 'Unknown')` of the botocore error).
+fn stderr_text<'e>(error: &'e ServiceError, key: &str) -> Cow<'e, str> {
+    match error.error.get(key) {
+        Some(Value::String(text)) => Cow::Borrowed(text),
+        Some(text @ Value::PyString(_)) => Cow::Owned(model::pyrepr::py_str(text)),
+        _ => Cow::Borrowed("Unknown"),
     }
 }
 

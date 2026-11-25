@@ -185,8 +185,8 @@ fn tagged(map: &Map) -> Option<Value> {
 }
 
 fn rust_row(response: &Value) -> serde_json::Value {
-    let cell = |format| match render(response, format) {
-        Ok(text) => serde_json::json!({ "ok": text }),
+    let cell = |format| match render(response, format, pytext::codec::Errors::SurrogateEscape) {
+        Ok(text) => serde_json::json!({ "ok": String::from_utf8_lossy(&text) }),
         Err(partial) => serde_json::json!({ "error": partial.error.message }),
     };
     serde_json::json!([cell(OutputFormat::Json), cell(OutputFormat::Text)])
@@ -252,11 +252,16 @@ fn listed(case: &Value) -> Option<crate::pages::tests::Listed> {
 }
 
 fn rust_pages(mut listed: crate::pages::tests::Listed) -> serde_json::Value {
-    let mut out = String::new();
-    let result = crate::pages::text(&mut listed, &mut |text| {
-        out.push_str(text);
-        Ok(())
-    });
+    let mut bytes = Vec::new();
+    let result = crate::pages::text(
+        &mut listed,
+        pytext::codec::Errors::SurrogateEscape,
+        &mut |text| {
+            bytes.extend_from_slice(text);
+            Ok(())
+        },
+    );
+    let out = String::from_utf8_lossy(&bytes).into_owned();
     let error = match result {
         Ok(()) => return serde_json::json!({ "ok": out }),
         Err(crate::pages::Stopped::Page(error)) => error,
@@ -326,8 +331,18 @@ fn a_response_at_the_reader_s_limit_renders_on_a_default_thread() -> Result<()> 
         let mut response = Map::new();
         response.insert("Doc".into(), doc);
         let response = Value::Map(response);
-        let json = render(&response, OutputFormat::Json).map(|text| text.len());
-        let text = render(&response, OutputFormat::Text).map(|text| text.len());
+        let json = render(
+            &response,
+            OutputFormat::Json,
+            pytext::codec::Errors::SurrogateEscape,
+        )
+        .map(|text| text.len());
+        let text = render(
+            &response,
+            OutputFormat::Text,
+            pytext::codec::Errors::SurrogateEscape,
+        )
+        .map(|text| text.len());
         drop(response);
         (json.is_ok(), text.is_ok())
     })

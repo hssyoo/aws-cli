@@ -143,10 +143,16 @@ fn outcome(
     result
 }
 
+/// What `format` prints to stdout for `value`, as text: the parity cases
+/// print UTF-8 only, which a lone surrogate's byte would not be.
 fn rendered(value: &Value, format: OutputFormat) -> Json {
-    match format::render(value, format) {
-        Ok(text) => Json::String(text),
-        Err(partial) => json!({ "written": partial.written, "error": partial.error.message }),
+    let stdout = pytext::codec::Errors::SurrogateEscape;
+    match format::render(value, format, stdout) {
+        Ok(text) => Json::String(String::from_utf8_lossy(&text).into_owned()),
+        Err(partial) => json!({
+            "written": String::from_utf8_lossy(&partial.written),
+            "error": partial.error.message,
+        }),
     }
 }
 
