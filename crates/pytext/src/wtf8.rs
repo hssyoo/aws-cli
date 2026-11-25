@@ -152,5 +152,31 @@ pub fn code_points(bytes: &[u8]) -> impl Iterator<Item = u32> + '_ {
     })
 }
 
+/// `text.upper()` of text in this encoding: each code point's full
+/// uppercase mapping (`'ß'` is `'SS'`), a surrogate kept as it is. Python's
+/// `upper`, unlike `lower`, looks at no neighbour.
+pub fn upper(text: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for point in code_points(text) {
+        match char::from_u32(point) {
+            Some(character) if !newer_than_python(point) => {
+                for upper in character.to_uppercase() {
+                    push_code_point(&mut out, u32::from(upper));
+                }
+            }
+            _ => push_code_point(&mut out, point),
+        }
+    }
+    out
+}
+
+/// The lowercase letters Unicode 17 added, which Rust's case tables map
+/// and the toolchain CPython's Unicode 16 database does not have, so
+/// Python leaves them as they are. The test over every code point finds
+/// any other difference, as either side's Unicode version changes.
+fn newer_than_python(point: u32) -> bool {
+    matches!(point, 0xA7CF | 0xA7D3 | 0xA7D5 | 0x16EBB..=0x16ED3)
+}
+
 #[cfg(test)]
 mod tests;
