@@ -1,0 +1,32 @@
+# cargo-mutants configuration (`cargo mutants`). Run it on one change at a
+# time, in the tree, so it shares the host's build lock and target directory:
+#
+#   cargo mutants --in-place --in-diff <diff file>
+#
+# `--in-place` is command-line only and runs one mutant at a time (it cannot
+# be combined with `--jobs`).
+
+# Mutated code may trip the workspace's deny lints (dead_code, unused
+# dependencies, clippy denies); cap them so a mutant fails only on its tests.
+cap_lints = true
+
+# Each mutant's test run may take this many times the baseline `cargo test`
+# before it counts as a timeout (a mutant that hangs a loop).
+timeout_multiplier = 3.0
+minimum_test_timeout = 60
+
+# Per-crate test command: a mutant runs only the tests of the package that
+# contains it (`cargo test -p <package>`), not the whole workspace.
+test_workspace = false
+
+# Product code only. xtask is dev tooling, fuzz is a separate workspace, and
+# test-only files would only mutate the tests themselves.
+exclude_globs = [
+  "xtask/**",
+  "fuzz/**",
+  "tests/**",
+  "**/tests/**",
+  "**/tests.rs",
+  "**/benches/**",
+  "**/build.rs",
+]
