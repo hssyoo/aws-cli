@@ -76,6 +76,7 @@ fn the_status_names_harness_errors_timeouts_and_exit_codes() {
     let found = diffs(&a, &failed);
     let exit = Diff {
         fingerprint: "exit:0->255".to_owned(),
+        key: None,
         request: None,
         a: "0".to_owned(),
         b: "255".to_owned(),
@@ -129,14 +130,10 @@ fn text_output_names_each_differing_line_both_sides_masked() {
     );
     assert_eq!(printed("", "x\n"), ["stdout:text:->x"]);
     let many: String = (0..20).map(|line| format!("{line}\n")).collect();
-    assert_eq!(
-        printed(&many, &many.replace('\n', "x\n")),
-        [
-            "stdout:text:#->#x",
-            "stdout:text:##->##x",
-            "stdout:text:..."
-        ]
-    );
+    let found = printed(&many, &many.replace('\n', "x\n"));
+    assert_eq!(found.len(), SPAN_MAX + 1, "{found:?}");
+    assert_eq!(found.first().map(String::as_str), Some("stdout:text:#->#x"));
+    assert_eq!(found.last().map(String::as_str), Some("stdout:text:..."));
 }
 
 #[test]
@@ -338,7 +335,13 @@ fn a_fingerprint_appears_once_a_row_with_its_first_request() {
 #[test]
 fn excerpts_are_cut() {
     let long = "x".repeat(EXCERPT_CHARS + 5);
-    assert_eq!(excerpt(&long), format!("{}...", "x".repeat(EXCERPT_CHARS)));
+    assert_eq!(
+        excerpt(&long, ""),
+        format!("{}...", "x".repeat(EXCERPT_CHARS))
+    );
+    let tail = format!("{long}a{long}");
+    let shown = excerpt(&tail, &format!("{long}b"));
+    assert!(shown.starts_with("...") && shown.contains('a'), "{shown}");
     assert_eq!(token_key("cfg/retry-mode#standard"), "cfg/retry-mode");
     assert_eq!(token_key("md/arch"), "md/arch");
     assert_eq!(token_key("Mozilla"), "Mozilla");

@@ -21,7 +21,7 @@ fn request(target: &str, headers: &[(&str, &str)], body: &str) -> Request {
 }
 
 fn one(request: &Request) -> Normal {
-    let mut normal = requests(std::slice::from_ref(request), []);
+    let mut normal = requests(std::slice::from_ref(request), [], None);
     normal.pop().unwrap_or_default()
 }
 
@@ -48,7 +48,7 @@ fn the_signature_and_scope_date_go_and_the_signed_headers_stay() {
     assert_eq!(
         authorization("host;x-amz-date", SIGNATURE),
         "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/<date>/us-west-2/zjson/aws4_request, \
-         SignedHeaders=host;x-amz-date, Signature=<sig>"
+         SignedHeaders=host;x-amz-date, Signature=<sig:unverified>"
     );
     assert_ne!(
         authorization("host;x-amz-date", SIGNATURE),
@@ -61,6 +61,37 @@ fn the_signature_and_scope_date_go_and_the_signed_headers_stay() {
     for malformed in ["garbage", "", "20261125T191630", "2026112xT191630Z"] {
         assert_eq!(header("X-Amz-Date", malformed), malformed);
     }
+}
+
+#[test]
+fn the_signature_becomes_its_verdict_with_the_runs_secret() {
+    let vanilla = request(
+        "/",
+        &[
+            ("Host", "example.amazonaws.com"),
+            ("X-Amz-Date", "20150830T123600Z"),
+            (
+                "Authorization",
+                "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, \
+                 SignedHeaders=host;x-amz-date, \
+                 Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31",
+            ),
+        ],
+        "",
+    );
+    let vanilla = Request {
+        method: "GET".to_owned(),
+        ..vanilla
+    };
+    let verdict = |secret| {
+        let normal = requests(std::slice::from_ref(&vanilla), [], Some(secret));
+        let authorization = normal
+            .first()
+            .and_then(|normal| normal.headers.get(2).cloned());
+        authorization.map(|(_, value)| value).unwrap_or_default()
+    };
+    assert!(verdict("wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY").ends_with("Signature=<sig:ok>"));
+    assert!(verdict("secret").ends_with("Signature=<sig:bad>"));
 }
 
 #[test]
@@ -84,7 +115,7 @@ fn invocation_ids_are_numbered_by_first_appearance() {
     let sent = |id: &str| request("/", &[("amz-sdk-invocation-id", id)], "");
     let labels = |ids: &[&str]| {
         let requests: Vec<_> = ids.iter().map(|id| sent(id)).collect();
-        super::requests(&requests, [])
+        super::requests(&requests, [], None)
             .into_iter()
             .flat_map(|normal| normal.headers.into_iter().map(|(_, value)| value))
             .collect::<Vec<_>>()
@@ -140,7 +171,7 @@ fn generated_uuids_are_numbered_and_given_ones_stay() {
         String::from_utf8_lossy(&normal.body),
         "{\"Token\": \"<uuid:1>\", \"Other\": \"<uuid:2>\", \"Again\": \"<uuid:1>\"}"
     );
-    let given = requests(&[request("/", &[], &body)], ["--token", UUID]);
+    let given = requests(&[request("/", &[], &body)], ["--token", UUID], None);
     let kept = given
         .first()
         .map(|normal| String::from_utf8_lossy(&normal.body).into_owned());
@@ -217,7 +248,11 @@ fn fields_keep_a_missing_equals_and_empty_fields() {
             pair("b", Some("2=3"))
         ]
     );
-    assert_eq!(read.empty, (true, true, 1));
+    let after = |name: &str| Some((name.to_owned(), 0));
+    assert_eq!(read.empty, [None, after("a"), after("b")]);
     assert_eq!(fields(""), Fields::default());
-    assert_eq!(fields("&").empty, (true, true, 0));
+    assert_eq!(fields("&").empty, [None, None]);
+    let moved = (fields("a=1&&b=2&c=1").empty, fields("a=1&b=2&&c=2").empty);
+    assert_ne!(moved.0, moved.1);
+    assert_eq!(fields("a&a&&b").empty, [Some(("a".to_owned(), 1))]);
 }

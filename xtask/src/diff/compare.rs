@@ -43,8 +43,10 @@ const REQUEST: &str = "request[*]";
 const EXCERPT_CHARS: usize = 120;
 /// Bytes shown on each side of a body's first difference.
 const CONTEXT_BYTES: usize = 40;
-/// The characters of a line a text fingerprint keeps of each side.
+/// The characters of a line a text fingerprint keeps of each side, from
+/// `LINE_CONTEXT` characters before the first that differs.
 const LINE_CHARS: usize = 48;
+const LINE_CONTEXT: usize = 16;
 /// The differing lines or XML tokens a stage names before `...`.
 const SPAN_MAX: usize = 16;
 
@@ -53,6 +55,11 @@ const SPAN_MAX: usize = 16;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diff {
     pub fingerprint: String,
+    /// What a known difference must name to cover this one, when the
+    /// fingerprint groups more than one cause: a text difference's full
+    /// lines, digits and all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request: Option<usize>,
     pub a: String,
@@ -82,19 +89,21 @@ struct Found {
 
 impl Found {
     fn add(&mut self, fingerprint: String, a: &str, b: &str) {
+        self.add_keyed(fingerprint, None, a, b);
+    }
+
+    fn add_keyed(&mut self, fingerprint: String, key: Option<String>, a: &str, b: &str) {
         self.noted += 1;
-        if self
-            .diffs
-            .iter()
-            .any(|diff| diff.fingerprint == fingerprint)
-        {
+        let same = |diff: &Diff| diff.fingerprint == fingerprint && diff.key == key;
+        if self.diffs.iter().any(same) {
             return;
         }
         self.diffs.push(Diff {
             fingerprint,
+            key,
             request: self.request,
-            a: excerpt(a),
-            b: excerpt(b),
+            a: excerpt(a, b),
+            b: excerpt(b, a),
         });
     }
 
@@ -108,12 +117,29 @@ impl Found {
     }
 }
 
-fn excerpt(text: &str) -> String {
-    if text.chars().count() <= EXCERPT_CHARS {
+/// `text` cut to `EXCERPT_CHARS` characters around where it first
+/// differs from `other`.
+fn excerpt(text: &str, other: &str) -> String {
+    let length = text.chars().count();
+    if length <= EXCERPT_CHARS {
         return text.to_owned();
     }
-    let kept: String = text.chars().take(EXCERPT_CHARS).collect();
-    format!("{kept}...")
+    let from = text
+        .chars()
+        .zip(other.chars())
+        .take_while(|(l, r)| l == r)
+        .count();
+    let start = from
+        .saturating_sub(EXCERPT_CHARS / 3)
+        .min(length - EXCERPT_CHARS);
+    let kept: String = text.chars().skip(start).take(EXCERPT_CHARS).collect();
+    let before = if start > 0 { "..." } else { "" };
+    let after = if start + EXCERPT_CHARS < length {
+        "..."
+    } else {
+        ""
+    };
+    format!("{before}{kept}{after}")
 }
 
 /// The differences between run `a` and run `b` of one row.
@@ -318,12 +344,14 @@ fn lines(stage: &str, a: &[u8], b: &[u8], found: &mut Found) {
             p.cloned().unwrap_or_default(),
             q.cloned().unwrap_or_default(),
         );
-        let fingerprint = format!(
-            "{stage}:text:{}->{}",
-            mask(&p, LINE_CHARS),
-            mask(&q, LINE_CHARS)
-        );
-        found.add(fingerprint, &p, &q);
+        let from = p.chars().zip(q.chars()).take_while(|(l, r)| l == r).count();
+        let start = from.saturating_sub(LINE_CONTEXT);
+        let shown = |line: &str| {
+            let cut = mask(&line.chars().skip(start).collect::<String>(), LINE_CHARS);
+            if start > 0 { format!("...{cut}") } else { cut }
+        };
+        let fingerprint = format!("{stage}:text:{}->{}", shown(&p), shown(&q));
+        found.add_keyed(fingerprint, Some(format!("{stage}:text:{p}->{q}")), &p, &q);
     }
 }
 
@@ -422,6 +450,22 @@ fn line(x: &Normal, y: &Normal, found: &mut Found) {
     );
     if x.query.is_some() != y.query.is_some() {
         found.add(format!("{REQUEST}.line:query-format"), &x.target, &y.target);
+    }
+    let form = |normal: &Normal| {
+        let origin = normal.target.starts_with('/');
+        if origin {
+            String::new()
+        } else {
+            normal
+                .target
+                .split("://")
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        }
+    };
+    if form(x) != form(y) {
+        found.add(format!("{REQUEST}.line:target-form"), &x.target, &y.target);
     }
     let stage = format!("{REQUEST}.line:target");
     found.backstop(mark, &stage, x.target.as_bytes(), y.target.as_bytes());
@@ -581,10 +625,10 @@ fn user_agent(a: &str, b: &str, found: &mut Found) {
         return;
     }
     let (x, y): (Vec<&str>, Vec<&str>) = (a.split(' ').collect(), b.split(' ').collect());
-    let keyed = |tokens: &[&str], key: &str| {
+    fn keyed<'t>(tokens: &[&'t str], key: &str) -> Vec<&'t str> {
         let matching = tokens.iter().filter(|token| token_key(token) == key);
-        matching.copied().collect::<Vec<_>>().join(" ")
-    };
+        matching.copied().collect()
+    }
     let keys = |tokens: &[&str]| {
         tokens
             .iter()
@@ -594,7 +638,8 @@ fn user_agent(a: &str, b: &str, found: &mut Found) {
     for key in union(keys(&x), keys(&y)) {
         let (l, r) = (keyed(&x, &key), keyed(&y, &key));
         if l != r {
-            found.add(format!("{REQUEST}.header:user-agent:{key}"), &l, &r);
+            let fingerprint = format!("{REQUEST}.header:user-agent:{key}");
+            found.add(fingerprint, &l.join(" "), &r.join(" "));
         }
     }
     let x_keys = occurrences(x.iter().map(|token| token_key(token)));
@@ -605,13 +650,15 @@ fn user_agent(a: &str, b: &str, found: &mut Found) {
 }
 
 /// A User-Agent token's key: the prefix, and for `md/` and `cfg/` the name
-/// too (`md/arch`), without the value after `#`.
+/// too (`md/arch`), without the value after `#`; `spacing` for the empty
+/// token a doubled, leading or trailing space makes.
 fn token_key(token: &str) -> &str {
     match token.split_once('/') {
         Some((prefix @ ("md" | "cfg"), rest)) => {
             &token[..prefix.len() + 1 + rest.find('#').unwrap_or(rest.len())]
         }
         Some((prefix, _)) => prefix,
+        None if token.is_empty() => "spacing",
         None => token,
     }
 }

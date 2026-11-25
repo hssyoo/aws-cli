@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 
 use crate::{TaskError, deps, harness, process};
 
+mod admission;
 mod capture;
 mod compare;
 mod corpus;
@@ -36,11 +37,14 @@ mod normalize;
 mod options;
 mod report;
 mod seeded;
+mod sigv4;
 
 use options::{Binary, Options, Route, SideSpec};
 
 const CORPUS_DIRECTORY: &str = "tests/diff/corpus";
 const KNOWN_DIFFERENCES: &str = "tests/diff/known-differences.json";
+/// The corpus `tests/diff/convert_parity.py` makes from the parity cases.
+pub const PARITY_CORPUS: &str = "tests/diff/corpus/parity.jsonl";
 
 /// One side of a comparison: what the report calls it, its binary and its
 /// route.
@@ -85,6 +89,14 @@ impl Run {
 
 pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
     let options = options::parse(args)?;
+    if options.check_corpus {
+        capture::check_corpus(root)?;
+        return writeln!(
+            io::stdout().lock(),
+            "diff: {PARITY_CORPUS} is what its converter writes"
+        )
+        .map_err(TaskError::from);
+    }
     // The runs hold the local CLI test lock, so no other CLI suite of this
     // worktree loads the machine or contends for the CRT's process lock.
     let _cli_test_guard = process::cli_test_guard(root)?;
@@ -105,20 +117,21 @@ pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
 
 /// The comparison `options` ask for.
 fn plan(root: &Path, options: &Options) -> Result<Run, TaskError> {
-    let default = SideSpec {
+    let candidate = |route| SideSpec {
         binary: Binary::Candidate,
-        route: Route::Native,
+        route,
     };
-    let a = side(
-        root,
-        options.a.as_ref().unwrap_or(&default),
-        &options.aws_binary,
-    )?;
-    let b = side(
-        root,
-        options.b.as_ref().unwrap_or(&default),
-        &options.aws_binary,
-    )?;
+    let (a, b) = if options.oracle {
+        (candidate(Route::Native), candidate(Route::Python))
+    } else {
+        let default = || candidate(Route::Native);
+        (
+            options.a.clone().unwrap_or_else(default),
+            options.b.clone().unwrap_or_else(default),
+        )
+    };
+    let a = side(root, &a, &options.aws_binary)?;
+    let b = side(root, &b, &options.aws_binary)?;
     let corpus = if options.corpus.is_empty() {
         corpus::files(root, Path::new(CORPUS_DIRECTORY))?
     } else {

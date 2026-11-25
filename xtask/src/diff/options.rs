@@ -53,6 +53,9 @@ pub struct Options {
     pub known: Option<PathBuf>,
     pub out: Option<PathBuf>,
     pub self_test: bool,
+    /// `--oracle`: the candidate's native route against its Python route.
+    pub oracle: bool,
+    pub check_corpus: bool,
 }
 
 /// The options that take a value.
@@ -70,8 +73,7 @@ pub fn parse(args: &[String]) -> Result<Options, TaskError> {
     let mut options = Options::default();
     let mut args = args.iter();
     while let Some(flag) = args.next() {
-        if flag == "--self-test" {
-            options.self_test = true;
+        if switch(flag, &mut options) {
             continue;
         }
         if !VALUED.contains(&flag.as_str()) {
@@ -91,15 +93,47 @@ pub fn parse(args: &[String]) -> Result<Options, TaskError> {
             _ => options.out = Some(PathBuf::from(value)),
         }
     }
-    let only_binary = Options {
-        aws_binary: options.aws_binary.clone(),
-        self_test: true,
-        ..Options::default()
+    check(&options)?;
+    Ok(options)
+}
+
+/// Sets the option `flag` names if it takes no value.
+fn switch(flag: &str, options: &mut Options) -> bool {
+    let set = match flag {
+        "--self-test" => &mut options.self_test,
+        "--oracle" => &mut options.oracle,
+        "--check-corpus" => &mut options.check_corpus,
+        _ => return false,
     };
-    if options.self_test && options != only_binary {
+    *set = true;
+    true
+}
+
+/// Fails on options that do not go together.
+fn check(options: &Options) -> Result<(), TaskError> {
+    let alone = |set: Options| *options == set;
+    let binary = options.aws_binary.clone();
+    if options.self_test
+        && !alone(Options {
+            aws_binary: binary,
+            self_test: true,
+            ..Options::default()
+        })
+    {
         return Err(deps::error("--self-test takes only --aws-binary"));
     }
-    Ok(options)
+    if options.check_corpus
+        && !alone(Options {
+            check_corpus: true,
+            ..Options::default()
+        })
+    {
+        return Err(deps::error("--check-corpus takes no other option"));
+    }
+    if options.oracle && (options.a.is_some() || options.b.is_some()) {
+        return Err(deps::error("--oracle sets both sides; drop --a and --b"));
+    }
+    Ok(())
 }
 
 /// `candidate:ROUTE` or `PATH:ROUTE`; a path may itself hold colons.

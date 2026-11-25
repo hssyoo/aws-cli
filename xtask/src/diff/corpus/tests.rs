@@ -105,3 +105,17 @@ fn the_seed_corpus_loads_and_filters_by_id() -> Result<(), TaskError> {
     );
     Ok(())
 }
+
+#[test]
+fn the_parity_corpus_holds_one_row_per_parity_case() -> Result<(), TaskError> {
+    let rows = load(&root(), &[PathBuf::from(crate::diff::PARITY_CORPUS)], None)?;
+    assert_eq!(rows.len(), 86);
+    let from_cases = |row: &Row| {
+        let source = row.source.as_deref().unwrap_or_default();
+        source.starts_with("tests/parity/cases/") && source.ends_with(&format!("#{}", row.id))
+    };
+    assert!(rows.iter().all(from_cases));
+    let fake = rows.iter().filter(|row| row.data_path.is_some()).count();
+    assert_eq!(fake, 58);
+    Ok(())
+}

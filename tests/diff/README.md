@@ -8,8 +8,9 @@ order, body. It passes when every difference is a known one.
 ```sh
 cargo xtask build                    # the candidate: the default artifact, present and current
 cargo xtask diff                     # candidate:native against itself (determinism)
-cargo xtask diff --a candidate:native --b candidate:python
+cargo xtask diff --oracle            # candidate:native against candidate:python, botocore's route
 cargo xtask diff --a path/to/old/aws:native --b candidate:native
+cargo xtask diff --check-corpus      # corpus/parity.jsonl must be what its converter writes
 cargo xtask diff --self-test         # the harness must catch a seeded defect, and see a stand-in whole
 ```
 
@@ -45,7 +46,14 @@ paths for every run, and stdin empty. Runs time out after 60 s.
 | `timeout_s` | overrides the 60 s timeout; at least 1 (optional) |
 
 `seed.jsonl` holds three rows (json, rest-json and query on the fake
-models) that the self-test uses. `standin.jsonl`, outside the corpus,
+models) that the self-test uses. `parity.jsonl` holds the 86 cases of
+`tests/parity/cases`, converted mechanically by `convert_parity.py` (its
+docstring gives the rules) into the invocation a user would type: one
+argument per input member, settings as arguments and variables, the canned
+replies as they are. Regenerate it with `run.py --venv target/diff/venv
+--aws-cli-source aws-cli convert_parity.py --aws-cli-source aws-cli --cases
+tests/parity/cases --models tests/models --out corpus/parity.jsonl`;
+`--check-corpus` fails when it drifts. `standin.jsonl`, outside the corpus,
 holds the self-test's rows for `standin.py`, a stand-in CLI that drives the
 capture's other paths: a timeout, a request the stub cannot parse, the
 environment, the reply sequence, the request limit and a chunked body.
@@ -53,7 +61,10 @@ environment, the reply sequence, the request limit and a chunked body.
 ## What is normalized, and fingerprints
 
 Both sides alike, each value only when it has its expected form, and
-nothing else: the SigV4 signature (64 lowercase hex digits) and scope date,
+nothing else: the SigV4 signature (64 lowercase hex digits), which becomes
+its verdict, `<sig:ok>` or `<sig:bad>`, as recomputed from the request's
+own bytes and the run's fake secret key (`<sig:unverified>` for SigV4a or
+a run without a key), and the scope date,
 an `X-Amz-Date` of the form `YYYYMMDDTHHMMSSZ`, a UUID
 `amz-sdk-invocation-id` (numbered by first appearance), a `ttl=` date in
 `amz-sdk-request`, the host's release and distribution version in the
@@ -79,13 +90,27 @@ stray process held open. Each request also records the hosts the CLI
 asked the proxy to CONNECT to (`connects:`) and a chunked body's chunk
 sizes and trailers (`body:framing`).
 
+## Not native
+
+A side on the native route that declines a row (exit 255 and only
+`aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable
+(<reason>); ...`) is not native: the row is not compared, and the report
+lists the rows each reason declined. When two native sides disagree (one
+declines, or for another reason) the admission changed:
+`admission-changed:a|b|reason`, a mismatch no entry covers. Against
+another route (the oracle) a refusal is only counted. The report also
+counts each side's signatures by verdict.
+
 ## Known differences
 
 `known-differences.json` lists the differences accepted: each entry has a
 `fingerprint`, the `cases` it holds for (row ids, or `"*"`), the `mode` it
 holds in (`oracle`, `baseline` or `determinism`) and a `reason`. It starts
-empty. No entry may name a timeout or a harness error: a row with one is
-always mismatched. A run's `report.json` proposes an entry, with an empty
+empty. No entry may name a timeout, a harness error or an admission change:
+a row with one is always mismatched. A text difference is grouped by a
+masked fingerprint, but an entry covers it only by naming its full lines,
+digits and all (the instance's `key`), so a known message never hides
+another; a `:bytes` entry must list its rows. A run's `report.json` proposes an entry, with an empty
 reason, for each group no entry covers; adding one is a reviewed change,
 never the harness's.
 
