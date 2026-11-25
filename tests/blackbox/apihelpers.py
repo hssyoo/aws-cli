@@ -126,6 +126,46 @@ def printed(value: Mapping[str, Any]) -> str:
     return json.dumps(value, indent=4) + "\n"
 
 
+class _Chunks:
+    """A stream that keeps each `write`, as `json.dump` makes them."""
+
+    def __init__(self) -> None:
+        self.chunks: list[str] = []
+
+    def write(self, chunk: str) -> None:
+        self.chunks.append(chunk)
+
+
+def json_chunks(value: object) -> list[str]:
+    """`JSONFormatter`'s writes: `json.dump`'s chunks, then the newline."""
+    stream = _Chunks()
+    json.dump(value, stream, indent=4, ensure_ascii=False)
+    return [*stream.chunks, "\n"]
+
+
+def written_by_python(
+    chunks: Sequence[str], errors: str = "surrogateescape"
+) -> tuple[str, str | None]:
+    """What a text stream encoding UTF-8 with `errors` holds after
+    `chunks` were written one by one, read back as the harness reads
+    output, and the text of the `UnicodeEncodeError` that stopped them:
+    each write is encoded on its own, so the writes before the failing one
+    stay written. stdout writes with surrogateescape; the pager's pipe,
+    a `Popen` text stream, is strict."""
+    written = b""
+    for chunk in chunks:
+        try:
+            written += chunk.encode("utf-8", errors)
+        except UnicodeEncodeError as error:
+            return written.decode("utf-8", "surrogateescape"), str(error)
+    return written.decode("utf-8", "surrogateescape"), None
+
+
+def general_failure(message: str) -> str:
+    """What `GeneralExceptionHandler` prints for an exception's text."""
+    return f"\naws: [ERROR]: {message}\n"
+
+
 def argv(template: str, **values: object) -> list[str]:
     """`template` split on whitespace, as upstream's `run_cmd` splits a
     command, with each word's fields then filled from `values`: a path

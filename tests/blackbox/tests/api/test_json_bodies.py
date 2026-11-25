@@ -17,7 +17,13 @@ import pytest
 from harness_plugin import PYTHON_ROUTE
 from localstub import HTTPResponse
 
-from apihelpers import ApiSession, fake_models_fixture
+from apihelpers import (
+    ApiSession,
+    fake_models_fixture,
+    general_failure,
+    json_chunks,
+    written_by_python,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -87,42 +93,6 @@ async def test_nan_and_the_infinities_print_as_python_prints_them(
     )
 
 
-class _Chunks:
-    """A stream that keeps each `write`, as `json.dump` makes them."""
-
-    def __init__(self) -> None:
-        self.chunks: list[str] = []
-
-    def write(self, chunk: str) -> None:
-        self.chunks.append(chunk)
-
-
-def printed_by_python(chunks: list[str]) -> tuple[str, str | None]:
-    """What a `surrogateescape` stdout holds after `chunks` were written
-    one by one, read back as the harness reads it, and the text of the
-    `UnicodeEncodeError` that stopped them: each write is encoded on its
-    own, so the bytes before the failing one stay written."""
-    written = b""
-    for chunk in chunks:
-        try:
-            written += chunk.encode("utf-8", "surrogateescape")
-        except UnicodeEncodeError as error:
-            return written.decode("utf-8", "surrogateescape"), str(error)
-    return written.decode("utf-8", "surrogateescape"), None
-
-
-def json_chunks(value: object) -> list[str]:
-    """`JSONFormatter`'s writes: `json.dump`'s chunks, then the newline."""
-    stream = _Chunks()
-    json.dump(value, stream, indent=4, ensure_ascii=False)
-    return [*stream.chunks, "\n"]
-
-
-def general_failure(message: str) -> str:
-    """What `GeneralExceptionHandler` prints for an exception's text."""
-    return f"\naws: [ERROR]: {message}\n"
-
-
 def text_json(text: str) -> str:
     """`text` as a JSON string, a lone surrogate written as its escape."""
     return json.dumps(text)
@@ -153,14 +123,14 @@ async def test_a_lone_surrogate_it_cannot_escape_fails_as_python_s_encoder_does(
 ) -> None:
     reply = body(service, text_json(text), "[]")
     _, (first, member), _ = COMMANDS[service]
-    expected, error = printed_by_python(json_chunks({first: text, member: []}))
+    expected, error = written_by_python(json_chunks({first: text, member: []}))
     assert error is not None
     printed = await run(models, service, reply, rc=255)
     assert (printed.stdout, printed.stderr) == (expected, general_failure(error)), (
         printed.describe()
     )
     # The text formatter writes the row of scalars with one write.
-    rows_expected, rows_error = printed_by_python([text, "\n"])
+    rows_expected, rows_error = written_by_python([text, "\n"])
     assert rows_error is not None
     rows = await run(models, service, reply, "--output", "text", rc=255)
     assert (rows.stdout, rows.stderr) == (rows_expected, general_failure(rows_error)), (
@@ -175,7 +145,7 @@ async def test_a_lone_surrogate_in_a_map_key_prints_as_its_value_does(
     doc = {"k\udc80": "v", "K\ud800": "w"}
     reply = body(service, '"t"', json.dumps(doc))
     _, (first, member), _ = COMMANDS[service]
-    expected, error = printed_by_python(json_chunks({first: "t", member: doc}))
+    expected, error = written_by_python(json_chunks({first: "t", member: doc}))
     assert error is not None
     printed = await run(models, service, reply, rc=255)
     assert (printed.stdout, printed.stderr) == (expected, general_failure(error)), (
@@ -255,13 +225,13 @@ async def test_a_lone_surrogate_in_a_later_page_fails_after_the_pages_before_it(
     replies = [page(["a"], "t1"), page([f"b{char}"], None)]
     command = PAGES[0].split()
     rows = await models.run([*command, "--output", "text"], replies=replies, expected_rc=rc)
-    rows_expected, rows_error = printed_by_python(["THINGS\ta\n", f"THINGS\tb{char}\n"])
+    rows_expected, rows_error = written_by_python(["THINGS\ta\n", f"THINGS\tb{char}\n"])
     assert rows.stdout == rows_expected, rows.describe()
     assert rows.stderr == ("" if rows_error is None else general_failure(rows_error)), (
         rows.describe()
     )
     printed = await models.run(command, replies=replies, expected_rc=rc)
-    expected, error = printed_by_python(json_chunks({"Things": ["a", f"b{char}"]}))
+    expected, error = written_by_python(json_chunks({"Things": ["a", f"b{char}"]}))
     assert printed.stdout == expected, printed.describe()
     assert printed.stderr == ("" if error is None else general_failure(error)), (
         printed.describe()
