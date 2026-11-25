@@ -219,8 +219,8 @@ ever reports a regression. On the reference machine:
 
 The baseline file also holds each tier's record of the binary it was
 taken on, without its runs (`--write-baseline`, on the default artifact
-of a clean committed head). `--check-baseline` judges a result against its
-tier's record: counts exactly; median wall and CPU and both ends of the
+of a committed head with no uncommitted change but to that file).
+`--check-baseline` judges a result against its tier's record: counts exactly; median wall and CPU and both ends of the
 peaks with the calibration's baseline tolerances; only on the record's CPU
 model; with a load limit of the calibration's highest plus a quarter per
 CPU, since a stored record has no same-run reference; and a complete run
@@ -243,7 +243,11 @@ binary's do, so the stored check's tolerances are if anything wide.
 
 ## Refreshing
 
-On the head to record, idle machine, clean tree:
+On the head to record, on an idle machine, with no uncommitted change to
+a tracked file but the platform's baseline file: each step rewrites that
+file, and the next step takes it for its own output, not a change the
+binary was built from (any other uncommitted change is refused). Commit
+it once, at the end:
 
 ```sh
 cargo xtask build
@@ -326,7 +330,8 @@ deadline despite the timer leeway macOS allows.
 comparison, the base's and the head's records. A record gives the platform
 key, the host (OS, release, CPU model, CPU count), the binary's path
 (relative to the checkout when it lies inside it) and commit (and whether
-the worktree had uncommitted changes to tracked files), the tier, the run
+the worktree had uncommitted changes to tracked files, the platform's
+baseline file apart), the tier, the run
 counts, the first run, every series with its summary and its raw runs, and
 the series the binary refused.
 

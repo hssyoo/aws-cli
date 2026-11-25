@@ -81,7 +81,7 @@ pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
     if stores && (identity.commit.is_none() || identity.dirty != Some(false)) {
         return Err(deps::error(
             "a baseline or a calibration is measured on the default artifact of a committed \
-             head, with no uncommitted changes",
+             head, with no uncommitted change but to the platform's baseline file",
         ));
     }
     let context = Context {
@@ -93,9 +93,7 @@ pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
             || root.join("target/perf/result.json"),
             |path| root.join(path),
         ),
-        baseline: root
-            .join("tests/perf/baselines")
-            .join(format!("{}.json", platform())),
+        baseline: root.join(own(&platform())),
     };
     match options.mode {
         Mode::Report => take(&context, options.tier, &context.out).map(drop),
@@ -113,7 +111,9 @@ fn platform() -> String {
 
 /// What the result says was measured. The default artifact is current
 /// with the worktree, so it was built from `HEAD` and whatever tracked
-/// changes are uncommitted; an explicit binary's commit is `--commit`'s.
+/// changes are uncommitted, apart from the platform's baseline file, which
+/// is the perf command's own output and no input of the binary ([`own`]);
+/// an explicit binary's commit is `--commit`'s.
 fn identity(root: &Path, binary: &Path, options: &Options) -> Result<Binary, TaskError> {
     let path = shown(root, binary);
     if options.binary.is_some() {
@@ -129,12 +129,35 @@ fn identity(root: &Path, binary: &Path, options: &Options) -> Result<Binary, Tas
         ));
     }
     let head = git(root, &["rev-parse", "HEAD"])?;
-    let changes = git(root, &["status", "--porcelain", "--untracked-files=no"])?;
+    // Untrimmed: a porcelain line starts with its two status columns, the
+    // first of which may be a space.
+    let status = process::output(Command::new("git").current_dir(root).args([
+        "status",
+        "--porcelain",
+        "--untracked-files=no",
+    ]))?;
+    let status = String::from_utf8_lossy(&status.stdout);
     Ok(Binary {
         path,
         commit: Some(head),
-        dirty: Some(!changes.is_empty()),
+        dirty: Some(changed_besides(&status, &own(&platform()))),
     })
+}
+
+/// The platform's baseline file, relative to the repository root: what
+/// `--calibrate` and `--write-baseline` write, so a change to it is the
+/// refresh's own work, not a change the binary was built from.
+fn own(platform: &str) -> String {
+    format!("tests/perf/baselines/{platform}.json")
+}
+
+/// Whether git's porcelain `status` names a changed path besides `own`.
+/// A rename or copy (`old -> new`) is a change whatever it names.
+fn changed_besides(status: &str, own: &str) -> bool {
+    status
+        .lines()
+        .filter(|line| !line.is_empty())
+        .any(|line| line.get(3..) != Some(own))
 }
 
 /// `binary` as the result records it: relative to `root` when it lies
