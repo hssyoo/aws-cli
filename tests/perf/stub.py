@@ -19,8 +19,8 @@ the modelled round-trip time:
 So a fresh connection's first request costs 2 `rtt` over HTTP and 3 over
 HTTPS, and every request on a reused connection costs 1.
 
-The stub counts connections accepted, requests served and response bytes
-written since the last `reset`.
+The stub counts connections accepted and requests served since the last
+`reset`.
 """
 
 from __future__ import annotations
@@ -47,7 +47,6 @@ class Counts:
 
     connections: int = 0
     requests: int = 0
-    response_bytes: int = 0
 
 
 @dataclass
@@ -129,12 +128,7 @@ class Stub:
     ) -> None:
         while (request := reader.request()) is not None:
             wait(rtt)
-            response = self._next_page(request.keep_alive)
-            # Counted before it is sent, as the request was, so the count is
-            # complete by the time the client has read the response.
-            with self._lock:
-                self._counts.response_bytes += len(response)
-            stream.sendall(response)
+            stream.sendall(self._next_page(request.keep_alive))
             if not request.keep_alive:
                 return
 

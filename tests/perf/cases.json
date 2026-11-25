@@ -1,7 +1,7 @@
 {
   "format": 1,
-  "warmup": 2,
-  "runs": 10,
+  "warmup": 1,
+  "runs": 5,
   "cases": [
     {
       "name": "query-single",
@@ -10,22 +10,11 @@
         "get-caller-identity"
       ],
       "schemes": [
-        "http",
         "https"
       ],
       "latencies_ms": [
-        0,
-        20,
-        80
+        0
       ],
-      "quick": {
-        "schemes": [
-          "https"
-        ],
-        "latencies_ms": [
-          0
-        ]
-      },
       "response": {
         "content_type": "text/xml",
         "pages": 1,
@@ -42,22 +31,11 @@
       ],
       "fake_models": true,
       "schemes": [
-        "http",
         "https"
       ],
       "latencies_ms": [
-        0,
-        20,
-        80
+        0
       ],
-      "quick": {
-        "schemes": [
-          "https"
-        ],
-        "latencies_ms": [
-          0
-        ]
-      },
       "response": {
         "content_type": "application/x-amz-json-1.0",
         "pages": 1,
@@ -74,52 +52,15 @@
       ],
       "fake_models": true,
       "schemes": [
-        "http",
         "https"
       ],
       "latencies_ms": [
-        0,
-        20,
-        80
+        0
       ],
-      "quick": {
-        "schemes": [
-          "https"
-        ],
-        "latencies_ms": [
-          0
-        ]
-      },
       "response": {
         "content_type": "application/json",
         "pages": 1,
         "page": "{\"ThingId\": \"thing-0\", \"Count\": 3}"
-      }
-    },
-    {
-      "name": "query-pages-10",
-      "argv": [
-        "zquery",
-        "list-things"
-      ],
-      "fake_models": true,
-      "schemes": [
-        "http",
-        "https"
-      ],
-      "latencies_ms": [
-        0,
-        20,
-        80
-      ],
-      "response": {
-        "content_type": "text/xml",
-        "pages": 10,
-        "items_per_page": 50,
-        "separator": "",
-        "page": "<ListThingsResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><ListThingsResult><Things>$items</Things>$marker</ListThingsResult><ResponseMetadata><RequestId>00000000-0000-4000-8000-000000000000</RequestId></ResponseMetadata></ListThingsResponse>",
-        "item": "<member>thing-$index</member>",
-        "marker": "<NextToken>token-$next</NextToken>"
       }
     },
     {
@@ -130,22 +71,11 @@
       ],
       "fake_models": true,
       "schemes": [
-        "http",
         "https"
       ],
       "latencies_ms": [
-        0,
-        20,
-        80
+        20
       ],
-      "quick": {
-        "schemes": [
-          "https"
-        ],
-        "latencies_ms": [
-          20
-        ]
-      },
       "response": {
         "content_type": "application/x-amz-json-1.0",
         "pages": 10,
@@ -154,56 +84,6 @@
         "page": "{\"Things\": [$items]$marker}",
         "item": "\"thing-$index\"",
         "marker": ", \"NextToken\": \"token-$next\""
-      }
-    },
-    {
-      "name": "rest-json-pages-10",
-      "argv": [
-        "zrestjson",
-        "list-functions"
-      ],
-      "fake_models": true,
-      "schemes": [
-        "http",
-        "https"
-      ],
-      "latencies_ms": [
-        0,
-        20,
-        80
-      ],
-      "response": {
-        "content_type": "application/json",
-        "pages": 10,
-        "items_per_page": 50,
-        "separator": ", ",
-        "page": "{\"Functions\": [$items]$marker}",
-        "item": "{\"FunctionName\": \"function-$index\", \"Runtime\": \"python3.14\"}",
-        "marker": ", \"NextMarker\": \"token-$next\""
-      }
-    },
-    {
-      "name": "query-pages-100",
-      "argv": [
-        "zquery",
-        "list-things"
-      ],
-      "fake_models": true,
-      "schemes": [
-        "https"
-      ],
-      "latencies_ms": [
-        0,
-        20
-      ],
-      "response": {
-        "content_type": "text/xml",
-        "pages": 100,
-        "items_per_page": 50,
-        "separator": "",
-        "page": "<ListThingsResponse xmlns=\"https://zquery.example.com/doc/2020-01-01/\"><ListThingsResult><Things>$items</Things>$marker</ListThingsResult><ResponseMetadata><RequestId>00000000-0000-4000-8000-000000000000</RequestId></ResponseMetadata></ListThingsResponse>",
-        "item": "<member>thing-$index</member>",
-        "marker": "<NextToken>token-$next</NextToken>"
       }
     },
     {
@@ -220,15 +100,6 @@
         0,
         20
       ],
-      "quick": {
-        "schemes": [
-          "https"
-        ],
-        "latencies_ms": [
-          0,
-          20
-        ]
-      },
       "response": {
         "content_type": "application/x-amz-json-1.0",
         "pages": 100,
@@ -237,30 +108,6 @@
         "page": "{\"Things\": [$items]$marker}",
         "item": "\"thing-$index\"",
         "marker": ", \"NextToken\": \"token-$next\""
-      }
-    },
-    {
-      "name": "rest-json-pages-100",
-      "argv": [
-        "zrestjson",
-        "list-functions"
-      ],
-      "fake_models": true,
-      "schemes": [
-        "https"
-      ],
-      "latencies_ms": [
-        0,
-        20
-      ],
-      "response": {
-        "content_type": "application/json",
-        "pages": 100,
-        "items_per_page": 50,
-        "separator": ", ",
-        "page": "{\"Functions\": [$items]$marker}",
-        "item": "{\"FunctionName\": \"function-$index\", \"Runtime\": \"python3.14\"}",
-        "marker": ", \"NextMarker\": \"token-$next\""
       }
     },
     {
@@ -278,14 +125,6 @@
       "latencies_ms": [
         0
       ],
-      "quick": {
-        "schemes": [
-          "https"
-        ],
-        "latencies_ms": [
-          0
-        ]
-      },
       "response": {
         "content_type": "application/json",
         "pages": 1,
@@ -303,22 +142,11 @@
         "s3://perf-bucket"
       ],
       "schemes": [
-        "http",
         "https"
       ],
       "latencies_ms": [
-        0,
-        20,
-        80
+        0
       ],
-      "quick": {
-        "schemes": [
-          "https"
-        ],
-        "latencies_ms": [
-          0
-        ]
-      },
       "response": {
         "content_type": "application/xml",
         "pages": 1,

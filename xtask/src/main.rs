@@ -33,20 +33,13 @@ use std::process::ExitCode;
 pub enum TaskError {
     Io(io::Error),
     Message(String),
-    /// A check that could not judge, such as a performance check on a
-    /// loaded machine: neither a pass nor a failure, so it exits with
-    /// [`INCONCLUSIVE`] instead of 1.
-    Inconclusive(String),
 }
-
-/// The exit status of a check that could not judge.
-const INCONCLUSIVE: u8 = 2;
 
 impl fmt::Display for TaskError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Io(error) => error.fmt(f),
-            Self::Message(message) | Self::Inconclusive(message) => f.write_str(message),
+            Self::Message(message) => f.write_str(message),
         }
     }
 }
@@ -70,11 +63,7 @@ fn main() -> ExitCode {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             let _ = writeln!(io::stderr().lock(), "xtask: {error}");
-            if matches!(error, TaskError::Inconclusive(_)) {
-                ExitCode::from(INCONCLUSIVE)
-            } else {
-                ExitCode::FAILURE
-            }
+            ExitCode::FAILURE
         }
     }
 }
