@@ -613,8 +613,10 @@ async def test_a_response_token_holding_a_lone_surrogate_pages_and_resumes(
         printed({"Things": ["a", "b"], "NextToken": resume}),
         "",
     ), run.describe()
+    # Resumed, it asks for that page again and skips what was printed.
     run = await paged.run(
-        ["zjson", "list-things", "--starting-token", resume], replies=pages[1:]
+        ["zjson", "list-things", "--starting-token", resume],
+        replies=[{"Things": ["b", "c"]}],
     )
     assert params(run) == [{"NextToken": ESCAPABLE}], run.describe()
     assert run.stdout == printed({"Things": ["c"]}), run.describe()
