@@ -5,7 +5,7 @@ use super::{ParseOptions, Protocol, Serialized};
 use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse, Method};
 use crate::xml::{self, Element};
-use model::pyrepr::{float_from_text, int_from_text, py_repr, py_str};
+use model::pyrepr::{float_from_text, int_from_text, py_repr, py_str, py_str_text};
 use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
 use model::value::{Key, Map, Value};
 
@@ -34,8 +34,8 @@ impl Protocol for Query {
             .as_deref()
             .ok_or_else(|| SerializeError::new("'apiVersion'"))?;
         let mut form = Form::default();
-        form.set("Action", operation.name.to_string());
-        form.set("Version", version.to_owned());
+        form.set("Action", operation.name.to_string().into_bytes());
+        form.set("Version", version.as_bytes().to_vec());
         if let Some(shape) = operation.input {
             form.value(model, input, shape, "")?;
         }
@@ -49,7 +49,7 @@ impl Protocol for Query {
             path: "/".into(),
             query: String::new(),
             headers,
-            body: form.encoded().into_bytes(),
+            body: form.encoded()?.into_bytes(),
             host_prefix: common::host_prefix(model, operation, input)?,
         })
     }
@@ -82,12 +82,14 @@ pub(super) fn method(operation: &Operation) -> Result<Method, SerializeError> {
 }
 
 /// The form's fields in insertion order; setting a field again replaces
-/// its value in place, as the serializer's dict does.
+/// its value in place, as the serializer's dict does. A value is a `str` in
+/// `pytext::wtf8`'s encoding, which may hold a lone surrogate until
+/// [`Form::encoded`] fails on it.
 #[derive(Default)]
-struct Form(Vec<(String, String)>);
+struct Form(Vec<(String, Vec<u8>)>);
 
 impl Form {
-    fn set(&mut self, name: &str, value: String) {
+    fn set(&mut self, name: &str, value: Vec<u8>) {
         match self.0.iter_mut().find(|(other, _)| other == name) {
             Some((_, old)) => *old = value,
             None => self.0.push((name.to_owned(), value)),
@@ -96,13 +98,22 @@ impl Form {
 
     /// The body on the wire: `AWSRequestPreparer._prepare_body`'s
     /// `urlencode(params, doseq=True)` of the serializer's dict.
-    fn encoded(&self) -> String {
-        let pairs: Vec<String> = self
-            .0
-            .iter()
-            .map(|(name, value)| format!("{}={}", quote_plus(name), quote_plus(value)))
-            .collect();
-        pairs.join("&")
+    ///
+    /// # Errors
+    /// `quote_plus`'s `UnicodeEncodeError` for a value with a lone
+    /// surrogate, its position within that value.
+    fn encoded(&self) -> Result<String, SerializeError> {
+        let mut pairs = Vec::with_capacity(self.0.len());
+        for (name, value) in &self.0 {
+            let value = pytext::codec::encode_utf8(value, pytext::codec::Errors::Strict)
+                .map_err(|error| SerializeError::new(error.to_string()))?;
+            pairs.push(format!(
+                "{}={}",
+                quote_plus(name.as_bytes()),
+                quote_plus(&value)
+            ));
+        }
+        Ok(pairs.join("&"))
     }
 
     /// `QuerySerializer._serialize` of `value` at `prefix`.
@@ -121,7 +132,7 @@ impl Form {
                 self.map(model, value, shape, (*key, *item), prefix)
             }
             ShapeKind::Blob => {
-                self.set(prefix, common::base64_in(value)?);
+                self.set(prefix, common::base64_in(value)?.into_bytes());
                 Ok(())
             }
             ShapeKind::Timestamp => {
@@ -130,7 +141,10 @@ impl Form {
                     .timestamp_format
                     .as_deref()
                     .unwrap_or("iso8601");
-                self.set(prefix, py_str(&common::timestamp_out(value, format)?));
+                self.set(
+                    prefix,
+                    py_str(&common::timestamp_out(value, format)?).into_bytes(),
+                );
                 Ok(())
             }
             ShapeKind::Boolean => {
@@ -139,15 +153,16 @@ impl Form {
                 } else {
                     "false"
                 };
-                self.set(prefix, text.into());
+                self.set(prefix, text.as_bytes().to_vec());
                 Ok(())
             }
             ShapeKind::Float | ShapeKind::Double => {
-                self.set(prefix, py_str(&common::special_float(value)));
+                self.set(prefix, py_str(&common::special_float(value)).into_bytes());
                 Ok(())
             }
             _ => {
-                self.set(prefix, py_str(value));
+                // `str(value)`, a lone surrogate kept for `urlencode`.
+                self.set(prefix, py_str_text(value).into_owned());
                 Ok(())
             }
         }
@@ -196,7 +211,7 @@ impl Form {
             _ => return Err(SerializeError::new("a list is required")),
         };
         if items.is_empty() {
-            self.set(prefix, String::new());
+            self.set(prefix, Vec::new());
             return Ok(());
         }
         let member_name = model.shape(member).traits.name.as_deref();
@@ -267,11 +282,12 @@ impl Form {
     }
 }
 
-/// `urllib.parse.quote_plus` with no extra safe characters: UTF-8, a
-/// space as `+`, and every byte but letters, digits and `-_.~` as `%XX`.
-fn quote_plus(text: &str) -> String {
+/// `urllib.parse.quote_plus` with no extra safe characters, of text
+/// already encoded as UTF-8: a space as `+`, and every byte but letters,
+/// digits and `-_.~` as `%XX`.
+fn quote_plus(text: &[u8]) -> String {
     let mut encoded = String::with_capacity(text.len());
-    for byte in text.bytes() {
+    for &byte in text {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
             encoded.push(char::from(byte));
         } else if byte == b' ' {
@@ -472,7 +488,7 @@ impl Reader<'_, '_> {
                 .ok_or_else(|| invalid("could not convert string to float")),
             ShapeKind::Integer | ShapeKind::Long => int_from_text(text).map_err(ParseError::new),
             ShapeKind::Timestamp => (self.options.timestamp)(&Value::String(text.into())),
-            ShapeKind::Blob => (self.options.blob)(text),
+            ShapeKind::Blob => (self.options.blob)(&Value::String(text.into())),
             _ => Ok(Value::String(text.into())),
         }
     }

@@ -7,7 +7,7 @@ use crate::http::{Headers, HttpResponse};
 use crate::protocol::ParseOptions;
 use crate::protocol::common::{Family, short_type};
 use crate::protocol::json::{Json, Reader, body_json, error_code};
-use model::pyrepr::{float_from_text, int_from_text, py_repr};
+use model::pyrepr::{float_from_py_text, int_from_py_text, int_from_text, py_repr, py_str_text};
 use model::shapes::{Model, ShapeId, ShapeKind};
 use model::value::{Map, Value};
 
@@ -113,6 +113,8 @@ fn ensure_boolean(value: &Value) -> bool {
     match value {
         Value::Bool(flag) => *flag,
         Value::String(text) => text.to_lowercase() == "true",
+        // `'\ud800'.lower()` keeps the surrogate, so it is never `'true'`.
+        Value::PyString(_) => false,
         _ => false,
     }
 }
@@ -127,6 +129,7 @@ fn int(value: &Value) -> Result<Value, ParseError> {
             crate::python::int_of_float(*number).map_err(|error| ParseError::new(error.to_string()))
         }
         Value::String(text) => int_from_text(text).map_err(ParseError::new),
+        Value::PyString(text) => int_from_py_text(text.as_bytes()).map_err(ParseError::new),
         other => Err(ParseError::new(format!(
             "int() argument must be a string, a bytes-like object or a real number, not '{}'",
             short_type(other)
@@ -146,12 +149,13 @@ fn float(value: &Value) -> Result<Value, ParseError> {
             .ok()
             .filter(|number| number.is_finite())
             .ok_or_else(|| ParseError::new("int too large to convert to float"))?,
-        Value::String(text) => float_from_text(text).ok_or_else(|| {
-            ParseError::new(format!(
-                "could not convert string to float: {}",
-                py_repr(value)
-            ))
-        })?,
+        Value::String(_) | Value::PyString(_) => float_from_py_text(&py_str_text(value))
+            .ok_or_else(|| {
+                ParseError::new(format!(
+                    "could not convert string to float: {}",
+                    py_repr(value)
+                ))
+            })?,
         other => {
             return Err(ParseError::new(format!(
                 "float() argument must be a string or a real number, not '{}'",
@@ -176,7 +180,9 @@ fn injected_code(body: &Value, headers: &Headers) -> Option<Value> {
     };
     match code {
         Value::Null => None,
-        Value::String(text) => Some(Value::String(error_code(&text))),
+        Value::String(_) | Value::PyString(_) => {
+            Some(error_code(&model::pyrepr::py_str_text(&code)))
+        }
         other => Some(other),
     }
 }

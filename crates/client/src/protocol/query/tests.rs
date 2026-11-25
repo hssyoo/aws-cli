@@ -150,3 +150,28 @@ fn malformed_xml_is_a_response_parser_error() -> Result<(), ParseError> {
     assert_eq!(error.map(|error| error.message).as_deref(), Some(expected));
     Ok(())
 }
+
+/// `urlencode`'s `quote_plus` encodes each value as strict UTF-8, which a
+/// lone surrogate fails at its position within the value.
+#[test]
+fn a_lone_surrogate_fails_the_form_as_urlencode_does() -> Result<(), Box<dyn std::error::Error>> {
+    let model = model()?;
+    let mut fields = Map::new();
+    fields.insert(
+        "Text".into(),
+        Value::from_text(model::value::Wtf8Buf::from_code_points([
+            0x61, 0x62, 0xDC80,
+        ])),
+    );
+    let failed = Query
+        .serialize(&model, go(&model), &Value::Map(fields))
+        .err();
+    assert_eq!(
+        failed.map(|error| error.message),
+        Some(
+            "'utf-8' codec can't encode character '\\udc80' in position 2: surrogates not allowed"
+                .to_owned()
+        )
+    );
+    Ok(())
+}

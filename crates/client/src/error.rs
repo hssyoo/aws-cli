@@ -54,7 +54,9 @@ impl ServiceError {
 }
 
 impl ServiceError {
-    /// `Error.Code`, which botocore prints as `Unknown` when absent.
+    /// `Error.Code` when it is Rust text, for comparing with a code: one
+    /// holding a lone surrogate matches none. What prints is
+    /// [`Self::field_text`]'s.
     pub fn code(&self) -> Option<&str> {
         self.text("Code")
     }
@@ -62,6 +64,16 @@ impl ServiceError {
     /// `Error.Message`, likewise.
     pub fn message(&self) -> Option<&str> {
         self.text("Message")
+    }
+
+    /// `str()` of `Error[key]` as `ClientError`'s message formats it, in
+    /// `pytext::wtf8`'s encoding (a lone surrogate kept), `Unknown` when
+    /// absent.
+    pub fn field_text(&self, key: &str) -> std::borrow::Cow<'_, [u8]> {
+        self.error.get(key).map_or(
+            std::borrow::Cow::Borrowed(b"Unknown".as_slice()),
+            model::pyrepr::py_str_text,
+        )
     }
 
     fn text(&self, key: &str) -> Option<&str> {
@@ -77,13 +89,15 @@ impl std::fmt::Display for ServiceError {
     /// attempts ran out.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = cli_core::botocore_error::client_error(
-            self.code().unwrap_or("Unknown").as_bytes(),
+            &self.field_text("Code"),
             self.operation.as_bytes(),
             self.max_attempts_reached
                 .then_some(u64::from(self.retry_attempts)),
-            self.message().unwrap_or("Unknown").as_bytes(),
+            &self.field_text("Message"),
         );
-        f.write_str(&String::from_utf8_lossy(&text))
+        // Rust text, a lone surrogate as stderr's `backslashreplace`
+        // writes it.
+        f.write_str(&pytext::codec::backslashreplace(&text))
     }
 }
 

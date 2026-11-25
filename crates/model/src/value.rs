@@ -174,6 +174,14 @@ impl Map {
             .map(|(_, v)| v)
     }
 
+    /// [`Self::get_mut`] of any key.
+    pub fn get_mut_key(&mut self, key: &Key) -> Option<&mut Value> {
+        self.entries
+            .iter_mut()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v)
+    }
+
     pub fn contains_key(&self, key: &str) -> bool {
         self.get(key).is_some()
     }

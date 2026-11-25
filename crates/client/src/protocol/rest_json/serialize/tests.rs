@@ -401,3 +401,28 @@ fn values_a_location_cannot_hold_are_refused() -> TestResult {
     );
     Ok(())
 }
+
+/// `percent_encode`'s strict `.encode('utf-8')` fails on a lone surrogate,
+/// at its position within the value, in a label and a query string alike;
+/// a header value holding one is the native client's own limit.
+#[test]
+fn a_lone_surrogate_fails_percent_encoding_as_python_s() -> TestResult {
+    let lone = Value::from_text(model::value::Wtf8Buf::from_code_points([0x61, 0xD800]));
+    let expected =
+        "'utf-8' codec can't encode character '\\ud800' in position 1: surrogates not allowed";
+    assert_eq!(
+        refused("Query", params(vec![("Text", lone.clone())]))?,
+        expected
+    );
+    let label = params(vec![
+        ("Name", lone.clone()),
+        ("Key", text("k")),
+        ("When", Value::Integer(1)),
+        ("Flag", Value::Bool(true)),
+        ("Data", Value::Blob(b"d".to_vec())),
+    ]);
+    assert_eq!(refused("Labels", label)?, expected);
+    let header = refused("Heads", params(vec![("Names", Value::List(vec![lone]))]))?;
+    assert!(header.starts_with("native client limit: "), "{header}");
+    Ok(())
+}

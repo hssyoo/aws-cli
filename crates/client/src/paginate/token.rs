@@ -139,11 +139,17 @@ fn decode_path(token: &mut Value, path: &Value) -> Result<(), DecodeError> {
     let encoded = steps
         .iter()
         .try_fold(token.clone(), |data, step| item(&data, step))?;
-    let Value::String(text) = &encoded else {
-        return Err(DecodeError::Raised(format!(
-            "'{}' object has no attribute 'encode'",
-            type_name(&encoded)
-        )));
+    let text = match &encoded {
+        Value::String(text) => text,
+        // `encoded.encode('utf-8')`'s `UnicodeEncodeError` is a
+        // `ValueError`, which the old token form is tried after.
+        Value::PyString(_) => return Err(DecodeError::Deprecated),
+        _ => {
+            return Err(DecodeError::Raised(format!(
+                "'{}' object has no attribute 'encode'",
+                type_name(&encoded)
+            )));
+        }
     };
     let bytes = pytext::base64::decode(text).map_err(|_| DecodeError::Deprecated)?;
     // `path[:-1]` of a dict looks the slice up, a `KeyError`.
@@ -158,8 +164,8 @@ fn decode_path(token: &mut Value, path: &Value) -> Result<(), DecodeError> {
         .try_fold(token, |data, step| item_mut(data, step))?;
     match container {
         Value::Map(map) => {
-            if let Value::String(key) = last {
-                map.insert(key.clone(), Value::Blob(bytes));
+            if let Ok(key) = map_key(last) {
+                map.insert_key(key, Value::Blob(bytes));
             }
         }
         Value::List(items) => {
@@ -176,7 +182,7 @@ fn item(data: &Value, step: &Value) -> Result<Value, DecodeError> {
     match data {
         Value::Map(map) => {
             let key = map_key(step)?;
-            map.get(key)
+            map.get_key(&key)
                 .cloned()
                 .ok_or_else(|| DecodeError::Raised(py_repr(step)))
         }
@@ -186,6 +192,11 @@ fn item(data: &Value, step: &Value) -> Result<Value, DecodeError> {
             let character = text.chars().nth(index).map(String::from);
             Ok(Value::String(character.unwrap_or_default()))
         }
+        Value::PyString(text) => {
+            let points: Vec<u32> = text.code_points().collect();
+            let index = sequence_index(points.len(), step, "string")?;
+            Ok(Value::from_text(Wtf8Buf::from_code_points([points[index]])))
+        }
         _ => Err(DecodeError::Deprecated),
     }
 }
@@ -194,7 +205,7 @@ fn item(data: &Value, step: &Value) -> Result<Value, DecodeError> {
 fn item_mut<'v>(data: &'v mut Value, step: &Value) -> Result<&'v mut Value, DecodeError> {
     match data {
         Value::Map(map) => map_key(step).and_then(|key| {
-            map.get_mut(key)
+            map.get_mut_key(&key)
                 .ok_or_else(|| DecodeError::Raised(py_repr(step)))
         }),
         Value::List(items) => {
@@ -205,11 +216,13 @@ fn item_mut<'v>(data: &'v mut Value, step: &Value) -> Result<&'v mut Value, Deco
     }
 }
 
-/// The key `step` looks up in a dict of JSON's string keys: any other
-/// hashable one is a `KeyError`, an unhashable one a `TypeError`.
-fn map_key(step: &Value) -> Result<&str, DecodeError> {
+/// The key `step` looks up in a dict of JSON's string keys, a lone
+/// surrogate's included: any other hashable one is a `KeyError`, an
+/// unhashable one a `TypeError`.
+fn map_key(step: &Value) -> Result<Key, DecodeError> {
     match step {
-        Value::String(key) => Ok(key),
+        Value::String(key) => Ok(Key::Str(key.clone())),
+        Value::PyString(key) => Ok(Key::Py(key.clone())),
         Value::List(_) | Value::Map(_) => Err(DecodeError::Deprecated),
         other => Err(DecodeError::Raised(py_repr(other))),
     }

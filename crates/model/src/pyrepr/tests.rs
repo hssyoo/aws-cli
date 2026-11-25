@@ -189,3 +189,24 @@ fn int_from_text_reads_what_python_int_reads() {
         )
     );
 }
+
+/// `int()`'s `ValueError` names the text by its repr cut to 200 characters
+/// (`%.200R`, as CPython 3.14.8 cuts it), a lone surrogate escaped.
+#[test]
+fn an_int_literal_error_names_python_s_repr() {
+    assert_eq!(
+        int_from_text(&"x".repeat(300)),
+        Err(format!(
+            "invalid literal for int() with base 10: '{}",
+            "x".repeat(199)
+        ))
+    );
+    let mut lone = b"a".to_vec();
+    pytext::wtf8::push_code_point(&mut lone, 0xDC80);
+    assert_eq!(
+        int_from_py_text(&lone),
+        Err("invalid literal for int() with base 10: 'a\\udc80'".into())
+    );
+    assert_eq!(int_from_py_text(b"12"), Ok(Value::Integer(12)));
+    assert_eq!(float_from_py_text(&lone), None);
+}

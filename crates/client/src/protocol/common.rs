@@ -252,6 +252,8 @@ pub(super) fn instant(value: &Value) -> Option<Timestamp> {
             Some(seconds) => Timestamp::from_epoch_float(seconds),
             None => written(text),
         },
+        // Neither a number nor a date: a surrogate is no part of either.
+        Value::PyString(_) => None,
         _ => None,
     }
 }
@@ -264,11 +266,21 @@ fn written(text: &str) -> Option<Timestamp> {
     Timestamp::from_unix_micros(local.unix_micros().checked_sub(offset)?)
 }
 
-/// botocore's default `blob_parser`, `base64.b64decode`.
-pub(super) fn decode_blob(text: &str) -> Result<Value, ParseError> {
-    pytext::base64::decode(text)
-        .map(Value::Blob)
-        .map_err(ParseError::new)
+/// botocore's default `blob_parser`, `base64.b64decode` of a `str`, which
+/// must be ASCII (`_bytes_from_decode_data`): a lone surrogate is not.
+pub(super) fn decode_blob(value: &Value) -> Result<Value, ParseError> {
+    match value {
+        Value::String(text) if text.is_ascii() => pytext::base64::decode(text)
+            .map(Value::Blob)
+            .map_err(ParseError::new),
+        Value::String(_) | Value::PyString(_) => Err(ParseError::new(
+            "string argument should contain only ASCII characters",
+        )),
+        other => Err(ParseError::new(format!(
+            "argument should be a bytes-like object or ASCII string, not '{}'",
+            short_type(other)
+        ))),
+    }
 }
 
 /// `Serializer._convert_timestamp_to_str`: the value as an instant, then in
@@ -291,6 +303,11 @@ pub(super) fn timestamp_out(value: &Value, format: &str) -> Result<Value, Serial
 pub(super) fn base64_in(value: &Value) -> Result<String, SerializeError> {
     match value {
         Value::String(text) => Ok(pytext::base64::encode(text.as_bytes())),
+        Value::PyString(text) => {
+            pytext::codec::encode_utf8(text.as_bytes(), pytext::codec::Errors::Strict)
+                .map(|bytes| pytext::base64::encode(&bytes))
+                .map_err(|error| SerializeError::new(error.to_string()))
+        }
         Value::Blob(bytes) => Ok(pytext::base64::encode(bytes)),
         other => Err(SerializeError::new(format!(
             "a bytes-like object is required, not '{}'",

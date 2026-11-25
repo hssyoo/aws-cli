@@ -534,6 +534,107 @@ async def test_a_bad_starting_token_fails_before_any_request(
     assert (run.stdout, run.stderr) == ("", stderr), run.describe()
 
 
+# A lone surrogate in a token: json.loads keeps it in the str, so the
+# token is sent, or fails where Python's encoders fail on it.
+
+LONE: Final = "\ud800"
+ESCAPABLE: Final = "\udc80"
+
+
+async def test_a_starting_token_holding_a_lone_surrogate_is_sent(
+    paged: ApiSession,
+) -> None:
+    run = await paged.run(
+        ["zjson", "list-things", "--starting-token", token(NextToken=LONE)],
+        replies=THINGS[2:],
+    )
+    assert params(run) == [{"NextToken": LONE}], run.describe()
+    assert wire(run.calls[0])[1] == b'{"NextToken": "\\ud800"}', run.describe()
+    assert (run.stdout, run.stderr) == (printed({"Things": ["d", "e"]}), "")
+
+
+async def test_a_starting_token_key_holding_a_lone_surrogate_is_unknown(
+    paged: ApiSession,
+) -> None:
+    # stderr writes the surrogate as its backslash escape.
+    run = await paged.run(
+        ["zjson", "list-things", "--starting-token", token(**{LONE: "x"})],
+        replies=[],
+        expected_rc=252,
+    )
+    assert run.calls == ()
+    assert (run.stdout, run.stderr) == (
+        "",
+        "\naws: [ERROR]: An error occurred (ParamValidation): Parameter "
+        'validation failed:\nUnknown parameter in input: "\\ud800", must be '
+        "one of: MaxResults, NextToken\n",
+    ), run.describe()
+
+
+# A form body and a query string encode their text as strict UTF-8
+# (`urlencode`, `percent_encode`), which a lone surrogate fails, before any
+# request is sent.
+ENCODE_FAILURES: Final = {
+    "query-form": ("zquery describe-widgets", "Marker"),
+    "rest-json-query-string": ("zrestjson list-functions", "Marker"),
+}
+
+
+@pytest.mark.parametrize("case", ENCODE_FAILURES)
+async def test_a_starting_token_python_cannot_encode_fails_before_sending(
+    paged: ApiSession, case: str
+) -> None:
+    command, name = ENCODE_FAILURES[case]
+    run = await paged.run(
+        [*command.split(), "--starting-token", token(**{name: "a" + LONE})],
+        replies=[],
+        expected_rc=255,
+    )
+    assert run.calls == ()
+    assert (run.stdout, run.stderr) == (
+        "",
+        "\naws: [ERROR]: 'utf-8' codec can't encode character '\\ud800' in "
+        "position 1: surrogates not allowed\n",
+    ), run.describe()
+
+
+async def test_a_response_token_holding_a_lone_surrogate_pages_and_resumes(
+    paged: ApiSession,
+) -> None:
+    pages = [
+        {"Things": ["a"], "NextToken": ESCAPABLE},
+        {"Things": ["b", "c"], "NextToken": "t2"},
+    ]
+    run = await paged.run("zjson list-things --max-items 2", replies=pages)
+    assert params(run) == [{}, {"NextToken": ESCAPABLE}], run.describe()
+    # The printed token holds it as json.dumps escapes it.
+    resume = token(NextToken=ESCAPABLE, boto_truncate_amount=1)
+    assert (run.stdout, run.stderr) == (
+        printed({"Things": ["a", "b"], "NextToken": resume}),
+        "",
+    ), run.describe()
+    run = await paged.run(
+        ["zjson", "list-things", "--starting-token", resume], replies=pages[1:]
+    )
+    assert params(run) == [{"NextToken": ESCAPABLE}], run.describe()
+    assert run.stdout == printed({"Things": ["c"]}), run.describe()
+
+
+async def test_the_same_lone_surrogate_token_twice_stops_the_pages(
+    paged: ApiSession,
+) -> None:
+    pages = [
+        {"Things": ["a"], "NextToken": ESCAPABLE},
+        {"Things": ["b"], "NextToken": ESCAPABLE},
+    ]
+    run = await paged.run("zjson list-things", replies=pages, expected_rc=255)
+    assert (run.stdout, run.stderr) == (
+        "",
+        "\naws: [ERROR]: Error during pagination: The same next token was "
+        "received twice: {'NextToken': '\\udc80'}\n",
+    ), run.describe()
+
+
 # --page-size.
 
 # The command and each request's path and body: the limit key is set

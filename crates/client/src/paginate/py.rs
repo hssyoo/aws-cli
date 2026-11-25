@@ -3,7 +3,7 @@
 //! slicing, `+`, `==` and `int()`. `Err` holds the text.
 use crate::error::PaginationError;
 use crate::python::FloatToInt;
-use model::value::{Map, Value};
+use model::value::{Map, Value, Wtf8Buf};
 
 /// The type's name as CPython's messages print it (`tp_name`).
 pub(super) use model::pyrepr::py_type_name as type_name;
@@ -20,6 +20,7 @@ pub(super) fn len(value: &Value) -> Result<i128, String> {
         Value::Map(map) => map.len(),
         Value::Blob(bytes) => bytes.len(),
         Value::String(text) => text.chars().count(),
+        Value::PyString(text) => text.len(),
         other => {
             return Err(format!(
                 "object of type '{}' has no len()",
@@ -76,12 +77,24 @@ pub(super) fn slice_stop(stop: i128, len: usize) -> usize {
     bound(stop, len)
 }
 
+/// The code points of a `str` holding a lone surrogate, which a slice of
+/// it counts.
+fn points(text: &Wtf8Buf) -> Vec<u32> {
+    text.code_points().collect()
+}
+
 /// `data[start:]` of a `str`; anything else is itself.
 pub(super) fn slice_from(data: &Value, start: &Value) -> Result<Value, String> {
     Ok(match data {
         Value::String(text) => {
             let start = slice_start(start, text.chars().count())?;
             Value::String(text.chars().skip(start).collect())
+        }
+        // A slice without the surrogates is a `String` again.
+        Value::PyString(text) => {
+            let points = points(text);
+            let start = slice_start(start, points.len())?;
+            Value::from_text(Wtf8Buf::from_code_points(points[start..].iter().copied()))
         }
         other => other.clone(),
     })
@@ -93,6 +106,11 @@ pub(super) fn slice_to(data: &Value, stop: i128) -> Result<Value, String> {
         Value::String(text) => {
             let end = slice_stop(stop, text.chars().count());
             Value::String(text.chars().take(end).collect())
+        }
+        Value::PyString(text) => {
+            let points = points(text);
+            let end = slice_stop(stop, points.len());
+            Value::from_text(Wtf8Buf::from_code_points(points[..end].iter().copied()))
         }
         Value::Blob(bytes) => Value::Blob(bytes[..slice_stop(stop, bytes.len())].to_vec()),
         other => {
@@ -139,7 +157,14 @@ pub(super) fn add(left: &Value, right: &Value) -> Result<Value, String> {
     }
     match (left, right) {
         (Value::String(left), Value::String(right)) => Ok(Value::String(format!("{left}{right}"))),
-        (Value::String(_) | Value::List(_), other) => Err(format!(
+        // Joined code point by code point: a high surrogate before a low
+        // one stays two, as in Python.
+        (Value::String(_) | Value::PyString(_), Value::String(_) | Value::PyString(_)) => {
+            let mut joined = model::pyrepr::py_str_text(left).into_owned();
+            joined.extend_from_slice(&model::pyrepr::py_str_text(right));
+            Ok(Value::from_text(Wtf8Buf::from_bytes(joined)))
+        }
+        (Value::String(_) | Value::PyString(_) | Value::List(_), other) => Err(format!(
             "can only concatenate {} (not \"{}\") to {}",
             type_name(left),
             type_name(other),
@@ -163,6 +188,8 @@ pub(super) fn eq(left: &Value, right: &Value) -> bool {
             left.len() == right.len() && left.iter().zip(right).all(|(l, r)| eq(l, r))
         }
         (Value::Map(left), Value::Map(right)) => map_eq(left, right),
+        // A `PyString` holds a surrogate and a `String` none, so the two
+        // are never equal, as their `str`s are not.
         _ => left == right,
     }
 }
@@ -185,6 +212,9 @@ pub(super) fn int(value: &Value) -> Result<Value, PaginationError> {
         Value::Integer(_) | Value::BigInteger(_) => Ok(value.clone()),
         Value::Bool(flag) => Ok(Value::Integer(i64::from(*flag))),
         Value::String(text) => model::pyrepr::int_from_text(text).map_err(PaginationError::Value),
+        Value::PyString(text) => {
+            model::pyrepr::int_from_py_text(text.as_bytes()).map_err(PaginationError::Value)
+        }
         Value::Float(number) => crate::python::int_of_float(*number).map_err(|error| match error {
             FloatToInt::NaN => PaginationError::Value(error.to_string()),
             FloatToInt::Infinite => PaginationError::Other(error.to_string()),
@@ -200,3 +230,6 @@ pub(super) fn int(value: &Value) -> Result<Value, PaginationError> {
 pub(super) fn int_number(value: &Value) -> i128 {
     int_of(value).unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests;

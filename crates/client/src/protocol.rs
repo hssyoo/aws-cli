@@ -28,8 +28,9 @@ pub struct Serialized {
 /// botocore's `timestamp_parser`: a timestamp member's wire value (XML text
 /// or a JSON number or string) to the parsed value.
 pub type TimestampHandler<'a> = &'a (dyn Fn(&Value) -> Result<Value, ParseError> + Sync);
-/// botocore's `blob_parser`: a blob member's base64 text to the parsed value.
-pub type BlobHandler<'a> = &'a (dyn Fn(&str) -> Result<Value, ParseError> + Sync);
+/// botocore's `blob_parser`: a blob member's `str` (a [`Value::String`], or
+/// a [`Value::PyString`] from a JSON body) to the parsed value.
+pub type BlobHandler<'a> = &'a (dyn Fn(&Value) -> Result<Value, ParseError> + Sync);
 
 /// The parser defaults `ResponseParserFactory.set_parser_defaults` sets.
 #[derive(Clone, Copy)]
@@ -57,7 +58,8 @@ pub struct ParseHooks {
 pub type OwnedTimestampHandler =
     std::sync::Arc<dyn Fn(&Value) -> Result<Value, ParseError> + Send + Sync>;
 /// A [`BlobHandler`] a client owns.
-pub type OwnedBlobHandler = std::sync::Arc<dyn Fn(&str) -> Result<Value, ParseError> + Send + Sync>;
+pub type OwnedBlobHandler =
+    std::sync::Arc<dyn Fn(&Value) -> Result<Value, ParseError> + Send + Sync>;
 
 impl ParseHooks {
     /// botocore's own handlers ([`ParseOptions::BOTOCORE`], the one place

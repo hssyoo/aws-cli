@@ -395,7 +395,7 @@ fn cli_parse_hooks(timestamps: TimestampParser) -> client::protocol::ParseHooks 
                 .parse(wire)
                 .map_err(|error| ParseError::new(format!("{error:?}")))
         }),
-        blob: Arc::new(|text: &str| Ok(Value::String(text.to_owned()))),
+        blob: Arc::new(|text: &Value| Ok(text.clone())),
     }
 }
 

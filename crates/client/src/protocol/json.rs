@@ -205,7 +205,7 @@ impl Reader<'_, '_> {
             ShapeKind::Map { key, value: item } => self.map((*key, *item), value),
             ShapeKind::List { member } => self.list(*member, value),
             ShapeKind::Blob => match value {
-                Value::String(text) => (self.options.blob)(text),
+                Value::String(_) | Value::PyString(_) => (self.options.blob)(value),
                 other => Err(ParseError::new(format!(
                     "argument should be a bytes-like object or ASCII string, not '{}'",
                     common::short_type(other)
@@ -396,7 +396,10 @@ impl Family for Json {
         let code = code
             .or_else(|| body.get("__type").cloned())
             .unwrap_or_else(|| Value::String(response.status.to_string()));
-        error.insert("Code".into(), Value::String(error_code(&py_str(&code))));
+        error.insert(
+            "Code".into(),
+            error_code(&model::pyrepr::py_str_text(&code)),
+        );
         let mut parsed = Map::new();
         parsed.insert("Error".into(), Value::Map(error));
         parsed.insert("ResponseMetadata".into(), Value::Map(Map::new()));
@@ -424,12 +427,16 @@ impl Family for Json {
     }
 }
 
-/// A code without what follows a `:` and what precedes the last `#`.
-pub(super) fn error_code(code: &str) -> String {
-    let code = code.split_once(':').map_or(code, |(head, _)| head);
-    code.rsplit_once('#')
-        .map_or(code, |(_, tail)| tail)
-        .to_owned()
+/// A code without what follows a `:` and what precedes the last `#`, of
+/// a `str` in `pytext::wtf8`'s encoding, the `str` it leaves: a lone
+/// surrogate kept. `:` and `#` are ASCII, so no cut splits a code point.
+pub(super) fn error_code(code: &[u8]) -> Value {
+    let code = code.split(|byte| *byte == b':').next().unwrap_or(code);
+    let code = code
+        .iter()
+        .rposition(|byte| *byte == b'#')
+        .map_or(code, |hash| &code[hash + 1..]);
+    Value::from_text(model::value::Wtf8Buf::from_bytes(code.to_vec()))
 }
 
 /// `shape.event_stream_name`: a member marked `eventstream`.
