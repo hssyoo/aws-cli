@@ -2,6 +2,7 @@
 //! shape an operation reaches, by the protocol botocore resolves.
 use super::census::{Features, Ignored};
 use super::forms::{add, entries, expression_forms, json_kind, strings};
+use super::observe::kebab;
 use serde_json::{Map, Value as Json};
 use std::collections::BTreeSet;
 
@@ -81,8 +82,40 @@ pub(crate) fn resolved_protocol(metadata: Option<&Json>) -> &str {
     resolved.copied().unwrap_or("unsupported")
 }
 
+/// Which part of a service a call reaches: one operation (`None`: all),
+/// whether the call gets a success reply (output features) and an error
+/// reply (`errors` and `err` features), and the CLI arguments it passes,
+/// which select the input members it sends (`None`: all).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Scope<'r> {
+    pub(crate) only: Option<&'r str>,
+    pub(crate) success: bool,
+    pub(crate) error: bool,
+    pub(crate) argv: Option<&'r [String]>,
+}
+
+/// Every operation, both reply kinds, every member.
+pub(crate) const ALL: Scope<'static> = Scope {
+    only: None,
+    success: true,
+    error: true,
+    argv: None,
+};
+
 /// The features of a `service-2.json`.
 pub(crate) fn service_features(json: &Json, ignored: &Ignored, out: &mut Features) {
+    service_features_in(json, ignored, ALL, out);
+}
+
+/// The features of a `service-2.json` a call in `scope` reaches: the
+/// service's own, and its operation's.
+pub(crate) fn service_features_in(
+    json: &Json,
+    ignored: &Ignored,
+    scope: Scope<'_>,
+    out: &mut Features,
+) {
+    let only = scope.only;
     for (key, _) in entries(Some(json)) {
         let spine = ["metadata", "operations", "shapes"].contains(&&**key);
         if !spine && !ignored.document.contains(key) {
@@ -97,9 +130,11 @@ pub(crate) fn service_features(json: &Json, ignored: &Ignored, out: &mut Feature
         shapes: json.get("shapes").and_then(Json::as_object),
         ignored,
         seen: BTreeSet::new(),
+        scope,
         out,
     };
-    for (_, operation) in entries(json.get("operations")) {
+    let operations = entries(json.get("operations"));
+    for (_, operation) in operations.filter(|(name, _)| only.is_none_or(|only| only == *name)) {
         walk.operation(operation);
     }
 }
@@ -151,15 +186,16 @@ impl Direction {
 
 /// A walk of one service's operations and the shapes they reach; a shape
 /// no operation reaches is no feature, as botocore never reads it.
-struct Walk<'a, 'o> {
+struct Walk<'a, 's, 'o> {
     protocol: &'a str,
     shapes: Option<&'a Map<String, Json>>,
     ignored: &'a Ignored,
     seen: BTreeSet<(&'a str, Direction)>,
+    scope: Scope<'s>,
     out: &'o mut Features,
 }
 
-impl<'a> Walk<'a, '_> {
+impl<'a> Walk<'a, '_, '_> {
     fn add(&mut self, parts: &[&str]) {
         add(self.out, parts);
     }
@@ -167,7 +203,9 @@ impl<'a> Walk<'a, '_> {
     fn operation(&mut self, operation: &'a Json) {
         let protocol = self.protocol;
         for (key, value) in entries(Some(operation)) {
-            if self.ignored.operation.contains(key) || key == "name" {
+            let unreached =
+                (key == "output" && !self.scope.success) || (key == "errors" && !self.scope.error);
+            if self.ignored.operation.contains(key) || key == "name" || unreached {
                 continue;
             }
             if CROSSED.contains(&&**key) {
@@ -265,7 +303,7 @@ impl<'a> Walk<'a, '_> {
                 self.add(&["op", protocol, which, key]);
             }
         }
-        self.shape(reference, direction);
+        self.shape_sent(reference, direction, direction == Direction::In);
     }
 
     fn target(&self, reference: &Json) -> Option<&'a Map<String, Json>> {
@@ -281,6 +319,26 @@ impl<'a> Walk<'a, '_> {
 
     /// The shape a reference names, once per direction, and its members.
     fn shape(&mut self, reference: &'a Json, direction: Direction) {
+        self.shape_sent(reference, direction, false);
+    }
+
+    /// Whether the call sends top-level input member `name`: it passes
+    /// `--<name>` (or `--no-<name>`), or the CLI fills it as a token.
+    fn sent(&self, name: &str, member: &Json) -> bool {
+        let Some(argv) = self.scope.argv else {
+            return true;
+        };
+        let flag = kebab(name);
+        let passed = |argument: &String| {
+            let argument = argument.strip_prefix("--").unwrap_or_default();
+            argument == flag || argument.strip_prefix("no-") == Some(flag.as_str())
+        };
+        member.get("idempotencyToken").is_some() || argv.iter().any(passed)
+    }
+
+    /// [`Self::shape`]; for the operation's input (`top`), only the members
+    /// the call sends.
+    fn shape_sent(&mut self, reference: &'a Json, direction: Direction, top: bool) {
         let Some(name) = reference.get("shape").and_then(Json::as_str) else {
             return;
         };
@@ -298,7 +356,10 @@ impl<'a> Walk<'a, '_> {
                 self.classified(&prefix, kind, key, value);
             }
         }
-        for (_, member) in entries(shape.get("members")) {
+        for (name, member) in entries(shape.get("members")) {
+            if top && !self.sent(name, member) {
+                continue;
+            }
             let location = member.get("location").and_then(Json::as_str);
             self.member(member, location.unwrap_or("body"), direction);
         }

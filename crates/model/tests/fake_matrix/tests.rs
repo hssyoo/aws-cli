@@ -1,12 +1,17 @@
-use super::census::{Census, Error, Ignored, census, defined_list, load, string_list};
+use super::census::{Census, Error, Features, Ignored, census, defined_list, load, string_list};
 use super::forms::{expression_forms, paginator_features, rule_set_features, waiter_features};
 use super::matrix::{listed, problems, summary};
+use super::observe::{Row, fakes, kebab, mapped, observation_problems, reached, rows};
 use super::walk::{PROTOCOL_PRIORITY, resolved_protocol, service_features};
 use serde_json::{Value as Json, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, Error>;
+/// FNV-1a 64 of `gaps-baseline.txt` as B7a froze it. Changing it needs an
+/// approved card.
+const BASELINE_FNV: u64 = 0xd1cf_3ef5_bf7c_efca;
+type Reach = std::result::Result<Features, String>;
 
 fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -478,5 +483,372 @@ fn errors_values_and_header_elements_are_their_own_features() -> Result<()> {
             .iter()
             .any(|feature| feature.starts_with("shape/rest-json/out/"))
     );
+    Ok(())
+}
+
+fn read(path: PathBuf) -> Result<String> {
+    std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()).into())
+}
+
+/// Each row's reached features, keyed by id.
+fn reach_of(models: &Path, rows: &[Row]) -> Result<BTreeMap<String, Reach>> {
+    let (fakes, ignored) = (fakes(models)?, ignored()?);
+    let reach = rows
+        .iter()
+        .map(|row| (row.id.clone(), reached(&fakes, &ignored, row)));
+    Ok(reach.collect())
+}
+
+/// G-039: every closed gap line is reached by a corpus row that
+/// `observed.txt` names.
+#[test]
+fn every_closed_gap_line_is_observed_by_a_corpus_row() -> Result<()> {
+    let matrix = repository().join("crates/model/tests/fake_matrix");
+    let (baseline, gaps) = (
+        read(matrix.join("gaps-baseline.txt"))?,
+        read(matrix.join("gaps.txt"))?,
+    );
+    let open: BTreeSet<&str> = listed(&gaps).into_iter().collect();
+    let closed: BTreeSet<&str> = listed(&baseline)
+        .into_iter()
+        .filter(|line| !open.contains(line))
+        .collect();
+    let rows = rows(&repository().join("tests/diff/corpus"))?;
+    let reach = reach_of(&repository().join("tests/models"), &rows)?;
+    let text = read(matrix.join("observed.txt"))?;
+    let found = observation_problems(&closed, &mapped(&text)?, &reach);
+    assert!(
+        found.is_empty(),
+        "{} problems:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+    Ok(())
+}
+
+#[test]
+fn kebab_is_botocore_s_xform_name() {
+    for (name, command) in [
+        ("GetWidget", "get-widget"),
+        ("GetWidgetV2", "get-widget-v2"),
+        ("PutS3Object", "put-s3-object"),
+        ("DescribeDBInstances", "describe-db-instances"),
+        ("WidgetExists", "widget-exists"),
+        ("ListACLs", "list-acls"),
+        ("ListAWSAccounts", "list-aws-accounts"),
+        ("GetAPIKeys", "get-api-keys"),
+        ("Get2FAStatus", "get2-fa-status"),
+    ] {
+        assert_eq!(kebab(name), command);
+    }
+}
+
+/// A json fake with `Shown` (a plain input) and `Hidden` (an input with an
+/// idempotency token), a paginator and a waiter on `Shown`.
+fn seeded_fake(name: &str) -> Result<PathBuf> {
+    let model = json!({"metadata": {"protocol": "json"}, "operations": {
+        "Shown": {"name": "Shown", "http": {"method": "POST", "requestUri": "/"},
+                  "input": {"shape": "Plain"}, "output": {"shape": "Plain"},
+                  "errors": [{"shape": "Missing"}]},
+        "Hidden": {"name": "Hidden", "http": {"method": "POST", "requestUri": "/"},
+                   "input": {"shape": "Tokened"}}},
+        "shapes": {"Text": {"type": "string"},
+                   "Plain": {"type": "structure", "members": {"Next": {"shape": "Text"}}},
+                   "Missing": {"type": "structure", "exception": true,
+                               "members": {"Reason": {"shape": "Text"}}},
+                   "Tokened": {"type": "structure", "members": {
+                       "Token": {"shape": "Text", "idempotencyToken": true}}}}});
+    let pages = json!({"pagination": {"Shown": {"input_token": "Next", "output_token": "Next"}}});
+    let waiters = json!({"version": 2, "waiters": {"ShownReady": {"operation": "Shown",
+        "delay": 1, "maxAttempts": 2, "acceptors": [{"matcher": "status", "state": "success",
+        "expected": 200}]}}});
+    let files = [
+        ("zseen/2020-01-01/service-2.json", model.to_string()),
+        ("zseen/2020-01-01/paginators-1.json", pages.to_string()),
+        ("zseen/2020-01-01/waiters-2.json", waiters.to_string()),
+    ];
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (*path, text.as_str()))
+        .collect();
+    scratch(name, &files)
+}
+
+fn row(id: &str, argv: &[&str]) -> Row {
+    replying(id, argv, &[200])
+}
+
+fn replying(id: &str, argv: &[&str], statuses: &[u64]) -> Row {
+    let argv = argv.iter().map(|argument| (*argument).to_owned()).collect();
+    Row {
+        id: id.into(),
+        argv,
+        statuses: statuses.to_vec(),
+    }
+}
+
+/// The seeded defect: a fake declares a feature on an operation no row
+/// runs. The check fails, naming it, whether the map names a row that
+/// runs another operation or names none.
+#[test]
+fn a_feature_no_row_reaches_fails_the_observation_check() -> Result<()> {
+    let root = seeded_fake("observe-seeded")?;
+    let rows = [row("shown", &["zseen", "shown"])];
+    let reach = reach_of(&root, &rows);
+    std::fs::remove_dir_all(&root)?;
+    let reach = reach?;
+    let hidden = "member/json/in/string/body/idempotencyToken";
+    let closed = BTreeSet::from([hidden]);
+    let found = observation_problems(&closed, &[(hidden, "shown")], &reach);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[1].starts_with(&format!("gap line {hidden} is closed")));
+    assert!(
+        found[0].contains("row shown does not reach member/json/in/string/body/idempotencyToken")
+    );
+    let found = observation_problems(&closed, &[], &reach);
+    assert!(
+        found[0].starts_with(&format!("gap line {hidden} is closed")),
+        "{found:?}"
+    );
+    assert!(found[0].contains("rows that reach it: []"));
+    let found = observation_problems(&closed, &[(hidden, "ghost")], &reach);
+    assert_eq!(found[0], "observed.txt: row ghost is in no corpus file");
+    assert!(found[1].starts_with(&format!("gap line {hidden} is closed")));
+    Ok(())
+}
+
+/// Evasion: a repeated or unsorted map line hides an entry from review,
+/// and a line that is not `feature row-id` is refused.
+#[test]
+fn map_lines_are_sorted_unique_and_well_formed() -> Result<()> {
+    let reach = BTreeMap::from([("r".to_owned(), Ok(Features::from(["a/x".to_owned()])))]);
+    let closed = BTreeSet::from(["a/x"]);
+    let twice = observation_problems(&closed, &[("a/x", "r"), ("a/x", "r")], &reach);
+    assert_eq!(
+        twice,
+        ["observed.txt line a/x r is out of order or repeated"]
+    );
+    assert!(mapped("# c\na/x r\n")? == [("a/x", "r")] && mapped("a/x").is_err());
+    Ok(())
+}
+
+/// A row reaches its operation's paginator and the service's features,
+/// a `wait` row its waiter and the waiter's operation, and a row on an
+/// unknown command or service reaches nothing.
+#[test]
+fn rows_reach_their_paginator_waiter_and_service() -> Result<()> {
+    let root = seeded_fake("observe-reach")?;
+    let rows = [
+        row("pages", &["zseen", "shown"]),
+        row("wait", &["zseen", "wait", "shown-ready"]),
+        row("typo", &["zseen", "showen"]),
+        row("other", &["zother", "shown"]),
+    ];
+    let reach = reach_of(&root, &rows);
+    std::fs::remove_dir_all(&root)?;
+    let reach = reach?;
+    let pages = reach["pages"].clone()?;
+    assert!(pages.contains("pages/input_token/string") && pages.contains("meta/protocol/json"));
+    assert!(
+        !pages
+            .iter()
+            .any(|feature| feature.contains("idempotencyToken"))
+    );
+    let wait = reach["wait"].clone()?;
+    assert!(wait.contains("wait/status/success") && wait.contains("op/json/input"));
+    assert!(
+        reach["typo"]
+            .as_ref()
+            .is_err_and(|why| why.contains("`showen`"))
+    );
+    assert!(
+        reach["other"]
+            .as_ref()
+            .is_err_and(|why| why.contains("no fake"))
+    );
+    let closed = BTreeSet::from(["pages/input_token/string"]);
+    let stale = observation_problems(&closed, &[("meta/protocol/json", "pages")], &reach);
+    assert!(stale.iter().any(|problem| problem.contains("is stale")));
+    Ok(())
+}
+
+/// M1 (rev-b7c): a row observes output features only with a success
+/// reply and error features only with an error reply; S2: a top-level
+/// input member only when the row passes its flag, or the CLI fills it.
+#[test]
+fn a_row_reaches_only_its_reply_kinds_and_the_members_it_sends() -> Result<()> {
+    let root = seeded_fake("observe-direction")?;
+    let rows = [
+        replying("ok", &["zseen", "shown"], &[200]),
+        replying("error", &["zseen", "shown"], &[404]),
+        replying("next", &["zseen", "shown", "--next", "n"], &[200]),
+        replying("filled", &["zseen", "hidden"], &[200]),
+    ];
+    let reach = reach_of(&root, &rows);
+    std::fs::remove_dir_all(&root)?;
+    let reach = reach?;
+    let (err, out, sent) = (
+        "shape/json/err/structure/exception",
+        "member/json/out/string/body",
+        "member/json/in/string/body",
+    );
+    let (ok, error) = (reach["ok"].clone()?, reach["error"].clone()?);
+    assert!(!ok.contains(err) && ok.contains(out) && !ok.contains(sent));
+    assert!(error.contains(err) && !error.contains(out) && !error.contains("op/json/output"));
+    assert!(reach["next"].clone()?.contains(sent));
+    assert!(
+        reach["filled"]
+            .clone()?
+            .contains("member/json/in/string/body/idempotencyToken")
+    );
+    let found = observation_problems(&BTreeSet::from([err]), &[(err, "ok")], &reach);
+    assert!(found[0].contains("row ok does not reach shape/json/err/structure/exception"));
+    Ok(())
+}
+
+/// The shipped map against the corpus with some rows removed.
+fn problems_without(removed: impl Fn(&Row) -> bool, rename: (&str, &str)) -> Result<Vec<String>> {
+    problems_after(|rows| rows.retain(|row| !removed(row)), rename)
+}
+
+/// The shipped map against the corpus after `edit`, with the entries of
+/// row `rename.0` moved to row `rename.1`.
+fn problems_after(edit: impl FnOnce(&mut Vec<Row>), rename: (&str, &str)) -> Result<Vec<String>> {
+    let matrix = repository().join("crates/model/tests/fake_matrix");
+    let (baseline, gaps) = (
+        read(matrix.join("gaps-baseline.txt"))?,
+        read(matrix.join("gaps.txt"))?,
+    );
+    let open: BTreeSet<&str> = listed(&gaps).into_iter().collect();
+    let closed: BTreeSet<&str> = listed(&baseline)
+        .into_iter()
+        .filter(|line| !open.contains(line))
+        .collect();
+    let mut rows = rows(&repository().join("tests/diff/corpus"))?;
+    edit(&mut rows);
+    let reach = reach_of(&repository().join("tests/models"), &rows)?;
+    let text = read(matrix.join("observed.txt"))?;
+    let mut map = mapped(&text)?;
+    for entry in &mut map {
+        if entry.1 == rename.0 {
+            entry.1 = rename.1;
+        }
+    }
+    map.sort();
+    Ok(observation_problems(&closed, &map, &reach))
+}
+
+/// rev-b7c M1's deletion: without the rows that get an error reply, every
+/// error-path line loses its observer.
+#[test]
+fn removing_the_error_rows_fails_every_error_line() -> Result<()> {
+    let found = problems_without(
+        |row| row.statuses.iter().any(|status| *status >= 300),
+        ("", ""),
+    )?;
+    let error_lines = found
+        .iter()
+        .filter(|problem| problem.starts_with("gap line") && problem.contains("/err/"))
+        .count();
+    assert!(
+        error_lines >= 50,
+        "{} error-line problems:\n{}",
+        error_lines,
+        found.join("\n")
+    );
+    Ok(())
+}
+
+/// rev-b7c S2's deletion: the full put-gadget row removed and its entries
+/// moved to the minimal row, which passes none of those members' flags.
+#[test]
+fn a_minimal_row_cannot_stand_in_for_the_members_it_omits() -> Result<()> {
+    let full = "fakes-zrestjson2-put-gadget";
+    let found = problems_without(
+        |row| row.id == full,
+        (full, "fakes-zrestjson2-put-gadget-minimal"),
+    )?;
+    let unsent = found
+        .iter()
+        .filter(|problem| problem.contains("does not reach member/rest-json/in"));
+    assert!(unsent.count() >= 20, "{}", found.join("\n"));
+    Ok(())
+}
+
+/// S1 (rev-b7c): the frozen baseline the closed set comes from is pinned,
+/// so deleting a line from it and from gaps.txt cannot close the line.
+#[test]
+fn the_gap_baseline_is_pinned() -> Result<()> {
+    let text = read(repository().join("crates/model/tests/fake_matrix/gaps-baseline.txt"))?;
+    let fnv = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    assert_eq!(
+        (listed(&text).len(), fnv),
+        (730, BASELINE_FNV),
+        "gaps-baseline.txt changed"
+    );
+    Ok(())
+}
+
+/// rev-b7c R-M1: a non-`wait` call ends at its outcome. A retried 503
+/// before a 200 is a success, a 404 after a 200 is never consumed, a 503
+/// before a 404 is an error; a `wait` row matches every reply.
+#[test]
+fn a_row_is_scoped_by_its_outcome_reply() -> Result<()> {
+    let root = seeded_fake("observe-outcome")?;
+    let rows = [
+        replying("retried", &["zseen", "shown"], &[503, 200]),
+        replying("unconsumed", &["zseen", "shown"], &[200, 404]),
+        replying("failed", &["zseen", "shown"], &[503, 404]),
+        replying("throttled", &["zseen", "shown"], &[503]),
+        replying("waited", &["zseen", "wait", "shown-ready"], &[404, 200]),
+    ];
+    let reach = reach_of(&root, &rows);
+    std::fs::remove_dir_all(&root)?;
+    let reach = reach?;
+    let (err, out) = (
+        "shape/json/err/structure/exception",
+        "member/json/out/string/body",
+    );
+    for (row, error, success) in [
+        ("retried", false, true),
+        ("unconsumed", false, true),
+        ("failed", true, false),
+        ("throttled", true, false),
+        ("waited", true, true),
+    ] {
+        let found = reach[row].clone()?;
+        assert_eq!(
+            (found.contains(err), found.contains(out)),
+            (error, success),
+            "{row}"
+        );
+    }
+    Ok(())
+}
+
+/// rev-b7c R-M1's repro: a 503 retried before get-gadget's 200, the
+/// missing row deleted and its entries moved to get-gadget. Every rest-json
+/// error line it held loses its observer.
+#[test]
+fn a_retried_success_cannot_observe_error_lines() -> Result<()> {
+    let (row, missing) = (
+        "fakes-zrestjson2-get-gadget",
+        "fakes-zrestjson2-get-gadget-missing",
+    );
+    let found = problems_after(
+        |rows| {
+            rows.retain(|candidate| candidate.id != missing);
+            for candidate in rows.iter_mut().filter(|candidate| candidate.id == row) {
+                candidate.statuses.insert(0, 503);
+            }
+        },
+        (missing, row),
+    )?;
+    let lost = found
+        .iter()
+        .filter(|p| p.starts_with("gap line") && p.contains("rest-json/err/"));
+    assert!(lost.count() >= 25, "{}", found.join("\n"));
     Ok(())
 }

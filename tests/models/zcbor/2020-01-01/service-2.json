@@ -1,0 +1,297 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "auth": [
+      "aws.auth#sigv4"
+    ],
+    "endpointPrefix": "zcbor",
+    "protocol": "smithy-rpc-v2-cbor",
+    "protocols": [
+      "smithy-rpc-v2-cbor"
+    ],
+    "serviceFullName": "Fake zcbor",
+    "serviceId": "Zcbor",
+    "signatureVersion": "v4",
+    "targetPrefix": "ZcborService",
+    "uid": "zcbor-2020-01-01"
+  },
+  "operations": {
+    "PutRecord": {
+      "name": "PutRecord",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "PutRecordInput"
+      },
+      "output": {
+        "shape": "PutRecordOutput"
+      }
+    },
+    "GetRecord": {
+      "name": "GetRecord",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "GetRecordInput"
+      },
+      "output": {
+        "shape": "GetRecordOutput"
+      },
+      "errors": [
+        {
+          "shape": "RecordNotFound"
+        }
+      ]
+    }
+  },
+  "shapes": {
+    "Big": {
+      "type": "long"
+    },
+    "Bytes": {
+      "type": "blob"
+    },
+    "Choice": {
+      "type": "structure",
+      "union": true,
+      "members": {
+        "Word": {
+          "shape": "Text"
+        },
+        "Number": {
+          "shape": "Int"
+        }
+      }
+    },
+    "Flag": {
+      "type": "boolean"
+    },
+    "GetRecordInput": {
+      "type": "structure",
+      "required": [
+        "Id"
+      ],
+      "members": {
+        "Id": {
+          "shape": "Text"
+        }
+      }
+    },
+    "GetRecordOutput": {
+      "type": "structure",
+      "members": {
+        "Flag": {
+          "shape": "Flag"
+        },
+        "Ratio": {
+          "shape": "Ratio"
+        },
+        "Count": {
+          "shape": "Int"
+        },
+        "When": {
+          "shape": "When"
+        },
+        "Items": {
+          "shape": "TextList"
+        },
+        "Grid": {
+          "shape": "Grid"
+        },
+        "Groups": {
+          "shape": "Groups"
+        },
+        "Labels": {
+          "shape": "Labels"
+        },
+        "Parts": {
+          "shape": "PartList"
+        },
+        "Index": {
+          "shape": "PartIndex"
+        },
+        "Part": {
+          "shape": "Part"
+        },
+        "Choice": {
+          "shape": "Choice"
+        },
+        "Note": {
+          "shape": "Text"
+        },
+        "Total": {
+          "shape": "Big"
+        },
+        "Maps": {
+          "shape": "LabelsList"
+        }
+      }
+    },
+    "Grid": {
+      "type": "list",
+      "member": {
+        "shape": "TextList"
+      }
+    },
+    "Groups": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "TextList"
+      }
+    },
+    "Int": {
+      "type": "integer"
+    },
+    "Labels": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Text"
+      }
+    },
+    "LabelsList": {
+      "type": "list",
+      "member": {
+        "shape": "Labels"
+      }
+    },
+    "Part": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "Text"
+        },
+        "Size": {
+          "shape": "Int"
+        }
+      }
+    },
+    "PartIndex": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Part"
+      }
+    },
+    "PartList": {
+      "type": "list",
+      "member": {
+        "shape": "Part"
+      }
+    },
+    "PutRecordInput": {
+      "type": "structure",
+      "members": {
+        "Flag": {
+          "shape": "Flag"
+        },
+        "Ratio": {
+          "shape": "Ratio"
+        },
+        "Count": {
+          "shape": "Int"
+        },
+        "When": {
+          "shape": "When"
+        },
+        "Items": {
+          "shape": "TextList"
+        },
+        "Grid": {
+          "shape": "Grid"
+        },
+        "Groups": {
+          "shape": "Groups"
+        },
+        "Labels": {
+          "shape": "Labels"
+        },
+        "Parts": {
+          "shape": "PartList"
+        },
+        "Index": {
+          "shape": "PartIndex"
+        },
+        "Part": {
+          "shape": "Part"
+        },
+        "Choice": {
+          "shape": "Choice"
+        },
+        "Note": {
+          "shape": "Text"
+        },
+        "Name": {
+          "shape": "Text",
+          "contextParam": {
+            "name": "Name"
+          }
+        },
+        "Token": {
+          "shape": "Text",
+          "idempotencyToken": true
+        },
+        "Data": {
+          "shape": "Bytes"
+        }
+      }
+    },
+    "PutRecordOutput": {
+      "type": "structure",
+      "members": {
+        "Id": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Ratio": {
+      "type": "double"
+    },
+    "RecordNotFound": {
+      "type": "structure",
+      "exception": true,
+      "error": {
+        "httpStatusCode": 404,
+        "senderFault": true
+      },
+      "members": {
+        "Message": {
+          "shape": "Text"
+        },
+        "Attempts": {
+          "shape": "Int"
+        },
+        "Reasons": {
+          "shape": "TextList"
+        },
+        "Parts": {
+          "shape": "PartList"
+        }
+      }
+    },
+    "Text": {
+      "type": "string"
+    },
+    "TextList": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      }
+    },
+    "When": {
+      "type": "timestamp"
+    }
+  }
+}
