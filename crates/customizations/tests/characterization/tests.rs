@@ -117,7 +117,8 @@ fn fixture(credentials: Credentials, customizations: Table) -> Result<Fixture> {
         credentials,
         transport: transport.clone(),
         now: Timestamp::from_unix_seconds(1_440_938_160).ok_or("instant")?,
-        random: 0.0,
+        // A draw that makes every backoff a real, non-zero wait.
+        random: 0.5,
         customizations,
         user_agent: UserAgentCase {
             host: Host {
@@ -166,40 +167,108 @@ fn keys_of(value: &Value) -> Vec<String> {
 
 // ---------------------------------------------------------------- the call loop
 
-/// (1) The retry quota (`RetryQuotaChecker`, 500 at 14 a transient retry)
-/// belongs to the client: calls and pages draw on the same one. Every
-/// request fails with a 500, so each call or page first tries 3 times,
-/// until the 35 retries the quota holds are spent: the 18th makes 2
-/// requests, and every one after it 1. A quota made per call, per page or
-/// per paginator would let each make 3. Another client has its own, full
-/// quota: one kept for the process would leave it nothing.
-#[test]
-fn the_retry_quota_is_shared_by_a_client_s_calls_and_pages() -> Result {
-    let f = fixture(signing(), &[])?;
-    respond(&f.transport, 500, "{}", 100);
+/// The requests each action of [`the_retry_quota_is_shared_by_a_client_s_calls_and_pages`]
+/// makes on today's code: 17 calls or pages of 3 attempts (2 retries
+/// each), then one of 2, then 1 and 1, and last a two-page pagination of
+/// 1 request a page.
+fn quota_actions() -> Vec<usize> {
+    let mut expected = vec![3; 17];
+    expected.extend([2, 1, 1, 2]);
+    expected
+}
+
+/// Runs the quota sequence on a client with `table`, scripting each
+/// action's responses as [`quota_actions`] counts them (so a response is
+/// never left over for the next action); a request beyond the script still
+/// counts, failing as the transport's `HTTPClientError`. Returns the
+/// requests each action made and the client's fixture.
+fn quota_run(table: Table) -> Result<(Vec<usize>, Fixture)> {
+    let f = fixture(signing(), table)?;
+    let expected = quota_actions();
     let mut requests = Vec::new();
-    for action in 0..20 {
+    let (last, failing) = expected.split_last().ok_or("no actions")?;
+    for (action, &count) in failing.iter().enumerate() {
+        respond(&f.transport, 500, "{}", count);
         let before = f.transport.sent().len();
         if action % 2 == 0 {
             let called = facade::call_case(&f.client, "Op", value(&json!({"Name": "a"})));
             assert!(called.is_err(), "{called:?}");
         } else {
-            let paged = facade::paginate_case(
-                &f.client,
-                &Pages,
-                "zfake",
-                "List",
-                value(&json!({})),
-                PaginationCase::default(),
-            )?;
+            let paged = paginate(&f.client)?;
             assert!(paged.is_err(), "{paged:?}");
         }
         requests.push(f.transport.sent().len() - before);
     }
-    let mut expected = vec![3; 17];
-    expected.extend([2, 1, 1]);
-    assert_eq!(requests, expected);
-    assert_eq!(f.runtime.slept().len(), 35);
+    // Last, a page that succeeds and a second page that fails: a paginator
+    // that sent its later pages through another client would retry it.
+    respond(&f.transport, 200, r#"{"NextToken": "t", "Items": []}"#, 1);
+    respond(&f.transport, 500, "{}", last - 1);
+    let before = f.transport.sent().len();
+    let paged = paginate(&f.client)?;
+    assert!(paged.is_err(), "{paged:?}");
+    requests.push(f.transport.sent().len() - before);
+    Ok((requests, f))
+}
+
+fn paginate(client: &Client) -> Result<std::result::Result<Value, CallError>> {
+    Ok(facade::paginate_case(
+        client,
+        &Pages,
+        "zfake",
+        "List",
+        value(&json!({})),
+        PaginationCase::default(),
+    )?)
+}
+
+/// (1) The retry quota (`RetryQuotaChecker`, 500 at 14 a transient retry)
+/// belongs to the client: calls and pages draw on the same one. Every
+/// request fails with a 500, so each call or page first tries 3 times,
+/// until the 35 retries the quota holds are spent: the 18th makes 2
+/// requests, and every one after it 1, a later page included. A quota made
+/// per call, per page or per paginator would let each make 3. It holds
+/// whatever retry classifiers the client carries (none, one for the
+/// service, one for `Op` alone), so a strategy rebuilt per call to merge
+/// classifiers would show. Another client has its own, full quota: one
+/// kept for the process would leave it nothing.
+#[test]
+fn the_retry_quota_is_shared_by_a_client_s_calls_and_pages() -> Result {
+    type Classifier = (&'static str, Option<(Table, Seen<u32>)>, bool);
+    let classifiers: [Classifier; 3] = [
+        ("no classifier", None, false),
+        (
+            "service classifier",
+            Some(hooks::deferring_classifier("zfake", None)),
+            false,
+        ),
+        (
+            "Op classifier",
+            Some(hooks::deferring_classifier("zfake", Some("Op"))),
+            true,
+        ),
+    ];
+    for (name, classifier, op_only) in classifiers {
+        let table: Table = classifier.as_ref().map_or(&[], |(table, _)| *table);
+        let (requests, f) = quota_run(table)?;
+        assert_eq!(requests, quota_actions(), "{name}");
+        let slept = f.runtime.slept();
+        assert_eq!(slept.len(), 35, "{name}");
+        assert!(
+            slept.iter().all(|sleep| !sleep.is_zero()),
+            "{name}: {slept:?}"
+        );
+        if let Some((_, seen)) = classifier {
+            // Consulted on every attempt it is in scope for: `Op`'s are the
+            // even actions'.
+            let in_scope: usize = requests
+                .iter()
+                .enumerate()
+                .filter(|(action, _)| !op_only || (action % 2 == 0 && *action < 20))
+                .map(|(_, count)| count)
+                .sum();
+            assert_eq!(seen.entries().len(), in_scope, "{name}: classified");
+        }
+    }
     let other = fixture(signing(), &[])?;
     respond(&other.transport, 500, "{}", 5);
     let called = facade::call_case(&other.client, "Op", value(&json!({"Name": "a"})));
