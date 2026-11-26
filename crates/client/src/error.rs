@@ -132,6 +132,28 @@ macro_rules! message_error {
 }
 message_error!(SerializeError, ParseError);
 
+/// A codec's failure, with its botocore text, fails the request.
+impl From<model::serde::SerdeError> for SerializeError {
+    fn from(error: model::serde::SerdeError) -> Self {
+        Self::new(error.into_message())
+    }
+}
+
+/// A codec's failure, with its botocore text, fails the parse.
+impl From<model::serde::SerdeError> for ParseError {
+    fn from(error: model::serde::SerdeError) -> Self {
+        Self::new(error.into_message())
+    }
+}
+
+/// A parse hook's failure inside a deserializer's callback, carried out
+/// through it unchanged.
+impl From<ParseError> for model::serde::SerdeError {
+    fn from(error: ParseError) -> Self {
+        Self::new(error.message)
+    }
+}
+
 /// What botocore's paginator (paginate.py) raises of its own as it pages,
 /// besides a page's call failure. The CLI's `GeneralExceptionHandler`
 /// prints each as `str(exception)`.
