@@ -31,6 +31,7 @@ pub use crate::protocol::{BlobHandler, ParseOptions, Serialized, TimestampHandle
 pub use crate::testing::{FixedRuntime, InMemoryTransport};
 pub use cli_core::client_config::ClientSettings;
 pub use cli_core::client_config::user_agent::{Distribution, Host, Versions};
+pub use credentials::LoadError as CredentialLoadError;
 pub use model::shapes::Model;
 pub use timestamp::Timestamp;
 
