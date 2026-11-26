@@ -55,8 +55,12 @@ replies as they are. Regenerate it with `run.py --venv target/diff/venv
 tests/parity/cases --models tests/models --out corpus/parity.jsonl`;
 `--check-corpus` fails when it drifts. Either run also replays each row on
 the in-tree CLI, in process, and fails unless it sends what its case's
-call in `tests/parity/oracle.py` sends, so a member that never reaches the
-wire (one a paging option shadows, say) fails the conversion. `standin.jsonl`, outside the corpus,
+call in `tests/parity/oracle.py` sends (method, URL, headers but the
+User-Agent, body; the signature by scope and signed headers), so a member
+that never reaches the wire, at any binding, fails the conversion. The
+check attacks itself first: synthetic evasions it must tell apart, and
+each input member of each case dropped and altered, which it must see
+wherever botocore's request changes. `standin.jsonl`, outside the corpus,
 holds the self-test's rows for `standin.py`, a stand-in CLI that drives the
 capture's other paths: a timeout, a request the stub cannot parse, the
 environment, the reply sequence, the request limit and a chunked body.

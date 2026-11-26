@@ -32,9 +32,15 @@ masks the case's other checks, and a top-level scalar of the wrong type.
 Then every row runs, in process, on the in-tree CLI, each request answered
 in turn by the row's replies, and must send what the parity oracle's call
 of its case sends (`tests/parity/oracle.py`'s layer B): the same method,
-URL and body, request for request, the order of query pairs, form pairs
-and JSON members aside. A member that does not reach the wire,
+URL, headers (but the User-Agent) and body, request for request, the order
+of query pairs, form pairs, headers and JSON members and the case of
+header names aside. A member that does not reach the wire,
 or a call the CLI pages where the case makes one, fails the conversion.
+The check is attacked first: it must tell apart a dropped or changed
+header, query, label, host label, body or payload member (`attack`), and
+for every row, each input member dropped or altered in its case must be
+seen wherever it changes what botocore's call sends (`mutation_misses`),
+also on `ATTACK_CASES`, which bind members where no parity case does.
 
 `--out FILE` writes the corpus; `--check FILE` fails unless FILE is what
 the converter writes.
@@ -45,6 +51,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any, Final
@@ -200,18 +207,25 @@ def corpus(source: Path, cases: Path, models: Path) -> str:
         for case in json.loads(path.read_text(encoding="utf-8")):
             where = f"tests/parity/cases/{path.name}#{case['name']}"
             converted.append((case, row(case, where, session, xform_name)))
-    wrong = [
-        f"{line['id']}: {difference}"
-        for case, line in converted
-        if (difference := on_the_wire(case, line, cases.parent / "oracle.py", models))
-    ]
+    wire = Wire(cases.parent / "oracle.py", models)
+    attack()
+    attacked = [(case, row(case, "attack", session, xform_name)) for case in ATTACK_CASES]
+    wrong = []
+    for case, line in converted + attacked:
+        sent, expected = wire.cli(line), wire.oracle(case)
+        if found := difference(sent, expected):
+            wrong.append(f"{line['id']}: {found}")
+        wrong += [f"{line['id']}: {miss}" for miss in mutation_misses(wire, case, sent, expected)]
     if wrong:
         raise SystemExit("rows that do not send their case's requests:\n" + "\n".join(wrong))
     lines = [json.dumps(line, ensure_ascii=False) for _, line in converted]
     return "".join(f"{line}\n" for line in lines)
 
 
-def requests_sent(argv: list[str], env: dict[str, str], replies: list[dict[str, Any]]) -> list[Any]:
+Sent = tuple[str, str, tuple[tuple[str, str], ...], bytes]
+
+
+def requests_sent(argv: list[str], env: dict[str, str], replies: list[dict[str, Any]]) -> list[Sent]:
     """What the in-tree CLI sends for `argv` under `env`, in process, each
     request answered by the next of `replies` (the last repeating)."""
     import contextlib
@@ -221,11 +235,10 @@ def requests_sent(argv: list[str], env: dict[str, str], replies: list[dict[str, 
     from awscli.clidriver import create_clidriver
     from botocore.awsrequest import AWSResponse
 
-    sent: list[Any] = []
+    sent: list[Sent] = []
 
     def answer(request: Any, **kwargs: Any) -> Any:
-        body = request.body or b""
-        sent.append((request.method, request.url, body.encode() if isinstance(body, str) else body))
+        sent.append(sending(request.method, request.url, request.headers.items(), request.body))
         spec = replies[min(len(sent), len(replies)) - 1] if replies else {"status": 200, "body": ""}
         raw = base64.b64decode(spec["body_base64"]) if "body_base64" in spec else spec.get("body", "").encode()
         return AWSResponse(request.url, spec["status"], dict(spec.get("headers", [])), Raw(raw))
@@ -250,6 +263,12 @@ def requests_sent(argv: list[str], env: dict[str, str], replies: list[dict[str, 
     return sent
 
 
+def sending(method: str, url: str, headers: Any, body: Any) -> Sent:
+    as_text = [(name, value.decode() if isinstance(value, bytes) else value) for name, value in headers]
+    body = body or b""
+    return method, url, tuple(as_text), body.encode() if isinstance(body, str) else body
+
+
 class Raw:
     def __init__(self, body: bytes) -> None:
         self._body = body
@@ -258,45 +277,60 @@ class Raw:
         yield self._body
 
 
-def on_the_wire(case: dict[str, Any], line: dict[str, Any], oracle_path: Path, models: Path) -> str:
-    """How `line`'s requests differ from what its case's call sends, or ""."""
-    import importlib.util
-    import os
-    import tempfile
+class Wire:
+    """The requests a case's call (the parity oracle's layer B) and a row's
+    CLI run send, under the oracle's pinned clock and uuids."""
 
-    spec = importlib.util.spec_from_file_location("parity_oracle", oracle_path)
-    oracle = sys.modules.get("parity_oracle")
-    if oracle is None and spec is not None and spec.loader is not None:
-        oracle = importlib.util.module_from_spec(spec)
-        sys.modules["parity_oracle"] = oracle
-        spec.loader.exec_module(oracle)
-        oracle.pin_clock_and_uuid()
-    saved = dict(os.environ)
-    try:
-        oracle.ISSUED[0] = 0
-        expected = [
-            (request["method"], request["url"], base64.b64decode(request["body"]))
-            for request in oracle.layer_b(case, models)["requests"]
+    def __init__(self, oracle_path: Path, models: Path) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("parity_oracle", oracle_path)
+        if spec is None or spec.loader is None:
+            raise SystemExit(f"cannot load {oracle_path}")
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        self.module.pin_clock_and_uuid()
+        self.models = models
+
+    def oracle(self, case: dict[str, Any]) -> list[Sent]:
+        import os
+
+        saved = dict(os.environ)
+        try:
+            self.module.ISSUED[0] = 0
+            requests = self.module.layer_b(case, self.models)["requests"]
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        return [
+            sending(request["method"], request["url"], request["headers"], base64.b64decode(request["body"]))
+            for request in requests
         ]
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
-    with tempfile.TemporaryDirectory() as home:
-        env = {
-            "HOME": home,
-            "AWS_CONFIG_FILE": os.path.join(home, "config"),
-            "AWS_SHARED_CREDENTIALS_FILE": os.path.join(home, "credentials"),
-            "AWS_EC2_METADATA_DISABLED": "true",
-            "AWS_PAGER": "",
-            "AWS_ACCESS_KEY_ID": "AKIDEXAMPLE",
-            "AWS_SECRET_ACCESS_KEY": "secret",
-            "AWS_DEFAULT_REGION": "us-west-2",
-            **line["env"],
-        }
-        if line["data_path"] is not None:
-            env["AWS_DATA_PATH"] = str(models)
-        oracle.ISSUED[0] = 0
-        sent = requests_sent(line["argv"], env, line["responses"])
+
+    def cli(self, line: dict[str, Any]) -> list[Sent]:
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as home:
+            env = {
+                "HOME": home,
+                "AWS_CONFIG_FILE": os.path.join(home, "config"),
+                "AWS_SHARED_CREDENTIALS_FILE": os.path.join(home, "credentials"),
+                "AWS_EC2_METADATA_DISABLED": "true",
+                "AWS_PAGER": "",
+                "AWS_ACCESS_KEY_ID": "AKIDEXAMPLE",
+                "AWS_SECRET_ACCESS_KEY": "secret",
+                "AWS_DEFAULT_REGION": "us-west-2",
+                **line["env"],
+            }
+            if line["data_path"] is not None:
+                env["AWS_DATA_PATH"] = str(self.models)
+            self.module.ISSUED[0] = 0
+            return requests_sent(line["argv"], env, line["responses"])
+
+
+def difference(sent: list[Sent], expected: list[Sent]) -> str:
+    """How `sent` differs from what the case's call sends, or ""."""
     if len(sent) != len(expected):
         return f"{len(sent)} requests, where the case's call sends {len(expected)}"
     for index, (got, want) in enumerate(zip(sent, expected)):
@@ -305,18 +339,147 @@ def on_the_wire(case: dict[str, Any], line: dict[str, Any], oracle_path: Path, m
     return ""
 
 
-def unordered(method: str, url: str, body: bytes) -> tuple[Any, ...]:
-    """A request with its query pairs, form pairs and JSON members in any
-    order: the CLI serializes a structure in its model's order, a call in
-    its arguments'."""
-    origin, _, query = url.partition("?")
+# Headers only the route sets: the CLI names itself in its User-Agent.
+ROUTE_HEADERS: Final = frozenset({"user-agent"})
+
+
+def unordered(method: str, url: str, headers: tuple[tuple[str, str], ...], body: bytes) -> tuple[Any, ...]:
+    """A request with its query pairs, form pairs, headers and JSON members
+    in any order (the CLI serializes a structure in its model's order, a
+    call in its arguments'), header names in any case, and every number as
+    its text, so `1` is neither `1.0` nor `true`. A signature is over those
+    bytes, so only its scope and signed headers are compared."""
+    origin, mark, query = url.partition("?")
     if body.startswith(b"{"):
-        shape: Any = json.loads(body)
+        shape: Any = json.loads(
+            body,
+            parse_int=lambda text: ("int", text),
+            parse_float=lambda text: ("float", text),
+            object_pairs_hook=lambda pairs: sorted(pairs, key=repr),
+        )
     elif b"=" in body and not body.startswith(b"<"):
         shape = sorted(body.split(b"&"))
     else:
         shape = body
-    return method, origin, sorted(query.split("&")), shape
+    named = sorted(
+        (name.lower(), re.sub(r"Signature=[0-9a-f]{64}", "Signature=<sig>", value))
+        for name, value in headers
+        if name.lower() not in ROUTE_HEADERS
+    )
+    return method, origin, mark, sorted(query.split("&")), named, shape
+
+
+def altered(value: Any) -> Any:
+    """`value` changed in its last scalar, or None when nothing is left to
+    change: what a converter that mangles a value would send."""
+    import datetime
+
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, (int, float)):
+        return value + 1
+    if isinstance(value, str):
+        return value[:-1] + ("y" if value.endswith("x") else "x")
+    if isinstance(value, dict) and set(value) == {"$blob"}:
+        return {"$blob": base64.b64encode(base64.b64decode(value["$blob"]) + b"!").decode()}
+    if isinstance(value, dict) and set(value) == {"$datetime"}:
+        moment = datetime.datetime.fromisoformat(value["$datetime"].replace("Z", "+00:00"))
+        return {"$datetime": (moment + datetime.timedelta(seconds=1)).isoformat()}
+    if isinstance(value, dict) and value:
+        key = next(iter(value))
+        inner = altered(value[key])
+        return None if inner is None else {**value, key: inner}
+    if isinstance(value, list) and value:
+        inner = altered(value[-1])
+        return None if inner is None else [*value[:-1], inner]
+    return None
+
+
+def mutation_misses(wire: Wire, case: dict[str, Any], sent: list[Sent], expected: list[Sent]) -> list[str]:
+    """The wire check attacked: each input member dropped, then altered, in
+    the case. Wherever that changes what botocore's call sends (every byte,
+    signature and all), the row's unchanged run must differ from it."""
+    params = case.get("input", {})
+    misses = []
+    for name, value in params.items():
+        changed = altered(value)
+        variants = [("dropped", {key: item for key, item in params.items() if key != name})]
+        if changed is not None:
+            variants.append(("altered", {**params, name: changed}))
+        for how, mutated in variants:
+            truth = wire.oracle({**case, "input": mutated})
+            if truth != expected and not difference(sent, truth):
+                misses.append(f"the wire check misses {name} {how}")
+    return misses
+
+
+def signed(region: str, headers: str, digit: str) -> tuple[str, str]:
+    scope = f"AKIDEXAMPLE/20261122/{region}/zjson/aws4_request"
+    return ("Authorization", f"AWS4-HMAC-SHA256 Credential={scope}, SignedHeaders={headers}, Signature={digit * 64}")
+
+
+# Cases the wire check runs and attacks, never written: a binding no parity
+# case has yet, an input member bound to the payload.
+ATTACK_CASES: Final = [
+    {
+        "name": "attack-iot-data-publish-payload",
+        "service": "iot-data",
+        "operation": "Publish",
+        "input": {"topic": "t/1", "qos": 1, "payload": {"$blob": "aGk="}},
+        "response": {"status": 200, "headers": {}, "body": ""},
+    },
+]
+
+
+def attack() -> None:
+    """Requests the comparison must tell apart from a base request: each a
+    way a converted row could go wrong and still look right."""
+    base: Sent = (
+        "POST",
+        "https://z.data.zjson.us-west-2.amazonaws.com/p/l?a=1&b=2",
+        (("X-Trace", "t"), ("X-Meta-k", "v"), ("Content-Type", "application/json"), ("User-Agent", "u")),
+        b'{"N":1,"F":1.5,"B":true,"S":"s"}',
+    )
+    method, url, headers, body = base
+    bare = (method, url.split("?")[0], headers, body)
+    evasions: dict[str, Sent] = {
+        "a header member dropped": (method, url, headers[1:], body),
+        "a header member changed": (method, url, (("X-Trace", "u"), *headers[1:]), body),
+        "a prefix-map header changed": (method, url, (headers[0], ("X-Meta-k", "w"), *headers[2:]), body),
+        "a header the call does not send": (method, url, (*headers, ("X-Extra", "1")), body),
+        "a header repeated": (method, url, (*headers, headers[0]), body),
+        "a query member changed": (method, url.replace("b=2", "b=3"), headers, body),
+        "a query member dropped": (method, url.replace("&b=2", ""), headers, body),
+        "an empty query": (method, url.split("?")[0] + "?", headers, body),
+        "a label member changed": (method, url.replace("/l?", "/m?"), headers, body),
+        "a host label changed": (method, url.replace("z.data", "y.data"), headers, body),
+        "an integer sent as a float": (method, url, headers, body.replace(b'"N":1', b'"N":1.0')),
+        "an integer sent as a boolean": (method, url, headers, body.replace(b'"N":1', b'"N":true')),
+        "a body member dropped": (method, url, headers, body.replace(b',"S":"s"', b"")),
+        "a payload changed": (method, url, headers, b"raw"),
+        "another method": ("PUT", url, headers, body),
+        "another signing scope": (method, url, (*headers, signed("us-east-1", "x-trace", "0")), body),
+        "other signed headers": (method, url, (*headers, signed("us-west-2", "host", "0")), body),
+    }
+    if difference([base], [base]):
+        raise SystemExit("the wire check tells a request from itself")
+    reordered = (("x-trace", "t"), *reversed(headers[1:-1]), ("User-Agent", "v"))
+    benign = (method, "https://z.data.zjson.us-west-2.amazonaws.com/p/l?b=2&a=1", reordered, body)
+    if difference([benign], [base]):
+        raise SystemExit("the wire check tells order, name case or the User-Agent apart")
+    resigned = (method, url, (*headers, signed("us-west-2", "x-trace", "1")), body)
+    signed_base = (method, url, (*headers, signed("us-west-2", "x-trace", "0")), body)
+    if difference([resigned], [signed_base]):
+        raise SystemExit("the wire check tells two signatures of one scope apart")
+    passed = [
+        how
+        for how, request in evasions.items()
+        if not difference([request], [signed_base if "sign" in how else base])
+    ]
+    if not difference([evasions["an empty query"]], [bare]):
+        passed.append("an empty query against none")
+    if passed:
+        raise SystemExit("the wire check misses " + ", ".join(passed))
 
 
 def main() -> None:
