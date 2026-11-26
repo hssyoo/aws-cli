@@ -1,0 +1,1 @@
+zrestjson2 upload fixture: fixed bytes for fakes-zrestjson2-upload-gadget.

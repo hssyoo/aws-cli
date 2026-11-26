@@ -8,6 +8,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, Error>;
+/// FNV-1a 64 of `gaps-baseline.txt` as B7a froze it. Changing it needs an
+/// approved card.
+const BASELINE_FNV: u64 = 0xd1cf_3ef5_bf7c_efca;
 type Reach = std::result::Result<Features, String>;
 
 fn repository() -> PathBuf {
@@ -531,6 +534,10 @@ fn kebab_is_botocore_s_xform_name() {
         ("PutS3Object", "put-s3-object"),
         ("DescribeDBInstances", "describe-db-instances"),
         ("WidgetExists", "widget-exists"),
+        ("ListACLs", "list-acls"),
+        ("ListAWSAccounts", "list-aws-accounts"),
+        ("GetAPIKeys", "get-api-keys"),
+        ("Get2FAStatus", "get2-fa-status"),
     ] {
         assert_eq!(kebab(name), command);
     }
@@ -541,11 +548,14 @@ fn kebab_is_botocore_s_xform_name() {
 fn seeded_fake(name: &str) -> Result<PathBuf> {
     let model = json!({"metadata": {"protocol": "json"}, "operations": {
         "Shown": {"name": "Shown", "http": {"method": "POST", "requestUri": "/"},
-                  "input": {"shape": "Plain"}, "output": {"shape": "Plain"}},
+                  "input": {"shape": "Plain"}, "output": {"shape": "Plain"},
+                  "errors": [{"shape": "Missing"}]},
         "Hidden": {"name": "Hidden", "http": {"method": "POST", "requestUri": "/"},
                    "input": {"shape": "Tokened"}}},
         "shapes": {"Text": {"type": "string"},
                    "Plain": {"type": "structure", "members": {"Next": {"shape": "Text"}}},
+                   "Missing": {"type": "structure", "exception": true,
+                               "members": {"Reason": {"shape": "Text"}}},
                    "Tokened": {"type": "structure", "members": {
                        "Token": {"shape": "Text", "idempotencyToken": true}}}}});
     let pages = json!({"pagination": {"Shown": {"input_token": "Next", "output_token": "Next"}}});
@@ -565,10 +575,15 @@ fn seeded_fake(name: &str) -> Result<PathBuf> {
 }
 
 fn row(id: &str, argv: &[&str]) -> Row {
+    replying(id, argv, &[200])
+}
+
+fn replying(id: &str, argv: &[&str], statuses: &[u64]) -> Row {
     let argv = argv.iter().map(|argument| (*argument).to_owned()).collect();
     Row {
         id: id.into(),
         argv,
+        statuses: statuses.to_vec(),
     }
 }
 
@@ -585,7 +600,8 @@ fn a_feature_no_row_reaches_fails_the_observation_check() -> Result<()> {
     let hidden = "member/json/in/string/body/idempotencyToken";
     let closed = BTreeSet::from([hidden]);
     let found = observation_problems(&closed, &[(hidden, "shown")], &reach);
-    assert_eq!(found.len(), 1);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(found[1].starts_with(&format!("gap line {hidden} is closed")));
     assert!(
         found[0].contains("row shown does not reach member/json/in/string/body/idempotencyToken")
     );
@@ -596,7 +612,8 @@ fn a_feature_no_row_reaches_fails_the_observation_check() -> Result<()> {
     );
     assert!(found[0].contains("rows that reach it: []"));
     let found = observation_problems(&closed, &[(hidden, "ghost")], &reach);
-    assert_eq!(found, ["observed.txt: row ghost is in no corpus file"]);
+    assert_eq!(found[0], "observed.txt: row ghost is in no corpus file");
+    assert!(found[1].starts_with(&format!("gap line {hidden} is closed")));
     Ok(())
 }
 
@@ -652,5 +669,118 @@ fn rows_reach_their_paginator_waiter_and_service() -> Result<()> {
     let closed = BTreeSet::from(["pages/input_token/string"]);
     let stale = observation_problems(&closed, &[("meta/protocol/json", "pages")], &reach);
     assert!(stale.iter().any(|problem| problem.contains("is stale")));
+    Ok(())
+}
+
+/// M1 (rev-b7c): a row observes output features only with a success
+/// reply and error features only with an error reply; S2: a top-level
+/// input member only when the row passes its flag, or the CLI fills it.
+#[test]
+fn a_row_reaches_only_its_reply_kinds_and_the_members_it_sends() -> Result<()> {
+    let root = seeded_fake("observe-direction")?;
+    let rows = [
+        replying("ok", &["zseen", "shown"], &[200]),
+        replying("error", &["zseen", "shown"], &[404]),
+        replying("next", &["zseen", "shown", "--next", "n"], &[200]),
+        replying("filled", &["zseen", "hidden"], &[200]),
+    ];
+    let reach = reach_of(&root, &rows);
+    std::fs::remove_dir_all(&root)?;
+    let reach = reach?;
+    let (err, out, sent) = (
+        "shape/json/err/structure/exception",
+        "member/json/out/string/body",
+        "member/json/in/string/body",
+    );
+    let (ok, error) = (reach["ok"].clone()?, reach["error"].clone()?);
+    assert!(!ok.contains(err) && ok.contains(out) && !ok.contains(sent));
+    assert!(error.contains(err) && !error.contains(out) && !error.contains("op/json/output"));
+    assert!(reach["next"].clone()?.contains(sent));
+    assert!(
+        reach["filled"]
+            .clone()?
+            .contains("member/json/in/string/body/idempotencyToken")
+    );
+    let found = observation_problems(&BTreeSet::from([err]), &[(err, "ok")], &reach);
+    assert!(found[0].contains("row ok does not reach shape/json/err/structure/exception"));
+    Ok(())
+}
+
+/// The shipped map against the corpus with some rows removed.
+fn problems_without(removed: impl Fn(&Row) -> bool, rename: (&str, &str)) -> Result<Vec<String>> {
+    let matrix = repository().join("crates/model/tests/fake_matrix");
+    let (baseline, gaps) = (
+        read(matrix.join("gaps-baseline.txt"))?,
+        read(matrix.join("gaps.txt"))?,
+    );
+    let open: BTreeSet<&str> = listed(&gaps).into_iter().collect();
+    let closed: BTreeSet<&str> = listed(&baseline)
+        .into_iter()
+        .filter(|line| !open.contains(line))
+        .collect();
+    let mut rows = rows(&repository().join("tests/diff/corpus"))?;
+    rows.retain(|row| !removed(row));
+    let reach = reach_of(&repository().join("tests/models"), &rows)?;
+    let text = read(matrix.join("observed.txt"))?;
+    let mut map = mapped(&text)?;
+    for entry in &mut map {
+        if entry.1 == rename.0 {
+            entry.1 = rename.1;
+        }
+    }
+    map.sort();
+    Ok(observation_problems(&closed, &map, &reach))
+}
+
+/// rev-b7c M1's deletion: without the rows that get an error reply, every
+/// error-path line loses its observer.
+#[test]
+fn removing_the_error_rows_fails_every_error_line() -> Result<()> {
+    let found = problems_without(
+        |row| row.statuses.iter().any(|status| *status >= 300),
+        ("", ""),
+    )?;
+    let error_lines = found
+        .iter()
+        .filter(|problem| problem.starts_with("gap line") && problem.contains("/err/"))
+        .count();
+    assert!(
+        error_lines >= 50,
+        "{} error-line problems:\n{}",
+        error_lines,
+        found.join("\n")
+    );
+    Ok(())
+}
+
+/// rev-b7c S2's deletion: the full put-gadget row removed and its entries
+/// moved to the minimal row, which passes none of those members' flags.
+#[test]
+fn a_minimal_row_cannot_stand_in_for_the_members_it_omits() -> Result<()> {
+    let full = "fakes-zrestjson2-put-gadget";
+    let found = problems_without(
+        |row| row.id == full,
+        (full, "fakes-zrestjson2-put-gadget-minimal"),
+    )?;
+    let unsent = found
+        .iter()
+        .filter(|problem| problem.contains("does not reach member/rest-json/in"));
+    assert!(unsent.count() >= 20, "{}", found.join("\n"));
+    Ok(())
+}
+
+/// S1 (rev-b7c): the frozen baseline the closed set comes from is pinned,
+/// so deleting a line from it and from gaps.txt cannot close the line.
+#[test]
+fn the_gap_baseline_is_pinned() -> Result<()> {
+    let text = read(repository().join("crates/model/tests/fake_matrix/gaps-baseline.txt"))?;
+    let fnv = text.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    assert_eq!(
+        (listed(&text).len(), fnv),
+        (730, BASELINE_FNV),
+        "gaps-baseline.txt changed"
+    );
     Ok(())
 }

@@ -6,18 +6,38 @@
 //! its rule set's, its operation's shapes, the operation's paginator, or
 //! the waiter `wait` names) must hold the feature. A feature a fake only
 //! declares, on an operation no row runs, therefore cannot close its line.
+//! The call's own direction counts too: output features need a success
+//! reply among the row's responses, error features an error reply (status
+//! 300 or more), and top-level input members an argument that sends them.
 use super::census::{Error, Features, Ignored, load, services};
 use super::forms::{paginator_features_in, rule_set_features, waiter_features_in};
-use super::walk::service_features_in;
+use super::walk::{Scope, service_features_in};
 use serde_json::Value as Json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// A corpus row on the fake models: its id and its arguments after `aws`.
+/// A corpus row on the fake models: its id, its arguments after `aws`,
+/// and the statuses of its canned replies.
 #[derive(Debug)]
 pub(crate) struct Row {
     pub(crate) id: String,
     pub(crate) argv: Vec<String>,
+    pub(crate) statuses: Vec<u64>,
+}
+
+impl Row {
+    /// The part of an operation this row's call reaches.
+    fn scope<'r>(&'r self, only: Option<&'r str>) -> Scope<'r> {
+        Scope {
+            only,
+            success: self
+                .statuses
+                .iter()
+                .any(|status| (200..300).contains(status)),
+            error: self.statuses.iter().any(|status| *status >= 300),
+            argv: Some(&self.argv),
+        }
+    }
 }
 
 /// The rows of every `.jsonl` file in `directory` whose `data_path` is
@@ -47,9 +67,12 @@ pub(crate) fn rows(directory: &Path) -> Result<Vec<Row>, Error> {
                 .and_then(Json::as_array)
                 .into_iter()
                 .flatten();
+            let replies = row.get("responses").and_then(Json::as_array);
+            let status = |reply: &Json| reply.get("status").map_or(Some(200), Json::as_u64);
             rows.push(Row {
                 id: row.get("id").and_then(text).ok_or("a row without an id")?,
                 argv: argv.filter_map(text).collect(),
+                statuses: replies.into_iter().flatten().filter_map(status).collect(),
             });
         }
     }
@@ -60,6 +83,17 @@ pub(crate) fn rows(directory: &Path) -> Result<Vec<Row>, Error> {
 /// before a capital that follows a lowercase letter or digit, or that
 /// starts a capitalized word after a capital; then lowercased.
 pub(crate) fn kebab(name: &str) -> String {
+    // botocore's `_special_case_transform`: a trailing `[A-Z]{2,}s`, as in
+    // `ListACLs`, is one lowercase word.
+    let capitals = name.strip_suffix('s').unwrap_or_default();
+    let head = capitals.trim_end_matches(|c: char| c.is_ascii_uppercase());
+    if capitals.len() >= head.len() + 2 {
+        return format!(
+            "{}-{}",
+            kebab(head),
+            name[head.len()..].to_ascii_lowercase()
+        );
+    }
     let characters: Vec<char> = name.chars().collect();
     let mut out = String::new();
     for (index, &character) in characters.iter().enumerate() {
@@ -115,15 +149,17 @@ pub(crate) fn reached(
         let waiter = waiter.ok_or_else(|| format!("waits on no waiter of {service}"))?;
         let operation = waiters["waiters"][waiter]
             .get("operation")
-            .and_then(Json::as_str);
-        service_features_in(&model, ignored, operation, &mut out);
+            .and_then(Json::as_str)
+            .ok_or_else(|| format!("waiter {waiter} names no operation"))?;
+        service_features_in(&model, ignored, row.scope(Some(operation)), &mut out);
         waiter_features_in(&waiters, Some(waiter), &mut out);
     } else {
         let keys = operations.into_iter().flatten().map(|(name, _)| name);
         let operation = named(keys, command)
             .ok_or_else(|| format!("runs `{command}`, which no operation of {service} is"))?;
-        service_features_in(&model, ignored, Some(operation), &mut out);
-        if let Some(pages) = read("paginators-1")? {
+        service_features_in(&model, ignored, row.scope(Some(operation)), &mut out);
+        let paged = row.scope(None).success;
+        if let (Some(pages), true) = (read("paginators-1")?, paged) {
             paginator_features_in(&pages, Some(operation), &mut out);
         }
     }
@@ -193,9 +229,6 @@ pub(crate) fn observation_problems(
         .iter()
         .filter(|feature| !observers.contains_key(*feature))
     {
-        if map.iter().any(|(mapped, _)| mapped == feature) {
-            continue;
-        }
         let candidates: Vec<&str> = reach
             .iter()
             .filter(|(_, found)| found.as_ref().is_ok_and(|found| found.contains(*feature)))
@@ -203,7 +236,7 @@ pub(crate) fn observation_problems(
             .take(3)
             .collect();
         problems.push(format!(
-            "gap line {feature} is closed, but observed.txt maps no corpus row to it; rows \
+            "gap line {feature} is closed, but no row observed.txt maps to it observes it; rows \
              that reach it: {candidates:?} (none: keep the line in gaps.txt)"
         ));
     }
