@@ -1,12 +1,14 @@
-use super::census::{Census, Error, Ignored, census, defined_list, load, string_list};
+use super::census::{Census, Error, Features, Ignored, census, defined_list, load, string_list};
 use super::forms::{expression_forms, paginator_features, rule_set_features, waiter_features};
 use super::matrix::{listed, problems, summary};
+use super::observe::{Row, fakes, kebab, mapped, observation_problems, reached, rows};
 use super::walk::{PROTOCOL_PRIORITY, resolved_protocol, service_features};
 use serde_json::{Value as Json, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 type Result<T> = std::result::Result<T, Error>;
+type Reach = std::result::Result<Features, String>;
 
 fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -478,5 +480,177 @@ fn errors_values_and_header_elements_are_their_own_features() -> Result<()> {
             .iter()
             .any(|feature| feature.starts_with("shape/rest-json/out/"))
     );
+    Ok(())
+}
+
+fn read(path: PathBuf) -> Result<String> {
+    std::fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()).into())
+}
+
+/// Each row's reached features, keyed by id.
+fn reach_of(models: &Path, rows: &[Row]) -> Result<BTreeMap<String, Reach>> {
+    let (fakes, ignored) = (fakes(models)?, ignored()?);
+    let reach = rows
+        .iter()
+        .map(|row| (row.id.clone(), reached(&fakes, &ignored, row)));
+    Ok(reach.collect())
+}
+
+/// G-039: every closed gap line is reached by a corpus row that
+/// `observed.txt` names.
+#[test]
+fn every_closed_gap_line_is_observed_by_a_corpus_row() -> Result<()> {
+    let matrix = repository().join("crates/model/tests/fake_matrix");
+    let (baseline, gaps) = (
+        read(matrix.join("gaps-baseline.txt"))?,
+        read(matrix.join("gaps.txt"))?,
+    );
+    let open: BTreeSet<&str> = listed(&gaps).into_iter().collect();
+    let closed: BTreeSet<&str> = listed(&baseline)
+        .into_iter()
+        .filter(|line| !open.contains(line))
+        .collect();
+    let rows = rows(&repository().join("tests/diff/corpus"))?;
+    let reach = reach_of(&repository().join("tests/models"), &rows)?;
+    let text = read(matrix.join("observed.txt"))?;
+    let found = observation_problems(&closed, &mapped(&text)?, &reach);
+    assert!(
+        found.is_empty(),
+        "{} problems:\n{}",
+        found.len(),
+        found.join("\n")
+    );
+    Ok(())
+}
+
+#[test]
+fn kebab_is_botocore_s_xform_name() {
+    for (name, command) in [
+        ("GetWidget", "get-widget"),
+        ("GetWidgetV2", "get-widget-v2"),
+        ("PutS3Object", "put-s3-object"),
+        ("DescribeDBInstances", "describe-db-instances"),
+        ("WidgetExists", "widget-exists"),
+    ] {
+        assert_eq!(kebab(name), command);
+    }
+}
+
+/// A json fake with `Shown` (a plain input) and `Hidden` (an input with an
+/// idempotency token), a paginator and a waiter on `Shown`.
+fn seeded_fake(name: &str) -> Result<PathBuf> {
+    let model = json!({"metadata": {"protocol": "json"}, "operations": {
+        "Shown": {"name": "Shown", "http": {"method": "POST", "requestUri": "/"},
+                  "input": {"shape": "Plain"}, "output": {"shape": "Plain"}},
+        "Hidden": {"name": "Hidden", "http": {"method": "POST", "requestUri": "/"},
+                   "input": {"shape": "Tokened"}}},
+        "shapes": {"Text": {"type": "string"},
+                   "Plain": {"type": "structure", "members": {"Next": {"shape": "Text"}}},
+                   "Tokened": {"type": "structure", "members": {
+                       "Token": {"shape": "Text", "idempotencyToken": true}}}}});
+    let pages = json!({"pagination": {"Shown": {"input_token": "Next", "output_token": "Next"}}});
+    let waiters = json!({"version": 2, "waiters": {"ShownReady": {"operation": "Shown",
+        "delay": 1, "maxAttempts": 2, "acceptors": [{"matcher": "status", "state": "success",
+        "expected": 200}]}}});
+    let files = [
+        ("zseen/2020-01-01/service-2.json", model.to_string()),
+        ("zseen/2020-01-01/paginators-1.json", pages.to_string()),
+        ("zseen/2020-01-01/waiters-2.json", waiters.to_string()),
+    ];
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(path, text)| (*path, text.as_str()))
+        .collect();
+    scratch(name, &files)
+}
+
+fn row(id: &str, argv: &[&str]) -> Row {
+    let argv = argv.iter().map(|argument| (*argument).to_owned()).collect();
+    Row {
+        id: id.into(),
+        argv,
+    }
+}
+
+/// The seeded defect: a fake declares a feature on an operation no row
+/// runs. The check fails, naming it, whether the map names a row that
+/// runs another operation or names none.
+#[test]
+fn a_feature_no_row_reaches_fails_the_observation_check() -> Result<()> {
+    let root = seeded_fake("observe-seeded")?;
+    let rows = [row("shown", &["zseen", "shown"])];
+    let reach = reach_of(&root, &rows);
+    std::fs::remove_dir_all(&root)?;
+    let reach = reach?;
+    let hidden = "member/json/in/string/body/idempotencyToken";
+    let closed = BTreeSet::from([hidden]);
+    let found = observation_problems(&closed, &[(hidden, "shown")], &reach);
+    assert_eq!(found.len(), 1);
+    assert!(
+        found[0].contains("row shown does not reach member/json/in/string/body/idempotencyToken")
+    );
+    let found = observation_problems(&closed, &[], &reach);
+    assert!(
+        found[0].starts_with(&format!("gap line {hidden} is closed")),
+        "{found:?}"
+    );
+    assert!(found[0].contains("rows that reach it: []"));
+    let found = observation_problems(&closed, &[(hidden, "ghost")], &reach);
+    assert_eq!(found, ["observed.txt: row ghost is in no corpus file"]);
+    Ok(())
+}
+
+/// Evasion: a repeated or unsorted map line hides an entry from review,
+/// and a line that is not `feature row-id` is refused.
+#[test]
+fn map_lines_are_sorted_unique_and_well_formed() -> Result<()> {
+    let reach = BTreeMap::from([("r".to_owned(), Ok(Features::from(["a/x".to_owned()])))]);
+    let closed = BTreeSet::from(["a/x"]);
+    let twice = observation_problems(&closed, &[("a/x", "r"), ("a/x", "r")], &reach);
+    assert_eq!(
+        twice,
+        ["observed.txt line a/x r is out of order or repeated"]
+    );
+    assert!(mapped("# c\na/x r\n")? == [("a/x", "r")] && mapped("a/x").is_err());
+    Ok(())
+}
+
+/// A row reaches its operation's paginator and the service's features,
+/// a `wait` row its waiter and the waiter's operation, and a row on an
+/// unknown command or service reaches nothing.
+#[test]
+fn rows_reach_their_paginator_waiter_and_service() -> Result<()> {
+    let root = seeded_fake("observe-reach")?;
+    let rows = [
+        row("pages", &["zseen", "shown"]),
+        row("wait", &["zseen", "wait", "shown-ready"]),
+        row("typo", &["zseen", "showen"]),
+        row("other", &["zother", "shown"]),
+    ];
+    let reach = reach_of(&root, &rows);
+    std::fs::remove_dir_all(&root)?;
+    let reach = reach?;
+    let pages = reach["pages"].clone()?;
+    assert!(pages.contains("pages/input_token/string") && pages.contains("meta/protocol/json"));
+    assert!(
+        !pages
+            .iter()
+            .any(|feature| feature.contains("idempotencyToken"))
+    );
+    let wait = reach["wait"].clone()?;
+    assert!(wait.contains("wait/status/success") && wait.contains("op/json/input"));
+    assert!(
+        reach["typo"]
+            .as_ref()
+            .is_err_and(|why| why.contains("`showen`"))
+    );
+    assert!(
+        reach["other"]
+            .as_ref()
+            .is_err_and(|why| why.contains("no fake"))
+    );
+    let closed = BTreeSet::from(["pages/input_token/string"]);
+    let stale = observation_problems(&closed, &[("meta/protocol/json", "pages")], &reach);
+    assert!(stale.iter().any(|problem| problem.contains("is stale")));
     Ok(())
 }

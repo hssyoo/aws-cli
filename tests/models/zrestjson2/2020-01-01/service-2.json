@@ -1,0 +1,905 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "auth": [
+      "aws.auth#sigv4"
+    ],
+    "endpointPrefix": "zrestjson2",
+    "protocol": "rest-json",
+    "protocols": [
+      "rest-json"
+    ],
+    "serviceFullName": "Fake zrestjson2",
+    "serviceId": "Zrestjson2",
+    "signatureVersion": "v4",
+    "uid": "zrestjson2-2020-01-01"
+  },
+  "operations": {
+    "PutGadget": {
+      "name": "PutGadget",
+      "http": {
+        "method": "PUT",
+        "requestUri": "/gadgets/{GadgetId}/{Revision}/{Count}"
+      },
+      "input": {
+        "shape": "PutGadgetRequest"
+      },
+      "output": {
+        "shape": "PutGadgetResponse"
+      }
+    },
+    "GetGadget": {
+      "name": "GetGadget",
+      "http": {
+        "method": "GET",
+        "requestUri": "/gadgets/{GadgetId}"
+      },
+      "input": {
+        "shape": "GetGadgetRequest"
+      },
+      "output": {
+        "shape": "GetGadgetResponse"
+      },
+      "errors": [
+        {
+          "shape": "GadgetMissing"
+        }
+      ],
+      "endpoint": {
+        "hostPrefix": "data."
+      }
+    },
+    "PatchGadget": {
+      "name": "PatchGadget",
+      "http": {
+        "method": "PATCH",
+        "requestUri": "/gadgets/{GadgetId}"
+      },
+      "input": {
+        "shape": "PatchGadgetRequest"
+      },
+      "output": {
+        "shape": "PatchGadgetResponse"
+      },
+      "auth": [
+        "aws.auth#sigv4"
+      ],
+      "unsignedPayload": true
+    },
+    "HeadGadget": {
+      "name": "HeadGadget",
+      "http": {
+        "method": "HEAD",
+        "requestUri": "/gadgets/{GadgetId}"
+      },
+      "input": {
+        "shape": "GetGadgetRequest"
+      },
+      "output": {
+        "shape": "HeadGadgetResponse"
+      }
+    },
+    "UploadGadget": {
+      "name": "UploadGadget",
+      "http": {
+        "method": "PUT",
+        "requestUri": "/gadgets/{GadgetId}/data"
+      },
+      "input": {
+        "shape": "UploadRequest"
+      },
+      "authtype": "v4-unsigned-body"
+    },
+    "DeleteGadget": {
+      "name": "DeleteGadget",
+      "http": {
+        "method": "DELETE",
+        "requestUri": "/gadgets/{GadgetId}"
+      },
+      "input": {
+        "shape": "DeleteGadgetRequest"
+      },
+      "endpoint": {
+        "hostPrefix": "{AccountId}."
+      }
+    }
+  },
+  "shapes": {
+    "Big": {
+      "type": "long"
+    },
+    "BigList": {
+      "type": "list",
+      "member": {
+        "shape": "Big"
+      }
+    },
+    "BigMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Big"
+      }
+    },
+    "Bytes": {
+      "type": "blob"
+    },
+    "BytesList": {
+      "type": "list",
+      "member": {
+        "shape": "Bytes"
+      }
+    },
+    "BytesMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Bytes"
+      }
+    },
+    "Choice": {
+      "type": "structure",
+      "union": true,
+      "members": {
+        "Word": {
+          "shape": "Text"
+        },
+        "Number": {
+          "shape": "Int"
+        }
+      }
+    },
+    "Config": {
+      "type": "structure",
+      "members": {
+        "Label": {
+          "shape": "Text"
+        },
+        "Weight": {
+          "shape": "Int"
+        }
+      }
+    },
+    "DeleteGadgetRequest": {
+      "type": "structure",
+      "required": [
+        "AccountId",
+        "GadgetId"
+      ],
+      "members": {
+        "AccountId": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "x-amz-account-id",
+          "hostLabel": true
+        },
+        "GadgetId": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "GadgetId"
+        }
+      }
+    },
+    "Doc": {
+      "type": "structure",
+      "members": {},
+      "document": true
+    },
+    "Flag": {
+      "type": "boolean"
+    },
+    "FlagList": {
+      "type": "list",
+      "member": {
+        "shape": "Flag"
+      }
+    },
+    "FlagMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Flag"
+      }
+    },
+    "Frac": {
+      "type": "float"
+    },
+    "FracList": {
+      "type": "list",
+      "member": {
+        "shape": "Frac"
+      }
+    },
+    "FracMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Frac"
+      }
+    },
+    "GadgetMissing": {
+      "type": "structure",
+      "exception": true,
+      "error": {
+        "httpStatusCode": 404,
+        "senderFault": true
+      },
+      "members": {
+        "Message": {
+          "shape": "Text",
+          "locationName": "message"
+        },
+        "RetryAfter": {
+          "shape": "Int",
+          "location": "header",
+          "locationName": "Retry-After"
+        },
+        "Backoff": {
+          "shape": "Big",
+          "location": "header",
+          "locationName": "x-amz-backoff"
+        },
+        "Blob": {
+          "shape": "Bytes"
+        },
+        "Dbl": {
+          "shape": "Ratio"
+        },
+        "Frac": {
+          "shape": "Frac"
+        },
+        "Big": {
+          "shape": "Big"
+        },
+        "At": {
+          "shape": "When"
+        },
+        "Reasons": {
+          "shape": "TextList",
+          "locationName": "reasons"
+        },
+        "Codes": {
+          "shape": "BigList"
+        },
+        "Parts": {
+          "shape": "PartList"
+        },
+        "Dict": {
+          "shape": "TextMap"
+        },
+        "Index": {
+          "shape": "PartMap"
+        },
+        "Obj": {
+          "shape": "Part"
+        },
+        "Doc": {
+          "shape": "Doc"
+        },
+        "Choice": {
+          "shape": "Choice"
+        }
+      }
+    },
+    "GetGadgetRequest": {
+      "type": "structure",
+      "required": [
+        "GadgetId"
+      ],
+      "members": {
+        "GadgetId": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "GadgetId"
+        }
+      }
+    },
+    "GetGadgetResponse": {
+      "type": "structure",
+      "members": {
+        "Blob": {
+          "shape": "Bytes",
+          "locationName": "blob"
+        },
+        "Bool": {
+          "shape": "Flag",
+          "locationName": "bool"
+        },
+        "Dbl": {
+          "shape": "Ratio",
+          "locationName": "dbl"
+        },
+        "Num": {
+          "shape": "Int",
+          "locationName": "num"
+        },
+        "Strs": {
+          "shape": "TextList",
+          "locationName": "strs"
+        },
+        "Big": {
+          "shape": "Big",
+          "locationName": "big"
+        },
+        "Dict": {
+          "shape": "TextMap",
+          "locationName": "dict"
+        },
+        "Str": {
+          "shape": "Text",
+          "locationName": "str"
+        },
+        "Obj": {
+          "shape": "Part",
+          "locationName": "obj"
+        },
+        "At": {
+          "shape": "When",
+          "locationName": "at"
+        },
+        "PlainBlob": {
+          "shape": "Bytes"
+        },
+        "PlainDbl": {
+          "shape": "Ratio"
+        },
+        "PlainFrac": {
+          "shape": "Frac"
+        },
+        "PlainBig": {
+          "shape": "Big"
+        },
+        "PlainAt": {
+          "shape": "When"
+        },
+        "PlainMap": {
+          "shape": "TextMap"
+        },
+        "Iso": {
+          "shape": "WhenIso"
+        },
+        "Epoch": {
+          "shape": "WhenEpoch"
+        },
+        "Choice": {
+          "shape": "Choice"
+        },
+        "Payload": {
+          "shape": "Json",
+          "jsonvalue": true
+        },
+        "Flags": {
+          "shape": "FlagList"
+        },
+        "FlagByName": {
+          "shape": "FlagMap"
+        },
+        "Ints": {
+          "shape": "IntList"
+        },
+        "IntByName": {
+          "shape": "IntMap"
+        },
+        "Bigs": {
+          "shape": "BigList"
+        },
+        "BigByName": {
+          "shape": "BigMap"
+        },
+        "Ratios": {
+          "shape": "RatioList"
+        },
+        "RatioByName": {
+          "shape": "RatioMap"
+        },
+        "Fracs": {
+          "shape": "FracList"
+        },
+        "FracByName": {
+          "shape": "FracMap"
+        },
+        "Bytess": {
+          "shape": "BytesList"
+        },
+        "BytesByName": {
+          "shape": "BytesMap"
+        },
+        "Whens": {
+          "shape": "WhenList"
+        },
+        "WhenByName": {
+          "shape": "WhenMap"
+        },
+        "Parts": {
+          "shape": "PartList"
+        },
+        "PartByName": {
+          "shape": "PartMap"
+        },
+        "Lists": {
+          "shape": "ListList"
+        },
+        "Maps": {
+          "shape": "MapList"
+        },
+        "ListByName": {
+          "shape": "ListMap"
+        },
+        "MapByName": {
+          "shape": "MapMap"
+        },
+        "Token": {
+          "shape": "Text",
+          "idempotencyToken": true
+        },
+        "Problem": {
+          "shape": "Problem"
+        },
+        "Size": {
+          "shape": "Big",
+          "location": "header",
+          "locationName": "x-amz-size"
+        },
+        "Context": {
+          "shape": "Json",
+          "location": "header",
+          "locationName": "x-amz-context",
+          "jsonvalue": true
+        }
+      }
+    },
+    "HeadGadgetResponse": {
+      "type": "structure",
+      "members": {
+        "Size": {
+          "shape": "Big",
+          "location": "header",
+          "locationName": "x-amz-size"
+        }
+      }
+    },
+    "Int": {
+      "type": "integer"
+    },
+    "IntList": {
+      "type": "list",
+      "member": {
+        "shape": "Int"
+      }
+    },
+    "IntMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Int"
+      }
+    },
+    "Json": {
+      "type": "string"
+    },
+    "ListList": {
+      "type": "list",
+      "member": {
+        "shape": "TextList"
+      }
+    },
+    "ListMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "TextList"
+      }
+    },
+    "MapList": {
+      "type": "list",
+      "member": {
+        "shape": "TextMap"
+      }
+    },
+    "MapMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "TextMap"
+      }
+    },
+    "Part": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "Text"
+        },
+        "Size": {
+          "shape": "Int"
+        }
+      }
+    },
+    "PartList": {
+      "type": "list",
+      "member": {
+        "shape": "Part"
+      }
+    },
+    "PartMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Part"
+      }
+    },
+    "PatchGadgetRequest": {
+      "type": "structure",
+      "required": [
+        "GadgetId"
+      ],
+      "payload": "Config",
+      "members": {
+        "GadgetId": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "GadgetId"
+        },
+        "Config": {
+          "shape": "Config"
+        }
+      }
+    },
+    "PatchGadgetResponse": {
+      "type": "structure",
+      "payload": "Config",
+      "members": {
+        "Config": {
+          "shape": "Config"
+        }
+      }
+    },
+    "Problem": {
+      "type": "structure",
+      "exception": true,
+      "error": {
+        "httpStatusCode": 409,
+        "senderFault": true
+      },
+      "members": {
+        "Message": {
+          "shape": "Text"
+        }
+      }
+    },
+    "PutGadgetRequest": {
+      "type": "structure",
+      "required": [
+        "GadgetId",
+        "Revision",
+        "Count"
+      ],
+      "members": {
+        "Blob": {
+          "shape": "Bytes",
+          "locationName": "blob"
+        },
+        "Bool": {
+          "shape": "Flag",
+          "locationName": "bool"
+        },
+        "Dbl": {
+          "shape": "Ratio",
+          "locationName": "dbl"
+        },
+        "Num": {
+          "shape": "Int",
+          "locationName": "num"
+        },
+        "Strs": {
+          "shape": "TextList",
+          "locationName": "strs"
+        },
+        "Big": {
+          "shape": "Big",
+          "locationName": "big"
+        },
+        "Dict": {
+          "shape": "TextMap",
+          "locationName": "dict"
+        },
+        "Str": {
+          "shape": "Text",
+          "locationName": "str"
+        },
+        "Obj": {
+          "shape": "Part",
+          "locationName": "obj"
+        },
+        "At": {
+          "shape": "When",
+          "locationName": "at"
+        },
+        "PlainBlob": {
+          "shape": "Bytes"
+        },
+        "PlainDbl": {
+          "shape": "Ratio"
+        },
+        "PlainFrac": {
+          "shape": "Frac"
+        },
+        "PlainBig": {
+          "shape": "Big"
+        },
+        "PlainAt": {
+          "shape": "When"
+        },
+        "PlainMap": {
+          "shape": "TextMap"
+        },
+        "Iso": {
+          "shape": "WhenIso"
+        },
+        "Epoch": {
+          "shape": "WhenEpoch"
+        },
+        "Choice": {
+          "shape": "Choice"
+        },
+        "Payload": {
+          "shape": "Json",
+          "jsonvalue": true
+        },
+        "Flags": {
+          "shape": "FlagList"
+        },
+        "FlagByName": {
+          "shape": "FlagMap"
+        },
+        "Ints": {
+          "shape": "IntList"
+        },
+        "IntByName": {
+          "shape": "IntMap"
+        },
+        "Bigs": {
+          "shape": "BigList"
+        },
+        "BigByName": {
+          "shape": "BigMap"
+        },
+        "Ratios": {
+          "shape": "RatioList"
+        },
+        "RatioByName": {
+          "shape": "RatioMap"
+        },
+        "Fracs": {
+          "shape": "FracList"
+        },
+        "FracByName": {
+          "shape": "FracMap"
+        },
+        "Bytess": {
+          "shape": "BytesList"
+        },
+        "BytesByName": {
+          "shape": "BytesMap"
+        },
+        "Whens": {
+          "shape": "WhenList"
+        },
+        "WhenByName": {
+          "shape": "WhenMap"
+        },
+        "Parts": {
+          "shape": "PartList"
+        },
+        "PartByName": {
+          "shape": "PartMap"
+        },
+        "Lists": {
+          "shape": "ListList"
+        },
+        "Maps": {
+          "shape": "MapList"
+        },
+        "ListByName": {
+          "shape": "ListMap"
+        },
+        "MapByName": {
+          "shape": "MapMap"
+        },
+        "Doc": {
+          "shape": "Doc"
+        },
+        "Token": {
+          "shape": "Text",
+          "idempotencyToken": true
+        },
+        "Owner": {
+          "shape": "Text",
+          "contextParam": {
+            "name": "Owner"
+          }
+        },
+        "GadgetId": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "GadgetId",
+          "contextParam": {
+            "name": "GadgetId"
+          }
+        },
+        "Revision": {
+          "shape": "Big",
+          "location": "uri",
+          "locationName": "Revision"
+        },
+        "Count": {
+          "shape": "Int",
+          "location": "uri",
+          "locationName": "Count"
+        },
+        "Enabled": {
+          "shape": "Flag",
+          "location": "header",
+          "locationName": "x-amz-enabled"
+        },
+        "Since": {
+          "shape": "When",
+          "location": "header",
+          "locationName": "x-amz-since"
+        },
+        "RequestToken": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "x-amz-request-token",
+          "idempotencyToken": true
+        },
+        "Context": {
+          "shape": "Json",
+          "location": "header",
+          "locationName": "x-amz-context",
+          "jsonvalue": true
+        },
+        "Weight": {
+          "shape": "Frac",
+          "location": "querystring",
+          "locationName": "weight"
+        },
+        "Offset": {
+          "shape": "Big",
+          "location": "querystring",
+          "locationName": "offset"
+        },
+        "After": {
+          "shape": "When",
+          "location": "querystring",
+          "locationName": "after"
+        },
+        "QueryToken": {
+          "shape": "Text",
+          "location": "querystring",
+          "locationName": "token",
+          "idempotencyToken": true
+        },
+        "Filters": {
+          "shape": "ListMap",
+          "location": "querystring"
+        },
+        "Params": {
+          "shape": "TextMap",
+          "location": "querystring"
+        }
+      }
+    },
+    "PutGadgetResponse": {
+      "type": "structure",
+      "members": {
+        "Etag": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "ETag"
+        }
+      }
+    },
+    "Ratio": {
+      "type": "double"
+    },
+    "RatioList": {
+      "type": "list",
+      "member": {
+        "shape": "Ratio"
+      }
+    },
+    "RatioMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Ratio"
+      }
+    },
+    "Text": {
+      "type": "string"
+    },
+    "TextList": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      }
+    },
+    "TextMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Text"
+      }
+    },
+    "Upload": {
+      "type": "blob",
+      "streaming": true,
+      "requiresLength": true
+    },
+    "UploadRequest": {
+      "type": "structure",
+      "required": [
+        "GadgetId",
+        "Body"
+      ],
+      "payload": "Body",
+      "members": {
+        "GadgetId": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "GadgetId"
+        },
+        "Body": {
+          "shape": "Upload"
+        }
+      }
+    },
+    "When": {
+      "type": "timestamp"
+    },
+    "WhenEpoch": {
+      "type": "timestamp",
+      "timestampFormat": "unixTimestamp"
+    },
+    "WhenIso": {
+      "type": "timestamp",
+      "timestampFormat": "iso8601"
+    },
+    "WhenList": {
+      "type": "list",
+      "member": {
+        "shape": "When"
+      }
+    },
+    "WhenMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "When"
+      }
+    }
+  }
+}

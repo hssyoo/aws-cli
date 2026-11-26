@@ -83,6 +83,17 @@ pub(crate) fn resolved_protocol(metadata: Option<&Json>) -> &str {
 
 /// The features of a `service-2.json`.
 pub(crate) fn service_features(json: &Json, ignored: &Ignored, out: &mut Features) {
+    service_features_in(json, ignored, None, out);
+}
+
+/// The features of a `service-2.json` a call of operation `only` reaches
+/// (the service's own, and that operation's), or of every operation.
+pub(crate) fn service_features_in(
+    json: &Json,
+    ignored: &Ignored,
+    only: Option<&str>,
+    out: &mut Features,
+) {
     for (key, _) in entries(Some(json)) {
         let spine = ["metadata", "operations", "shapes"].contains(&&**key);
         if !spine && !ignored.document.contains(key) {
@@ -99,7 +110,8 @@ pub(crate) fn service_features(json: &Json, ignored: &Ignored, out: &mut Feature
         seen: BTreeSet::new(),
         out,
     };
-    for (_, operation) in entries(json.get("operations")) {
+    let operations = entries(json.get("operations"));
+    for (_, operation) in operations.filter(|(name, _)| only.is_none_or(|only| only == *name)) {
         walk.operation(operation);
     }
 }

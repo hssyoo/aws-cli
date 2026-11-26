@@ -172,7 +172,7 @@ fn deep_merge(base: &mut Json, extra: &Json) {
 
 /// Each service under `root` with the directory of its latest version
 /// holding a `service-2.json` (`Loader.determine_latest_version`).
-fn services(root: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
+pub(crate) fn services(root: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
     let mut services = Vec::new();
     for entry in std::fs::read_dir(root)? {
         let path = entry?.path();

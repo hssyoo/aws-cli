@@ -15,6 +15,8 @@ mod census;
 mod forms;
 #[path = "fake_matrix/matrix.rs"]
 mod matrix;
+#[path = "fake_matrix/observe.rs"]
+mod observe;
 #[path = "fake_matrix/tests.rs"]
 mod tests;
 #[path = "fake_matrix/walk.rs"]

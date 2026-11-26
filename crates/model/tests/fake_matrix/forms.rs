@@ -155,7 +155,13 @@ fn endpoint_features(endpoint: &Json, out: &mut Features) {
 /// The features of a `paginators-1.json`: each key with its value's kind,
 /// and the expression forms its strings use.
 pub(crate) fn paginator_features(json: &Json, out: &mut Features) {
-    for (_, paginator) in entries(json.get("pagination")) {
+    paginator_features_in(json, None, out);
+}
+
+/// [`paginator_features`] of the paginator of operation `only`, or of all.
+pub(crate) fn paginator_features_in(json: &Json, only: Option<&str>, out: &mut Features) {
+    let paginators = entries(json.get("pagination"));
+    for (_, paginator) in paginators.filter(|(name, _)| only.is_none_or(|only| only == *name)) {
         for (key, value) in entries(Some(paginator)) {
             add(out, &["pages", key, json_kind(value)]);
             let texts: Vec<&str> = match value {
@@ -175,7 +181,13 @@ pub(crate) fn paginator_features(json: &Json, out: &mut Features) {
 /// state it ends in, the kind of value it expects, and the expression
 /// forms of its argument.
 pub(crate) fn waiter_features(json: &Json, out: &mut Features) {
-    for (_, waiter) in entries(json.get("waiters")) {
+    waiter_features_in(json, None, out);
+}
+
+/// [`waiter_features`] of the waiter named `only`, or of all.
+pub(crate) fn waiter_features_in(json: &Json, only: Option<&str>, out: &mut Features) {
+    let waiters = entries(json.get("waiters"));
+    for (_, waiter) in waiters.filter(|(name, _)| only.is_none_or(|only| only == *name)) {
         for (key, _) in entries(Some(waiter)) {
             add(out, &["wait", "key", key]);
         }
