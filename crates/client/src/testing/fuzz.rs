@@ -1,18 +1,21 @@
 //! The bodies of the fuzz targets over this crate's readers
 //! (`fuzz/fuzz_targets/client_xml.rs`, `protocol_responses.rs`,
 //! `paginator_token.rs`), which the stable replay test (its `tests`) also
-//! runs. No input may panic.
-use crate::error::ParseError;
-use crate::http::{Headers, HttpResponse};
-use crate::protocol::{self, ParseOptions};
-use model::shapes::Model;
-use model::value::Value;
+//! runs. No input may panic. It also holds the bodies of the model reader
+//! and validator targets (`model_json.rs`, `model_validate.rs`), copied
+//! from `model::fuzz`. Everything it reads goes through [`super::facade`].
+use super::facade::{
+    Headers, HttpResponse, Model, ParseError, ParseOptions, Validated, model_from_json,
+    operation_names, parse_case, parse_error_case, protocol_for_model, validate_case,
+};
+use model::value::{Map, Value};
+use std::sync::Arc;
 
 /// `ElementTree.XMLParser` over any bytes: a tree or expat's error. A tree
 /// reads the same twice.
 pub fn xml(bytes: &[u8]) {
-    let first = crate::xml::parse(bytes);
-    assert_eq!(first.is_ok(), crate::xml::parse(bytes).is_ok());
+    let first = super::facade::xml_parses(bytes);
+    assert_eq!(first, super::facade::xml_parses(bytes));
 }
 
 /// Statuses a response may carry: success, the redirects the error path
@@ -55,14 +58,14 @@ fn wire_blob(text: &Value) -> Result<Value, ParseError> {
 /// third the headers, and the rest is the body. A success parses or fails
 /// with `ResponseParserError`; an error status gives a service error or
 /// fails the same way.
-pub fn responses(models: &[Model], bytes: &[u8]) {
+pub fn responses(models: &[Arc<Model>], bytes: &[u8]) {
     let [pick, status, flags, body @ ..] = bytes else {
         return;
     };
     let Some(model) = models.get(usize::from(pick & 3) % models.len().max(1)) else {
         return;
     };
-    let (Some(protocol), operations) = (protocol::for_model(model), model.operations()) else {
+    let (Some(protocol), operations) = (protocol_for_model(model), operation_names(model)) else {
         return;
     };
     let Some(operation) = operations.get(usize::from(pick >> 2) % operations.len().max(1)) else {
@@ -80,9 +83,9 @@ pub fn responses(models: &[Model], bytes: &[u8]) {
     };
     for options in [&ParseOptions::BOTOCORE, &WIRE] {
         if response.status < 300 {
-            let _ = protocol.parse(model, operation, &response, options);
+            let _ = parse_case(protocol, model, operation, &response, options);
         } else {
-            let _ = protocol.parse_error(model, operation, &response, options);
+            let _ = parse_error_case(protocol, model, operation, &response, options);
         }
     }
 }
@@ -100,7 +103,7 @@ const INPUT_TOKENS: [&[&str]; 3] = [&[], &["NextToken"], &["Marker", "NextRecord
 /// decodes to exactly the input tokens encodes (the `resume_token` setter)
 /// to one that decodes to the same token and offset.
 pub fn starting_token(bytes: &[u8]) {
-    use crate::paginate::{TRUNCATE_AMOUNT, parse_starting_token, resume_token};
+    use super::facade::{TRUNCATE_AMOUNT, parse_starting_token, resume_token};
     let [pick, raw @ ..] = bytes else {
         return;
     };
@@ -130,4 +133,32 @@ pub fn starting_token(bytes: &[u8]) {
         return;
     };
     assert_eq!(parse_starting_token(&encoded, &names), Ok(parsed));
+}
+
+/// `Model::from_json` over any bytes: a model or an error. Every operation
+/// of a model it builds validates an empty input.
+pub fn model_json(bytes: &[u8]) {
+    let Ok(model) = model_from_json(bytes) else {
+        return;
+    };
+    for operation in operation_names(&model) {
+        report(validate_case(&model, &operation, &Value::Map(Map::new())));
+    }
+}
+
+/// `ParamValidator().validate` of any JSON document against every
+/// operation of `model`; an invalid input's report prints.
+pub fn validate(model: &Model, bytes: &[u8]) {
+    let Ok(params) = Value::from_json(bytes) else {
+        return;
+    };
+    for operation in operation_names(model) {
+        report(validate_case(model, &operation, &params));
+    }
+}
+
+fn report(validation: Result<Validated, String>) {
+    if let Ok(Validated::Invalid { report, .. }) = validation {
+        assert!(!report.to_string().is_empty());
+    }
 }
