@@ -10,14 +10,16 @@
 //! `PARITY_VECTORS` names the capture; `cargo xtask parity` sets it.
 use client::error::{ParseError, ServiceError};
 use client::http::{Headers, HttpResponse};
-use client::protocol::{self, ParseOptions, Protocol, Serialized};
+use client::testing::facade::{
+    self, Model, ParseOptions, ProtocolHandle, Serialized, Validated, botocore_options,
+    parse_options,
+};
 use format::{OutputFormat, TimestampFormat, TimestampParser};
-use model::shapes::{Model, Operation};
 use model::source::DirSource;
-use model::validate::{Validation, validate_input};
 use model::value::{Map, Value};
 use serde_json::{Value as Json, json};
 use std::path::PathBuf;
+use std::sync::Arc;
 use timestamp::Timestamp;
 
 mod calls;
@@ -74,14 +76,14 @@ fn decode(value: Value) -> Result<Value> {
     })
 }
 
-fn model(case: &Json) -> Result<Model> {
+fn model(case: &Json) -> Result<Arc<Model>> {
     let root = if case["models"] == "fake" {
         repository().join("tests/models")
     } else {
         repository().join("aws-cli/awscli/botocore/data")
     };
     let service = case["service"].as_str().ok_or("service")?;
-    Ok(Model::load(&DirSource::new(root), service)?)
+    Ok(facade::load_model(&DirSource::new(root), service)?)
 }
 
 fn request_json(request: &Serialized) -> Json {
@@ -127,14 +129,14 @@ fn canned(canned: &Json) -> HttpResponse {
 /// or the `ClientError` text and its details, or the parser's error.
 fn outcome(
     name: &str,
-    protocol: &dyn Protocol,
+    protocol: ProtocolHandle,
     model: &Model,
-    operation: &Operation,
+    operation: &str,
     response: &HttpResponse,
     options: &ParseOptions<'_>,
 ) -> Json {
     if response.status >= 300 {
-        return match protocol.parse_error(model, operation, response, options) {
+        return match facade::parse_error_case(protocol, model, operation, response, options) {
             Ok(error) => {
                 let text = error.to_string();
                 json!({ "error": text, "details": dumped(&details(error)) })
@@ -142,7 +144,7 @@ fn outcome(
             Err(error) => json!({ "parse_error": error.message }),
         };
     }
-    let parsed = match protocol.parse(model, operation, response, options) {
+    let parsed = match facade::parse_case(protocol, model, operation, response, options) {
         Ok(parsed) => parsed,
         Err(error) => return json!({ "parse_error": error.message }),
     };
@@ -196,17 +198,21 @@ fn identity_blob(text: &Value) -> std::result::Result<Value, ParseError> {
 /// Layer A for one case, as the JSON `oracle.py` wrote for it.
 fn layer_a(case: &Json) -> Result<Json> {
     let model = model(case)?;
-    let operation = model
-        .operation(case["operation"].as_str().ok_or("operation")?)
-        .ok_or("no operation")?;
-    let protocol = protocol::for_model(&model).ok_or("protocol not implemented")?;
-    let input = decode(Value::from_serde(&case["input"]))?;
-    match validate_input(&model, operation, &input) {
-        Validation::Valid => {}
-        Validation::Invalid(report) => return Ok(json!({ "validation": report.message() })),
-        Validation::Undecided(reason) => return Ok(json!({ "undecided": format!("{reason:?}") })),
+    let operation = case["operation"].as_str().ok_or("operation")?;
+    if !facade::operation_names(&model)
+        .iter()
+        .any(|name| name == operation)
+    {
+        return Err("no operation".into());
     }
-    let mut vector = match protocol.serialize(&model, operation, &input) {
+    let protocol = facade::protocol_for_model(&model).ok_or("protocol not implemented")?;
+    let input = decode(Value::from_serde(&case["input"]))?;
+    match facade::validate_case(&model, operation, &input)? {
+        Validated::Valid => {}
+        Validated::Invalid { message, .. } => return Ok(json!({ "validation": message })),
+        Validated::Undecided(reason) => return Ok(json!({ "undecided": reason })),
+    }
+    let mut vector = match facade::serialize_case(protocol, &model, operation, &input) {
         Ok(request) => json!({ "request": request_json(&request) }),
         Err(error) => return Ok(json!({ "serialize_error": error.message })),
     };
@@ -214,21 +220,9 @@ fn layer_a(case: &Json) -> Result<Json> {
         let iso = cli_timestamp(TimestampFormat::Iso8601);
         let wire = cli_timestamp(TimestampFormat::Wire);
         let settings: [(&str, ParseOptions<'_>); 3] = [
-            ("botocore", ParseOptions::BOTOCORE),
-            (
-                "iso8601",
-                ParseOptions {
-                    timestamp: &iso,
-                    blob: &identity_blob,
-                },
-            ),
-            (
-                "wire",
-                ParseOptions {
-                    timestamp: &wire,
-                    blob: &identity_blob,
-                },
-            ),
+            ("botocore", botocore_options()),
+            ("iso8601", parse_options(&iso, &identity_blob)),
+            ("wire", parse_options(&wire, &identity_blob)),
         ];
         let mut outcomes = serde_json::Map::new();
         for (name, options) in &settings {

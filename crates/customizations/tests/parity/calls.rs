@@ -6,13 +6,12 @@
 use super::{Result, canned, decode, repository, response};
 use cli_core::client_config::user_agent::{Host, Versions};
 use cli_core::client_config::{ClientSettings, Resolved, Source as SettingSource};
-use client::call::{Client, ClientParts, UserAgentContext};
-use client::credentials::{CredentialError, CredentialSource, SigningCredentials};
-use client::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
 use client::error::CallError;
 use client::http::{HttpRequest, HttpResponse};
-use client::testing::{FixedRuntime, InMemoryTransport};
-use model::shapes::Model;
+use client::testing::facade::{
+    self, Client, ClientCase, Credentials, EndpointCase, InMemoryTransport, Keys, Model,
+    PaginationCase, UserAgentCase,
+};
 use model::source::{DirSource, Kind, LoadError, Source};
 use model::value::Value;
 use serde_json::{Value as Json, json};
@@ -69,33 +68,24 @@ fn locations(case: &Json) -> Locations {
     }
 }
 
-/// The case's keys, as the oracle puts them in the environment.
-#[derive(Debug)]
-struct Keys(SigningCredentials);
-
-impl CredentialSource for Keys {
-    fn credentials(&self) -> std::result::Result<Option<SigningCredentials>, CredentialError> {
-        Ok(Some(self.0.clone()))
-    }
-    /// The oracle supplies the keys in the environment, so botocore's
-    /// `EnvProvider` answers.
-    fn method(&self) -> Option<&'static str> {
-        Some("env")
-    }
-}
-
-fn keys(settings: &Json) -> Keys {
+/// The case's keys, as the oracle puts them in the environment. The oracle
+/// supplies the keys in the environment, so botocore's `EnvProvider`
+/// answers.
+fn keys(settings: &Json) -> Credentials {
     let text = |key: &str, default: &str| settings[key].as_str().unwrap_or(default).to_owned();
-    Keys(SigningCredentials {
-        access_key_id: text("access_key", "AKIDEXAMPLE"),
-        secret_access_key: text("secret_key", "secret"),
-        session_token: settings["session_token"].as_str().map(str::to_owned),
-        account_id: None,
-    })
+    Credentials::Static {
+        keys: Keys {
+            access_key_id: text("access_key", "AKIDEXAMPLE"),
+            secret_access_key: text("secret_key", "secret"),
+            session_token: settings["session_token"].as_str().map(str::to_owned),
+            account_id: None,
+        },
+        method: Some("env"),
+    }
 }
 
-fn user_agent() -> UserAgentContext {
-    UserAgentContext {
+fn user_agent() -> UserAgentCase {
+    UserAgentCase {
         host: Host {
             system: "Darwin".into(),
             release: "27.2.0".into(),
@@ -108,11 +98,9 @@ fn user_agent() -> UserAgentContext {
             rust: "1.96.0",
         },
         // The comparison reads only the `m/` feature codes.
-        extras: client::useragent::SessionExtras {
-            installer: "other",
-            prompt: "off",
-            command: String::new(),
-        },
+        installer: "other",
+        prompt: "off",
+        command: String::new(),
     }
 }
 
@@ -125,8 +113,8 @@ fn client(case: &Json) -> Result<(Client, Arc<InMemoryTransport>)> {
     let service = case["service"].as_str().ok_or("service")?;
     let settings = &case["settings"];
     let source = locations(case);
-    let model = Model::load(&source, service)?;
-    let endpoints = EndpointData::load(&source, service, model.metadata())?;
+    let model = facade::load_model(&source, service)?;
+    let endpoints = facade::endpoint_data(&source, service, &model)?;
     // One canned response per request, in order, the last answering every
     // request after it, as the oracle's capture answers.
     let answers: Vec<HttpResponse> = match case["responses"].as_array() {
@@ -149,26 +137,27 @@ fn client(case: &Json) -> Result<(Client, Arc<InMemoryTransport>)> {
     client_settings.endpoint_override = endpoint_url.is_some();
     // The oracle's keys are in the environment.
     client_settings.credential_source = cli_core::command::CredentialSource::Environment;
-    let client = Client::new(ClientParts {
+    let client = facade::client_case(ClientCase {
         service: service.to_owned(),
-        model: Arc::new(model),
+        model,
         endpoints,
-        endpoint: EndpointConfig::new(&EndpointInputs {
-            region: Some(settings["region"].as_str().unwrap_or("us-west-2")),
+        endpoint: EndpointCase {
+            region: Some(
+                settings["region"]
+                    .as_str()
+                    .unwrap_or("us-west-2")
+                    .to_owned(),
+            ),
             use_fips: Some(settings["fips"].as_bool().unwrap_or(false)),
             use_dual_stack: Some(settings["dualstack"].as_bool().unwrap_or(false)),
-            endpoint_url,
-            signing: true,
-        }),
+            endpoint_url: endpoint_url.map(str::to_owned),
+        },
         settings: client_settings,
-        credentials: Arc::new(keys(settings)),
+        credentials: keys(settings),
         transport: transport.clone(),
-        runtime: Arc::new(FixedRuntime::new(
-            Timestamp::from_unix_seconds(PINNED).ok_or("pinned instant")?,
-            0.0,
-        )),
+        now: Timestamp::from_unix_seconds(PINNED).ok_or("pinned instant")?,
+        random: 0.0,
         customizations: &customizations::TABLE,
-        parse: client::protocol::ParseHooks::botocore(),
         user_agent: user_agent(),
     })?;
     Ok((client, transport))
@@ -226,10 +215,8 @@ fn error_json(model: &Model, error: &CallError) -> Json {
         CallError::Parse(_) => "ResponseParserError".to_owned(),
         CallError::Service(service) => service
             .code()
-            .and_then(|code| model.shape_for_error_code(code))
-            .map_or("ClientError".to_owned(), |id| {
-                model.shape(id).name.to_string()
-            }),
+            .and_then(|code| facade::error_shape_name(model, code))
+            .unwrap_or_else(|| "ClientError".to_owned()),
         other => format!("{other:?}"),
     };
     json!({ "class": class, "text": error.to_string() })
@@ -242,13 +229,13 @@ pub fn layer_b(case: &Json) -> Result<Json> {
     let input = decode(Value::from_serde(&case["input"]))?;
     let outcome = match case.get("paginate") {
         Some(pagination) => paginated(case, &client, operation, input, pagination)?,
-        None => client.call(operation, input).map(|output| {
-            let mut value = output.value;
+        None => facade::call_case(&client, operation, input).map(|(value, retry_attempts)| {
+            let mut value = value;
             if let Value::Map(map) = &mut value
                 && let Some(Value::Map(metadata)) = map.get_mut("ResponseMetadata")
             {
                 // `Endpoint._send_request` adds it to the parsed response.
-                let attempts = i64::from(output.retry_attempts);
+                let attempts = i64::from(retry_attempts);
                 metadata.insert("RetryAttempts".into(), Value::Integer(attempts));
             }
             value
@@ -265,7 +252,8 @@ pub fn layer_b(case: &Json) -> Result<Json> {
             vector["parsed"] = Json::String(super::dumped(&value));
         }
         Err(error) => {
-            let model = Model::load(&locations(case), case["service"].as_str().unwrap_or(""))?;
+            let service = case["service"].as_str().unwrap_or("");
+            let model = facade::load_model(&locations(case), service)?;
             vector["error"] = error_json(&model, &error);
         }
     }
@@ -282,24 +270,19 @@ fn paginated(
     input: Value,
     pagination: &Json,
 ) -> Result<std::result::Result<Value, CallError>> {
-    use client::paginate::{PageIterator, PaginationConfig};
     let service = case["service"].as_str().ok_or("service")?;
-    let pages = model::paginators::Paginators::load(&locations(case), service)?;
-    let entry = pages
-        .get(operation)
-        .ok_or("the operation has no paginator")?;
-    let config = entry
-        .config
-        .clone()
-        .map_err(|refused| format!("{refused:?}"))?;
     let option = |key: &str| pagination.get(key).map(Value::from_serde);
-    let pagination = PaginationConfig {
+    let pagination = PaginationCase {
         max_items: option("MaxItems"),
         page_size: option("PageSize"),
         starting_token: pagination["StartingToken"].as_str().map(str::to_owned),
     };
-    Ok(
-        PageIterator::new(client, operation, input, config, pagination)
-            .and_then(|mut pages| pages.build_full_result()),
-    )
+    Ok(facade::paginate_case(
+        client,
+        &locations(case),
+        service,
+        operation,
+        input,
+        pagination,
+    )?)
 }
