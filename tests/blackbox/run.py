@@ -197,10 +197,15 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         "own CRT process lock (Linux); `auto` is one per CPU",
     )
     args, forwarded = parser.parse_known_args()
-    if args.numprocesses and any(
-        arg.split("=", 1)[0] in ("--tx", "--dist", "-d") for arg in forwarded
-    ):
-        parser.error("-n chooses the workers itself; drop --tx and --dist")
+    # Workers pytest-xdist starts from any other option would share the
+    # host's CRT process lock; only run.py's own `-n` isolates them.
+    addopts = shlex.split(os.environ.get("PYTEST_ADDOPTS", ""))
+    for source, tokens in (("arguments", forwarded), ("PYTEST_ADDOPTS", addopts)):
+        if any(is_xdist_option(token) for token in tokens):
+            parser.error(
+                f"pytest-xdist options in the {source} would start workers "
+                "that share the CRT process lock; use run.py's -n N alone"
+            )
     system = (args.crt_link, args.python_payload, args.python_abi)
     if args.link_mode == "system" and None in system:
         parser.error(
@@ -213,6 +218,15 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
             "system build"
         )
     return args, forwarded
+
+
+def is_xdist_option(token: str) -> bool:
+    """Whether `token` is a pytest-xdist option that starts or places
+    workers, in any of its spellings (`--tx=SPEC`, `-n8`, `-d`)."""
+    name = token.split("=", 1)[0]
+    if name in ("--tx", "--dist", "--numprocesses", "--maxprocesses", "-d"):
+        return True
+    return token.startswith("-n") and not token.startswith("--")
 
 
 def worker_count(value: str) -> int:
