@@ -10,9 +10,10 @@
 //!   becomes `<date>`. In a query, `X-Amz-Signature` becomes `<sig>`, and
 //!   `X-Amz-Date` and the `X-Amz-Credential` date as in the header.
 //! - `X-Amz-Date` of the form `YYYYMMDDTHHMMSSZ` becomes `<amz-date>`.
-//! - A version 4 UUID `amz-sdk-invocation-id` becomes `<invocation-id:k>`, k
-//!   numbering the run's distinct ids by first appearance, so a retry that
-//!   keeps its id still matches only one that does.
+//! - A version 4 UUID `amz-sdk-invocation-id` becomes `<invocation-id:k>`,
+//!   k numbering the run's distinct generated values (ids and tokens alike)
+//!   by first appearance, so a retry that keeps its id still matches only one
+//!   that does, and an id reused as a token keeps its number.
 //! - `amz-sdk-request`: only a `ttl=` date becomes `<ttl>`; `attempt=` and
 //!   `max=` are deterministic and compared.
 //! - `User-Agent`, token by token: the host's release in `os/<family>#*`, and
@@ -21,10 +22,14 @@
 //!   `md/arch` stay, as both sides run on one host. The Python route's
 //!   telemetry session `sid/<hex>` becomes `sid/<sid>`, and the `m/` feature
 //!   codes are sorted, as Python joins them from a set.
-//! - Version 4 UUIDs in a body or a query value, the idempotency tokens the
-//!   CLI generates, become `<uuid:k>` by first appearance, unless the row
+//! - Version 4 UUIDs in a body, a query value or another header's value,
+//!   the idempotency tokens the CLI generates, become `<uuid:k>`, k numbering
+//!   them across the run by first appearance (each request's query, then its
+//!   headers, then its body), unless the row
 //!   itself holds them: its arguments, variables, or replies, which the CLI
 //!   may echo.
+//! - Case is kept: an uppercase value becomes `<kind-upper:k>`, and one of
+//!   mixed case stays as sent.
 
 use std::collections::BTreeSet;
 
@@ -87,14 +92,26 @@ pub fn fields(text: &str) -> Fields {
     fields
 }
 
-/// The run's distinct values of one kind, numbered by first appearance.
+/// The run's distinct generated values, numbered by first appearance
+/// across their kinds, so a value sent as two kinds keeps one number.
 #[derive(Debug, Default)]
 struct Numbering {
     seen: Vec<String>,
 }
 
 impl Numbering {
-    fn label(&mut self, kind: &str, value: &str) -> String {
+    /// `<kind:k>`, or `<kind-upper:k>` for an uppercase value; none for a
+    /// value of mixed case, which stays as sent.
+    fn label(&mut self, kind: &str, value: &str) -> Option<String> {
+        let letters = value.bytes().filter(u8::is_ascii_alphabetic);
+        let case = match (
+            letters.clone().any(|byte| byte.is_ascii_lowercase()),
+            letters.clone().any(|byte| byte.is_ascii_uppercase()),
+        ) {
+            (true, true) => return None,
+            (false, true) => "-upper",
+            _ => "",
+        };
         let index = match self.seen.iter().position(|seen| seen == value) {
             Some(index) => index,
             None => {
@@ -102,15 +119,14 @@ impl Numbering {
                 self.seen.len() - 1
             }
         };
-        format!("<{kind}:{}>", index + 1)
+        Some(format!("<{kind}{case}:{}>", index + 1))
     }
 }
 
 /// One run's numberings, the UUIDs its row gave, and its secret key.
 #[derive(Debug)]
 struct State<'a> {
-    ids: Numbering,
-    uuids: Numbering,
+    numbers: Numbering,
     exempt: BTreeSet<String>,
     secret: Option<&'a str>,
 }
@@ -131,8 +147,7 @@ pub fn requests<'a>(
         })
         .collect();
     let mut state = State {
-        ids: Numbering::default(),
-        uuids: Numbering::default(),
+        numbers: Numbering::default(),
         exempt,
         secret,
     };
@@ -158,7 +173,7 @@ fn normal(request: &Request, state: &mut State<'_>) -> Normal {
     let headers = request
         .headers
         .iter()
-        .map(|(name, value)| (name.clone(), header(name, value, verdict, &mut state.ids)))
+        .map(|(name, value)| (name.clone(), header(name, value, verdict, state)))
         .collect();
     let query_text = query
         .as_ref()
@@ -195,14 +210,17 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> &'a str {
         .map_or("", |(_, value)| value)
 }
 
-fn header(name: &str, value: &str, verdict: Verdict, ids: &mut Numbering) -> String {
+fn header(name: &str, value: &str, verdict: Verdict, state: &mut State<'_>) -> String {
     match name.to_ascii_lowercase().as_str() {
         "authorization" => scope_date(&signature(value, verdict)),
         "x-amz-date" if is_amz_date(value) => "<amz-date>".to_owned(),
-        "amz-sdk-invocation-id" if is_uuid(value.as_bytes()) => ids.label("invocation-id", value),
+        "amz-sdk-invocation-id" if is_uuid(value.as_bytes()) => state
+            .numbers
+            .label("invocation-id", value)
+            .unwrap_or_else(|| value.to_owned()),
         "amz-sdk-request" => sdk_request(value),
         "user-agent" => user_agent(value),
-        _ => value.to_owned(),
+        _ => String::from_utf8_lossy(&replace_uuids(value.as_bytes(), state)).into_owned(),
     }
 }
 
@@ -353,8 +371,11 @@ fn replace_uuids(text: &[u8], state: &mut State<'_>) -> Vec<u8> {
         if state.exempt.contains(&uuid) {
             continue;
         }
+        let Some(label) = state.numbers.label("uuid", &uuid) else {
+            continue;
+        };
         out.extend_from_slice(&text[copied..at]);
-        out.extend_from_slice(state.uuids.label("uuid", &uuid).as_bytes());
+        out.extend_from_slice(label.as_bytes());
         copied = at + 36;
     }
     out.extend_from_slice(&text[copied..]);
@@ -380,7 +401,7 @@ fn uuids(text: &[u8]) -> Vec<usize> {
     found
 }
 
-fn is_uuid(candidate: &[u8]) -> bool {
+pub(super) fn is_uuid(candidate: &[u8]) -> bool {
     candidate.len() == 36
         && candidate
             .iter()

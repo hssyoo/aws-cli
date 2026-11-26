@@ -30,6 +30,11 @@ fn sent(id: &str, stdout: &str, max: &str) -> Result<Capture, TaskError> {
 }
 
 fn report_of(pairs: Vec<(Capture, Capture)>) -> Result<Report, TaskError> {
+    report_with(pairs, &[])
+}
+
+/// `report_of`, the rows `silent` names declaring they send no request.
+fn report_with(pairs: Vec<(Capture, Capture)>, silent: &[&str]) -> Result<Report, TaskError> {
     let side = |label: &str| Side {
         label: label.to_owned(),
         binary: PathBuf::from(label),
@@ -47,7 +52,12 @@ fn report_of(pairs: Vec<(Capture, Capture)>) -> Result<Report, TaskError> {
         .iter()
         .map(|(a, _)| format!("{{\"id\":\"{}\",\"argv\":[\"x\"],\"responses\":[]}}", a.id))
         .collect();
-    let rows = corpus::parse("rows", &lines.join("\n"))?;
+    let mut rows = corpus::parse("rows", &lines.join("\n"))?;
+    for row in &mut rows {
+        if silent.contains(&row.id.as_str()) {
+            row.requests = Some(0);
+        }
+    }
     Ok(report::build(&run, &rows, &pairs, &[]))
 }
 
@@ -102,13 +112,23 @@ fn standin(rows: &[(&str, Value)]) -> Result<Vec<Capture>, TaskError> {
         .collect()
 }
 
+const UUID_A: &str = "0f8fad5b-d9cb-469f-a165-70867728950e";
+const UUID_B: &str = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+
 fn standin_runs(env: &str, limit: &str) -> Result<Vec<Capture>, TaskError> {
     let get = json!({"method": "GET", "target": "/", "version": "1.1", "headers": [], "body": "",
                      "complete": true});
     let requests = |count: usize| vec![get.clone(); count];
     let chunked = json!({"method": "PUT", "target": "/chunked", "version": "1.1", "headers": [],
                          "body": "hello", "framing": ["3", "2", "0"], "complete": true});
+    let token = |side: &str, uuid: &str| {
+        let request = json!({"method": "POST", "target": "/token", "version": "1.1",
+                             "headers": [["X-Token", uuid]], "body": "", "complete": true});
+        json!({"side": side, "requests": [request]})
+    };
     standin(&[
+        ("standin-header-uuid", token("a", UUID_A)),
+        ("standin-header-uuid", token("b", UUID_B)),
         ("standin-chunked", json!({"requests": [chunked]})),
         ("standin-env", json!({"stdout": env})),
         (
@@ -128,18 +148,44 @@ fn the_stand_in_must_see_what_the_capture_promises() -> Result<(), TaskError> {
     let limit = format!("{}{}", "200 x\n".repeat(64), "closed\n".repeat(2));
     let unparsed = json!({"harness": ["protocol_error: a connection closed in request_headers"]});
     let hung = json!({"exit": null, "timed_out": true});
+    let get = json!({"method": "GET", "target": "/0", "version": "1.1", "headers": [],
+                     "body": "", "complete": true});
     let pairs = vec![
+        (
+            run_of("standin-declared-none", json!({"requests": [get.clone()]}))?,
+            run_of("standin-declared-none", json!({"requests": [get]}))?,
+        ),
         (
             run_of("standin-malformed", unparsed.clone())?,
             run_of("standin-malformed", unparsed)?,
+        ),
+        (
+            run_of("standin-no-request", json!({}))?,
+            run_of("standin-no-request", json!({}))?,
         ),
         (
             run_of("standin-timeout", hung.clone())?,
             run_of("standin-timeout", hung)?,
         ),
     ];
-    let report = report_of(pairs)?;
-    assert!(check_standin(&report, &standin_runs(&env, &limit)?).is_ok());
+    let report = report_with(pairs, &["standin-declared-none"])?;
+    let result = check_standin(&report, &standin_runs(&env, &limit)?);
+    assert!(result.is_ok(), "{result:?}");
+    // The header's token must be fresh on each side, and a UUID.
+    for (a, b) in [(UUID_A, UUID_A), (UUID_A, "not-a-uuid")] {
+        let mut runs = standin_runs(&env, &limit)?;
+        runs.retain(|run| run.id != "standin-header-uuid");
+        let token = |side: &str, uuid: &str| {
+            let request = json!({"method": "POST", "target": "/token", "version": "1.1",
+                                 "headers": [["X-Token", uuid]], "body": "", "complete": true});
+            run_of(
+                "standin-header-uuid",
+                json!({"side": side, "requests": [request]}),
+            )
+        };
+        runs.extend([token("a", a)?, token("b", b)?]);
+        assert!(check_standin(&report, &runs).is_err(), "{a} {b}");
+    }
     let failures = [
         standin_runs(&format!("{env}AWS_DEFAULT_REGION=us-west-2\n"), &limit)?,
         standin_runs(&env.replace("AWS_PAGER=\n", ""), &limit)?,

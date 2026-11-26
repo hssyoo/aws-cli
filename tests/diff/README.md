@@ -10,6 +10,7 @@ cargo xtask build                    # the candidate: the default artifact, pres
 cargo xtask diff                     # candidate:native against itself (determinism)
 cargo xtask diff --oracle            # candidate:native against candidate:python, botocore's route
 cargo xtask diff --a path/to/old/aws:native --b candidate:native
+cargo xtask diff --baseline d56b358bb # that commit's binary (built once, cached) against the candidate
 cargo xtask diff --check-corpus      # corpus/parity.jsonl must be what its converter writes
 cargo xtask diff --self-test         # the harness must catch a seeded defect, and see a stand-in whole
 ```
@@ -22,6 +23,25 @@ binary's path, then `:native`, `:python` or `:unset`, the value of
 (repeatable; default `corpus/*.jsonl`), `--filter TEXT` (row ids containing
 it), `--known FILE` (default `known-differences.json`), `--out DIR`
 (default `target/diff/<mode>`).
+
+`--baseline SHA|PATH [--route R]` sets A to a baseline and B to the
+candidate, both on route R (`native` by default); it takes neither `--a`,
+`--b` nor `--oracle`, and the candidate cannot be its own baseline. A value
+holding a `/` is a path, the baseline as it is. Otherwise it names a commit,
+whose binary is built once in the user's cache directory, outside every
+checkout: `aws-cli-native/diff-baseline/<sha>/` under `$XDG_CACHE_HOME` or
+`~/.cache`. There `src` is a fresh detached worktree of the commit, built by
+its own `cargo xtask build` into `target` (the managed dependency store stays
+shared), and the artifact is copied to `aws` with `aws.stamp`: the commit,
+the build recipe and the copy's SHA-256. The build reads only the commit's
+own Cargo configuration (a `.cargo/config` in a directory above `src`, but
+`$CARGO_HOME`'s, fails the run) and keeps only a short list of variables
+(HOME, PATH, the locale, the proxies, the cache and toolchain homes), so
+neither the candidate's `.cargo/config.toml` nor its `[env]` reaches it. The
+worktree must be clean before and after. A later run reuses the copy while
+its stamp holds (`diff: baseline <sha> reused`), and builds again otherwise.
+An admission change fails in this mode, and a run that compares no row
+(every row declined natively) says so.
 
 Nothing leaves the machine. One `localstub` server listens behind its TLS
 intercept proxy; every run goes through it (`HTTPS_PROXY`, the proxy's CA as
@@ -44,13 +64,15 @@ paths for every run, and stdin empty. Runs time out after 60 s.
 | `data_path` | AWS_DATA_PATH, relative to the repository root (`tests/models` for the fake models), or absent |
 | `responses` | the stub's reply to the run's n-th request: `status` (200), `headers` as ordered pairs, `body` or `body_base64`. The last repeats; from the 65th request on the stub closes each connection unanswered |
 | `timeout_s` | overrides the 60 s timeout; at least 1 (optional) |
+| `requests` | `0` for a row that sends no request (optional; no other count). A run that ends having sent none, its row not declaring it, is `requests:declared:none:<side>`, and one that sends a request though its row declares none `requests:declared:0:<side>`; no entry covers either. A run a native side declined, that timed out or that the capture did not see whole is left to its own fingerprint |
 
 `seed.jsonl` holds three rows (json, rest-json and query on the fake
 models) that the self-test uses. `parity.jsonl` holds the 86 cases of
 `tests/parity/cases`, converted mechanically by `convert_parity.py` (its
 docstring gives the rules) into the invocation a user would type: one
 argument per input member, settings as arguments and variables, the canned
-replies as they are. Regenerate it with `run.py --venv target/diff/venv
+replies as they are, and `"requests": 0` where the case's call sends no
+request. Regenerate it with `run.py --venv target/diff/venv
 --aws-cli-source aws-cli convert_parity.py --aws-cli-source aws-cli --cases
 tests/parity/cases --models tests/models --out corpus/parity.jsonl`;
 `--check-corpus` fails when it drifts. Either run also replays each row on
@@ -78,8 +100,9 @@ an `X-Amz-Date` of the form `YYYYMMDDTHHMMSSZ`, a UUID
 `amz-sdk-request`, the host's release and distribution version in the
 User-Agent (`os/linux#<release>`; the family, `md/arch` and the rest stay),
 the Python route's `sid/` and the order of its `m/` codes, and generated
-version 4 UUIDs in bodies and queries (numbered; those the row gives, in its
-arguments, variables or replies, stay). `xtask/src/diff/normalize.rs` lists
+version 4 UUIDs in bodies, queries and other headers' values (numbered
+across the run by first appearance; those the row gives, in its arguments,
+variables or replies, stay). `xtask/src/diff/normalize.rs` lists
 each.
 
 A difference is named by its stage and a differing field, such as
@@ -116,7 +139,7 @@ row native or not, is `sig:bad:<side>`, a mismatch no entry covers.
 `fingerprint`, the `cases` it holds for (row ids, or `"*"`), the `mode` it
 holds in (`oracle`, `baseline` or `determinism`) and a `reason`. It starts
 empty. No entry may name a timeout, a harness error, an admission change,
-a bad signature or a stage's overflow past its named differences (`:...`):
+a bad signature, a broken request declaration or a stage's overflow past its named differences (`:...`):
 a row with one is always mismatched. A text difference is grouped by a
 masked fingerprint, but an entry covers it only by naming its full lines,
 digits and all (the instance's `key`), so a known message never hides

@@ -1,6 +1,9 @@
 {"id":"standin-timeout","source":"tests/diff/standin.py","argv":["sleep","30"],"responses":[],"timeout_s":1}
 {"id":"standin-malformed","source":"tests/diff/standin.py","argv":["malformed"],"responses":[]}
-{"id":"standin-env","source":"tests/diff/standin.py","argv":["env"],"env":{"AWS_DEFAULT_REGION":null,"STANDIN":"1"},"responses":[]}
+{"id":"standin-env","source":"tests/diff/standin.py","argv":["env"],"env":{"AWS_DEFAULT_REGION":null,"STANDIN":"1"},"responses":[],"requests":0}
 {"id":"standin-replies","source":"tests/diff/standin.py","argv":["get","3"],"responses":[{"status":200,"body":"one"},{"status":201,"body":"two"}]}
 {"id":"standin-limit","source":"tests/diff/standin.py","argv":["get","66"],"responses":[{"status":200,"body":"x"}]}
 {"id":"standin-chunked","source":"tests/diff/standin.py","argv":["chunked"],"responses":[{"status":200}]}
+{"id":"standin-no-request","source":"tests/diff/standin.py","argv":["sleep","0"],"responses":[]}
+{"id":"standin-declared-none","source":"tests/diff/standin.py","argv":["get","1"],"responses":[{"status":200}],"requests":0}
+{"id":"standin-header-uuid","source":"tests/diff/standin.py","argv":["uuid"],"responses":[{"status":200}]}

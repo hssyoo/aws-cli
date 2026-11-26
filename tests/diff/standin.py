@@ -7,7 +7,9 @@ capture's paths the real CLI's happy path leaves alone (`standin.jsonl`):
   AWS_CA_BUNDLE), a connection each, printing each reply's status and body,
   or `closed` for a connection closed unanswered;
 - `chunked`: sends through the proxy a body of two chunks, `hel` and `lo`;
-- `malformed`: sends through the proxy a request the stub cannot parse.
+- `malformed`: sends through the proxy a request the stub cannot parse;
+- `uuid`: sends through the proxy a request whose `X-Token` header is a
+  fresh version 4 UUID, as an idempotency token bound to a header is.
 
 It uses the standard library alone, on the host's python3.
 """
@@ -20,6 +22,7 @@ import ssl
 import sys
 import time
 import urllib.parse
+import uuid
 from typing import Final
 
 HOST: Final = "standin.example.com"
@@ -64,6 +67,13 @@ def malformed() -> None:
     connection.close()
 
 
+def token() -> None:
+    connection = proxied()
+    connection.request("POST", "/token", headers={"X-Token": str(uuid.uuid4())})
+    print(connection.getresponse().status)
+    connection.close()
+
+
 def main() -> None:
     command, *rest = sys.argv[1:]
     if command == "sleep":
@@ -77,6 +87,8 @@ def main() -> None:
         chunked()
     elif command == "malformed":
         malformed()
+    elif command == "uuid":
+        token()
     else:
         raise SystemExit(f"standin: unknown command {command}")
 

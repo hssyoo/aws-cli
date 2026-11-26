@@ -216,7 +216,7 @@ fn hmac(key: &[u8], message: &[u8]) -> [u8; 32] {
         .into()
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(super) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

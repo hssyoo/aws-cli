@@ -6,7 +6,8 @@
 //! relative to the repository root, for fake models), the `responses` the
 //! stub gives the run's requests in order (the last repeating), each a
 //! `status`, `headers` as ordered pairs, and a `body` or `body_base64`, and
-//! an optional `timeout_s` of at least a second. A row cannot set the
+//! an optional `timeout_s` of at least a second, and `requests`, which a
+//! row that sends no request must declare `0` (no other count). A row cannot set the
 //! variables the harness owns ([`OWNED`]).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,6 +32,10 @@ pub struct Row {
     pub responses: Vec<Reply>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u32>,
+    /// `0` for a row that sends no request; without it, a run that ends
+    /// having sent none fails ([`super::report`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests: Option<u32>,
 }
 
 impl Row {
@@ -147,6 +152,9 @@ fn check(row: &Row) -> Result<(), String> {
     }
     if let Some(name) = row.env.keys().find(|name| OWNED.contains(&name.as_str())) {
         return Err(format!("the harness owns {name}"));
+    }
+    if row.requests.is_some_and(|count| count != 0) {
+        return Err("requests may only declare 0, a row that sends none".to_owned());
     }
     if row.timeout_s == Some(0) {
         return Err("timeout_s must be at least 1".to_owned());

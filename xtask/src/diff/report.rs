@@ -8,7 +8,9 @@
 //! or mismatched, or not native ([`admission`]). A timeout, a harness error,
 //! a changed admission, a bad signature on either side ([`UNCOVERABLE`]) or
 //! a stage's overflow past its named differences ([`OVERFLOW`]) is never
-//! known: no entry may name one. A text difference is covered only by an entry naming its full
+//! known: no entry may name one. So is a run that sends no request when its
+//! row does not declare `"requests": 0`, or one that sends a request when it
+//! does. A text difference is covered only by an entry naming its full
 //! lines (its `key`), and a `:bytes` one only for listed rows. The run
 //! passes when no row is mismatched. The report also counts each side's
 //! signatures by verdict ([`sigv4`]).
@@ -65,9 +67,16 @@ impl Known {
     }
 }
 
-/// The fingerprints no entry may cover: the run was not seen whole, or a
-/// request's signature is bad.
-pub const UNCOVERABLE: [&str; 4] = ["timeout:", "harness:", "admission-changed:", "sig:bad:"];
+/// The fingerprints no entry may cover: the run was not seen whole, a
+/// request's signature is bad, or a run broke its row's declared requests
+/// ([`declared`]).
+pub const UNCOVERABLE: [&str; 5] = [
+    "timeout:",
+    "harness:",
+    "admission-changed:",
+    "sig:bad:",
+    "requests:declared:",
+];
 
 /// The end of a stage's fingerprint past its last named difference, which
 /// stands for any number of others, so no entry may cover it either.
@@ -105,7 +114,7 @@ pub fn known(text: &str) -> Result<Vec<Known>, TaskError> {
     if let Some(entry) = known.iter().find(|entry| uncoverable(&entry.fingerprint)) {
         return Err(deps::error(format!(
             "the known difference {} names a timeout, a harness error, an admission change, \
-             a bad signature or an overflow, which no entry covers",
+             a bad signature, a broken request declaration or an overflow, which no entry covers",
             entry.fingerprint
         )));
     }
@@ -274,6 +283,7 @@ pub fn build(run: &Run, rows: &[Row], pairs: &[(Capture, Capture)], known: &[Kno
                 counted.count(side, capture)
             })
             .collect();
+        let bad: Vec<Diff> = bad.into_iter().chain(declared(run, row, a, b)).collect();
         let mut diffs = match admission::diffs(run, row, (a, b), &mut report.refusals) {
             Some(diffs) => diffs,
             None if bad.is_empty() => {
@@ -306,6 +316,44 @@ pub fn build(run: &Run, rows: &[Row], pairs: &[(Capture, Capture)], known: &[Kno
         .map(|index| known[index].fingerprint.clone())
         .collect();
     report
+}
+
+/// A run that ends having sent no request, its row not declaring
+/// `"requests": 0` (`requests:declared:none:<side>`), or that sends one
+/// though it does (`requests:declared:0:<side>`). A run a native side
+/// declined, that timed out or that the capture did not see whole is left to
+/// its own fingerprint.
+fn declared(run: &Run, row: &Row, a: &Capture, b: &Capture) -> Vec<Diff> {
+    let mut found = Vec::new();
+    for (name, side, capture) in [("a", &run.a, a), ("b", &run.b, b)] {
+        let whole = capture.exit.is_some() && !capture.timed_out && capture.harness.is_empty();
+        if !whole || admission::refusal(side, capture).is_some() {
+            continue;
+        }
+        let sent = capture.requests.len();
+        let (declared, detail) = match (row.requests, sent) {
+            (None, 0) => (
+                "none",
+                "sent no request; a row that sends none declares \"requests\": 0".to_owned(),
+            ),
+            (Some(_), 1..) => ("0", format!("sent {sent} requests; the row declares 0")),
+            _ => continue,
+        };
+        let detail = detail.as_str();
+        let (x, y) = if name == "a" {
+            (detail, "")
+        } else {
+            ("", detail)
+        };
+        found.push(Diff {
+            fingerprint: format!("requests:declared:{declared}:{name}"),
+            key: None,
+            request: None,
+            a: x.to_owned(),
+            b: y.to_owned(),
+        });
+    }
+    found
 }
 
 fn add(groups: &mut BTreeMap<String, Group>, id: &str, diff: &Diff, known: bool) {
@@ -411,6 +459,12 @@ impl Report {
             self.mismatched,
             self.not_native
         );
+        if self.rows > 0 && self.identical + self.known + self.mismatched == 0 {
+            let _ = writeln!(
+                text,
+                "diff: warning: no row was compared, so this run shows nothing about the sides"
+            );
+        }
         for (side, reasons) in &self.refusals {
             let counts: Vec<String> = reasons
                 .iter()

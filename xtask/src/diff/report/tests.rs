@@ -34,6 +34,13 @@ fn rows(ids: &[&str]) -> Result<Vec<Row>, TaskError> {
     corpus::parse("rows", &lines.join("\n"))
 }
 
+/// Rows that declare they send no request.
+fn silent(ids: &[&str]) -> Result<Vec<Row>, TaskError> {
+    let mut rows = rows(ids)?;
+    rows.iter_mut().for_each(|row| row.requests = Some(0));
+    Ok(rows)
+}
+
 /// A request as the capture writes it.
 fn request(target: &str, headers: &[(&str, &str)], body: &str) -> Value {
     let headers: Vec<[&str; 2]> = headers
@@ -546,7 +553,7 @@ fn a_known_text_difference_covers_only_its_own_lines() -> Result<(), TaskError> 
         run_of("r", error("(reached max retries: 4): Rate exceeded"))?,
         run_of("r", error("(reached max retries: 1): Rate exceeded"))?,
     );
-    let first = build(&run(Route::Native), &rows(&["r"])?, &[benign], &[]);
+    let first = build(&run(Route::Native), &silent(&["r"])?, &[benign], &[]);
     let proposed = first
         .proposed
         .first()
@@ -563,7 +570,7 @@ fn a_known_text_difference_covers_only_its_own_lines() -> Result<(), TaskError> 
         run_of("r", error("(reached max retries: 4): Rate exceeded"))?,
         run_of("r", error("(reached max retries: 4): Rate exceeded."))?,
     );
-    let covered = build(&run(Route::Native), &rows(&["r"])?, &[benign], &entries);
+    let covered = build(&run(Route::Native), &silent(&["r"])?, &[benign], &entries);
     assert_eq!((covered.known, covered.mismatched), (1, 0));
     let masked = first
         .groups
@@ -574,7 +581,7 @@ fn a_known_text_difference_covers_only_its_own_lines() -> Result<(), TaskError> 
         .map_err(|error| deps::error(error.to_string()))?;
     let report = build(
         &run(Route::Native),
-        &rows(&["r"])?,
+        &silent(&["r"])?,
         &[retries],
         &[entries, by_group].concat(),
     );
@@ -597,9 +604,9 @@ fn admission_changes_and_opaque_bodies_for_every_row_are_never_known() -> Result
     )];
     let changed: Vec<Known> = serde_json::from_str(&entry("admission-changed:a", "determinism"))
         .map_err(|error| deps::error(error.to_string()))?;
-    let report = build(&run(Route::Native), &rows(&["r"])?, &pairs, &changed);
+    let report = build(&run(Route::Native), &silent(&["r"])?, &pairs, &changed);
     assert_eq!((report.not_native, report.mismatched), (0, 1));
-    let oracle = build(&run(Route::Python), &rows(&["r"])?, &pairs, &[]);
+    let oracle = build(&run(Route::Python), &silent(&["r"])?, &pairs, &[]);
     assert_eq!(
         (
             oracle.not_native,
@@ -680,5 +687,148 @@ fn no_entry_covers_the_differences_past_the_named_ones() -> Result<(), TaskError
     );
     assert_eq!((report.known, report.mismatched), (0, 1));
     assert!(known(&entry("request[*].body:...", "determinism")).is_err());
+    Ok(())
+}
+
+// B3.3 (G-042b). On 17a368a34 a row that sent nothing passed; these name the
+// field it lacked, so they do not build there.
+
+fn sends_one() -> Value {
+    json!({"requests": [request("/", &[("X-Amz-Target", "T.A")], "{}")]})
+}
+
+#[test]
+fn a_row_that_sends_no_request_undeclared_fails() -> Result<(), TaskError> {
+    // Evasion: an argument the CLI takes for its own (a global `--version`)
+    // ends the run before any request, and both sides agree.
+    let quiet = || run_of("r", json!({"stdout": "aws-cli/2\n"}));
+    let report = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[(quiet()?, quiet()?)],
+        &[],
+    );
+    assert_eq!((report.identical, report.mismatched), (0, 1));
+    assert_eq!(
+        fingerprints(&report),
+        ["requests:declared:none:a", "requests:declared:none:b"]
+    );
+    assert!(report.verdict().is_err());
+    // A usage error ends the run as early, with its own exit status.
+    let usage = || run_of("r", json!({"exit": 252, "stderr": "usage: aws\n"}));
+    let report = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[(usage()?, usage()?)],
+        &[],
+    );
+    assert_eq!(report.mismatched, 1);
+    // No entry covers it, in any mode.
+    for mode in ["determinism", "baseline", "oracle"] {
+        for side in ["a", "b"] {
+            for declared in ["none", "0"] {
+                let text = entry(&format!("requests:declared:{declared}:{side}"), mode);
+                assert!(known(&text).is_err(), "{text}");
+            }
+        }
+    }
+    // Declared, it is identical.
+    let report = build(
+        &run(Route::Native),
+        &silent(&["r"])?,
+        &[(quiet()?, quiet()?)],
+        &[],
+    );
+    assert_eq!((report.identical, report.mismatched), (1, 0));
+    Ok(())
+}
+
+#[test]
+fn a_row_that_declares_none_must_send_none_on_each_side() -> Result<(), TaskError> {
+    // Evasion: declaring 0 on a row to pass it while one side sends.
+    let quiet = run_of("r", json!({}))?;
+    let sending = run_of("r", sends_one())?;
+    let report = build(
+        &run(Route::Native),
+        &silent(&["r"])?,
+        &[(quiet, sending.clone())],
+        &[],
+    );
+    let names = fingerprints(&report);
+    assert!(names.contains(&"requests:declared:0:b"), "{names:?}");
+    assert!(!names.contains(&"requests:declared:0:a"), "{names:?}");
+    let both = build(
+        &run(Route::Native),
+        &silent(&["r"])?,
+        &[(sending.clone(), sending)],
+        &[],
+    );
+    assert_eq!(
+        fingerprints(&both),
+        ["requests:declared:0:a", "requests:declared:0:b"]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_declined_hung_or_unseen_run_is_left_to_its_own_fingerprint() -> Result<(), TaskError> {
+    let stderr = "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable \
+                  (unsupported_option); Python fallback disabled\n";
+    let declined = run_of("r", json!({"exit": 255, "stderr": stderr}))?;
+    // The oracle: the native side declined, the Python side sent.
+    let oracle = build(
+        &run(Route::Python),
+        &rows(&["r"])?,
+        &[(declined.clone(), run_of("r", sends_one())?)],
+        &[],
+    );
+    assert_eq!((oracle.not_native, oracle.mismatched), (1, 0));
+    // Both declined alike: not native, not a missing request.
+    let alike = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[(declined.clone(), declined)],
+        &[],
+    );
+    assert_eq!((alike.not_native, alike.mismatched), (1, 0));
+    // But a declined side does not excuse the other's silence.
+    let silent_python = build(
+        &run(Route::Python),
+        &rows(&["r"])?,
+        &[(
+            run_of("r", json!({"exit": 255, "stderr": stderr}))?,
+            run_of("r", json!({}))?,
+        )],
+        &[],
+    );
+    assert_eq!(fingerprints(&silent_python), ["requests:declared:none:b"]);
+    let hung = || run_of("r", json!({"exit": null, "timed_out": true}));
+    let report = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[(hung()?, hung()?)],
+        &[],
+    );
+    assert_eq!(fingerprints(&report), ["timeout:both"]);
+    Ok(())
+}
+
+#[test]
+fn a_run_that_compares_no_row_says_so() -> Result<(), TaskError> {
+    // rev-b33 N4: a run whose every row a native side declined passes, and
+    // its summary says it compared nothing.
+    let stderr = "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable \
+                  (unsupported_option); Python fallback disabled\n";
+    let declined = || run_of("r", json!({"exit": 255, "stderr": stderr}));
+    let none = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[(declined()?, declined()?)],
+        &[],
+    );
+    assert!(none.verdict().is_ok());
+    assert!(none.summary().contains("warning: no row was compared"));
+    let compared = report(Route::Native)?;
+    assert!(!compared.summary().contains("warning"));
     Ok(())
 }
