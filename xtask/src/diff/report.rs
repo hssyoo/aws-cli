@@ -459,6 +459,12 @@ impl Report {
             self.mismatched,
             self.not_native
         );
+        if self.rows > 0 && self.identical + self.known + self.mismatched == 0 {
+            let _ = writeln!(
+                text,
+                "diff: warning: no row was compared, so this run shows nothing about the sides"
+            );
+        }
         for (side, reasons) in &self.refusals {
             let counts: Vec<String> = reasons
                 .iter()

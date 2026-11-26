@@ -812,3 +812,23 @@ fn a_declined_hung_or_unseen_run_is_left_to_its_own_fingerprint() -> Result<(), 
     assert_eq!(fingerprints(&report), ["timeout:both"]);
     Ok(())
 }
+
+#[test]
+fn a_run_that_compares_no_row_says_so() -> Result<(), TaskError> {
+    // rev-b33 N4: a run whose every row a native side declined passes, and
+    // its summary says it compared nothing.
+    let stderr = "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable \
+                  (unsupported_option); Python fallback disabled\n";
+    let declined = || run_of("r", json!({"exit": 255, "stderr": stderr}));
+    let none = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[(declined()?, declined()?)],
+        &[],
+    );
+    assert!(none.verdict().is_ok());
+    assert!(none.summary().contains("warning: no row was compared"));
+    let compared = report(Route::Native)?;
+    assert!(!compared.summary().contains("warning"));
+    Ok(())
+}
