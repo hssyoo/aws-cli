@@ -144,6 +144,12 @@ fn plan(root: &Path, options: &Options) -> Result<Run, TaskError> {
             route,
         };
         b.route = route;
+        if a.binary == b.binary {
+            return Err(deps::error(format!(
+                "--baseline {value} is the candidate itself; compare it with itself without \
+                 --baseline"
+            )));
+        }
     }
     let corpus = if options.corpus.is_empty() {
         corpus::files(root, Path::new(CORPUS_DIRECTORY))?

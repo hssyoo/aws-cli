@@ -26,15 +26,22 @@ it), `--known FILE` (default `known-differences.json`), `--out DIR`
 
 `--baseline SHA|PATH [--route R]` sets A to a baseline and B to the
 candidate, both on route R (`native` by default); it takes neither `--a`,
-`--b` nor `--oracle`. A path to a file is the baseline as it is. Otherwise
-the commit's binary is built once: `target/diff/baseline/<sha>/src` is a
-detached worktree of the commit, built by its own `cargo xtask build` into
-`target/diff/baseline/<sha>/target` (the managed dependency store stays
-shared), and the artifact is copied to `target/diff/baseline/<sha>/aws`
-with `aws.stamp`, the commit and the copy's SHA-256. A later run reuses the
-copy while its stamp holds (`diff: baseline <sha> reused`), and builds
-again otherwise; it never builds from a worktree at another commit or with
-tracked files changed, but names it. An admission change fails in this mode.
+`--b` nor `--oracle`, and the candidate cannot be its own baseline. A value
+holding a `/` is a path, the baseline as it is. Otherwise it names a commit,
+whose binary is built once in the user's cache directory, outside every
+checkout: `aws-cli-native/diff-baseline/<sha>/` under `$XDG_CACHE_HOME` or
+`~/.cache`. There `src` is a fresh detached worktree of the commit, built by
+its own `cargo xtask build` into `target` (the managed dependency store stays
+shared), and the artifact is copied to `aws` with `aws.stamp`: the commit,
+the build recipe and the copy's SHA-256. The build reads only the commit's
+own Cargo configuration (a `.cargo/config` in a directory above `src`, but
+`$CARGO_HOME`'s, fails the run) and keeps only a short list of variables
+(HOME, PATH, the locale, the proxies, the cache and toolchain homes), so
+neither the candidate's `.cargo/config.toml` nor its `[env]` reaches it. The
+worktree must be clean before and after. A later run reuses the copy while
+its stamp holds (`diff: baseline <sha> reused`), and builds again otherwise.
+An admission change fails in this mode, and a run that compares no row
+(every row declined natively) says so.
 
 Nothing leaves the machine. One `localstub` server listens behind its TLS
 intercept proxy; every run goes through it (`HTTPS_PROXY`, the proxy's CA as
