@@ -171,7 +171,8 @@ fn keys_of(value: &Value) -> Vec<String> {
 /// request fails with a 500, so each call or page first tries 3 times,
 /// until the 35 retries the quota holds are spent: the 18th makes 2
 /// requests, and every one after it 1. A quota made per call, per page or
-/// per paginator would let each make 3.
+/// per paginator would let each make 3. Another client has its own, full
+/// quota: one kept for the process would leave it nothing.
 #[test]
 fn the_retry_quota_is_shared_by_a_client_s_calls_and_pages() -> Result {
     let f = fixture(signing(), &[])?;
@@ -199,6 +200,11 @@ fn the_retry_quota_is_shared_by_a_client_s_calls_and_pages() -> Result {
     expected.extend([2, 1, 1]);
     assert_eq!(requests, expected);
     assert_eq!(f.runtime.slept().len(), 35);
+    let other = fixture(signing(), &[])?;
+    respond(&other.transport, 500, "{}", 5);
+    let called = facade::call_case(&other.client, "Op", value(&json!({"Name": "a"})));
+    assert!(called.is_err(), "{called:?}");
+    assert_eq!(other.transport.sent().len(), 3, "another client's quota");
     Ok(())
 }
 
