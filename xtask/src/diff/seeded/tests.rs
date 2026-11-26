@@ -169,8 +169,7 @@ fn the_stand_in_must_see_what_the_capture_promises() -> Result<(), TaskError> {
         ),
     ];
     let report = report_with(pairs, &["standin-declared-none"])?;
-    let result = check_standin(&report, &standin_runs(&env, &limit)?);
-    assert!(result.is_ok(), "{result:?}");
+    assert!(check_standin(&report, &standin_runs(&env, &limit)?).is_ok());
     // The header's token must be fresh on each side, and a UUID.
     for (a, b) in [(UUID_A, UUID_A), (UUID_A, "not-a-uuid")] {
         let mut runs = standin_runs(&env, &limit)?;
