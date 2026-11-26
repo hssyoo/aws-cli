@@ -4,10 +4,7 @@
 //! the table's structure, not its numbers: every refusal names what it
 //! refuses, and an operation that reaches a key the model loader does not
 //! interpret is refused with that key's name.
-use client::admission::{Unsupported, static_refusal};
-use client::endpoint::EndpointData;
-use model::paginators::{Paginators, Refused};
-use model::shapes::Model;
+use client::testing::facade;
 use model::source::{DirSource, Kind, Source};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -18,42 +15,17 @@ fn repository() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// A refusal's kind and what it names, the row of the table it counts in.
-fn row(refusal: &Unsupported) -> (String, String) {
-    let named = |kind: &str, name: &str| (kind.to_owned(), name.to_owned());
-    match refusal {
-        Unsupported::Protocol(name) => named("protocol", name),
-        Unsupported::Trait(name) => named("trait", name),
-        Unsupported::Builtin(name) => named("builtin", name),
-        Unsupported::ClientContextParam(name) => named("clientContextParam", name),
-        Unsupported::Auth(name) => named("auth", name),
-        Unsupported::Hook(reason) => named("hook", reason),
-        Unsupported::OperationContextParams => named("operationContextParams", "-"),
-        Unsupported::UnsignedPayload => named("unsignedPayload", "-"),
-        Unsupported::EndpointHeaders => named("endpointHeaders", "-"),
-        Unsupported::RegionPattern => named("regionPattern", "-"),
-        Unsupported::EndpointData => named("endpointData", "-"),
-        Unsupported::Validation(undecided) => named("validation", &format!("{undecided:?}")),
-        Unsupported::StartingToken(why) => named("startingToken", why),
-        Unsupported::Paginator(Refused::Expression(expression)) => named("paginator", expression),
-        Unsupported::Paginator(Refused::Malformed(why)) => named("paginator", why),
-    }
+/// The static refusal's (kind, name) of every operation of `service` in
+/// `source`, with this crate's table.
+fn refusals(source: &dyn Source, service: &str) -> Result<Vec<Option<(String, String)>>> {
+    let table = &customizations::TABLE[..];
+    let rows = facade::refusals(source, service, table)?;
+    Ok(rows.into_iter().map(|(_, refusal)| refusal).collect())
 }
 
-/// The refusals of every operation of `service` in `source`.
-fn refusals(source: &impl Source, service: &str) -> Result<Vec<Option<Unsupported>>> {
-    let model = Model::load(source, service)?;
-    let endpoints = EndpointData::load(source, service, model.metadata())?;
-    let table = &customizations::TABLE[..];
-    let pages = Paginators::load(source, service)?;
-    Ok(model
-        .operations()
-        .iter()
-        .map(|operation| {
-            let entry = pages.get(&operation.name).map(|entry| &entry.config);
-            static_refusal(&model, operation, &endpoints, service, table, entry)
-        })
-        .collect())
+/// An operation, by name.
+struct Operation {
+    name: String,
 }
 
 #[test]
@@ -68,7 +40,7 @@ fn every_shipped_operation_is_admitted_or_refused_by_name() -> Result<()> {
             match refusal {
                 None => admitted += 1,
                 Some(refusal) => {
-                    let (kind, name) = row(&refusal);
+                    let (kind, name) = refusal;
                     assert!(!name.is_empty(), "{service}: an unnamed {kind} refusal");
                     *counts.entry((kind, name)).or_default() += 1;
                 }
@@ -112,12 +84,16 @@ fn an_uninterpreted_key_refuses_the_operation_by_its_name() -> Result<()> {
         std::fs::copy(botocore, scratch.join(&file))?;
     }
     let source = DirSource::new(&scratch);
-    let model = Model::load(&source, "zjson")?;
+    let model = facade::load_model(&source, "zjson")?;
+    let operations: Vec<Operation> = facade::operation_names(&model)
+        .into_iter()
+        .map(|name| Operation { name })
+        .collect();
     let found = refusals(&source, "zjson");
     std::fs::remove_dir_all(&scratch)?;
     let found = found?;
-    for (operation, refusal) in model.operations().iter().zip(found) {
-        let planted = Some(Unsupported::Trait("aws.api#longPoll".into()));
+    for (operation, refusal) in operations.iter().zip(found) {
+        let planted = Some(("trait".to_owned(), "aws.api#longPoll".to_owned()));
         if &*operation.name == "Ping" {
             assert_eq!(refusal, planted);
         } else {

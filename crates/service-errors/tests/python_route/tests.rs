@@ -14,14 +14,13 @@
 use cli_core::cli_error::{CommandFailure, ErrorFormat, exit_status, render_command_failure};
 use cli_core::client_config::user_agent::{Host, Versions};
 use cli_core::client_config::{ClientSettings, Resolved, Source};
-use client::call::{Client, ClientParts, UserAgentContext};
-use client::credentials::{CredentialError, CredentialSource, SigningCredentials};
-use client::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
 use client::error::CallError;
 use client::http::{Headers, HttpResponse};
-use client::testing::{FixedRuntime, InMemoryTransport};
+use client::testing::facade::{
+    self, ClientCase, Credentials, EndpointCase, EndpointData, InMemoryTransport, Keys, Model,
+    UserAgentCase,
+};
 use client::transport::TransportError;
-use model::shapes::Model;
 use model::value::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,17 +38,18 @@ fn data() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../aws-cli/awscli/botocore/data")
 }
 
-#[derive(Debug)]
-struct Keys(bool);
-
-impl CredentialSource for Keys {
-    fn credentials(&self) -> Result<Option<SigningCredentials>, CredentialError> {
-        Ok(self.0.then(|| SigningCredentials {
+fn keys(found: bool) -> Credentials {
+    if !found {
+        return Credentials::Absent;
+    }
+    Credentials::Static {
+        keys: Keys {
             access_key_id: "AKIDEXAMPLE".into(),
             secret_access_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY".into(),
             session_token: None,
             account_id: None,
-        }))
+        },
+        method: None,
     }
 }
 
@@ -132,17 +132,10 @@ fn transport_failure(case: &Value, kind: &str) -> TestResult<TransportError> {
 /// `service`'s model and endpoint data, as the payload holds them.
 fn service_data(service: &str) -> TestResult<(Arc<Model>, EndpointData)> {
     let directory = service_directory(service)?;
-    let model = Arc::new(Model::from_json(&std::fs::read(
-        directory.join("service-2.json"),
-    )?)?);
-    let prefix = model
-        .metadata()
-        .endpoint_prefix
-        .as_deref()
-        .unwrap_or(service)
-        .to_owned();
+    let model = facade::model_from_json(&std::fs::read(directory.join("service-2.json"))?)?;
+    let prefix = facade::endpoint_prefix(&model).unwrap_or_else(|| service.to_owned());
     let endpoints_json = std::fs::read(data().join("endpoints.json"))?;
-    let endpoints = EndpointData::from_documents(
+    let endpoints = facade::endpoint_data_from_documents(
         std::fs::read(directory.join("endpoint-rule-set-1.json"))?,
         std::fs::read(data().join("partitions.json"))?,
         Some((&endpoints_json, &prefix)),
@@ -191,27 +184,23 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
     let mut settings = ClientSettings::new(format!("{service}.test"));
     settings.max_attempts = Some(Resolved::new(attempts, Source::Env("AWS_MAX_ATTEMPTS")));
     let transport = transport_for(case, attempts)?;
-    let parts = ClientParts {
+    let parts = ClientCase {
         service: service.into(),
         model: model.clone(),
         endpoints,
-        endpoint: EndpointConfig::new(&EndpointInputs {
-            region: region.as_deref(),
-            endpoint_url: endpoint_url.as_deref(),
+        endpoint: EndpointCase {
+            region,
+            endpoint_url,
             use_fips: case.get("fips").map(|_| true),
             use_dual_stack: case.get("dual_stack").map(|_| true),
-            signing: true,
-        }),
+        },
         settings,
-        credentials: Arc::new(Keys(case.get("no_credentials").is_none())),
+        credentials: keys(case.get("no_credentials").is_none()),
         transport,
-        runtime: Arc::new(FixedRuntime::new(
-            timestamp::Timestamp::from_unix_seconds(1_440_938_160).ok_or("epoch")?,
-            0.0,
-        )),
+        now: timestamp::Timestamp::from_unix_seconds(1_440_938_160).ok_or("epoch")?,
+        random: 0.0,
         customizations: &[],
-        parse: client::protocol::ParseHooks::botocore(),
-        user_agent: UserAgentContext {
+        user_agent: UserAgentCase {
             host: Host::default(),
             distribution: None,
             versions: Versions {
@@ -219,11 +208,9 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
                 crt: "0.1.0",
                 rust: "1.96.0",
             },
-            extras: client::useragent::SessionExtras {
-                installer: "other",
-                prompt: "off",
-                command: format!("{service}.test"),
-            },
+            installer: "other",
+            prompt: "off",
+            command: format!("{service}.test"),
         },
     };
     let input = case
@@ -231,9 +218,9 @@ fn native_error(case: &Value) -> TestResult<(CallError, Arc<Model>)> {
         .cloned()
         .unwrap_or(Value::Map(model::value::Map::new()));
     let operation = text(case, "operation").ok_or("operation")?;
-    let error = match Client::new(parts) {
+    let error = match facade::client_case(parts) {
         Err(error) => error,
-        Ok(client) => match client.call(operation, input) {
+        Ok(client) => match facade::call_case(&client, operation, input) {
             Err(error) => error,
             Ok(output) => return Err(format!("the call succeeded: {output:?}").into()),
         },
@@ -259,12 +246,8 @@ fn native_failure(case: &Value) -> TestResult<CommandFailure> {
         // The process provider's failure as the credentials crate words
         // it, for the helper's stderr (`credentials::process`), reaching
         // the client's call as the model client's chain hands it over.
-        let error = credentials::LoadError::CredentialRetrieval {
-            provider: "custom-process",
-            error_msg: "boom\n".into(),
-        };
+        let error = facade::credential_retrieval_error("custom-process", "boom\n");
         let (model, _) = service_data("sts")?;
-        let error = CallError::Credentials(error.to_string());
         return Ok(service_errors::call_failure(&error, &model));
     }
     let (error, model) = native_error(case)?;

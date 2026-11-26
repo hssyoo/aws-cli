@@ -1,13 +1,14 @@
 //! Each façade function as a typed `fn` pointer, each struct by an
 //! exhaustive destructuring with typed fields, each enum by an exhaustive
 //! match. A few behaviours the frozen harnesses lean on are checked too.
+use cli_core::client_config::{Resolved, Source as SettingSource};
 use client::http::Method;
 use client::testing::facade::{
     self, BlobHandler, CallError, Client, ClientCase, ClientSettings, Credentials, Customization,
-    Distribution, EndpointCase, EndpointData, Headers, Host, HttpRequest, HttpResponse,
-    InMemoryTransport, Keys, MemberInfo, Model, PaginationCase, ParseError, ParseOptions,
-    ProtocolHandle, SerializeError, Serialized, ServiceError, StartingToken, Timestamp,
-    TimestampHandler, UserAgentCase, Validated, Versions,
+    Distribution, EndpointCase, EndpointData, FixedRuntime, Headers, Host, HttpRequest,
+    HttpResponse, InMemoryTransport, Keys, MemberInfo, Model, PaginationCase, ParseError,
+    ParseOptions, ProtocolHandle, SerializeError, Serialized, ServiceError, StartingToken,
+    Timestamp, TimestampHandler, UserAgentCase, Validated, Versions,
 };
 use model::source::{DirSource, Source};
 use model::value::{Map, Value};
@@ -62,6 +63,7 @@ fn every_function_keeps_its_signature() {
     let _: fn(&[u8]) -> bool = facade::xml_parses;
     let _: fn(&str, &[String]) -> Out<StartingToken, CallError> = facade::parse_starting_token;
     let _: fn(&Map, &[String]) -> Out<String, String> = facade::resume_token;
+    let _: fn(&'static str, &str) -> CallError = facade::credential_retrieval_error;
     let _: &str = facade::TRUNCATE_AMOUNT;
     let _: fn(&[Arc<Model>], &[u8]) = client::testing::fuzz::responses;
     let _: fn(&[u8]) = client::testing::fuzz::xml;
@@ -179,6 +181,7 @@ fn every_type_keeps_its_fields_and_variants() {
         other_fields;
     let _: fn(&Validated, &Credentials) -> usize = enum_variants;
     let _: (Headers, Option<HttpRequest>, Option<AtomicUsize>) = (Headers::default(), None, None);
+    let _: Option<FixedRuntime> = None;
 }
 
 fn fake(service: &str) -> Result<Arc<Model>> {
@@ -350,5 +353,91 @@ fn input_members_give_botocore_s_type_names_and_locations() -> Result<()> {
         member("Odd", "fancy", None, "", ""),
     ];
     assert_eq!(facade::input_members(&model, "Put"), expected);
+    Ok(())
+}
+
+#[test]
+fn an_unknown_type_is_undecided_with_its_debug_text() -> Result<()> {
+    let model = facade::model_from_json(EVERY_TYPE.as_bytes())?;
+    let mut input = Map::new();
+    input.insert("Odd".into(), Value::String("x".into()));
+    assert_eq!(
+        facade::validate_case(&model, "Put", &Value::Map(input))?,
+        Validated::Undecided("UnknownType(\"fancy\")".to_owned())
+    );
+    Ok(())
+}
+
+#[test]
+fn a_credential_retrieval_error_reads_as_botocore_s() {
+    assert_eq!(
+        facade::credential_retrieval_error("custom-process", "boom\n"),
+        CallError::Credentials(
+            "Error when retrieving credentials from custom-process: boom\n".to_owned()
+        )
+    );
+}
+
+/// A call answered by a server error, then a success: one retry attempt.
+#[test]
+fn a_retried_call_reports_its_retry_attempts() -> Result<()> {
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let model = fake("zjson")?;
+    let endpoints = facade::endpoint_data_from_documents(
+        std::fs::read(repository.join("tests/models/zjson/2020-01-01/endpoint-rule-set-1.json"))?,
+        std::fs::read(repository.join("aws-cli/awscli/botocore/data/partitions.json"))?,
+        None,
+    )?;
+    let transport = Arc::new(InMemoryTransport::new());
+    transport.respond(HttpResponse {
+        status: 500,
+        headers: Headers::default(),
+        body: b"{}".to_vec(),
+    });
+    transport.respond(HttpResponse {
+        status: 200,
+        headers: Headers::default(),
+        body: b"{}".to_vec(),
+    });
+    let mut settings = ClientSettings::new("zjson.test".to_owned());
+    settings.max_attempts = Some(Resolved::new(2, SettingSource::Env("AWS_MAX_ATTEMPTS")));
+    let client = facade::client_case(ClientCase {
+        service: "zjson".to_owned(),
+        model,
+        endpoints,
+        endpoint: EndpointCase {
+            region: Some("us-west-2".to_owned()),
+            ..EndpointCase::default()
+        },
+        settings,
+        credentials: Credentials::Static {
+            keys: Keys {
+                access_key_id: "AKIDEXAMPLE".to_owned(),
+                secret_access_key: "secret".to_owned(),
+                session_token: None,
+                account_id: None,
+            },
+            method: None,
+        },
+        transport: transport.clone(),
+        now: Timestamp::from_unix_seconds(1_440_938_160).ok_or("epoch")?,
+        random: 0.0,
+        customizations: &[],
+        user_agent: UserAgentCase {
+            host: Host::default(),
+            distribution: None,
+            versions: Versions {
+                cli: "2.0.0",
+                crt: "0.1.0",
+                rust: "1.96.0",
+            },
+            installer: "other",
+            prompt: "off",
+            command: "zjson.test".to_owned(),
+        },
+    })?;
+    let (_, retry_attempts) = facade::call_case(&client, "ListThings", Value::Map(Map::new()))?;
+    assert_eq!(retry_attempts, 1);
+    assert_eq!(transport.sent().len(), 2);
     Ok(())
 }
