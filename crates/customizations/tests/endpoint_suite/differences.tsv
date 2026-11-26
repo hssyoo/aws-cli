@@ -1,0 +1,16 @@
+# provider cases 14049
+# e2e inputs 636 (skipped 2)
+dynamodb	e2e.0	93	url	https://dynamodb.us-east-1.amazonaws.com
+dynamodb	e2e.0	93	properties	{}
+dynamodb	e2e.0	95	url	https://111111111111.ddb.us-east-1.amazonaws.com
+dynamodb	e2e.0	106	url	https://dynamodb.us-east-1.api.aws
+dynamodb	e2e.0	106	properties	{}
+dynamodb	e2e.0	149	error	AccountIdEndpointMode is required but no AccountID was provided or able to be loaded
+dynamodb	e2e.0	151	url	https://111111111111.ddb.us-east-1.amazonaws.com
+dynamodb	e2e.0	162	error	AccountIdEndpointMode is required but no AccountID was provided or able to be loaded
+dynamodb	e2e.0	172	url	https://dynamodb.cn-north-1.amazonaws.com.cn
+dynamodb	e2e.0	172	properties	{}
+dynamodb	e2e.0	196	error	AccountIdEndpointMode is required but no AccountID was provided or able to be loaded
+dynamodb	e2e.0	209	url	https://dynamodb.us-gov-east-1.amazonaws.com
+dynamodb	e2e.0	209	properties	{}
+dynamodb	e2e.0	233	error	AccountIdEndpointMode is required but no AccountID was provided or able to be loaded

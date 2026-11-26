@@ -326,6 +326,138 @@ pub fn endpoint_data_from_documents(
     EndpointData::from_documents(rules, partitions, endpoints).map_err(|error| error.to_string())
 }
 
+/// A rule parameter's value.
+pub use crate::endpoint::ParamValue;
+
+/// A service's endpoint data for the endpoint suite: what a client resolves
+/// with, and the documents the rules engine reads.
+#[derive(Clone, Debug)]
+pub struct RuleSet {
+    data: EndpointData,
+    rules: Vec<u8>,
+    partitions: Vec<u8>,
+}
+
+/// The service's rule set, partitions and `endpoints.json` in `source`, as
+/// [`endpoint_data`] loads them.
+///
+/// # Errors
+/// The loader's error, as text.
+pub fn rule_set(source: &dyn Source, service: &str, model: &Model) -> Result<RuleSet, String> {
+    use model::source::{load_data_bytes, load_service_bytes};
+    let source = Dyn(source);
+    let text = |error: LoadError| error.to_string();
+    let (_, rules) = load_service_bytes(&source, service, Kind::EndpointRuleSet).map_err(text)?;
+    let partitions = load_data_bytes(&source, "partitions").map_err(text)?;
+    let endpoints = load_data_bytes(&source, "endpoints").map_err(text)?;
+    let prefix = model
+        .metadata()
+        .endpoint_prefix
+        .as_deref()
+        .unwrap_or(service);
+    let data = EndpointData::from_documents(
+        rules.clone(),
+        partitions.clone(),
+        Some((&endpoints, prefix)),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(RuleSet {
+        data,
+        rules,
+        partitions,
+    })
+}
+
+/// What one resolution gives: an endpoint, or the error text.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EndpointOutcome {
+    Endpoint {
+        url: String,
+        /// The endpoint's properties, as JSON text.
+        properties: String,
+        /// How many headers the endpoint carries.
+        headers: usize,
+    },
+    /// A rule's error message, or the engine's failure.
+    Error(String),
+}
+
+/// `EndpointProvider.resolve_endpoint(**params)` over `rules`.
+pub fn resolve_case(rules: &RuleSet, params: &[(&str, ParamValue)]) -> EndpointOutcome {
+    use crt::endpoints::{Documents, ParamValue as Crt, Resolved};
+    let arrays: Vec<Vec<&str>> = params
+        .iter()
+        .map(|(_, value)| match value {
+            ParamValue::StringArray(items) => items.iter().map(String::as_str).collect(),
+            _ => Vec::new(),
+        })
+        .collect();
+    let list: Vec<(&str, Crt<'_>)> = params
+        .iter()
+        .zip(&arrays)
+        .map(|((name, value), array)| {
+            let value = match value {
+                ParamValue::String(text) => Crt::String(text),
+                ParamValue::Boolean(flag) => Crt::Boolean(*flag),
+                ParamValue::StringArray(_) => Crt::StringArray(array),
+            };
+            (*name, value)
+        })
+        .collect();
+    let documents = Documents {
+        rules_json: &rules.rules,
+        partitions_json: &rules.partitions,
+    };
+    let lossy = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
+    match crt::endpoints::resolve_with_headers(documents, &list) {
+        Ok((Resolved::Endpoint { url, properties }, headers)) => EndpointOutcome::Endpoint {
+            url: lossy(&url),
+            // The engine gives no bytes for an endpoint without properties.
+            properties: if properties.is_empty() {
+                "{}".to_owned()
+            } else {
+                lossy(&properties)
+            },
+            headers,
+        },
+        Ok((Resolved::RuleError(message), _)) => EndpointOutcome::Error(lossy(&message)),
+        Err(error) => EndpointOutcome::Error(error.to_string()),
+    }
+}
+
+/// A call's endpoint: the parameters a client of `model` gives `operation`
+/// with `input` and these built-ins alone (`AWS::Auth::AccountId` among
+/// them as the credentials' account id), resolved as [`resolve_case`] does.
+///
+/// # Errors
+/// An operation the model lacks.
+pub fn endpoint_case(
+    rules: &RuleSet,
+    model: &Model,
+    operation: &str,
+    input: &Value,
+    builtins: &[(&str, ParamValue)],
+) -> Result<EndpointOutcome, String> {
+    let found = model
+        .operation(operation)
+        .ok_or_else(|| no_operation(operation))?;
+    let mut set = crate::endpoint::Builtins::default();
+    let mut account_id = None;
+    for (name, value) in builtins {
+        match (*name, value) {
+            ("AWS::Auth::AccountId", ParamValue::String(id)) => account_id = Some(id.as_str()),
+            _ => set.set(name, value.clone()),
+        }
+    }
+    let params =
+        crate::endpoint::provider_params(&rules.data, model, found, input, &set, account_id);
+    let params: Vec<(&str, ParamValue)> = params
+        .iter()
+        .map(|(name, value)| (name, value.clone()))
+        .collect();
+    Ok(resolve_case(rules, &params))
+}
+
 // ---------------------------------------------------------------- census
 
 /// A refusal's kind and what it names.
