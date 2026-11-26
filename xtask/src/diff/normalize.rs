@@ -21,8 +21,10 @@
 //!   `md/arch` stay, as both sides run on one host. The Python route's
 //!   telemetry session `sid/<hex>` becomes `sid/<sid>`, and the `m/` feature
 //!   codes are sorted, as Python joins them from a set.
-//! - Version 4 UUIDs in a body or a query value, the idempotency tokens the
-//!   CLI generates, become `<uuid:k>` by first appearance, unless the row
+//! - Version 4 UUIDs in a body, a query value or another header's value,
+//!   the idempotency tokens the CLI generates, become `<uuid:k>`, k numbering
+//!   them across the run by first appearance (each request's query, then its
+//!   headers, then its body), unless the row
 //!   itself holds them: its arguments, variables, or replies, which the CLI
 //!   may echo.
 
@@ -158,7 +160,7 @@ fn normal(request: &Request, state: &mut State<'_>) -> Normal {
     let headers = request
         .headers
         .iter()
-        .map(|(name, value)| (name.clone(), header(name, value, verdict, &mut state.ids)))
+        .map(|(name, value)| (name.clone(), header(name, value, verdict, state)))
         .collect();
     let query_text = query
         .as_ref()
@@ -195,14 +197,16 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> &'a str {
         .map_or("", |(_, value)| value)
 }
 
-fn header(name: &str, value: &str, verdict: Verdict, ids: &mut Numbering) -> String {
+fn header(name: &str, value: &str, verdict: Verdict, state: &mut State<'_>) -> String {
     match name.to_ascii_lowercase().as_str() {
         "authorization" => scope_date(&signature(value, verdict)),
         "x-amz-date" if is_amz_date(value) => "<amz-date>".to_owned(),
-        "amz-sdk-invocation-id" if is_uuid(value.as_bytes()) => ids.label("invocation-id", value),
+        "amz-sdk-invocation-id" if is_uuid(value.as_bytes()) => {
+            state.ids.label("invocation-id", value)
+        }
         "amz-sdk-request" => sdk_request(value),
         "user-agent" => user_agent(value),
-        _ => value.to_owned(),
+        _ => String::from_utf8_lossy(&replace_uuids(value.as_bytes(), state)).into_owned(),
     }
 }
 
@@ -380,7 +384,7 @@ fn uuids(text: &[u8]) -> Vec<usize> {
     found
 }
 
-fn is_uuid(candidate: &[u8]) -> bool {
+pub(super) fn is_uuid(candidate: &[u8]) -> bool {
     candidate.len() == 36
         && candidate
             .iter()

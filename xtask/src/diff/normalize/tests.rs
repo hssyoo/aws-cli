@@ -256,3 +256,135 @@ fn fields_keep_a_missing_equals_and_empty_fields() {
     assert_ne!(moved.0, moved.1);
     assert_eq!(fields("a&a&&b").empty, [Some(("a".to_owned(), 1))]);
 }
+
+// B3.3 (G-042a): each fails on 17a368a34, where a header's UUID stayed raw.
+
+/// The headers of `request` after normalizing it alone, with `inputs`.
+fn headers_of(request: &Request, inputs: &[&str]) -> Vec<(String, String)> {
+    let mut normal = requests(std::slice::from_ref(request), inputs.iter().copied(), None);
+    normal.pop().unwrap_or_default().headers
+}
+
+#[test]
+fn a_generated_uuid_in_a_header_is_numbered() {
+    let sent = |uuid: &str| {
+        headers_of(
+            &request("/", &[("x-amz-client-token", uuid), ("X-Other", "t-1")], ""),
+            &[],
+        )
+    };
+    assert_eq!(sent(UUID), sent(OTHER_UUID));
+    assert_eq!(
+        sent(UUID),
+        [
+            ("x-amz-client-token".to_owned(), "<uuid:1>".to_owned()),
+            ("X-Other".to_owned(), "t-1".to_owned())
+        ]
+    );
+    // Inside a longer value too, as in a body.
+    let within = headers_of(&request("/", &[("X-Ids", &format!("a,{UUID}"))], ""), &[]);
+    assert_eq!(within, [("X-Ids".to_owned(), "a,<uuid:1>".to_owned())]);
+}
+
+#[test]
+fn a_header_and_a_body_share_one_numbering() {
+    // Evasion: a constant `<uuid>` would hide a side that sends two tokens
+    // where the other sends one token twice.
+    let sent = |header: &str, body: &str| {
+        let normal = requests(
+            &[request("/", &[("X-Token", header)], &format!("\"{body}\""))],
+            [],
+            None,
+        );
+        normal
+            .first()
+            .map(|normal| (normal.headers.clone(), normal.body.clone()))
+    };
+    assert_ne!(sent(UUID, UUID), sent(UUID, OTHER_UUID));
+    let numbered = sent(UUID, UUID).map(|(_, body)| body);
+    assert_eq!(numbered, Some(b"\"<uuid:1>\"".to_vec()));
+    // Across requests, a retry that keeps its token still matches only one
+    // that does.
+    let retried = |second: &str| {
+        let normal = requests(
+            &[
+                request("/", &[("X-Token", UUID)], ""),
+                request("/", &[("X-Token", second)], ""),
+            ],
+            [],
+            None,
+        );
+        normal.into_iter().map(|n| n.headers).collect::<Vec<_>>()
+    };
+    assert_ne!(retried(UUID), retried(OTHER_UUID));
+}
+
+#[test]
+fn a_header_uuid_the_row_gives_stays() {
+    // Evasion: normalizing the user's own token would hide a CLI that drops
+    // it for a generated one.
+    let given = headers_of(
+        &request("/", &[("x-amz-client-token", UUID)], ""),
+        &["--client-token", UUID],
+    );
+    assert_eq!(given, [("x-amz-client-token".to_owned(), UUID.to_owned())]);
+    let generated = headers_of(
+        &request("/", &[("x-amz-client-token", OTHER_UUID)], ""),
+        &["--client-token", UUID],
+    );
+    assert_ne!(given, generated);
+}
+
+#[test]
+fn a_header_value_that_is_not_a_v4_uuid_stays() {
+    // Evasion: a version 1 UUID, a longer hex run, or a truncated one is not
+    // a generated token, and must show when it changes.
+    let version_1 = "1bea5eb3-c152-1a22-9489-328f1be28e40";
+    let longer = format!("{UUID}0");
+    for value in [version_1, longer.as_str(), &UUID[..35]] {
+        assert_eq!(header("X-Token", value), value, "{value}");
+    }
+    // The invocation id keeps its own numbering, apart from the tokens.
+    let normal = headers_of(
+        &request(
+            "/",
+            &[("amz-sdk-invocation-id", UUID), ("X-Token", UUID)],
+            "",
+        ),
+        &[],
+    );
+    let values: Vec<&str> = normal.iter().map(|(_, value)| value.as_str()).collect();
+    assert_eq!(values, ["<invocation-id:1>", "<uuid:1>"]);
+}
+
+#[test]
+fn a_header_uuid_does_not_hide_a_changed_signature() {
+    // The signature is verified on the bytes as sent, before any header is
+    // normalized: a token changed after signing is still bad.
+    let authorization = format!(
+        "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20261125/us-west-2/zjson/aws4_request, \
+         SignedHeaders=host;x-token, Signature={SIGNATURE}"
+    );
+    let sent = request(
+        "/",
+        &[
+            ("Host", "h"),
+            ("X-Token", UUID),
+            ("Authorization", &authorization),
+        ],
+        "",
+    );
+    let normal = requests(std::slice::from_ref(&sent), [], Some("secret"));
+    let headers = normal
+        .first()
+        .map(|normal| normal.headers.clone())
+        .unwrap_or_default();
+    let values: Vec<&str> = headers.iter().map(|(_, value)| value.as_str()).collect();
+    assert_eq!(values.get(1), Some(&"<uuid:1>"));
+    assert!(
+        values
+            .get(2)
+            .is_some_and(|value| value.ends_with("Signature=<sig:bad>")),
+        "{values:?}"
+    );
+}
