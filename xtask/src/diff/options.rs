@@ -56,11 +56,17 @@ pub struct Options {
     /// `--oracle`: the candidate's native route against its Python route.
     pub oracle: bool,
     pub check_corpus: bool,
+    /// `--baseline SHA|PATH`: that binary (a commit's, built and cached) as
+    /// A against the candidate as B, both on `--route` (default native).
+    pub baseline: Option<String>,
+    pub route: Option<Route>,
 }
 
 /// The options that take a value.
-const VALUED: [&str; 7] = [
+const VALUED: [&str; 9] = [
     "--a",
+    "--baseline",
+    "--route",
     "--b",
     "--aws-binary",
     "--corpus",
@@ -90,6 +96,8 @@ pub fn parse(args: &[String]) -> Result<Options, TaskError> {
             "--corpus" => options.corpus.push(PathBuf::from(value)),
             "--filter" => options.filter = Some(value),
             "--known" => options.known = Some(PathBuf::from(value)),
+            "--baseline" => options.baseline = Some(value),
+            "--route" => options.route = Some(route(&value)?),
             _ => options.out = Some(PathBuf::from(value)),
         }
     }
@@ -133,7 +141,21 @@ fn check(options: &Options) -> Result<(), TaskError> {
     if options.oracle && (options.a.is_some() || options.b.is_some()) {
         return Err(deps::error("--oracle sets both sides; drop --a and --b"));
     }
+    let sides = options.oracle || options.a.is_some() || options.b.is_some();
+    if options.baseline.is_some() && sides {
+        return Err(deps::error(
+            "--baseline sets both sides; drop --a, --b and --oracle",
+        ));
+    }
+    if options.route.is_some() && options.baseline.is_none() {
+        return Err(deps::error("--route goes with --baseline"));
+    }
     Ok(())
+}
+
+fn route(text: &str) -> Result<Route, TaskError> {
+    Route::parse(text)
+        .ok_or_else(|| deps::error(format!("--route is native, python or unset, not {text:?}")))
 }
 
 /// `candidate:ROUTE` or `PATH:ROUTE`; a path may itself hold colons.

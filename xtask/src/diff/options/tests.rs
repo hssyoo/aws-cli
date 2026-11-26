@@ -113,3 +113,23 @@ fn the_oracle_and_the_corpus_check_stand_alone() -> Result<(), TaskError> {
     );
     Ok(())
 }
+
+#[test]
+fn baseline_sets_both_sides_and_takes_a_route() -> Result<(), TaskError> {
+    let options = parse(&args(&["--baseline", "d56b358bb", "--route", "python"]))?;
+    assert_eq!(options.baseline.as_deref(), Some("d56b358bb"));
+    assert_eq!(options.route, Some(Route::Python));
+    for conflicting in [
+        &["--baseline", "x", "--a", "candidate:native"][..],
+        &["--baseline", "x", "--b", "candidate:native"],
+        &["--baseline", "x", "--oracle"],
+        &["--baseline", "x", "--self-test"],
+        &["--baseline", "x", "--check-corpus"],
+        &["--route", "native"],
+        &["--baseline", "x", "--route", "fallback"],
+        &["--baseline"],
+    ] {
+        assert!(failure(conflicting).is_some(), "{conflicting:?}");
+    }
+    Ok(())
+}

@@ -18,8 +18,10 @@
 //! A side is `candidate` (the default artifact, which must be present and
 //! current as for `blackbox`, or `--aws-binary PATH`) or a binary's path,
 //! then `:native`, `:python` or `:unset`; both default to
-//! `candidate:native`. `--self-test` runs the harness on a seeded defect
-//! ([`seeded`]). The report, job and captures are written under
+//! `candidate:native`. `--baseline SHA|PATH [--route R]` sets A to a
+//! commit's binary, built once and cached ([`baseline`]), or a file, and B
+//! to the candidate, both on route R (native by default). `--self-test`
+//! runs the harness on a seeded defect ([`seeded`]). The report, job and captures are written under
 //! `target/diff/<mode>`, or `--out DIR`.
 
 use std::fs;
@@ -29,6 +31,7 @@ use std::path::{Path, PathBuf};
 use crate::{TaskError, deps, harness, process};
 
 mod admission;
+mod baseline;
 mod capture;
 mod compare;
 mod corpus;
@@ -130,8 +133,18 @@ fn plan(root: &Path, options: &Options) -> Result<Run, TaskError> {
             options.b.clone().unwrap_or_else(default),
         )
     };
-    let a = side(root, &a, &options.aws_binary)?;
-    let b = side(root, &b, &options.aws_binary)?;
+    let mut a = side(root, &a, &options.aws_binary)?;
+    let mut b = side(root, &b, &options.aws_binary)?;
+    if let Some(value) = &options.baseline {
+        let (label, binary) = baseline::resolve(root, value)?;
+        let route = options.route.unwrap_or(Route::Native);
+        a = Side {
+            label,
+            binary,
+            route,
+        };
+        b.route = route;
+    }
     let corpus = if options.corpus.is_empty() {
         corpus::files(root, Path::new(CORPUS_DIRECTORY))?
     } else {
