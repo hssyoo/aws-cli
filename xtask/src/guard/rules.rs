@@ -3,20 +3,17 @@
 
 use std::collections::BTreeMap;
 
-use super::diff::{FileLines, is_test_file, matches};
+use super::attrs::{self, Source};
+use super::diff::{Commit, FileLines, crate_of, is_test_file, matches};
 use super::{Inputs, PROTECTED_LIST};
 
-/// The lines above or below an attribute's first that are read for its
-/// closing bracket.
-const ATTRIBUTE_LINES_MAX: usize = 32;
-
 pub fn check(inputs: &Inputs) -> Vec<String> {
-    let trailers = Trailers::parse(&inputs.messages);
     let mut violations = protected(inputs);
     violations.extend(suppressions(inputs));
-    violations.extend(test_counts(&inputs.base_tests, &inputs.head_tests));
-    violations.extend(deleted_tests(inputs, &trailers));
-    violations.extend(asserts(&inputs.lines, &trailers));
+    violations.extend(test_counts(inputs));
+    violations.extend(deleted_tests(inputs));
+    violations.extend(module_removals(inputs));
+    violations.extend(asserts(inputs));
     violations
 }
 
@@ -41,38 +38,38 @@ fn protected(inputs: &Inputs) -> Vec<String> {
     violations
 }
 
-/// The `.rs` files at head whose added lines hold a suppression attribute.
-pub fn suppression_files(lines: &[FileLines]) -> Vec<String> {
-    lines
-        .iter()
-        .filter(|file| {
-            file.added
-                .iter()
-                .any(|(_, text)| suppression(text).is_some())
-        })
-        .filter_map(|file| file.new.clone())
-        .filter(|path| path.ends_with(".rs"))
-        .collect()
+fn source<'a>(path: &str, text: &'a str) -> Source<'a> {
+    if path.ends_with(".rs") {
+        Source::rust(text)
+    } else {
+        Source::plain(text)
+    }
 }
 
 fn suppressions(inputs: &Inputs) -> Vec<String> {
     let mut violations = Vec::new();
     for file in &inputs.lines {
-        let Some(path) = &file.new else { continue };
-        let Some(source) = inputs.head_sources.get(path) else {
+        let Some(path) = file.new.as_deref().filter(|path| path.ends_with(".rs")) else {
             continue;
         };
-        let source: Vec<_> = source.lines().collect();
-        for (line, text) in &file.added {
-            let Some(kind) = suppression(text) else {
-                continue;
-            };
-            if !justified(&source, line.saturating_sub(1), kind) {
+        let Some(text) = inputs.head_sources.get(path) else {
+            continue;
+        };
+        let source = Source::rust(text);
+        for found in attrs::suppressions(&source) {
+            let added = file
+                .added
+                .iter()
+                .any(|(line, _)| (found.first_line..=found.last_line).contains(line));
+            if added && !justified(&source, &found) {
                 violations.push(format!(
-                    "guard: suppression: {path}:{line}: `{}` has no justification; say why in \
-                     a `//` comment on the same or the previous line, or in the attribute's \
-                     `reason = \"..\"` (`#[ignore = \"..\"]` for ignore)",
-                    text.trim()
+                    "guard: suppression: {path}:{}: `{}` ({}) has no justification; say why \
+                     in a `//` comment on its line or above its attributes, or in the \
+                     attribute itself ({})",
+                    found.first_line,
+                    found.text,
+                    found.kind,
+                    remedy(found.kind)
                 ));
             }
         }
@@ -80,154 +77,207 @@ fn suppressions(inputs: &Inputs) -> Vec<String> {
     violations
 }
 
-/// The kind of suppression attribute a line starts, if any: `allow`,
-/// `expect` or `ignore`, outer or inner.
-pub fn suppression(line: &str) -> Option<&'static str> {
-    let line = line.trim_start();
-    let rest = line
-        .strip_prefix("#![")
-        .or_else(|| line.strip_prefix("#["))?;
-    let rest = rest.trim_start();
-    if rest.starts_with("allow(") {
-        Some("allow")
-    } else if rest.starts_with("expect(") {
-        Some("expect")
-    } else if let Some(after) = rest.strip_prefix("ignore") {
-        let next = after.trim_start().chars().next();
-        matches!(next, None | Some(']' | '=')).then_some("ignore")
-    } else {
-        None
+fn remedy(kind: &str) -> &'static str {
+    match kind {
+        "ignore" => "`#[ignore = \"..\"]`",
+        "should_panic" => "`expected = \"..\"`",
+        "cfg-off" => "a cfg that is always false switches the code off; delete the code instead",
+        _ => "`reason = \"..\"`",
     }
 }
 
-/// Whether the attribute starting at `source[index]` is justified: a `//`
-/// comment on its line or the line before, or a non-empty `reason = ".."`
-/// (`ignore = ".."` for ignore) in the attribute.
-pub fn justified(source: &[&str], index: usize, kind: &str) -> bool {
-    let Some(first) = source.get(index) else {
-        return false;
-    };
-    let previous = index
-        .checked_sub(1)
-        .and_then(|previous| source.get(previous));
-    if has_comment(first) || previous.is_some_and(|line| is_comment(line)) {
+/// A suppression is justified by its own reason, a `//` comment on its
+/// first or last line, or a comment line directly above the stack of
+/// attributes it is in.
+pub fn justified(source: &Source<'_>, found: &attrs::Found) -> bool {
+    if found.reasoned || source.has_comment(found.first_line) || source.has_comment(found.last_line)
+    {
         return true;
     }
-    let attribute = attribute_text(source, index);
-    let key = if kind == "ignore" { "ignore" } else { "reason" };
-    has_string_value(&attribute, key)
+    let mut line = found.first_line.saturating_sub(1);
+    while line > 0 && source.is_attribute_line(line) {
+        line -= 1;
+    }
+    let comment_line = source
+        .line(line)
+        .is_some_and(|(code, _)| code.trim_start().starts_with("//"));
+    comment_line && source.has_comment(line)
 }
 
-/// The text of the attribute starting at `source[index]`, through its
-/// closing bracket.
-fn attribute_text(source: &[&str], index: usize) -> String {
-    let mut text = String::new();
-    let mut depth = 0_i32;
-    for line in source.iter().skip(index).take(ATTRIBUTE_LINES_MAX) {
-        text.push_str(line);
-        text.push('\n');
-        depth += line.matches('[').count() as i32 - line.matches(']').count() as i32;
-        if depth <= 0 {
-            break;
+/// Test functions per crate, counted in the changed files alone (the
+/// unchanged ones count the same at both ends).
+fn test_counts(inputs: &Inputs) -> Vec<String> {
+    let mut base: BTreeMap<String, usize> = BTreeMap::new();
+    let mut head: BTreeMap<String, usize> = BTreeMap::new();
+    let count = |sources: &BTreeMap<String, String>, path: &Option<String>| {
+        let path = path.as_deref().filter(|path| path.ends_with(".rs"))?;
+        Some(attrs::test_count(&Source::rust(sources.get(path)?)))
+    };
+    for change in &inputs.changes {
+        // A file that survives is counted in its crate at head on both
+        // sides, so moving a crate or making a directory one moves no test.
+        let owner = match (&change.new, &change.old) {
+            (Some(new), _) => crate_of(&inputs.head_crates, new),
+            (None, Some(old)) => crate_of(&inputs.base_crates, old),
+            (None, None) => continue,
+        };
+        if let Some(count) = count(&inputs.base_sources, &change.old) {
+            *base.entry(owner.clone()).or_default() += count;
+        }
+        if let Some(count) = count(&inputs.head_sources, &change.new) {
+            *head.entry(owner).or_default() += count;
         }
     }
-    text
-}
-
-fn has_comment(line: &str) -> bool {
-    line.match_indices("//").any(|(at, _)| {
-        let comment = &line[at + 2..];
-        !comment.starts_with(['/', '!']) && !comment.trim().is_empty()
-    })
-}
-
-/// A `//` line comment with text, not a doc comment.
-fn is_comment(line: &str) -> bool {
-    line.trim_start()
-        .strip_prefix("//")
-        .is_some_and(|comment| !comment.starts_with(['/', '!']) && !comment.trim().is_empty())
-}
-
-/// Whether `key = "<something>"` appears in `text`.
-fn has_string_value(text: &str, key: &str) -> bool {
-    text.match_indices(key).any(|(at, _)| {
-        text[at + key.len()..]
-            .trim_start()
-            .strip_prefix('=')
-            .map(str::trim_start)
-            .and_then(|value| value.strip_prefix('"'))
-            .is_some_and(|value| value.chars().next().is_some_and(|first| first != '"'))
-    })
-}
-
-fn test_counts(base: &BTreeMap<String, usize>, head: &BTreeMap<String, usize>) -> Vec<String> {
     base.iter()
         .filter_map(|(name, &before)| {
             let after = head.get(name).copied().unwrap_or(0);
             (after < before).then(|| {
                 format!(
-                    "guard: test-count: {name}: #[test] functions fell from {before} to \
-                     {after}; restore the tests, or replace what a retired test covered so \
-                     the count holds"
+                    "guard: test-count: {name}: test functions in the changed files fell from \
+                     {before} to {after}; restore the tests (a test in a comment or a string is \
+                     not counted), or replace what a retired test covered so the count holds"
                 )
             })
         })
         .collect()
 }
 
-fn deleted_tests(inputs: &Inputs, trailers: &Trailers) -> Vec<String> {
-    inputs
-        .changes
-        .iter()
-        .filter(|change| change.status == 'D')
-        .filter_map(|change| change.old.as_deref())
-        .filter(|path| is_test_file(path))
-        .filter(|path| {
-            !trailers.names(&trailers.retires, path)
-                && !inputs
-                    .messages
-                    .iter()
-                    .any(|message| message.contains(*path))
-        })
-        .map(|path| {
-            format!(
-                "guard: deleted-test: {path}: a test file was deleted; restore it, or name it \
-                 in the commit message or a `Retires: {path}` trailer"
-            )
-        })
-        .collect()
+/// Whether a commit of the range that touches `path` has a trailer `key`
+/// naming exactly `path`.
+fn trailer(commits: &[Commit], key: &str, path: &str) -> bool {
+    commits.iter().any(|commit| {
+        let values = if key == "Retires" {
+            &commit.retires
+        } else {
+            &commit.asserts_changed
+        };
+        commit.paths.iter().any(|touched| touched == path)
+            && values.iter().any(|value| value == path)
+    })
 }
 
-fn asserts(lines: &[FileLines], trailers: &Trailers) -> Vec<String> {
+/// Whether a commit that touches `path` names it in its message, as a
+/// whole path.
+fn mentioned(commits: &[Commit], path: &str) -> bool {
+    let part =
+        |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '/'));
+    commits
+        .iter()
+        .filter(|commit| commit.paths.iter().any(|touched| touched == path))
+        .any(|commit| {
+            commit.message.match_indices(path).any(|(at, _)| {
+                !part(commit.message[..at].chars().next_back())
+                    && !part(commit.message[at + path.len()..].chars().next())
+            })
+        })
+}
+
+fn deleted_tests(inputs: &Inputs) -> Vec<String> {
     let mut violations = Vec::new();
-    for file in lines {
-        let (Some(old), Some(new)) = (&file.old, &file.new) else {
+    for change in &inputs.changes {
+        let Some(old) = change.old.as_deref().filter(|old| is_test_file(old)) else {
             continue;
         };
-        if !is_test_file(old)
-            || trailers.names_assert_change(old)
-            || trailers.names_assert_change(new)
-        {
-            continue;
+        let how = match (change.status, change.new.as_deref()) {
+            ('D', _) => "deleted",
+            ('R', Some(new)) if !is_test_file(new) => "renamed out of the test paths",
+            _ => continue,
+        };
+        if !trailer(&inputs.commits, "Retires", old) && !mentioned(&inputs.commits, old) {
+            violations.push(format!(
+                "guard: deleted-test: {old}: a test file was {how}; restore it, or name it in \
+                 the message of the commit that removes it, or in its `Retires: {old}` trailer"
+            ));
         }
-        let mut added: Vec<_> = file.added.iter().map(|(_, text)| text.trim()).collect();
-        let mut changed = Vec::new();
-        for (line, text) in file
-            .removed
-            .iter()
-            .filter(|(_, text)| text.contains("assert"))
-        {
-            match added.iter().position(|kept| *kept == text.trim()) {
-                Some(position) => {
-                    added.swap_remove(position);
-                }
-                None => changed.push(line.to_string()),
+    }
+    violations
+}
+
+/// The file a `mod name;` in `parent` loads.
+fn child_path(parent: &str, name: &str) -> String {
+    let (directory, file) = parent.rsplit_once('/').unwrap_or(("", parent));
+    let stem = file.strip_suffix(".rs").unwrap_or(file);
+    let base = match (directory, stem) {
+        (_, "lib" | "main" | "mod") => directory.to_owned(),
+        ("", _) => stem.to_owned(),
+        _ => format!("{directory}/{stem}"),
+    };
+    if base.is_empty() {
+        format!("{name}.rs")
+    } else {
+        format!("{base}/{name}.rs")
+    }
+}
+
+/// The test module a line declares (`mod tests;`, `pub(crate) mod testing {`).
+fn test_module(code: &str) -> Option<&'static str> {
+    let mut words = code
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty());
+    words.position(|word| word == "mod")?;
+    match words.next()? {
+        "tests" => Some("tests"),
+        "testing" => Some("testing"),
+        _ => None,
+    }
+}
+
+fn module_removals(inputs: &Inputs) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in &inputs.lines {
+        let Some(old) = file.old.as_deref().filter(|old| old.ends_with(".rs")) else {
+            continue;
+        };
+        let Some(text) = inputs.base_sources.get(old) else {
+            continue;
+        };
+        let source = Source::rust(text);
+        for (line, raw) in &file.removed {
+            let Some(name) = source.line(*line).and_then(|(code, _)| test_module(code)) else {
+                continue;
+            };
+            let kept = file
+                .added
+                .iter()
+                .any(|(_, added)| added.trim() == raw.trim());
+            let child = child_path(old, name);
+            let retired = [old, child.as_str()]
+                .iter()
+                .any(|path| trailer(&inputs.commits, "Retires", path));
+            if !kept && !retired {
+                violations.push(format!(
+                    "guard: test-module: {old}:{line}: `{}` was removed, which stops its tests \
+                     compiling; restore it, or add a `Retires: {child}` trailer to the commit",
+                    raw.trim()
+                ));
             }
         }
+    }
+    violations
+}
+
+fn asserts(inputs: &Inputs) -> Vec<String> {
+    let mut violations = Vec::new();
+    for file in &inputs.lines {
+        let (Some(old), Some(new)) = (file.old.as_deref(), file.new.as_deref()) else {
+            continue;
+        };
+        let exempt = [old, new].iter().any(|path| {
+            trailer(&inputs.commits, "Retires", path)
+                || trailer(&inputs.commits, "Asserts-changed", path)
+        });
+        if !is_test_file(old) || exempt {
+            continue;
+        }
+        let (Some(base), Some(head)) = (inputs.base_sources.get(old), inputs.head_sources.get(new))
+        else {
+            continue;
+        };
+        let changed = changed_asserts(&source(old, base), &source(new, head), &file.removed);
         if !changed.is_empty() {
             violations.push(format!(
-                "guard: assert: {old}: {} removed or changed assert line(s) (base line {}); \
-                 restore them, or say why in an `Asserts-changed: {old}` trailer",
+                "guard: assert: {old}: {} removed or changed assert statement(s) (base line {}); \
+                 restore them, or say why in an `Asserts-changed: {old}` trailer on the commit",
                 changed.len(),
                 changed.join(", ")
             ));
@@ -236,39 +286,46 @@ fn asserts(lines: &[FileLines], trailers: &Trailers) -> Vec<String> {
     violations
 }
 
-/// The path trailers of the range's commit messages.
-#[derive(Debug, Default)]
-pub struct Trailers {
-    pub retires: Vec<String>,
-    pub asserts_changed: Vec<String>,
+/// The first lines of the base's assert statements that a removed line
+/// falls in and whose text (whitespace collapsed) is not among the head's
+/// statements left once the untouched base statements are matched off.
+pub fn changed_asserts(
+    base: &Source<'_>,
+    head: &Source<'_>,
+    removed: &[(usize, String)],
+) -> Vec<String> {
+    let mut remaining: Vec<String> = attrs::statements(head)
+        .into_iter()
+        .map(|statement| statement.text)
+        .collect();
+    let (touched, untouched): (Vec<_>, Vec<_>) =
+        attrs::statements(base).into_iter().partition(|statement| {
+            removed
+                .iter()
+                .any(|(line, _)| (statement.first_line..=statement.last_line).contains(line))
+        });
+    let mut take = |text: &str| {
+        let position = remaining.iter().position(|kept| kept == text);
+        position
+            .map(|position| remaining.swap_remove(position))
+            .is_some()
+    };
+    for statement in &untouched {
+        take(&statement.text);
+    }
+    touched
+        .iter()
+        .filter(|statement| !take(&statement.text))
+        .map(|statement| statement.first_line.to_string())
+        .collect()
 }
 
-impl Trailers {
-    pub fn parse(messages: &[String]) -> Self {
-        let mut trailers = Self::default();
-        for line in messages.iter().flat_map(|message| message.lines()) {
-            let (list, values) = if let Some(values) = line.strip_prefix("Retires:") {
-                (&mut trailers.retires, values)
-            } else if let Some(values) = line.strip_prefix("Asserts-changed:") {
-                (&mut trailers.asserts_changed, values)
-            } else {
-                continue;
-            };
-            list.extend(
-                values
-                    .split([',', ' ', '\t'])
-                    .filter(|value| !value.is_empty())
-                    .map(str::to_owned),
-            );
-        }
-        trailers
-    }
-
-    fn names(&self, list: &[String], path: &str) -> bool {
-        list.iter().any(|pattern| matches(pattern, path))
-    }
-
-    fn names_assert_change(&self, path: &str) -> bool {
-        self.names(&self.retires, path) || self.names(&self.asserts_changed, path)
-    }
+/// The lines of a file diff whose paths are known; a block with lines and
+/// no path means git's output was not understood.
+pub fn unparsed(lines: &[FileLines]) -> Option<&FileLines> {
+    lines.iter().find(|file| {
+        file.old.is_none()
+            && file.new.is_none()
+            && !(file.added.is_empty() && file.removed.is_empty())
+    })
 }

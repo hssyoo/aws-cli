@@ -1,10 +1,6 @@
-use super::diff::{self, Change, FileLines};
-use super::rules::{self, Trailers};
-use super::{Inputs, options};
-use std::collections::BTreeMap;
-use std::fs;
-use std::path::Path;
-use std::process::Command;
+use super::attrs::{self, Source};
+use super::diff::{self, Change};
+use super::{lex, options, rules};
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
@@ -18,71 +14,72 @@ fn change(status: char, old: Option<&str>, new: Option<&str>) -> Change {
     }
 }
 
-fn lines(path: &str, removed: &[(usize, &str)], added: &[(usize, &str)]) -> FileLines {
-    let owned = |items: &[(usize, &str)]| {
-        items
-            .iter()
-            .map(|(line, text)| (*line, (*text).to_owned()))
-            .collect()
-    };
-    FileLines {
-        old: Some(path.to_owned()),
-        new: Some(path.to_owned()),
-        removed: owned(removed),
-        added: owned(added),
-    }
-}
-
-fn rule_names(inputs: &Inputs) -> Vec<String> {
-    rules::check(inputs)
-        .iter()
-        .map(|violation| {
-            let words: Vec<_> = violation
-                .split_whitespace()
-                .take(3)
-                .map(|word| word.trim_end_matches(':'))
-                .collect();
-            words.join(": ")
-        })
-        .collect()
-}
-
 #[test]
 fn options_need_a_base_and_default_the_head() {
     let parsed = options(&strings(&["--base", "v2"])).ok();
     assert_eq!(parsed, Some(("v2".to_owned(), "HEAD".to_owned())));
     let both = options(&strings(&["--head", "h", "--base", "b"])).ok();
     assert_eq!(both, Some(("b".to_owned(), "h".to_owned())));
-    for bad in [
-        &[][..],
+    let bad: [&[&str]; 5] = [
+        &[],
         &["--head", "h"],
         &["--base"],
         &["--base", "a", "--base", "b"],
         &["x"],
-    ] {
+    ];
+    for bad in bad {
         assert!(options(&strings(bad)).is_err(), "{bad:?}");
     }
 }
 
 #[test]
 fn globs_match_within_and_across_segments() {
-    assert!(diff::matches("xtask/**", "xtask/src/guard.rs"));
-    assert!(diff::matches("**/Cargo.toml", "Cargo.toml"));
-    assert!(diff::matches("**/Cargo.toml", "crates/a/Cargo.toml"));
-    assert!(diff::matches(
-        "tests/diff/corpus/*.jsonl",
-        "tests/diff/corpus/s3.jsonl"
-    ));
-    assert!(diff::matches("clippy.toml", "clippy.toml"));
-    assert!(!diff::matches("clippy.toml", "crates/clippy.toml"));
-    assert!(!diff::matches("tests/parity/**", "tests/paritycheck/a"));
-    assert!(!diff::matches(
-        "tests/diff/corpus/*.jsonl",
-        "tests/diff/corpus/a/b.jsonl"
-    ));
+    let cases = [
+        ("xtask/**", "xtask/src/guard.rs", true),
+        ("**/Cargo.toml", "Cargo.toml", true),
+        ("**/Cargo.toml", "crates/a/Cargo.toml", true),
+        ("**/.cargo/**", ".cargo/config.toml", true),
+        ("tests/**/conftest.py", "tests/conftest.py", true),
+        ("tests/*.py", "tests/awswire.py", true),
+        ("clippy.toml", "crates/clippy.toml", false),
+        ("tests/parity/**", "tests/paritycheck/a", false),
+        ("tests/*.py", "tests/a/b.py", false),
+    ];
+    for (pattern, path, expected) in cases {
+        assert_eq!(diff::matches(pattern, path), expected, "{pattern} {path}");
+    }
     assert_eq!(
         diff::patterns("# c\n\na/** # why\nb\n"),
         strings(&["a/**", "b"])
+    );
+}
+
+#[test]
+fn the_committed_list_covers_what_redirects_or_silences_an_oracle() {
+    let list = diff::patterns(include_str!("../../guard/protected.txt"));
+    for path in [
+        ".cargo/config.toml",
+        "crates/a/.cargo/config.toml",
+        "rust-toolchain.toml",
+        "crates/a/clippy.toml",
+        "crates/a/.rustfmt.toml",
+        ".gitattributes",
+        "crates/a/.gitattributes",
+        "tests/blackbox/tests/s3/conftest.py",
+        "tests/blackbox/tests/pytest.ini",
+        "tests/diff/capture.py",
+        "crates/a/Cargo.toml",
+        "xtask/src/guard.rs",
+    ] {
+        assert!(
+            list.iter().any(|pattern| diff::matches(pattern, path)),
+            "{path}"
+        );
+    }
+    assert!(
+        !list
+            .iter()
+            .any(|pattern| diff::matches(pattern, "crates/a/src/lib.rs"))
     );
 }
 
@@ -128,11 +125,32 @@ fn unified_diffs_number_lines_and_keep_header_lookalikes() {
         (files[1].old.as_deref(), files[1].new.as_deref()),
         (None, Some("n.rs"))
     );
-    assert_eq!(files[1].added, [(1, "fn n() {}".to_owned())]);
+    assert!(rules::unparsed(&files).is_none());
+    let unprefixed = diff::unified("diff --git x x\n--- x\n+++ x\n@@ -1 +1 @@\n-a\n+b\n");
+    assert!(rules::unparsed(&unprefixed).is_some());
 }
 
 #[test]
-fn tests_are_counted_in_the_deepest_crate() {
+fn batch_replies_and_logs_are_read_by_spec_and_by_commit() {
+    let specs = strings(&["h:a", "h:gone", "h:b"]);
+    let reply = b"1 blob 3\nabc\nh:gone missing\n2 blob 0\n\n";
+    let blobs = diff::batch(&specs, reply).unwrap_or_default();
+    assert_eq!(blobs.get("h:a").map(String::as_str), Some("abc"));
+    assert_eq!(blobs.get("h:b").map(String::as_str), Some(""));
+    assert!(!blobs.contains_key("h:gone"));
+    assert!(diff::batch(&specs, b"1 blob 9\nabc\n").is_err());
+    let log = "\u{1}drop it\n\nRetires: a.rs, b.rs\n\u{2}Retires: a.rs, b.rs\n\u{2}\0\na.rs\0c.rs\0\
+               \u{1}body Retires: x\n\u{2}\u{2}\0\nd.rs\0";
+    let commits = diff::commits(log);
+    assert_eq!(commits.len(), 2);
+    assert_eq!(commits[0].retires, strings(&["a.rs", "b.rs"]));
+    assert_eq!(commits[0].paths, strings(&["a.rs", "c.rs"]));
+    assert!(commits[1].retires.is_empty());
+    assert_eq!(commits[1].paths, strings(&["d.rs"]));
+}
+
+#[test]
+fn crates_are_the_deepest_manifest_directory() {
     let crates = diff::crate_directories(
         [
             "Cargo.toml",
@@ -143,17 +161,12 @@ fn tests_are_counted_in_the_deepest_crate() {
         .into_iter(),
     );
     assert_eq!(crates, strings(&["", "crates/a", "crates/a/inner"]));
-    let counts = [
-        ("crates/a/src/x.rs", 2),
-        ("crates/a/inner/t.rs", 3),
-        ("tests/t.rs", 1),
-    ]
-    .map(|(path, count)| (path.to_owned(), count));
-    let totals = diff::per_crate(&crates, counts.into_iter());
-    let expected: BTreeMap<_, _> = [(".", 1), ("crates/a", 2), ("crates/a/inner", 3)]
-        .map(|(k, v)| (k.to_owned(), v))
-        .into();
-    assert_eq!(totals, expected);
+    assert_eq!(
+        diff::crate_of(&crates, "crates/a/inner/src/t.rs"),
+        "crates/a/inner"
+    );
+    assert_eq!(diff::crate_of(&crates, "crates/a/src/x.rs"), "crates/a");
+    assert_eq!(diff::crate_of(&crates, "tests/t.rs"), ".");
 }
 
 #[test]
@@ -177,261 +190,164 @@ fn test_files_are_tests_rs_testing_rs_and_tests_directories() {
 }
 
 #[test]
-fn protected_paths_are_reported_with_the_pattern() {
-    let inputs = Inputs {
-        protected: strings(&["tests/parity/**", "**/Cargo.toml"]),
-        changes: vec![
-            change(
-                'M',
-                Some("tests/parity/cases.json"),
-                Some("tests/parity/cases.json"),
-            ),
-            change(
-                'R',
-                Some("crates/a/Cargo.toml"),
-                Some("crates/b/Cargo.toml"),
-            ),
-            change(
-                'M',
-                Some("crates/a/src/lib.rs"),
-                Some("crates/a/src/lib.rs"),
-            ),
-        ],
-        ..Inputs::default()
-    };
-    let violations = rules::check(&inputs);
-    assert_eq!(violations.len(), 3, "{violations:?}");
-    assert!(violations[0].starts_with("guard: protected: tests/parity/cases.json (M)"));
-    assert!(violations[0].contains("`tests/parity/**`") && violations[0].contains("approved"));
-    assert!(violations[2].starts_with("guard: protected: crates/b/Cargo.toml (R)"));
+fn the_mask_blanks_literals_and_comments_and_keeps_offsets() {
+    let source = concat!(
+        "let a = \"#[ignore] \\\" x\"; // #[ignore]\n",
+        "let b = r#\"#[test] \"quoted\" \"#; /* #[test] /* nested */ */\n",
+        "let c = '['; let d: &'static str = br\"]\";\n",
+        "fn e<'a>(x: &'a str) {}\n",
+    );
+    let masked = lex::mask(source);
+    assert_eq!(masked.len(), source.len());
+    assert_eq!(masked.lines().count(), 4);
+    assert!(!masked.contains("ignore") && !masked.contains("test"));
+    assert!(!masked.contains("nested") && !masked.contains("quoted"));
+    assert!(masked.contains("'static") && masked.contains("<'a>") && masked.contains("&'a str"));
+    assert_eq!(masked.matches('[').count(), 0, "{masked}");
+}
+
+fn kinds(text: &str) -> Vec<(&'static str, bool)> {
+    attrs::suppressions(&Source::rust(text))
+        .into_iter()
+        .map(|found| (found.kind, found.reasoned))
+        .collect()
 }
 
 #[test]
-fn suppressions_are_recognised_outer_inner_and_not_in_text() {
-    assert_eq!(rules::suppression("    #[ignore]"), Some("ignore"));
-    assert_eq!(rules::suppression(r#"#[ignore = "slow"]"#), Some("ignore"));
-    assert_eq!(rules::suppression("#![allow(dead_code)]"), Some("allow"));
-    assert_eq!(rules::suppression("#[expect("), Some("expect"));
-    assert_eq!(rules::suppression("#[ignored_attr]"), None);
-    assert_eq!(rules::suppression("#[allowed(x)]"), None);
-    assert_eq!(rules::suppression(r##"let s = "#[ignore]";"##), None);
-}
-
-#[test]
-fn a_suppression_is_justified_by_a_comment_or_a_reason() {
-    let cases: [(&[&str], usize, bool); 11] = [
-        (&["// the upstream suite skips it", "#[ignore]"], 1, true),
-        (&["#[ignore] // needs network"], 0, true),
-        (&[r#"#[ignore = "needs network"]"#], 0, true),
+fn suppressions_are_found_anywhere_and_inside_cfg_attr() {
+    let cases: [(&str, &[(&str, bool)]); 14] = [
+        ("#[ignore]", &[("ignore", false)]),
+        ("    # [ ignore ]", &[("ignore", false)]),
+        ("#[ignore = \"slow\"]", &[("ignore", true)]),
+        ("#[ignore = \"  \"]", &[("ignore", false)]),
+        ("#[test] #[ignore] fn a() {}", &[("ignore", false)]),
+        ("#![allow(dead_code)]", &[("allow", false)]),
+        ("#[allow (dead_code)]", &[("allow", false)]),
         (
-            &[
-                "#[expect(",
-                "    clippy::panic,",
-                r#"    reason = "a test""#,
-                ")]",
-            ],
-            0,
-            true,
+            "#[expect(\n  clippy::panic,\n  reason = \"a test\"\n)]",
+            &[("expect", true)],
         ),
-        (&[r#"#![allow(dead_code, reason = "fixture")]"#], 0, true),
-        (&["#[ignore]"], 0, false),
+        ("#[cfg_attr(miri, ignore)]", &[("ignore", false)]),
         (
-            &["/// Documents the item.", "#[allow(dead_code)]"],
-            1,
-            false,
+            "#[cfg_attr(all(), allow(x, reason = \"r\"), ignore)]",
+            &[("allow", true), ("ignore", false)],
         ),
-        (&["//", "#[allow(dead_code)]"], 1, false),
-        (&[r#"#[ignore = ""]"#], 0, false),
-        (&[r#"#[allow(dead_code, reason = "")]"#], 0, false),
-        (&["#[allow(dead_code)]", "// after it"], 0, false),
+        ("#[should_panic]", &[("should_panic", false)]),
+        (
+            "#[should_panic(expected = \"boom\")]",
+            &[("should_panic", true)],
+        ),
+        ("#[cfg(any())] mod tests;", &[("cfg-off", false)]),
+        ("#[cfg(not(test))]", &[("cfg-off", false)]),
     ];
-    for (source, index, expected) in cases {
-        let kind = rules::suppression(source[index]).unwrap_or_default();
-        assert_eq!(
-            rules::justified(source, index, kind),
-            expected,
-            "{source:?}"
-        );
+    for (text, expected) in cases {
+        assert_eq!(kinds(text), expected, "{text}");
+    }
+    for quiet in [
+        "let s = \"#[ignore]\";",
+        "// #[allow(x)]",
+        "#[ignored_attr]",
+        "#[allowed(x)]",
+        "#[cfg(test)]",
+        "#[cfg(feature = \"x\")]",
+        "#[cfg(all(test, not(miri)))]",
+    ] {
+        assert_eq!(kinds(quiet), [], "{quiet}");
     }
 }
 
 #[test]
-fn unjustified_added_suppressions_are_violations() {
-    let source =
-        "fn a() {}\n#[ignore]\n#[test]\nfn b() {}\n// why\n#[allow(dead_code)]\nfn c() {}\n";
-    let inputs = Inputs {
-        lines: vec![lines(
-            "src/lib.rs",
-            &[],
-            &[(2, "#[ignore]"), (6, "#[allow(dead_code)]")],
-        )],
-        head_sources: [("src/lib.rs".to_owned(), source.to_owned())].into(),
-        ..Inputs::default()
-    };
-    assert_eq!(
-        rules::suppression_files(&inputs.lines),
-        strings(&["src/lib.rs"])
-    );
-    let violations = rules::check(&inputs);
-    assert_eq!(violations.len(), 1, "{violations:?}");
-    assert!(violations[0].starts_with("guard: suppression: src/lib.rs:2: `#[ignore]`"));
-    assert!(violations[0].contains("reason = "));
+fn cfg_predicates_are_known_only_when_they_rest_on_test_and_literals() {
+    let cases = [
+        ("any()", Some(false)),
+        ("all()", Some(true)),
+        ("not(all())", Some(false)),
+        ("not(test)", Some(false)),
+        ("false", Some(false)),
+        ("any(miri, all())", Some(true)),
+        ("all(miri, any())", Some(false)),
+        ("miri", None),
+        ("any(miri, unix)", None),
+        ("nothing", None),
+    ];
+    for (predicate, expected) in cases {
+        assert_eq!(attrs::evaluate(predicate), expected, "{predicate}");
+    }
 }
 
 #[test]
-fn a_drop_in_a_crates_test_count_is_a_violation() {
-    let counts = |items: &[(&str, usize)]| -> BTreeMap<String, usize> {
-        items
+fn a_suppression_is_justified_by_its_reason_or_a_comment_beside_or_above_it() {
+    let justified = |text: &str| {
+        let source = Source::rust(text);
+        let found = attrs::suppressions(&source);
+        assert_eq!(found.len(), 1, "{text}");
+        found.iter().all(|found| rules::justified(&source, found))
+    };
+    for text in [
+        "// the upstream suite skips it\n#[ignore]",
+        "// flaky upstream\n#[test]\n#[ignore]\nfn a() {}",
+        "#[ignore] // needs network",
+        "#[ignore = \"needs network\"]",
+        "#![allow(dead_code, reason = \"fixture\")]",
+    ] {
+        assert!(justified(text), "{text}");
+    }
+    for text in [
+        "#[ignore]",
+        "/// Documents the item.\n#[allow(dead_code)]",
+        "//\n#[allow(dead_code)]",
+        "let x = 1; // about x\n#[allow(dead_code)]",
+        "#[allow(dead_code)] const U: &str = \"https://example.com\";",
+        "#[allow(dead_code)]\n// after it",
+    ] {
+        assert!(!justified(text), "{text}");
+    }
+}
+
+#[test]
+fn test_functions_are_counted_outside_comments_and_literals() {
+    let text = concat!(
+        "#[test]\nfn a() {}\n#[tokio::test(flavor = \"current_thread\")]\nasync fn b() {}\n",
+        "#[test_case(1)]\nfn c(x: u8) {}\n/* #[test]\nfn d() {} */\n",
+        "const E: &str = \"#[test]\";\n#[testing]\nfn f() {}\n",
+    );
+    assert_eq!(attrs::test_count(&Source::rust(text)), 3);
+}
+
+#[test]
+fn assert_statements_span_their_arguments() {
+    let text = concat!(
+        "fn t() {\n    assert_eq!(\n        a,\n        [1, 2],\n    );\n",
+        "    debug_assert!(b);\n}\n",
+    );
+    let found = attrs::statements(&Source::rust(text));
+    let spans: Vec<_> = found.iter().map(|s| (s.first_line, s.last_line)).collect();
+    assert_eq!(spans, [(2, 5), (6, 6)]);
+    assert_eq!(found[0].text, "assert_eq!(a,[1,2])");
+    let python = attrs::statements(&Source::plain(
+        "    assert x == 1\n    self.assertEqual(\n  a, b)\n",
+    ));
+    let spans: Vec<_> = python.iter().map(|s| (s.first_line, s.last_line)).collect();
+    assert_eq!(spans, [(1, 1), (2, 3)]);
+}
+
+#[test]
+fn a_changed_assert_is_one_whose_statement_is_gone_at_head() {
+    let base = "assert_eq!(\n    a,\n    b,\n);\nassert!(c);\nassert!(c);\n";
+    let check = |head: &str, removed: &[(usize, &str)]| {
+        let removed: Vec<_> = removed
             .iter()
-            .map(|(name, count)| ((*name).to_owned(), *count))
-            .collect()
+            .map(|(line, text)| (*line, (*text).to_owned()))
+            .collect();
+        rules::changed_asserts(&Source::rust(base), &Source::rust(head), &removed)
     };
-    let inputs = Inputs {
-        base_tests: counts(&[("crates/a", 5), ("crates/b", 2), ("crates/c", 1)]),
-        head_tests: counts(&[("crates/a", 4), ("crates/b", 3), ("crates/d", 9)]),
-        ..Inputs::default()
-    };
-    let violations = rules::check(&inputs);
-    assert_eq!(violations.len(), 2, "{violations:?}");
-    assert!(
-        violations[0]
-            .starts_with("guard: test-count: crates/a: #[test] functions fell from 5 to 4")
-    );
-    assert!(violations[1].starts_with("guard: test-count: crates/c:"));
-}
-
-#[test]
-fn deleted_test_files_need_a_mention_or_a_retires_trailer() {
-    let deleted = |messages: &[&str]| Inputs {
-        changes: vec![
-            change('D', Some("crates/a/src/tests.rs"), None),
-            change('D', Some("crates/a/src/lib.rs"), None),
-            change(
-                'R',
-                Some("crates/a/tests/it.rs"),
-                Some("crates/a/tests/moved.rs"),
-            ),
-        ],
-        messages: strings(messages),
-        ..Inputs::default()
-    };
-    assert_eq!(
-        rule_names(&deleted(&["refactor"])),
-        ["guard: deleted-test: crates/a/src/tests.rs"]
-    );
-    assert!(rules::check(&deleted(&["drop crates/a/src/tests.rs, now covered"])).is_empty());
-    assert!(rules::check(&deleted(&["x\n\nRetires: crates/a/src/**"])).is_empty());
-    assert!(!rules::check(&deleted(&["x\n\nAsserts-changed: crates/a/src/*"])).is_empty());
-}
-
-#[test]
-fn changed_asserts_in_a_test_file_need_a_trailer() {
-    let file = lines(
-        "src/tests.rs",
-        &[
-            (3, "    assert_eq!(a, 1);"),
-            (7, "    assert!(b);"),
-            (9, "let x = 1;"),
-        ],
-        &[(12, "assert!(b);"), (13, "let x = 2;")],
-    );
-    let product = lines("src/lib.rs", &[(1, "debug_assert!(x);")], &[]);
-    let inputs = |messages: &[&str]| Inputs {
-        lines: vec![file.clone(), product.clone()],
-        messages: strings(messages),
-        ..Inputs::default()
-    };
-    let violations = rules::check(&inputs(&[]));
-    assert_eq!(violations.len(), 1, "{violations:?}");
-    assert!(violations[0].starts_with("guard: assert: src/tests.rs: 1 removed or changed"));
-    assert!(violations[0].contains("(base line 3)"));
-    assert!(rules::check(&inputs(&["Asserts-changed: src/tests.rs"])).is_empty());
-    assert!(rules::check(&inputs(&["Retires: src/tests.rs, other.rs"])).is_empty());
-    assert!(!rules::check(&inputs(&["names src/tests.rs in prose"])).is_empty());
-}
-
-#[test]
-fn trailers_split_on_commas_and_spaces() {
-    let trailers = Trailers::parse(&strings(&[
-        "s\n\nRetires: a.rs, b/**\nAsserts-changed: c.rs\n",
-    ]));
-    assert_eq!(trailers.retires, strings(&["a.rs", "b/**"]));
-    assert_eq!(trailers.asserts_changed, strings(&["c.rs"]));
-}
-
-fn git(root: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args([
-            "-c",
-            "user.name=guard",
-            "-c",
-            "user.email=guard@example.invalid",
-        ])
-        .args([
-            "-c",
-            "commit.gpgsign=false",
-            "-c",
-            "core.hooksPath=/dev/null",
-        ])
-        .args(args)
-        .output();
-    let output = output.ok().filter(|output| output.status.success());
-    assert!(output.is_some(), "git {args:?}");
-    output
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        .unwrap_or_default()
-}
-
-fn write(root: &Path, path: &str, text: &str) {
-    let path = root.join(path);
-    let made = path
-        .parent()
-        .map_or(Ok(()), fs::create_dir_all)
-        .and_then(|()| fs::write(&path, text));
-    assert!(made.is_ok(), "{}", path.display());
-}
-
-#[test]
-fn a_seeded_commit_adding_an_ignore_fails_the_guard_on_a_real_repository() {
-    let root = std::env::temp_dir().join(format!("xtask-guard-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    write(&root, "xtask/guard/protected.txt", "tests/oracle/**\n");
-    write(&root, "Cargo.toml", "[package]\n");
-    write(
-        &root,
-        "src/tests.rs",
-        "#[test]\nfn a() {\n    assert!(true);\n}\n",
-    );
-    git(&root, &["init", "-q"]);
-    git(&root, &["add", "."]);
-    git(&root, &["commit", "-q", "-m", "base"]);
-    let base = git(&root, &["rev-parse", "HEAD"]);
-    write(
-        &root,
-        "src/tests.rs",
-        "#[test]\n#[ignore]\nfn a() {\n    assert!(true);\n}\n",
-    );
-    write(&root, "tests/oracle/expected.txt", "1\n");
-    git(&root, &["add", "."]);
-    git(&root, &["commit", "-q", "-m", "seeded"]);
-    let result = super::run(&root, &strings(&["--base", &base]));
-    let clean = super::run(&root, &strings(&["--base", &base, "--head", &base]));
-    let inputs = super::Git { root: &root }.inputs(&base, "HEAD");
-    let _ = fs::remove_dir_all(&root);
-    let error = result
-        .err()
-        .map(|error| error.to_string())
-        .unwrap_or_default();
-    assert!(error.contains("2 violation(s)"), "{error}");
-    assert!(clean.is_ok());
-    let names = inputs.map(|inputs| rule_names(&inputs)).unwrap_or_default();
-    assert_eq!(
-        names,
-        [
-            "guard: protected: tests/oracle/expected.txt",
-            "guard: suppression: src/tests.rs:2"
-        ]
-    );
+    let none = Vec::<String>::new();
+    let operand = "assert_eq!(\n    a,\n    a,\n);\nassert!(c);\nassert!(c);\n";
+    assert_eq!(check(operand, &[(3, "    b,")]), ["1"]);
+    let reflowed = "assert_eq!(a, b);\nassert!(c);\nassert!(c);\n";
+    assert_eq!(check(reflowed, &[(2, "    a,"), (3, "    b,")]), none);
+    let one_copy_left = "assert_eq!(\n    a,\n    b,\n);\nassert!(c);\n";
+    assert_eq!(check(one_copy_left, &[(6, "assert!(c);")]), ["6"]);
+    let moved = "assert!(c);\nassert_eq!(\n    a,\n    b,\n);\nassert!(c);\n";
+    assert_eq!(check(moved, &[(5, "assert!(c);")]), none);
 }

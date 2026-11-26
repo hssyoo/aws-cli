@@ -1,23 +1,55 @@
 # Paths that hold the oracles a change is judged by: the expected results,
-# the recorded upstream data, the lint and format settings, the pins and
-# manifests, and the harnesses that run them. `cargo xtask guard` reports
-# every change to one; such a change needs approval and lands on its own.
+# the recorded upstream data, the test harnesses and their configuration,
+# the lint, format and toolchain settings, the pins and manifests, and the
+# build tool that runs them all. `cargo xtask guard` reports every change
+# to one; such a change needs approval and lands on its own.
 # One glob per line: `*` matches within a path segment, `**` across them.
+
+# Expected results and upstream oracle data.
 tests/parity/**
 tests/blackbox/failures.txt
 tests/blackbox/upstream-failures.txt
 tests/integ/integ_expected_failures.txt
 tests/argparse/**
 tests/models/**
-tests/diff/known-differences.json
-tests/diff/corpus/**
+tests/diff/**
 aws-cli/tests/**
-clippy.toml
-rustfmt.toml
-xtask/**
-.github/**
-deps/pins.toml
+
+# Harness code and the configuration pytest reads (it searches upward
+# from each test, so a new file anywhere below tests/ can change a run).
+tests/*.py
+tests/*.ini
+tests/blackbox/*.py
+tests/blackbox/requirements.txt
+tests/**/conftest.py
+tests/**/pytest.ini
+tests/**/*pytest*.ini
+tests/**/pyproject.toml
+tests/**/setup.cfg
+tests/**/tox.ini
+
+# Lint, format and toolchain settings; clippy and rustfmt also read
+# dot-named and nested copies.
+**/clippy.toml
+**/.clippy.toml
+**/rustfmt.toml
+**/.rustfmt.toml
+rust-toolchain.toml
+rust-toolchain
+rust-analysis-toolchain.toml
+mise.toml
+**/deny.toml
+
+# Cargo configuration: `.cargo/config.toml` defines the `cargo xtask` alias
+# and can set rustflags that cap every lint. Manifests and the lock file.
+**/.cargo/**
 Cargo.lock
 **/Cargo.toml
-**/AGENTS.md
-**/CLAUDE.md
+deps/pins.toml
+
+# Git attributes decide what a diff shows; CI runs the gates.
+**/.gitattributes
+.github/**
+
+# The build tool that runs every oracle, this guard included.
+xtask/**

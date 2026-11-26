@@ -6,40 +6,52 @@
 //! - `protected`: a change to a path in `xtask/guard/protected.txt`, read
 //!   from base, head and the running checkout alike, so a change cannot
 //!   drop its own entry and a range from before the list is still checked.
-//! - `suppression`: an added `#[ignore]`, `#[allow(..)]` or `#[expect(..)]`
-//!   (or the inner `#![..]` forms) with no justification: a `//` comment on
-//!   the same or the previous line, or a non-empty `reason = ".."` (for
-//!   `ignore`, `= ".."`) in the attribute.
-//! - `test-count`: fewer `#[test]` functions in a crate (the deepest
-//!   directory holding a `Cargo.toml`) at head than at base.
-//! - `deleted-test`: a deleted test file (`tests.rs`, `testing.rs`, or any
-//!   file under a `tests` directory), unless a commit message in the range
-//!   names its path or a `Retires:` trailer matches it.
-//! - `assert`: a removed or changed line containing `assert` in a test file
-//!   that survives at head, unless a `Retires:` or `Asserts-changed:`
-//!   trailer matches the file. A line that reappears unchanged (trimmed) in
-//!   the same file, as when it moves, does not count.
+//! - `suppression`: an added attribute that silences a check, wherever it
+//!   sits on its line and inside `cfg_attr(..)`: `allow`, `expect`,
+//!   `ignore`, `should_panic`, or a `cfg` that is false in a test build
+//!   (`cfg(any())`, `cfg(not(test))`), with no justification. A
+//!   justification is a `//` comment on the attribute's line or directly
+//!   above its stack of attributes, or the attribute's own non-empty
+//!   `reason = ".."`, `#[ignore = ".."]` or `expected = ".."`.
+//! - `test-count`: fewer test functions in a crate (the deepest directory
+//!   holding a `Cargo.toml`) at head than at base, counted in the changed
+//!   files, with comments and literals masked out.
+//! - `deleted-test`: a test file (`tests.rs`, `testing.rs`, or any file
+//!   under a `tests` directory) deleted or renamed to a non-test path,
+//!   unless the commit that removes it names its path in its message or in
+//!   a `Retires:` trailer.
+//! - `test-module`: a removed `mod tests` or `mod testing` declaration,
+//!   unless it reappears in the file or a `Retires:` trailer of the commit
+//!   names the file or the module's file.
+//! - `assert`: an assert statement (an identifier containing `assert` and
+//!   its bracketed arguments, however many lines they span) in a test file
+//!   that survives at head, with a removed line in it and no identical
+//!   statement at head, unless a commit touching the file has a `Retires:`
+//!   or `Asserts-changed:` trailer for it.
 //!
-//! Trailer values are paths or globs (`*` within a segment, `**` across
-//! segments), separated by commas or spaces.
+//! Trailer values are exact paths, separated by commas or spaces, read from
+//! the trailer block of a commit that changes the path. The guard counts
+//! and compares text: a test emptied of its checks, or one whose checks
+//! live in helpers without `assert` in their name, is not caught.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::TaskError;
 
+mod attrs;
 mod diff;
+#[cfg(test)]
+mod evasions;
+mod lex;
 mod rules;
 
-use diff::{Change, FileLines};
+use diff::{Change, Commit, FileLines};
 
 const PROTECTED_LIST: &str = "xtask/guard/protected.txt";
-/// A `#[test]` attribute, alone or under a path (`#[tokio::test]`), at the
-/// start of a line.
-const TEST_ATTRIBUTE: &str = r"^[[:space:]]*#\[([A-Za-z_][A-Za-z0-9_]*::)*test\]";
 
 /// What the rules read, gathered from git once.
 #[derive(Debug, Default)]
@@ -47,11 +59,12 @@ pub struct Inputs {
     pub protected: Vec<String>,
     pub changes: Vec<Change>,
     pub lines: Vec<FileLines>,
-    /// The head text of each `.rs` file whose added lines hold a suppression.
+    /// The text at base and at head of each changed `.rs` or test file.
+    pub base_sources: BTreeMap<String, String>,
     pub head_sources: BTreeMap<String, String>,
-    pub base_tests: BTreeMap<String, usize>,
-    pub head_tests: BTreeMap<String, usize>,
-    pub messages: Vec<String>,
+    pub base_crates: Vec<String>,
+    pub head_crates: Vec<String>,
+    pub commits: Vec<Commit>,
 }
 
 pub fn run(root: &Path, args: &[String]) -> Result<(), TaskError> {
@@ -98,25 +111,51 @@ fn options(args: &[String]) -> Result<(String, String), TaskError> {
     ))
 }
 
+/// The settings every git call overrides, so a user's or a repository's
+/// configuration cannot change what the guard parses.
+const GIT_SETTINGS: [&str; 8] = [
+    "core.quotePath=false",
+    "diff.noprefix=false",
+    "diff.mnemonicPrefix=false",
+    "diff.relative=false",
+    "diff.suppressBlankEmpty=false",
+    "log.showSignature=false",
+    "log.follow=false",
+    "core.attributesFile=/dev/null",
+];
+
+/// The flags of every content diff: every file is text (a `-diff` or
+/// `binary` attribute cannot hide lines), with no converter or external
+/// tool, fixed prefixes and the whole tree.
+const DIFF_FLAGS: [&str; 8] = [
+    "--text",
+    "--no-textconv",
+    "--no-ext-diff",
+    "--no-color",
+    "--no-relative",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    "-M",
+];
+
 struct Git<'a> {
     root: &'a Path,
 }
 
 impl Git<'_> {
-    /// Runs git in the repository; `Ok(None)` when git exits 1 with no
-    /// stderr (as `git grep` does on no match, and `git show` never does).
-    fn read(&self, args: &[&str]) -> Result<Option<String>, TaskError> {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(self.root)
-            .args(["-c", "core.quotePath=false"])
-            .args(args)
-            .output()?;
-        if output.status.success() {
-            return Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()));
+    fn command(&self) -> Command {
+        let mut command = Command::new("git");
+        command.arg("-C").arg(self.root);
+        for setting in GIT_SETTINGS {
+            command.args(["-c", setting]);
         }
-        if output.status.code() == Some(1) && output.stderr.is_empty() {
-            return Ok(None);
+        command
+    }
+
+    fn read(&self, args: &[&str]) -> Result<String, TaskError> {
+        let output = self.command().args(args).output()?;
+        if output.status.success() {
+            return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
         }
         Err(TaskError::Message(format!(
             "git {} failed: {}",
@@ -125,45 +164,63 @@ impl Git<'_> {
         )))
     }
 
-    fn must(&self, args: &[&str]) -> Result<String, TaskError> {
-        self.read(args)?
-            .ok_or_else(|| TaskError::Message(format!("git {} failed", args.join(" "))))
-    }
-
     fn commit(&self, rev: &str) -> Result<String, TaskError> {
         let spec = format!("{rev}^{{commit}}");
         Ok(self
-            .must(&["rev-parse", "--verify", "--quiet", &spec])?
+            .read(&["rev-parse", "--verify", "--quiet", &spec])?
             .trim()
             .to_owned())
     }
 
-    /// A file's text at a commit, or `None` when it is absent there.
-    fn show(&self, rev: &str, path: &str) -> Result<Option<String>, TaskError> {
-        let spec = format!("{rev}:{path}");
-        let exists = Command::new("git")
-            .arg("-C")
-            .arg(self.root)
-            .args(["cat-file", "-e", &spec])
-            .output()?
-            .status
-            .success();
-        if !exists {
-            return Ok(None);
+    /// The text of each `rev:path` that exists, by `cat-file --batch`.
+    fn blobs(&self, specs: &[String]) -> Result<BTreeMap<String, String>, TaskError> {
+        let mut child = crate::process::spawn(
+            self.command()
+                .args(["cat-file", "--batch"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped()),
+        )?;
+        let input: String = specs.iter().map(|spec| format!("{spec}\n")).collect();
+        let mut stdin = child.stdin.take();
+        let writer = std::thread::spawn(move || {
+            stdin
+                .as_mut()
+                .map(|stdin| stdin.write_all(input.as_bytes()))
+        });
+        let output = child.wait_with_output()?;
+        if let Ok(Some(Err(error))) = writer.join() {
+            return Err(error.into());
         }
-        self.must(&["show", &spec]).map(Some)
+        if !output.status.success() {
+            return Err(TaskError::Message("git cat-file --batch failed".into()));
+        }
+        diff::batch(specs, &output.stdout)
     }
 
-    fn inputs(&self, base: &str, head: &str) -> Result<Inputs, TaskError> {
+    fn sources(
+        &self,
+        rev: &str,
+        paths: impl Iterator<Item = String>,
+    ) -> Result<BTreeMap<String, String>, TaskError> {
+        let paths: Vec<_> = paths.collect();
+        let specs: Vec<_> = paths.iter().map(|path| format!("{rev}:{path}")).collect();
+        let blobs = self.blobs(&specs)?;
+        Ok(paths
+            .into_iter()
+            .zip(specs)
+            .filter_map(|(path, spec)| Some((path, blobs.get(&spec)?.clone())))
+            .collect())
+    }
+
+    fn protected(&self, base: &str, head: &str) -> Result<Vec<String>, TaskError> {
         let mut protected = match fs::read_to_string(self.root.join(PROTECTED_LIST)) {
             Ok(text) => diff::patterns(&text),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(error.into()),
         };
-        for rev in [base, head] {
-            if let Some(text) = self.show(rev, PROTECTED_LIST)? {
-                protected.extend(diff::patterns(&text));
-            }
+        let specs = [base, head].map(|rev| format!("{rev}:{PROTECTED_LIST}"));
+        for text in self.blobs(&specs)?.values() {
+            protected.extend(diff::patterns(text));
         }
         protected.sort();
         protected.dedup();
@@ -172,56 +229,51 @@ impl Git<'_> {
                 "guard: {PROTECTED_LIST} is absent at {base}, at {head} and in the checkout"
             )));
         }
-        let range = format!("{base}..{head}");
-        let changes = diff::name_status(&self.must(&[
-            "diff",
-            "-M",
-            "-z",
-            "--no-ext-diff",
-            "--name-status",
-            base,
-            head,
-        ])?);
-        let lines = diff::unified(&self.must(&[
-            "diff",
-            "-M",
-            "-U0",
-            "--no-color",
-            "--no-ext-diff",
-            base,
-            head,
-        ])?);
-        let messages = self.must(&["log", "--format=%B%x00", &range])?;
-        let mut inputs = Inputs {
-            protected,
-            changes,
-            lines,
-            messages: messages.split('\0').map(str::to_owned).collect(),
-            base_tests: self.test_counts(base)?,
-            head_tests: self.test_counts(head)?,
-            ..Inputs::default()
-        };
-        for path in rules::suppression_files(&inputs.lines) {
-            if let Some(text) = self.show(head, &path)? {
-                inputs.head_sources.insert(path, text);
-            }
-        }
-        Ok(inputs)
+        Ok(protected)
     }
 
-    /// `#[test]` functions per crate directory at a commit.
-    fn test_counts(&self, rev: &str) -> Result<BTreeMap<String, usize>, TaskError> {
-        let files = self.must(&["ls-tree", "-r", "-z", "--name-only", rev])?;
-        let crates = diff::crate_directories(files.split('\0'));
-        let grep = self
-            .read(&["grep", "-c", "-E", TEST_ATTRIBUTE, rev, "--", "*.rs"])?
-            .unwrap_or_default();
-        let prefix = format!("{rev}:");
-        let counts = grep.lines().filter_map(|line| {
-            let (path, count) = line.strip_prefix(&prefix)?.rsplit_once(':')?;
-            Some((path.to_owned(), count.parse().ok()?))
-        });
-        Ok(diff::per_crate(&crates, counts))
+    fn inputs(&self, base: &str, head: &str) -> Result<Inputs, TaskError> {
+        let range = format!("{base}..{head}");
+        let mut status = vec!["diff", "-z", "--name-status"];
+        status.extend(DIFF_FLAGS);
+        status.extend([base, head]);
+        let changes = diff::name_status(&self.read(&status)?);
+        let mut unified = vec!["diff", "-U0"];
+        unified.extend(DIFF_FLAGS);
+        unified.extend([base, head]);
+        let lines = diff::unified(&self.read(&unified)?);
+        if let Some(file) = rules::unparsed(&lines) {
+            return Err(TaskError::Message(format!(
+                "guard: git diff output not understood near {file:?}"
+            )));
+        }
+        let log = [
+            "log",
+            "--no-renames",
+            "--name-only",
+            "-z",
+            "--diff-merges=first-parent",
+            diff::LOG_FORMAT,
+            &range,
+        ];
+        let read = |path: &&String| path.ends_with(".rs") || diff::is_test_file(path);
+        let olds = changes.iter().filter_map(|change| change.old.clone());
+        let news = changes.iter().filter_map(|change| change.new.clone());
+        Ok(Inputs {
+            protected: self.protected(base, head)?,
+            base_sources: self.sources(base, olds.filter(|path| read(&path)))?,
+            head_sources: self.sources(head, news.filter(|path| read(&path)))?,
+            base_crates: self.crates(base)?,
+            head_crates: self.crates(head)?,
+            commits: diff::commits(&self.read(&log)?),
+            changes,
+            lines,
+        })
+    }
+
+    fn crates(&self, rev: &str) -> Result<Vec<String>, TaskError> {
+        let files = self.read(&["ls-tree", "-r", "-z", "--name-only", rev])?;
+        Ok(diff::crate_directories(files.split('\0')))
     }
 }
 
