@@ -412,7 +412,12 @@ pub fn resolve_case(rules: &RuleSet, params: &[(&str, ParamValue)]) -> EndpointO
     match crt::endpoints::resolve_with_headers(documents, &list) {
         Ok((Resolved::Endpoint { url, properties }, headers)) => EndpointOutcome::Endpoint {
             url: lossy(&url),
-            properties: lossy(&properties),
+            // The engine gives no bytes for an endpoint without properties.
+            properties: if properties.is_empty() {
+                "{}".to_owned()
+            } else {
+                lossy(&properties)
+            },
             headers,
         },
         Ok((Resolved::RuleError(message), _)) => EndpointOutcome::Error(lossy(&message)),
