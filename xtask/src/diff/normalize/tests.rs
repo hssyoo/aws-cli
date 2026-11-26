@@ -389,3 +389,51 @@ fn a_header_uuid_does_not_hide_a_changed_signature() {
         "{values:?}"
     );
 }
+
+// rev-b33 S2 and S3: each fails on c41ca32b4.
+
+#[test]
+fn a_uuids_case_is_kept() {
+    // Evasion: a candidate that sends its token in uppercase, where botocore
+    // sends lowercase, matching once both became `<uuid:1>`.
+    let upper = UUID.to_ascii_uppercase();
+    assert_eq!(header("X-Token", UUID), "<uuid:1>");
+    assert_eq!(header("X-Token", &upper), "<uuid-upper:1>");
+    assert_ne!(header("X-Token", UUID), header("X-Token", &upper));
+    let body = one(&request("/", &[], &format!("\"{upper}\""))).body;
+    assert_eq!(body, b"\"<uuid-upper:1>\"".to_vec());
+    // Mixed case is no generated value; it stays as sent.
+    let mixed = format!("{}{}", &UUID[..8].to_ascii_uppercase(), &UUID[8..]);
+    assert_eq!(header("X-Token", &mixed), mixed);
+    assert_eq!(header("amz-sdk-invocation-id", &mixed), mixed);
+    assert_eq!(
+        header("amz-sdk-invocation-id", &upper),
+        "<invocation-id-upper:1>"
+    );
+}
+
+#[test]
+fn an_invocation_id_reused_as_a_token_keeps_its_number() {
+    // Evasion: a candidate that reuses the invocation id as the idempotency
+    // token, where the baseline generates a fresh one.
+    let sent = |token: &str| {
+        headers_of(
+            &request(
+                "/",
+                &[
+                    ("amz-sdk-invocation-id", UUID),
+                    ("x-amz-client-token", token),
+                ],
+                &format!("\"{token}\""),
+            ),
+            &[],
+        )
+    };
+    let values = |headers: Vec<(String, String)>| -> Vec<String> {
+        headers.into_iter().map(|(_, value)| value).collect()
+    };
+    assert_eq!(values(sent(UUID)), ["<invocation-id:1>", "<uuid:1>"]);
+    assert_eq!(values(sent(OTHER_UUID)), ["<invocation-id:1>", "<uuid:2>"]);
+    let body = |token: &str| one(&request("/", &[("amz-sdk-invocation-id", UUID)], token)).body;
+    assert_ne!(body(UUID), body(OTHER_UUID));
+}
