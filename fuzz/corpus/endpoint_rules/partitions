@@ -1,0 +1,1 @@
+P{"version":"1.1","partitions":[{"id":"aws","regionRegex":"^(us|eu)\\-\\w+\\-\\d+$","outputs":{"name":"aws","dnsSuffix":"amazonaws.com"},"regions":{"aws-global":{"description":"g","dnsSuffix":"g.example"}}},{"id":"o","regionRegex":"^o\\-\\w+\\-\\d+$","outputs":{"name":"o","dnsSuffix":"o.example"}}]}

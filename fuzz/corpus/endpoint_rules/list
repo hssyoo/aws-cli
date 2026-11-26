@@ -1,0 +1,2 @@
+{"version":"1.0","parameters":{"Region":{"type":"string","required":true},"Endpoint":{"type":"string"},"Bucket":{"type":"string"},"Fips":{"type":"boolean","required":true,"default":false},"Names":{"type":"stringArray"}},"rules":[{"type":"endpoint","conditions":[{"fn":"getAttr","argv":[{"ref":"Names"},"[-3]"],"assign":"n"},{"fn":"uriEncode","argv":[{"ref":"n"}],"assign":"e"}],"endpoint":{"url":"https://{e}"}},{"type":"error","conditions":[],"error":"none"}]}ÿNames=a b,c/d,
+Region=x
