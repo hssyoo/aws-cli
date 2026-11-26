@@ -156,7 +156,7 @@ fn the_verdict_and_summary_follow_the_rows() -> Result<(), TaskError> {
     );
     let summary = report.summary();
     assert!(
-        summary.contains("diff: 3 rows: 1 identical, 1 known, 1 mismatched\n"),
+        summary.contains("diff: 3 rows: 1 identical, 1 known, 1 mismatched, 0 not native\n"),
         "{summary}"
     );
     let line = "     1 NEW   request[*].header:x-amz-target:value  new: \"T.A\" vs \"T.B\"\n";
@@ -434,5 +434,251 @@ fn timeouts_and_harness_errors_are_never_known() -> Result<(), TaskError> {
         known(&harness).is_err(),
         "an entry for a harness error was accepted"
     );
+    Ok(())
+}
+
+// B3.2: each test fails on 64fd03d17.
+
+/// get-vanilla of the SigV4 test suite, as a run with its secret key.
+fn vanilla(signature: &str) -> Result<Capture, TaskError> {
+    let authorization = format!(
+        "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/service/aws4_request, \
+         SignedHeaders=host;x-amz-date, Signature={signature}"
+    );
+    let headers = [
+        ("Host", "example.amazonaws.com"),
+        ("X-Amz-Date", "20150830T123600Z"),
+        ("Authorization", authorization.as_str()),
+    ];
+    let mut request = request("/", &headers, "");
+    request["method"] = json!("GET");
+    let secret = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
+    run_of("r", json!({"secret_key": secret, "requests": [request]}))
+}
+
+#[test]
+fn a_tampered_signature_is_bad_where_a_good_one_is_ok() -> Result<(), TaskError> {
+    let good = "5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31";
+    let tampered = good.replacen('5', "6", 1);
+    let diffs = row_diffs(&rows(&["r"])?[0], &vanilla(good)?, &vanilla(&tampered)?);
+    let shown: Vec<_> = diffs
+        .iter()
+        .map(|diff| {
+            let verdict = |excerpt: &str| excerpt.rsplit("Signature=").next().map(str::to_owned);
+            (
+                diff.fingerprint.as_str(),
+                verdict(&diff.a),
+                verdict(&diff.b),
+            )
+        })
+        .collect();
+    let verdict = |text: &str| Some(text.to_owned());
+    assert_eq!(
+        shown,
+        [(
+            "request[*].header:authorization:value",
+            verdict("<sig:ok>"),
+            verdict("<sig:bad>")
+        )]
+    );
+    assert!(named(&vanilla(good)?, &vanilla(good)?)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_backstop_only_difference_shows_beside_a_named_one() -> Result<(), TaskError> {
+    let agent = |name: &str, spacing: &str| {
+        sending(
+            &[
+                (name, "T.A"),
+                ("User-Agent", &format!("aws-cli/2{spacing}lang/rust#1")),
+            ],
+            "/",
+            "",
+        )
+    };
+    let form = [
+        ("Host", "h"),
+        ("Content-Type", "application/x-www-form-urlencoded"),
+    ];
+    let absolute = sending(&[("Host", "h")], "http://h/p", "");
+    let mut moved = sending(&[("Host", "h")], "/p", "");
+    moved["requests"][0]["method"] = json!("PUT");
+    both_named(&[
+        (
+            agent("X-Amz-Target", " "),
+            agent("x-amz-target", "  "),
+            [
+                "request[*].header:x-amz-target:case",
+                "request[*].header:user-agent:spacing",
+            ],
+        ),
+        (
+            sending(&[("Host", "h")], "/p?a=1&&b=2&c=1", ""),
+            sending(&[("Host", "h")], "/p?a=1&b=2&&c=2", ""),
+            ["request[*].line:query:c", "request[*].line:query-format"],
+        ),
+        (
+            sending(&form, "/", "A=1&&B=2&C=1"),
+            sending(&form, "/", "A=1&B=2&&C=2"),
+            ["request[*].body:C", "request[*].body-format"],
+        ),
+        (
+            absolute,
+            moved,
+            ["request[*].line:method", "request[*].line:target-form"],
+        ),
+    ])
+}
+
+#[test]
+fn a_known_text_difference_covers_only_its_own_lines() -> Result<(), TaskError> {
+    let error = |tail: &str| {
+        printing(&format!(
+            "An error occurred (ThrottlingException) when calling the ListTables operation {tail}\n"
+        ))
+    };
+    let benign = (
+        run_of("r", error("(reached max retries: 4): Rate exceeded"))?,
+        run_of("r", error("(reached max retries: 4): Rate exceeded."))?,
+    );
+    let retries = (
+        run_of("r", error("(reached max retries: 4): Rate exceeded"))?,
+        run_of("r", error("(reached max retries: 1): Rate exceeded"))?,
+    );
+    let first = build(&run(Route::Native), &rows(&["r"])?, &[benign], &[]);
+    let proposed = first
+        .proposed
+        .first()
+        .map(|proposal| proposal.fingerprint.clone())
+        .unwrap_or_default();
+    let lines = "(reached max retries: 4): Rate exceeded->An error occurred (ThrottlingException) \
+                 when calling the ListTables operation (reached max retries: 4): Rate exceeded.";
+    assert!(proposed.ends_with(lines), "{proposed}");
+    let entries: Vec<Known> = serde_json::from_str(
+        &entry(&proposed, "determinism").replace("\"cases\": \"*\"", "\"cases\": [\"r\"]"),
+    )
+    .map_err(|error| deps::error(error.to_string()))?;
+    let benign = (
+        run_of("r", error("(reached max retries: 4): Rate exceeded"))?,
+        run_of("r", error("(reached max retries: 4): Rate exceeded."))?,
+    );
+    let covered = build(&run(Route::Native), &rows(&["r"])?, &[benign], &entries);
+    assert_eq!((covered.known, covered.mismatched), (1, 0));
+    let masked = first
+        .groups
+        .first()
+        .map(|group| group.fingerprint.clone())
+        .unwrap_or_default();
+    let by_group: Vec<Known> = serde_json::from_str(&entry(&masked, "determinism"))
+        .map_err(|error| deps::error(error.to_string()))?;
+    let report = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[retries],
+        &[entries, by_group].concat(),
+    );
+    assert_eq!((report.known, report.mismatched), (0, 1));
+    Ok(())
+}
+
+#[test]
+fn admission_changes_and_opaque_bodies_for_every_row_are_never_known() -> Result<(), TaskError> {
+    assert!(known(&entry("admission-changed:a", "baseline")).is_err());
+    assert!(known(&entry("request[*].body:bytes", "baseline")).is_err());
+    let listed = entry("request[*].body:bytes", "baseline").replace("\"*\"", "[\"r\"]");
+    assert!(known(&listed).is_ok());
+    let stderr = "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable \
+                  (unsupported_option); Python fallback disabled\n";
+    let declined = json!({"exit": 255, "stderr": stderr});
+    let pairs = [(
+        run_of("r", declined.clone())?,
+        run_of("r", json!({"stdout": "{}"}))?,
+    )];
+    let changed: Vec<Known> = serde_json::from_str(&entry("admission-changed:a", "determinism"))
+        .map_err(|error| deps::error(error.to_string()))?;
+    let report = build(&run(Route::Native), &rows(&["r"])?, &pairs, &changed);
+    assert_eq!((report.not_native, report.mismatched), (0, 1));
+    let oracle = build(&run(Route::Python), &rows(&["r"])?, &pairs, &[]);
+    assert_eq!(
+        (
+            oracle.not_native,
+            oracle.mismatched,
+            oracle.verdict().is_ok()
+        ),
+        (1, 0, true)
+    );
+    Ok(())
+}
+
+// B3.2 round 2: each test fails on dd9030286.
+
+#[test]
+fn a_bad_signature_on_both_sides_is_a_mismatch_no_entry_covers() -> Result<(), TaskError> {
+    let tampered = "6fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31";
+    let pairs = [(vanilla(tampered)?, vanilla(tampered)?)];
+    let report = build(&run(Route::Native), &rows(&["r"])?, &pairs, &[]);
+    assert_eq!((report.identical, report.mismatched), (0, 1));
+    assert_eq!(fingerprints(&report), ["sig:bad:a", "sig:bad:b"]);
+    assert!(known(&entry("sig:bad:a", "determinism")).is_err());
+    // A bad signature fails a row a native side declined, too.
+    let stderr = "aws: AWS_CLI_NATIVE_ROUTER=native: native implementation unavailable \
+                  (unsupported_option); Python fallback disabled\n";
+    let declined = run_of("r", json!({"exit": 255, "stderr": stderr}))?;
+    let pairs = [(declined, vanilla(tampered)?)];
+    let report = build(&run(Route::Python), &rows(&["r"])?, &pairs, &[]);
+    assert_eq!((report.not_native, report.mismatched), (0, 1));
+    assert_eq!(fingerprints(&report), ["sig:bad:b"]);
+    Ok(())
+}
+
+#[test]
+fn no_entry_covers_the_differences_past_the_named_ones() -> Result<(), TaskError> {
+    let lines = |last: &str| {
+        let mut text: String = (1..=20).map(|n| format!("line {n} a\n")).collect();
+        text.push_str(last);
+        text
+    };
+    let other: String = (1..=20).map(|n| format!("line {n} b\n")).collect();
+    let pair = |last: &str| -> Result<(Capture, Capture), TaskError> {
+        Ok((
+            run_of("r", printing(&lines(last)))?,
+            run_of("r", printing(&format!("{other}reached max retries: 1\n")))?,
+        ))
+    };
+    let first = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[pair("reached max retries: 1\n")?],
+        &[],
+    );
+    assert!(fingerprints(&first).contains(&"stdout:text:..."));
+    let proposed: Vec<String> = first
+        .proposed
+        .iter()
+        .map(|proposal| proposal.fingerprint.clone())
+        .collect();
+    let accepted: Vec<String> = proposed
+        .iter()
+        .map(|fingerprint| {
+            let fields = r#""cases": ["r"], "mode": "determinism", "reason": "r""#;
+            format!(r#"{{"fingerprint": {fingerprint:?}, {fields}}}"#)
+        })
+        .collect();
+    let text = format!("[{}]", accepted.join(","));
+    assert!(
+        known(&text).is_err(),
+        "an entry for an overflow was accepted"
+    );
+    let entries: Vec<Known> =
+        serde_json::from_str(&text).map_err(|error| deps::error(error.to_string()))?;
+    let report = build(
+        &run(Route::Native),
+        &rows(&["r"])?,
+        &[pair("reached max retries: 4\n")?],
+        &entries,
+    );
+    assert_eq!((report.known, report.mismatched), (0, 1));
+    assert!(known(&entry("request[*].body:...", "determinism")).is_err());
     Ok(())
 }

@@ -5,8 +5,13 @@
 //! `fingerprint`, the `cases` (row ids, or `"*"` for every row) it holds
 //! for, the `mode` (`oracle`, `baseline` or `determinism`) it holds in, and
 //! the `reason`. A row is identical, known (every difference has an entry)
-//! or mismatched. A timeout or a harness error ([`UNCOVERABLE`]) is never
-//! known: no entry may name one. The run passes when no row is mismatched.
+//! or mismatched, or not native ([`admission`]). A timeout, a harness error,
+//! a changed admission, a bad signature on either side ([`UNCOVERABLE`]) or
+//! a stage's overflow past its named differences ([`OVERFLOW`]) is never
+//! known: no entry may name one. A text difference is covered only by an entry naming its full
+//! lines (its `key`), and a `:bytes` one only for listed rows. The run
+//! passes when no row is mismatched. The report also counts each side's
+//! signatures by verdict ([`sigv4`]).
 //! The report proposes an entry for each unknown group, with its rows and
 //! an empty reason, and lists the entries no row used.
 
@@ -15,9 +20,11 @@ use std::fmt::Write as _;
 
 use serde::{Deserialize, Serialize};
 
+use super::admission::{self, Refusals};
 use super::capture::Capture;
 use super::compare::{self, Diff, Outcome};
 use super::corpus::Row;
+use super::sigv4::{self, Verdict};
 use super::{Run, Side, normalize};
 use crate::{TaskError, deps};
 
@@ -48,7 +55,8 @@ pub enum Every {
 }
 
 impl Known {
-    fn covers(&self, mode: &str, id: &str, fingerprint: &str) -> bool {
+    fn covers(&self, mode: &str, id: &str, diff: &Diff) -> bool {
+        let fingerprint = diff.key.as_deref().unwrap_or(&diff.fingerprint);
         let row = match &self.cases {
             Cases::Every(Every::All) => true,
             Cases::Listed(ids) => ids.iter().any(|listed| listed == id),
@@ -57,13 +65,19 @@ impl Known {
     }
 }
 
-/// The fingerprints no entry may cover: the run was not seen whole.
-pub const UNCOVERABLE: [&str; 2] = ["timeout:", "harness:"];
+/// The fingerprints no entry may cover: the run was not seen whole, or a
+/// request's signature is bad.
+pub const UNCOVERABLE: [&str; 4] = ["timeout:", "harness:", "admission-changed:", "sig:bad:"];
+
+/// The end of a stage's fingerprint past its last named difference, which
+/// stands for any number of others, so no entry may cover it either.
+pub const OVERFLOW: &str = ":...";
 
 fn uncoverable(fingerprint: &str) -> bool {
-    UNCOVERABLE
-        .iter()
-        .any(|prefix| fingerprint.starts_with(prefix))
+    fingerprint.ends_with(OVERFLOW)
+        || UNCOVERABLE
+            .iter()
+            .any(|prefix| fingerprint.starts_with(prefix))
 }
 
 /// The known differences in `text`.
@@ -90,7 +104,17 @@ pub fn known(text: &str) -> Result<Vec<Known>, TaskError> {
     }
     if let Some(entry) = known.iter().find(|entry| uncoverable(&entry.fingerprint)) {
         return Err(deps::error(format!(
-            "the known difference {} names a timeout or a harness error, which no entry covers",
+            "the known difference {} names a timeout, a harness error, an admission change, \
+             a bad signature or an overflow, which no entry covers",
+            entry.fingerprint
+        )));
+    }
+    let every_body = |entry: &&Known| {
+        entry.fingerprint.ends_with(":bytes") && matches!(entry.cases, Cases::Every(_))
+    };
+    if let Some(entry) = known.iter().find(every_body) {
+        return Err(deps::error(format!(
+            "the known difference {} must list its rows: an opaque body has no field to name",
             entry.fingerprint
         )));
     }
@@ -108,9 +132,46 @@ pub struct Report {
     pub identical: usize,
     pub known: usize,
     pub mismatched: usize,
+    /// Rows not compared, as a native side declined them.
+    pub not_native: usize,
+    refusals: Refusals,
+    signatures: BTreeMap<&'static str, Signatures>,
     pub groups: Vec<Group>,
     proposed: Vec<Proposal>,
     unused_known: Vec<String>,
+}
+
+/// A side's request signatures by verdict.
+#[derive(Debug, Default, Serialize)]
+struct Signatures {
+    ok: usize,
+    bad: usize,
+    unverified: usize,
+}
+
+impl Signatures {
+    /// Counts `capture`'s signatures, and gives a `sig:bad:<side>`
+    /// difference at its first bad one.
+    fn count(&mut self, side: &str, capture: &Capture) -> Option<Diff> {
+        let mut first_bad = None;
+        for (index, request) in capture.requests.iter().enumerate() {
+            match sigv4::verify(request, capture.secret_key.as_deref()) {
+                Verdict::Ok => self.ok += 1,
+                Verdict::Bad => {
+                    self.bad += 1;
+                    first_bad.get_or_insert(index);
+                }
+                Verdict::Unverified => self.unverified += 1,
+            }
+        }
+        first_bad.map(|index| Diff {
+            fingerprint: format!("sig:bad:{side}"),
+            key: None,
+            request: Some(index),
+            a: String::new(),
+            b: String::new(),
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -141,6 +202,8 @@ pub struct Group {
 struct Instance {
     id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     request: Option<usize>,
     a: String,
     b: String,
@@ -168,7 +231,11 @@ fn outcome<'a>(row: &Row, capture: &'a Capture) -> Outcome<'a> {
         stdout: &capture.stdout,
         stderr: &capture.stderr,
         connects: &capture.connects,
-        requests: normalize::requests(&capture.requests, row.inputs()),
+        requests: normalize::requests(
+            &capture.requests,
+            row.inputs(),
+            capture.secret_key.as_deref(),
+        ),
     }
 }
 
@@ -188,6 +255,9 @@ pub fn build(run: &Run, rows: &[Row], pairs: &[(Capture, Capture)], known: &[Kno
         identical: 0,
         known: 0,
         mismatched: 0,
+        not_native: 0,
+        refusals: Refusals::new(),
+        signatures: BTreeMap::new(),
         groups: Vec::new(),
         proposed: Vec::new(),
         unused_known: Vec::new(),
@@ -195,12 +265,29 @@ pub fn build(run: &Run, rows: &[Row], pairs: &[(Capture, Capture)], known: &[Kno
     let mut groups: BTreeMap<String, Group> = BTreeMap::new();
     let mut used = BTreeSet::new();
     for (row, (a, b)) in rows.iter().zip(pairs) {
-        let diffs = row_diffs(row, a, b);
+        // A bad signature fails the row even where both sides share it, or
+        // a native side declined the row.
+        let bad: Vec<Diff> = [("a", a), ("b", b)]
+            .into_iter()
+            .filter_map(|(side, capture)| {
+                let counted = report.signatures.entry(side).or_default();
+                counted.count(side, capture)
+            })
+            .collect();
+        let mut diffs = match admission::diffs(run, row, (a, b), &mut report.refusals) {
+            Some(diffs) => diffs,
+            None if bad.is_empty() => {
+                report.not_native += 1;
+                continue;
+            }
+            None => Vec::new(),
+        };
+        diffs.extend(bad);
         let mut covered = 0;
         for diff in &diffs {
             let entry = known
                 .iter()
-                .position(|k| k.covers(mode, &row.id, &diff.fingerprint))
+                .position(|k| k.covers(mode, &row.id, diff))
                 .filter(|_| !uncoverable(&diff.fingerprint));
             used.extend(entry);
             covered += usize::from(entry.is_some());
@@ -232,6 +319,7 @@ fn add(groups: &mut BTreeMap<String, Group>, id: &str, diff: &Diff, known: bool)
     group.known &= known;
     group.instances.push(Instance {
         id: id.to_owned(),
+        key: diff.key.clone(),
         request: diff.request,
         a: diff.a.clone(),
         b: diff.b.clone(),
@@ -257,21 +345,34 @@ fn ordered(groups: BTreeMap<String, Group>) -> Vec<Group> {
     groups
 }
 
+/// An entry for each fingerprint, or text key, no entry covers, with the
+/// rows it would cover.
 fn proposals(groups: &[Group], mode: &'static str) -> Vec<Proposal> {
-    let unknown = groups.iter().filter(|group| !group.known);
-    unknown
-        .map(|group| Proposal {
-            fingerprint: group.fingerprint.clone(),
-            cases: group
-                .instances
-                .iter()
-                .filter(|instance| !instance.known)
-                .map(|instance| instance.id.clone())
-                .collect(),
-            mode,
-            reason: String::new(),
+    let mut proposed: Vec<Proposal> = Vec::new();
+    let uncovered = groups.iter().flat_map(|group| {
+        let instances = group.instances.iter().filter(|instance| !instance.known);
+        instances.map(|instance| {
+            (
+                instance.key.as_ref().unwrap_or(&group.fingerprint),
+                instance,
+            )
         })
-        .collect()
+    });
+    for (fingerprint, instance) in uncovered {
+        match proposed
+            .iter_mut()
+            .find(|proposal| proposal.fingerprint == *fingerprint)
+        {
+            Some(proposal) => proposal.cases.push(instance.id.clone()),
+            None => proposed.push(Proposal {
+                fingerprint: fingerprint.clone(),
+                cases: vec![instance.id.clone()],
+                mode,
+                reason: String::new(),
+            }),
+        }
+    }
+    proposed
 }
 
 impl Report {
@@ -298,7 +399,7 @@ impl Report {
     pub fn summary(&self) -> String {
         let mut text = format!(
             "diff: A {} ({}), B {} ({}); mode {}\n\
-             diff: {} rows: {} identical, {} known, {} mismatched\n",
+             diff: {} rows: {} identical, {} known, {} mismatched, {} not native\n",
             self.a.side,
             self.a.binary,
             self.b.side,
@@ -307,8 +408,31 @@ impl Report {
             self.rows,
             self.identical,
             self.known,
-            self.mismatched
+            self.mismatched,
+            self.not_native
         );
+        for (side, reasons) in &self.refusals {
+            let counts: Vec<String> = reasons
+                .iter()
+                .map(|(reason, rows)| format!("{reason} {}", rows.len()))
+                .collect();
+            let _ = writeln!(
+                text,
+                "diff: {side} declined natively: {}",
+                counts.join(", ")
+            );
+        }
+        for (side, counted) in &self.signatures {
+            let Signatures {
+                ok,
+                bad,
+                unverified,
+            } = counted;
+            let _ = writeln!(
+                text,
+                "diff: {side} signatures: {ok} ok, {bad} bad, {unverified} unverified"
+            );
+        }
         for group in &self.groups {
             let status = if group.known { "known" } else { "NEW" };
             let first = group.instances.first();

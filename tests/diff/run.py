@@ -1,8 +1,10 @@
-"""Provision the differential harness's venv and run capture.py in it.
+"""Provision the differential harness's venv and run one of this
+directory's scripts in it: `run.py --venv DIR --aws-cli-source DIR SCRIPT
+ARGS...`, SCRIPT being `capture.py` or `convert_parity.py`.
 
-`cargo xtask diff` runs this on the host's python3 with a job file. Any
-other caller may too: the job names the binaries, routes and rows, and
-capture.py writes what each row did on each side (see its docstring).
+`cargo xtask diff` runs this on the host's python3. Any other caller may
+too: capture.py's job names the binaries, routes and rows, and it writes
+what each row did on each side (see its docstring).
 
 The venv installs the in-tree AWS CLI's runtime lock with the blackbox
 harness's hash-pinned test lock (tests/blackbox/requirements.txt), the
@@ -25,6 +27,7 @@ import harness_venv  # noqa: E402
 
 VENV_DEPS_REVISION: Final = "1"
 RUNTIME_LOCK: Final = "requirements/download-deps/system-sandbox-lock.txt"
+SCRIPTS: Final = ("capture.py", "convert_parity.py")
 
 
 def main() -> None:
@@ -32,7 +35,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--venv", type=Path, required=True)
     parser.add_argument("--aws-cli-source", type=Path, required=True)
-    parser.add_argument("--job", type=Path, required=True)
+    parser.add_argument("script", choices=SCRIPTS)
+    parser.add_argument("arguments", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     here = Path(__file__).resolve().parent
     python = harness_venv.ensure_venv(
@@ -50,9 +54,8 @@ def main() -> None:
         "-B",
         "-E",
         "-s",
-        str(here / "capture.py"),
-        "--job",
-        str(args.job.resolve()),
+        str(here / args.script),
+        *args.arguments,
     ]
     sys.exit(subprocess.run(command, check=False).returncode)
 

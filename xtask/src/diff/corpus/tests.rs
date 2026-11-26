@@ -105,3 +105,43 @@ fn the_seed_corpus_loads_and_filters_by_id() -> Result<(), TaskError> {
     );
     Ok(())
 }
+
+#[test]
+fn the_parity_corpus_holds_one_row_per_parity_case() -> Result<(), TaskError> {
+    let rows = load(&root(), &[PathBuf::from(crate::diff::PARITY_CORPUS)], None)?;
+    assert_eq!(rows.len(), 86);
+    let source = |row: &Row| {
+        let source = row.source.as_deref().unwrap_or_default();
+        let (case, masks) = source.split_once("; argparse: ").unwrap_or((source, ""));
+        (case.to_owned(), masks.to_owned())
+    };
+    let from_cases = |row: &Row| {
+        let (case, _) = source(row);
+        case.starts_with("tests/parity/cases/") && case.ends_with(&format!("#{}", row.id))
+    };
+    assert!(rows.iter().all(from_cases));
+    // The cases argparse stops before botocore's validator. zjson-measure
+    // leaves out its required Unit, so botocore's call fails validation too.
+    let masked: Vec<&str> = rows
+        .iter()
+        .filter(|row| !source(row).1.is_empty())
+        .map(|row| row.id.as_str())
+        .collect();
+    assert_eq!(
+        masked,
+        [
+            "dynamodb-validation",
+            "dynamodb-validation-type",
+            "zjson-measure",
+            "zjson-validation-each-kind",
+            "zjson11-validation",
+            "zquery-validation-each-kind",
+            "zquery-validation-missing-required",
+            "zquery-validation-get-thing",
+            "zrestjson-validation-missing-label"
+        ]
+    );
+    let fake = rows.iter().filter(|row| row.data_path.is_some()).count();
+    assert_eq!(fake, 58);
+    Ok(())
+}

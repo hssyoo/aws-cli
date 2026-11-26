@@ -4,9 +4,11 @@
 //! SignedHeaders, stdout and stderr are compared as captured.
 //!
 //! - `Authorization`: a 64-digit lowercase hexadecimal `Signature=` becomes
-//!   `<sig>`, and the credential scope's eight-digit date `<date>`; in a
-//!   query, `X-Amz-Signature`, `X-Amz-Date` and the `X-Amz-Credential` date
-//!   alike.
+//!   its verdict ([`sigv4`]): `<sig:ok>` when the request's own bytes and
+//!   the run's fake secret key give it, `<sig:bad>` when they do not, or
+//!   `<sig:unverified>`; and the credential scope's eight-digit date
+//!   becomes `<date>`. In a query, `X-Amz-Signature` becomes `<sig>`, and
+//!   `X-Amz-Date` and the `X-Amz-Credential` date as in the header.
 //! - `X-Amz-Date` of the form `YYYYMMDDTHHMMSSZ` becomes `<amz-date>`.
 //! - A version 4 UUID `amz-sdk-invocation-id` becomes `<invocation-id:k>`, k
 //!   numbering the run's distinct ids by first appearance, so a retry that
@@ -27,6 +29,7 @@
 use std::collections::BTreeSet;
 
 use super::capture::Request;
+use super::sigv4::{self, Verdict};
 
 /// A request as compared.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -52,8 +55,9 @@ pub struct Normal {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Fields {
     pub pairs: Vec<(String, Option<String>)>,
-    /// An empty first field, an empty last one, and the empty ones between.
-    pub empty: (bool, bool, usize),
+    /// Where each empty field is: after which field (its name and how many
+    /// fields of that name came before it), or at the start.
+    pub empty: Vec<Option<(String, usize)>>,
 }
 
 /// The fields of `text`; the empty text has none.
@@ -62,17 +66,23 @@ pub fn fields(text: &str) -> Fields {
     if text.is_empty() {
         return fields;
     }
-    let count = text.split('&').count();
-    for (index, field) in text.split('&').enumerate() {
-        match (field.is_empty(), index) {
-            (true, 0) => fields.empty.0 = true,
-            (true, last) if last + 1 == count => fields.empty.1 = true,
-            (true, _) => fields.empty.2 += 1,
-            (false, _) => fields.pairs.push(match field.split_once('=') {
-                Some((name, value)) => (name.to_owned(), Some(value.to_owned())),
-                None => (field.to_owned(), None),
-            }),
+    for field in text.split('&') {
+        if field.is_empty() {
+            let after = fields.pairs.last().map(|(name, _)| {
+                let before = fields
+                    .pairs
+                    .iter()
+                    .filter(|(other, _)| other == name)
+                    .count();
+                (name.clone(), before - 1)
+            });
+            fields.empty.push(after);
+            continue;
         }
+        fields.pairs.push(match field.split_once('=') {
+            Some((name, value)) => (name.to_owned(), Some(value.to_owned())),
+            None => (field.to_owned(), None),
+        });
     }
     fields
 }
@@ -96,19 +106,21 @@ impl Numbering {
     }
 }
 
-/// One run's numberings, and the UUIDs its row gave.
+/// One run's numberings, the UUIDs its row gave, and its secret key.
 #[derive(Debug)]
-struct State {
+struct State<'a> {
     ids: Numbering,
     uuids: Numbering,
     exempt: BTreeSet<String>,
+    secret: Option<&'a str>,
 }
 
 /// The run's requests, normalized; `inputs` are the texts the row holds,
-/// whose UUIDs stay.
+/// whose UUIDs stay, and `secret` the run's secret key, if it had one.
 pub fn requests<'a>(
     requests: &[Request],
     inputs: impl IntoIterator<Item = &'a str>,
+    secret: Option<&str>,
 ) -> Vec<Normal> {
     let exempt = inputs
         .into_iter()
@@ -122,6 +134,7 @@ pub fn requests<'a>(
         ids: Numbering::default(),
         uuids: Numbering::default(),
         exempt,
+        secret,
     };
     requests
         .iter()
@@ -129,7 +142,7 @@ pub fn requests<'a>(
         .collect()
 }
 
-fn normal(request: &Request, state: &mut State) -> Normal {
+fn normal(request: &Request, state: &mut State<'_>) -> Normal {
     let (prefix, host, rest) = match split_absolute(&request.target) {
         Some((prefix, authority, rest)) => (prefix, authority.to_owned(), rest),
         None => {
@@ -141,10 +154,11 @@ fn normal(request: &Request, state: &mut State) -> Normal {
         Some((path, query)) => (path, Some(query_values(query, state))),
         None => (rest, None),
     };
+    let verdict = sigv4::verify(request, state.secret);
     let headers = request
         .headers
         .iter()
-        .map(|(name, value)| (name.clone(), header(name, value, &mut state.ids)))
+        .map(|(name, value)| (name.clone(), header(name, value, verdict, &mut state.ids)))
         .collect();
     let query_text = query
         .as_ref()
@@ -181,9 +195,9 @@ fn header_value<'a>(headers: &'a [(String, String)], name: &str) -> &'a str {
         .map_or("", |(_, value)| value)
 }
 
-fn header(name: &str, value: &str, ids: &mut Numbering) -> String {
+fn header(name: &str, value: &str, verdict: Verdict, ids: &mut Numbering) -> String {
     match name.to_ascii_lowercase().as_str() {
-        "authorization" => scope_date(&signature(value)),
+        "authorization" => scope_date(&signature(value, verdict)),
         "x-amz-date" if is_amz_date(value) => "<amz-date>".to_owned(),
         "amz-sdk-invocation-id" if is_uuid(value.as_bytes()) => ids.label("invocation-id", value),
         "amz-sdk-request" => sdk_request(value),
@@ -193,7 +207,7 @@ fn header(name: &str, value: &str, ids: &mut Numbering) -> String {
 }
 
 /// `YYYYMMDDTHHMMSSZ`.
-fn is_amz_date(value: &str) -> bool {
+pub(super) fn is_amz_date(value: &str) -> bool {
     let bytes = value.as_bytes();
     let digits = |range: std::ops::Range<usize>| bytes[range].iter().all(u8::is_ascii_digit);
     bytes.len() == 16 && bytes[8] == b'T' && bytes[15] == b'Z' && digits(0..8) && digits(9..15)
@@ -207,8 +221,8 @@ fn is_signature(value: &str) -> bool {
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-/// `value` with the signature after `Signature=` replaced.
-fn signature(value: &str) -> String {
+/// `value` with the signature after `Signature=` replaced by its verdict.
+fn signature(value: &str, verdict: Verdict) -> String {
     let marker = "Signature=";
     let Some(start) = value.find(marker).map(|at| at + marker.len()) else {
         return value.to_owned();
@@ -220,7 +234,12 @@ fn signature(value: &str) -> String {
     if !is_signature(&value[start..start + length]) {
         return value.to_owned();
     }
-    format!("{}<sig>{}", &value[..start], &value[start + length..])
+    let placeholder = verdict.placeholder();
+    format!(
+        "{}{placeholder}{}",
+        &value[..start],
+        &value[start + length..]
+    )
 }
 
 /// `value` with its first credential scope date, eight digits between
@@ -306,7 +325,7 @@ fn user_agent_token(token: &str) -> String {
 
 /// `query` with each field's value normalized, its fields and framing as
 /// sent.
-fn query_values(query: &str, state: &mut State) -> String {
+fn query_values(query: &str, state: &mut State<'_>) -> String {
     let fields: Vec<String> = query
         .split('&')
         .map(|field| match field.split_once('=') {
@@ -317,7 +336,7 @@ fn query_values(query: &str, state: &mut State) -> String {
     fields.join("&")
 }
 
-fn query_value(name: &str, value: &str, state: &mut State) -> String {
+fn query_value(name: &str, value: &str, state: &mut State<'_>) -> String {
     match name {
         "X-Amz-Signature" if is_signature(value) => "<sig>".to_owned(),
         "X-Amz-Date" if is_amz_date(value) => "<amz-date>".to_owned(),
@@ -326,7 +345,7 @@ fn query_value(name: &str, value: &str, state: &mut State) -> String {
     }
 }
 
-fn replace_uuids(text: &[u8], state: &mut State) -> Vec<u8> {
+fn replace_uuids(text: &[u8], state: &mut State<'_>) -> Vec<u8> {
     let mut out = Vec::with_capacity(text.len());
     let mut copied = 0;
     for at in uuids(text) {

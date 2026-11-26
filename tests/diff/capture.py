@@ -23,7 +23,8 @@ request with the row's n-th response, the last repeating, and from the
 loops ends.
 
 Each run is one line of `captures`: the row id, the side, the exit status
-(null when the run timed out and was killed), stdout, stderr, the hosts of
+(null when the run timed out and was killed), stdout, stderr, the fake
+secret key it had (which its signatures are checked against), the hosts of
 the CONNECTs the proxy accepted (sorted), every request as the server
 received it (method, target, HTTP version, headers in wire order, body
 without chunk framing, a chunked body's size and trailer lines, and whether
@@ -336,6 +337,7 @@ async def run_row(
         "timed_out": status is None,
         "stdout": latin1(stdout),
         "stderr": latin1(stderr),
+        "secret_key": env.get("AWS_SECRET_ACCESS_KEY"),
         "connects": sorted(stub.ca.hosts),
         "requests": [request_record(request) for request in stub.server.requests],
     }

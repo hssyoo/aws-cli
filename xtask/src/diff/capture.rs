@@ -32,6 +32,10 @@ pub struct Capture {
     pub stdout: Vec<u8>,
     #[serde(deserialize_with = "latin1")]
     pub stderr: Vec<u8>,
+    /// The secret key the run had (a fake one), which its signatures must
+    /// be made with.
+    #[serde(default)]
+    pub secret_key: Option<String>,
     /// The host of each CONNECT the proxy accepted, sorted.
     #[serde(default)]
     pub connects: Vec<String>,
@@ -104,6 +108,29 @@ pub fn run(root: &Path, run: &Run, rows: &[Row]) -> Result<Vec<Capture>, TaskErr
     let text = serde_json::to_string_pretty(&job)
         .map_err(|error| deps::error(format!("diff job: {error}")))?;
     fs::write(&path, text)?;
+    let mut command = runner(root, "capture.py");
+    command.arg("--job").arg(&path);
+    process::run(&mut command)?;
+    parse(&fs::read_to_string(&captures)?)
+}
+
+/// Fails unless the parity corpus is what its converter writes now.
+pub fn check_corpus(root: &Path) -> Result<(), TaskError> {
+    let mut command = runner(root, "convert_parity.py");
+    command
+        .arg("--aws-cli-source")
+        .arg(root.join("aws-cli"))
+        .arg("--cases")
+        .arg(root.join("tests/parity/cases"))
+        .arg("--models")
+        .arg(root.join("tests/models"))
+        .arg("--check")
+        .arg(root.join(super::PARITY_CORPUS));
+    process::run(&mut command)
+}
+
+/// `tests/diff/run.py` running `script` in the harness venv.
+fn runner(root: &Path, script: &str) -> Command {
     let mut command = Command::new("python3");
     // `-B` keeps the runner's imports from writing bytecode under `tests/`.
     command
@@ -114,10 +141,8 @@ pub fn run(root: &Path, run: &Run, rows: &[Row]) -> Result<Vec<Capture>, TaskErr
         .arg(root.join("target/diff/venv"))
         .arg("--aws-cli-source")
         .arg(root.join("aws-cli"))
-        .arg("--job")
-        .arg(&path);
-    process::run(&mut command)?;
-    parse(&fs::read_to_string(&captures)?)
+        .arg(script);
+    command
 }
 
 /// `row` with its data path made absolute.

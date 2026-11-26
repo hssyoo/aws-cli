@@ -98,3 +98,18 @@ fn unknown_options_and_missing_values_fail() {
         Some("--out requires a value")
     );
 }
+
+#[test]
+fn the_oracle_and_the_corpus_check_stand_alone() -> Result<(), TaskError> {
+    assert!(parse(&args(&["--oracle", "--corpus", "x.jsonl"]))?.oracle);
+    assert!(parse(&args(&["--check-corpus"]))?.check_corpus);
+    assert_eq!(
+        failure(&["--oracle", "--b", "candidate:unset"]).as_deref(),
+        Some("--oracle sets both sides; drop --a and --b")
+    );
+    assert_eq!(
+        failure(&["--check-corpus", "--oracle"]).as_deref(),
+        Some("--check-corpus takes no other option")
+    );
+    Ok(())
+}
