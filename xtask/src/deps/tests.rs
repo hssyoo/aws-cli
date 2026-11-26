@@ -1023,7 +1023,7 @@ fn direct_tool_commands_preserve_hostile_paths_and_argument_boundaries() -> Resu
 /// A separate process writes it instead, so no descriptor this process could
 /// pass to a forked child ever has the file open for writing.
 #[cfg(unix)]
-fn write_executable_out_of_process(path: &Path, content: &str) -> Result<()> {
+pub(super) fn write_executable_out_of_process(path: &Path, content: &str) -> Result<()> {
     let mut child = Command::new("/bin/sh")
         .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
         .arg(path)
