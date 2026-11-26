@@ -19,9 +19,13 @@ runs, over the environment each test gives the command.
 Upstream's tests run with upstream's environment, AWS_MAX_ATTEMPTS=1
 included. The repo tests drop that setting, so the AWS CLI resolves `auto`
 to the CRT client they exercise, unless another AWS CLI process holds the
-machine-wide CRT process lock, which every CRT transfer takes. The tests
-run serially so no command holds it for another; with pytest-xdist's `-n`,
-which client a transfer gets depends on its siblings.
+machine-wide CRT process lock, which every CRT transfer takes. A serial run
+holds it for no other command. `-n N` runs each session on N pytest-xdist
+workers, each in its own mount namespace with a private lock directory
+(isolated_crt_lock.sh), so no worker's command holds it for another's and
+the run passes exactly as a serial one; that needs Linux with unprivileged
+user namespaces, and `-n` fails elsewhere rather than let a transfer's
+client depend on its siblings.
 
 Every test must pass against the public AWS CLI, except the upstream tests
 `--upstream-failures` lists, which it fails in upstream's own environment,
@@ -51,6 +55,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 from collections.abc import Collection, Sequence
@@ -84,6 +89,8 @@ TEST_TIMEOUT_SECONDS: Final = 60 * 60
 # pytest's exit status when a session selects no tests, as `-k` can leave
 # one of the two sessions.
 NO_TESTS_COLLECTED: Final = 5
+# Runs a command with its own CRT process lock directory; see the docstring.
+ISOLATED_CRT_LOCK: Final = Path(__file__).resolve().parent / "isolated_crt_lock.sh"
 
 
 @dataclass(frozen=True)
@@ -180,7 +187,28 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         type=Path,
         help="write each session's JUnit XML report into this directory",
     )
+    parser.add_argument(
+        "-n",
+        "--numprocesses",
+        type=worker_count,
+        default=0,
+        metavar="N",
+        help="run each session on N pytest-xdist workers, each with its "
+        "own CRT process lock (Linux); `auto` is one per CPU",
+    )
     args, forwarded = parser.parse_known_args()
+    # Workers pytest-xdist starts from any other option would share the
+    # host's CRT process lock; only run.py's own `-n` isolates them.
+    try:
+        addopts = shlex.split(os.environ.get("PYTEST_ADDOPTS", ""))
+    except ValueError as error:
+        parser.error(f"PYTEST_ADDOPTS: {error}")
+    for source, tokens in (("arguments", forwarded), ("PYTEST_ADDOPTS", addopts)):
+        if any(is_xdist_option(token) for token in tokens):
+            parser.error(
+                f"pytest-xdist options in the {source} would start workers "
+                "that share the CRT process lock; use run.py's -n N alone"
+            )
     system = (args.crt_link, args.python_payload, args.python_abi)
     if args.link_mode == "system" and None in system:
         parser.error(
@@ -193,6 +221,70 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
             "system build"
         )
     return args, forwarded
+
+
+# pytest-xdist's options that start, place or rerun workers.
+XDIST_LONG_OPTIONS: Final = frozenset(
+    ("--tx", "--dist", "--numprocesses", "--maxprocesses", "--looponfail")
+)
+XDIST_SHORT_FLAGS: Final = frozenset("ndf")
+# pytest's short options that take a value, which the rest of a cluster
+# such as `-kfoo` or `-rfE` spells.
+PYTEST_SHORT_VALUE_OPTIONS: Final = frozenset("kmpcoWr")
+
+
+def is_xdist_option(token: str) -> bool:
+    """Whether `token` is a pytest-xdist worker option in any spelling:
+    `--tx=SPEC`, `-n8`, or a cluster of short flags such as `-xn8` or `-qd`.
+    A cluster's letters count up to the first that takes a value."""
+    if token.startswith("--"):
+        return token.split("=", 1)[0] in XDIST_LONG_OPTIONS
+    if not token.startswith("-"):
+        return False
+    for letter in token[1:]:
+        if letter in XDIST_SHORT_FLAGS:
+            return True
+        if letter in PYTEST_SHORT_VALUE_OPTIONS:
+            return False
+    return False
+
+
+def worker_count(value: str) -> int:
+    """`-n`'s value: a count of workers, or `auto` for one per CPU."""
+    if value == "auto":
+        # The CPUs this process may run on, as xdist's own `auto` counts.
+        if hasattr(os, "sched_getaffinity"):
+            return len(os.sched_getaffinity(0))
+        return os.cpu_count() or 1
+    try:
+        count = int(value)
+    except ValueError:
+        count = -1
+    if count < 0:
+        raise argparse.ArgumentTypeError(f"expected a count or auto: {value!r}")
+    return count
+
+
+def check_crt_lock_isolation() -> None:
+    """Refuse `-n` where a worker cannot get its own CRT process lock: its
+    transfers would then take the classic client while a sibling's hold it."""
+    if not sys.platform.startswith("linux"):
+        raise SystemExit(
+            "blackbox -n needs a private CRT process lock per worker, which "
+            "run.py gives on Linux only; run the tests serially"
+        )
+    probe = subprocess.run(
+        [str(ISOLATED_CRT_LOCK), "true"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        raise SystemExit(
+            "blackbox -n needs unprivileged user and mount namespaces "
+            f"(unshare, util-linux >= 2.36): {probe.stderr.strip()}"
+        )
 
 
 def build_description(args: argparse.Namespace) -> dict[str, str | None]:
@@ -274,18 +366,18 @@ def upstream_issue_ledger(known_gaps: Path, cache_dir: Path) -> Path:
     return ledger
 
 
-def run_suite(
+def pytest_command(
     suite: Suite,
-    runtime_requirements: Path,
-    env: dict[str, str],
+    venv_python: Path,
     source: Path,
     pytest_args: Sequence[str],
-) -> int:
-    venv_python = harness_venv.ensure_venv(
-        suite.venv,
-        [runtime_requirements, suite.test_requirements],
-        VENV_DEPS_REVISION,
-    )
+    workers: int,
+) -> list[str]:
+    """The command that runs `suite`. Serially, pytest-xdist is disabled,
+    so an xdist option from any source fails the run rather than start
+    workers that share the CRT process lock. With `workers`, each worker,
+    and the controller, which checks the lock as the run starts, gets its
+    own lock directory."""
     command = [
         str(venv_python),
         "-m",
@@ -299,6 +391,35 @@ def run_suite(
         suite.tests,
         *pytest_args,
     ]
+    if not workers:
+        return [*command, "-p", "no:xdist", "-p", "no:xdist.looponfail"]
+    # `-n N` is `--dist load --tx N*popen`, with each worker's interpreter
+    # run through the wrapper.
+    isolated = shlex.join([str(ISOLATED_CRT_LOCK), str(venv_python)])
+    return [
+        str(ISOLATED_CRT_LOCK),
+        *command,
+        "--dist",
+        "load",
+        "--tx",
+        f"{workers}*popen//python={isolated}",
+    ]
+
+
+def run_suite(
+    suite: Suite,
+    runtime_requirements: Path,
+    env: dict[str, str],
+    source: Path,
+    pytest_args: Sequence[str],
+    workers: int,
+) -> int:
+    venv_python = harness_venv.ensure_venv(
+        suite.venv,
+        [runtime_requirements, suite.test_requirements],
+        VENV_DEPS_REVISION,
+    )
+    command = pytest_command(suite, venv_python, source, pytest_args, workers)
     try:
         result = subprocess.run(
             command,
@@ -327,6 +448,8 @@ def combined_returncode(returncodes: Sequence[int]) -> int:
 def main() -> None:
     args, pytest_args = parse_args()
     harness_venv.validate_host_python("blackbox tests")
+    if args.numprocesses:
+        check_crt_lock_isolation()
     harness_dir = Path(__file__).resolve().parent
     aws_binary = Path(args.aws_binary).resolve()
     if not aws_binary.is_file():
@@ -410,7 +533,14 @@ def main() -> None:
             report = args.junit_dir.resolve() / f"{suite.name}.xml"
             suite_args.append(f"--junitxml={report}")
         returncodes.append(
-            run_suite(suite, runtime_requirements, env, source, suite_args)
+            run_suite(
+                suite,
+                runtime_requirements,
+                env,
+                source,
+                suite_args,
+                args.numprocesses,
+            )
         )
     sys.exit(combined_returncode(returncodes))
 
