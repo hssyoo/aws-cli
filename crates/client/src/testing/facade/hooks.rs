@@ -12,6 +12,7 @@ use super::{CallError, Client, ClientCase, Customization, FixedRuntime};
 use crate::endpoint::{EndpointConfig, EndpointInputs};
 use crate::hooks::{CallContext, HookError, HookResult, Interceptor, Order, Scope};
 use crate::http::{HttpRequest, HttpResponse};
+use crate::retry::{Attempt, RetryDecision};
 use crate::useragent::{SessionExtras, UserAgentContext};
 use model::value::Value;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -50,11 +51,16 @@ impl<T: Clone> Seen<T> {
 
 /// A table of one customization of every call holding `interceptor`.
 fn table(id: &'static str, interceptor: Box<dyn Interceptor + Send>) -> Table {
+    scoped_table(id, Scope::ALL, interceptor)
+}
+
+/// A table of one customization of `scope` holding `interceptor`.
+fn scoped_table(id: &'static str, scope: Scope, interceptor: Box<dyn Interceptor + Send>) -> Table {
     let interceptor: &'static dyn Interceptor = Box::leak(interceptor);
     let interceptors: &'static [&'static dyn Interceptor] = Box::leak(Box::new([interceptor]));
     let customization: &'static Customization = Box::leak(Box::new(Customization {
         id,
-        scope: Scope::ALL,
+        scope,
         setting_defaults: &[],
         builtins: &[],
         interceptors,
@@ -161,6 +167,37 @@ pub fn failing_short_circuit(message: &str) -> (Table, Seen<u32>) {
     };
     (
         table("characterization-failing-short-circuit", Box::new(hook)),
+        seen,
+    )
+}
+
+#[derive(Debug)]
+struct DeferringClassifier(Seen<u32>);
+
+impl Interceptor for DeferringClassifier {
+    fn classify_retry(&self, cx: &mut CallContext<'_>, _: &Attempt<'_>) -> Option<RetryDecision> {
+        self.0.push(cx.attempt);
+        None
+    }
+}
+
+/// A retry classifier (`classify_retry`, a service's `needs-retry`
+/// handler such as DynamoDB's checksum check) that records each attempt it
+/// is asked about and leaves the decision to standard mode. It applies to
+/// `operation` of `service`, or to every operation of `service` for
+/// `None`.
+pub fn deferring_classifier(
+    service: &'static str,
+    operation: Option<&'static str>,
+) -> (Table, Seen<u32>) {
+    let seen = Seen::new();
+    let scope = match operation {
+        Some(operation) => Scope::operation(service, operation),
+        None => Scope::service(service),
+    };
+    let hook = Box::new(DeferringClassifier(seen.clone()));
+    (
+        scoped_table("characterization-deferring-classifier", scope, hook),
         seen,
     )
 }
