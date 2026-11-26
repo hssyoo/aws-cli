@@ -167,6 +167,7 @@ member/rest-json/out/structure/value
 member/rest-json/out/timestamp/body/locationName
 member/rest-json/out/timestamp/member
 member/rest-xml/out/blob/body/eventpayload
+member/rest-xml/out/blob/body/streaming
 member/rest-xml/out/structure/body/eventpayload
 member/smithy-rpc-v2-cbor/err/integer/body
 member/smithy-rpc-v2-cbor/err/list/body

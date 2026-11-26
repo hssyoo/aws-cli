@@ -27,11 +27,6 @@
       "builtIn": "SDK::Endpoint",
       "documentation": "A custom endpoint."
     },
-    "WidgetName": {
-      "required": false,
-      "type": "String",
-      "documentation": "A context parameter."
-    },
     "Owner": {
       "required": false,
       "type": "String",
@@ -43,6 +38,11 @@
       "documentation": "A context parameter."
     },
     "AccountId": {
+      "required": false,
+      "type": "String",
+      "documentation": "A context parameter."
+    },
+    "WidgetName": {
       "required": false,
       "type": "String",
       "documentation": "A context parameter."
@@ -65,6 +65,110 @@
         "url": {
           "ref": "Endpoint"
         }
+      }
+    },
+    {
+      "type": "endpoint",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Owner"
+            }
+          ]
+        },
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ]
+        }
+      ],
+      "endpoint": {
+        "url": "https://{Owner}.owner.zrestxml.{Region}.amazonaws.com",
+        "properties": {},
+        "headers": {}
+      }
+    },
+    {
+      "type": "endpoint",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Marker"
+            }
+          ]
+        },
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ]
+        }
+      ],
+      "endpoint": {
+        "url": "https://marker.zrestxml.{Region}.amazonaws.com",
+        "properties": {},
+        "headers": {}
+      }
+    },
+    {
+      "type": "endpoint",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "AccountId"
+            }
+          ]
+        },
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ]
+        }
+      ],
+      "endpoint": {
+        "url": "https://account.zrestxml.{Region}.amazonaws.com",
+        "properties": {},
+        "headers": {}
+      }
+    },
+    {
+      "type": "endpoint",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "WidgetName"
+            }
+          ]
+        },
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ]
+        }
+      ],
+      "endpoint": {
+        "url": "https://{WidgetName}.widget.zrestxml.{Region}.amazonaws.com",
+        "properties": {},
+        "headers": {}
       }
     },
     {

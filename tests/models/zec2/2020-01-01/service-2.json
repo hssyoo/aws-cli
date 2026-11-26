@@ -171,10 +171,6 @@
         "Spot": {
           "shape": "Placement"
         },
-        "ClientToken": {
-          "shape": "Text",
-          "idempotencyToken": true
-        },
         "Token": {
           "shape": "Text",
           "locationName": "clientToken",

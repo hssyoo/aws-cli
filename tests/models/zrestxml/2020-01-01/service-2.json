@@ -114,7 +114,10 @@
         "shape": "PatchWidgetRequest"
       },
       "httpChecksumRequired": true,
-      "unsignedPayload": true
+      "unsignedPayload": true,
+      "auth": [
+        "aws.auth#sigv4"
+      ]
     },
     "UploadWidgetData": {
       "name": "UploadWidgetData",
@@ -142,8 +145,31 @@
     }
   },
   "shapes": {
+    "AccessControlPolicy": {
+      "type": "structure",
+      "members": {
+        "Grants": {
+          "shape": "Grants",
+          "locationName": "AccessControlList"
+        },
+        "Owner": {
+          "shape": "AclOwner"
+        }
+      }
+    },
     "AccountId": {
       "type": "string"
+    },
+    "AclOwner": {
+      "type": "structure",
+      "members": {
+        "DisplayName": {
+          "shape": "Text"
+        },
+        "ID": {
+          "shape": "Text"
+        }
+      }
     },
     "Algorithm": {
       "type": "string"
@@ -236,12 +262,8 @@
         "Labels": {
           "shape": "TextMap"
         },
-        "Grantee": {
-          "shape": "Grantee",
-          "locationName": "Grantee",
-          "xmlNamespace": {
-            "uri": "http://www.w3.org/2001/XMLSchema-instance"
-          }
+        "AccessControlPolicy": {
+          "shape": "AccessControlPolicy"
         },
         "Nested": {
           "shape": "Nested",
@@ -370,12 +392,8 @@
         "Labels": {
           "shape": "TextMap"
         },
-        "Grantee": {
-          "shape": "Grantee",
-          "locationName": "Grantee",
-          "xmlNamespace": {
-            "uri": "http://www.w3.org/2001/XMLSchema-instance"
-          }
+        "AccessControlPolicy": {
+          "shape": "AccessControlPolicy"
         },
         "Nested": {
           "shape": "Nested",
@@ -396,8 +414,7 @@
       "payload": "Body",
       "members": {
         "Body": {
-          "shape": "Stream",
-          "streaming": true
+          "shape": "Stream"
         },
         "Kind": {
           "shape": "Text",
@@ -458,21 +475,48 @@
         }
       }
     },
-    "Grantee": {
+    "Grant": {
       "type": "structure",
       "members": {
-        "Kind": {
+        "Grantee": {
+          "shape": "Grantee"
+        },
+        "Permission": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Grantee": {
+      "type": "structure",
+      "required": [
+        "Type"
+      ],
+      "members": {
+        "DisplayName": {
+          "shape": "Text"
+        },
+        "ID": {
+          "shape": "Text"
+        },
+        "Type": {
           "shape": "Text",
           "locationName": "xsi:type",
           "xmlAttribute": true
         },
-        "Id": {
+        "URI": {
           "shape": "Text"
         }
       },
       "xmlNamespace": {
         "prefix": "xsi",
         "uri": "http://www.w3.org/2001/XMLSchema-instance"
+      }
+    },
+    "Grants": {
+      "type": "list",
+      "member": {
+        "shape": "Grant",
+        "locationName": "Grant"
       }
     },
     "HeadWidgetOutput": {
