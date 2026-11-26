@@ -215,7 +215,7 @@ fn kinds(text: &str) -> Vec<(&'static str, bool)> {
 
 #[test]
 fn suppressions_are_found_anywhere_and_inside_cfg_attr() {
-    let cases: [(&str, &[(&str, bool)]); 14] = [
+    let cases: [(&str, &[(&str, bool)]); 18] = [
         ("#[ignore]", &[("ignore", false)]),
         ("    # [ ignore ]", &[("ignore", false)]),
         ("#[ignore = \"slow\"]", &[("ignore", true)]),
@@ -239,6 +239,10 @@ fn suppressions_are_found_anywhere_and_inside_cfg_attr() {
         ),
         ("#[cfg(any())] mod tests;", &[("cfg-off", false)]),
         ("#[cfg(not(test))]", &[("cfg-off", false)]),
+        ("#[cfg(miri)]", &[("cfg", false)]),
+        ("#[cfg(all(test, windows))]", &[("cfg", false)]),
+        ("#[cfg(feature = \"x\")]", &[("cfg", false)]),
+        ("#[path = \"t.rs\"]", &[("path", false)]),
     ];
     for (text, expected) in cases {
         assert_eq!(kinds(text), expected, "{text}");
@@ -249,8 +253,8 @@ fn suppressions_are_found_anywhere_and_inside_cfg_attr() {
         "#[ignored_attr]",
         "#[allowed(x)]",
         "#[cfg(test)]",
-        "#[cfg(feature = \"x\")]",
         "#[cfg(all(test, not(miri)))]",
+        "#[cfg(unix)]",
     ] {
         assert_eq!(kinds(quiet), [], "{quiet}");
     }
@@ -350,4 +354,75 @@ fn a_changed_assert_is_one_whose_statement_is_gone_at_head() {
     assert_eq!(check(one_copy_left, &[(6, "assert!(c);")]), ["6"]);
     let moved = "assert!(c);\nassert_eq!(\n    a,\n    b,\n);\nassert!(c);\n";
     assert_eq!(check(moved, &[(5, "assert!(c);")]), none);
+}
+
+#[test]
+fn the_ci_build_knows_its_platform_and_not_its_features() {
+    let cases = [
+        ("unix", Some(true)),
+        ("all(test, not(miri))", Some(true)),
+        ("target_os = \"linux\"", Some(true)),
+        ("target_os = \"macos\"", Some(false)),
+        ("all(test, windows)", Some(false)),
+        ("feature = \"x\"", None),
+    ];
+    for (predicate, expected) in cases {
+        assert_eq!(attrs::evaluate_ci(predicate), expected, "{predicate}");
+    }
+}
+
+#[test]
+fn module_targets_follow_path_attributes_and_hold_tests_below_them() {
+    assert_eq!(rules::module_target("src/lib.rs", "a", None), "src/a.rs");
+    assert_eq!(rules::module_target("src/x.rs", "a", None), "src/x/a.rs");
+    assert_eq!(
+        rules::module_target("tests/it.rs", "t", Some("it/tests.rs")),
+        "tests/it/tests.rs"
+    );
+    let files = strings(&["src/a/b/tests.rs", "src/c.rs"]);
+    let sources = [("src/c.rs".to_owned(), "#[test]\nfn c() {}\n".to_owned())].into();
+    let none = std::collections::BTreeMap::new();
+    assert!(rules::holds_tests(&files, &none, "src/a.rs"));
+    assert!(rules::holds_tests(&files, &sources, "src/c.rs"));
+    assert!(!rules::holds_tests(&files, &none, "src/c.rs"));
+    let modules = super::gates::modules(&Source::rust(
+        "#[path = \"t.rs\"]\npub(crate) mod a;\nmod b {}\nmod c;\n",
+    ));
+    let found: Vec<_> = modules
+        .iter()
+        .map(|m| (m.line, m.name.as_str(), m.path.as_deref()))
+        .collect();
+    assert_eq!(found, [(2, "a", Some("t.rs")), (4, "c", None)]);
+}
+
+#[test]
+fn escapes_are_shadowing_macros_exits_and_passing_returns_before_checks() {
+    let text = concat!(
+        "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+        "use crate::noop as assert;\nuse std::fmt;\n",
+        "#[test]\nfn a() {\n    std::process::exit(0);\n    if x { return; }\n    assert!(y);\n}\n",
+        "#[test]\nfn b() -> Result<(), E> {\n    let Some(v) = w else { return Err(e) };\n",
+        "    let f = |x| x.exit(1);\n    assert!(v);\n    return Ok(());\n}\n",
+        "fn helper() { std::process::exit(1); return; }\n",
+    );
+    let found: Vec<_> = super::gates::escapes(&Source::rust(text), &[])
+        .into_iter()
+        .map(|found| (found.kind, found.first_line, found.test_item))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("shadow", 1, false),
+            ("shadow", 2, false),
+            ("exit", 6, true),
+            ("exit", 17, false),
+            ("return", 7, true),
+        ]
+    );
+    let names = strings(&["assert_parses"]);
+    let custom = super::gates::escapes(
+        &Source::rust("macro_rules! assert_parses { () => {}; }\n"),
+        &names,
+    );
+    assert_eq!(custom.len(), 1);
 }

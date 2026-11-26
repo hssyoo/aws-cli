@@ -221,3 +221,148 @@ fn honest_changes_pass_and_a_protected_change_fails_the_run() {
     let error = error.map(|error| error.to_string()).unwrap_or_default();
     assert!(error.contains("1 violation(s)"), "{error}");
 }
+
+#[test]
+fn a_test_module_or_function_gated_on_a_cfg_off_in_ci_is_a_suppression() {
+    let cases = [
+        (
+            "src/lib.rs",
+            "#[cfg(test)]\nmod tests;",
+            "#[cfg(miri)]\nmod tests;",
+        ),
+        (
+            "src/tests.rs",
+            "#[test]\nfn adds()",
+            "#[test]\n#[cfg(all(test, windows))]\nfn adds()",
+        ),
+        (
+            "src/tests.rs",
+            "#[test]\nfn adds()",
+            "#![cfg(miri)]\n#[test]\nfn adds()",
+        ),
+    ];
+    for (path, from, to) in cases {
+        let repo = Repo::new("gate");
+        repo.edit(path, from, to);
+        repo.commit("tidy");
+        assert_eq!(repo.violations(), [format!("suppression {path}")], "{to}");
+    }
+    let repo = Repo::new("gate-ok");
+    repo.edit(
+        "src/tests.rs",
+        "#[test]\nfn adds()",
+        "#[cfg(unix)]\n#[test]\nfn adds()",
+    );
+    repo.edit(
+        "src/lib.rs",
+        "pub fn one()",
+        "#[cfg(windows)]\nmod win;\npub fn one()",
+    );
+    repo.write("src/win.rs", "pub fn w() {}\n");
+    repo.commit("platform code");
+    assert_eq!(repo.violations(), Vec::<String>::new());
+}
+
+#[test]
+fn removing_a_child_module_that_holds_tests_is_a_test_module_removal() {
+    let mut repo = Repo::new("child");
+    repo.rebase(&[
+        (
+            "src/lib.rs",
+            &format!("mod extra;\nmod inline;\nmod plain;\n{}", super::LIB),
+        ),
+        ("src/extra.rs", "#[cfg(test)]\nmod tests;\n"),
+        ("src/extra/tests.rs", "#[test]\nfn e() {}\n"),
+        ("src/inline.rs", "#[test]\nfn i() {}\n"),
+        ("src/plain.rs", "pub fn p() {}\n"),
+    ]);
+    repo.edit("src/lib.rs", "mod extra;\nmod inline;\nmod plain;\n", "");
+    repo.commit("tidy");
+    assert_eq!(
+        repo.violations(),
+        ["test-module src/lib.rs", "test-module src/lib.rs"]
+    );
+}
+
+#[test]
+fn a_path_attribute_retargeting_a_test_module_is_a_suppression() {
+    let repo = Repo::new("path");
+    repo.edit(
+        "src/lib.rs",
+        "mod tests;",
+        "#[path = \"tests_empty.rs\"]\nmod tests;",
+    );
+    repo.write("src/tests_empty.rs", "\n");
+    repo.commit("tidy");
+    assert_eq!(repo.violations(), ["suppression src/lib.rs"]);
+    let same = Repo::new("path-same");
+    same.edit(
+        "src/lib.rs",
+        "mod tests;",
+        "#[path = \"tests.rs\"]\nmod tests;",
+    );
+    same.commit("tidy");
+    assert_eq!(same.violations(), Vec::<String>::new());
+}
+
+#[test]
+fn a_macro_or_import_shadowing_assert_is_an_escape_unless_a_trailer_says_why() {
+    let shadows = [
+        "macro_rules! assert_eq { ($($t:tt)*) => {}; }\n",
+        "macro_rules! assert { ($($t:tt)*) => {}; }\n",
+        "use crate::one as assert_ne;\n",
+    ];
+    for shadow in shadows {
+        let repo = Repo::new("shadow");
+        repo.write("src/tests.rs", &format!("{shadow}{TESTS}"));
+        repo.commit("tidy");
+        assert_eq!(repo.violations(), ["suppression src/tests.rs"], "{shadow}");
+        repo.write("README", "x\n");
+        repo.edit("src/tests.rs", "fn adds", "fn adds_up");
+        repo.commit("rename\n\nAsserts-changed: src/tests.rs");
+        assert_eq!(repo.violations(), Vec::<String>::new(), "{shadow}");
+    }
+}
+
+#[test]
+fn an_exit_or_a_passing_return_before_the_checks_of_a_test_is_an_escape() {
+    let escapes = [
+        "fn adds() {\n    std::process::exit(0);",
+        "fn adds() {\n    std::process::abort();",
+        "fn adds() {\n    if one() == 1 {\n        return;\n    }",
+    ];
+    for escape in escapes {
+        let repo = Repo::new("escape");
+        repo.edit("src/tests.rs", "fn adds() {", escape);
+        repo.commit("tidy");
+        assert_eq!(repo.violations(), ["suppression src/tests.rs"], "{escape}");
+    }
+    let failing = Repo::new("escape-err");
+    failing.edit(
+        "src/tests.rs",
+        "fn adds() {",
+        concat!(
+            "fn adds() -> Result<(), String> {\n",
+            "    if one() != 1 {\n        return Err(\"x\".into());\n    }",
+        ),
+    );
+    failing.edit(
+        "src/tests.rs",
+        "        2,\n    );\n}",
+        "        2,\n    );\n    Ok(())\n}",
+    );
+    failing.commit("tidy");
+    assert_eq!(failing.violations(), Vec::<String>::new());
+}
+
+#[test]
+fn a_test_attribute_made_conditional_is_a_drop_in_the_count() {
+    let repo = Repo::new("cfg-attr-test");
+    repo.edit(
+        "src/tests.rs",
+        "#[test]\nfn adds()",
+        "#[cfg_attr(not(miri), test)]\nfn adds()",
+    );
+    repo.commit("tidy");
+    assert_eq!(repo.violations(), ["test-count ."]);
+}

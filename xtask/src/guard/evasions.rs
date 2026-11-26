@@ -54,6 +54,15 @@ impl Repo {
         repo
     }
 
+    /// Commits the scratch files as a new base for the change under test.
+    pub fn rebase(&mut self, files: &[(&str, &str)]) {
+        for (path, text) in files {
+            self.write(path, text);
+        }
+        self.commit("base");
+        self.base = self.git(&["rev-parse", "HEAD"]);
+    }
+
     pub fn git(&self, args: &[&str]) -> String {
         let output = Command::new("git")
             .arg("-C")

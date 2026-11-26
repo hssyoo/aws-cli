@@ -46,6 +46,7 @@ mod attrs;
 mod diff;
 #[cfg(test)]
 mod evasions;
+mod gates;
 mod lex;
 mod rules;
 
@@ -64,6 +65,9 @@ pub struct Inputs {
     pub head_sources: BTreeMap<String, String>,
     pub base_crates: Vec<String>,
     pub head_crates: Vec<String>,
+    /// Every file at base and at head.
+    pub base_files: Vec<String>,
+    pub head_files: Vec<String>,
     pub commits: Vec<Commit>,
 }
 
@@ -259,21 +263,44 @@ impl Git<'_> {
         let read = |path: &&String| path.ends_with(".rs") || diff::is_test_file(path);
         let olds = changes.iter().filter_map(|change| change.old.clone());
         let news = changes.iter().filter_map(|change| change.new.clone());
+        let base_sources = self.module_sources(base, olds.filter(|path| read(&path)))?;
+        let head_sources = self.module_sources(head, news.filter(|path| read(&path)))?;
+        let base_files = self.files(base)?;
+        let head_files = self.files(head)?;
         Ok(Inputs {
             protected: self.protected(base, head)?,
-            base_sources: self.sources(base, olds.filter(|path| read(&path)))?,
-            head_sources: self.sources(head, news.filter(|path| read(&path)))?,
-            base_crates: self.crates(base)?,
-            head_crates: self.crates(head)?,
+            base_sources,
+            head_sources,
+            base_crates: diff::crate_directories(base_files.iter().map(String::as_str)),
+            head_crates: diff::crate_directories(head_files.iter().map(String::as_str)),
+            base_files,
+            head_files,
             commits: diff::commits(&self.read(&log)?),
             changes,
             lines,
         })
     }
 
-    fn crates(&self, rev: &str) -> Result<Vec<String>, TaskError> {
+    /// The sources of `paths` at `rev`, with the module files their
+    /// `mod name;` declarations load.
+    fn module_sources(
+        &self,
+        rev: &str,
+        paths: impl Iterator<Item = String>,
+    ) -> Result<BTreeMap<String, String>, TaskError> {
+        let mut sources = self.sources(rev, paths)?;
+        let modules = rules::module_files(&sources);
+        sources.extend(self.sources(rev, modules.into_iter())?);
+        Ok(sources)
+    }
+
+    fn files(&self, rev: &str) -> Result<Vec<String>, TaskError> {
         let files = self.read(&["ls-tree", "-r", "-z", "--name-only", rev])?;
-        Ok(diff::crate_directories(files.split('\0')))
+        Ok(files
+            .split('\0')
+            .filter(|file| !file.is_empty())
+            .map(str::to_owned)
+            .collect())
     }
 }
 

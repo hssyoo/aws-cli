@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use super::attrs::{self, Source};
 use super::diff::{Commit, FileLines, crate_of, is_test_file, matches};
+use super::gates;
 use super::{Inputs, PROTECTED_LIST};
 
 pub fn check(inputs: &Inputs) -> Vec<String> {
@@ -56,16 +57,23 @@ fn suppressions(inputs: &Inputs) -> Vec<String> {
             continue;
         };
         let source = Source::rust(text);
-        for found in attrs::suppressions(&source) {
+        let names = file
+            .old
+            .as_deref()
+            .and_then(|old| inputs.base_sources.get(old))
+            .map(|base| gates::assert_macros(&Source::rust(base)))
+            .unwrap_or_default();
+        let mut found = attrs::suppressions(&source);
+        found.extend(gates::escapes(&source, &names));
+        for found in found {
             let added = file
                 .added
                 .iter()
                 .any(|(line, _)| (found.first_line..=found.last_line).contains(line));
-            if added && !justified(&source, &found) {
+            if added && applies(inputs, path, &found) && !excused(inputs, &source, path, &found) {
                 violations.push(format!(
                     "guard: suppression: {path}:{}: `{}` ({}) has no justification; say why \
-                     in a `//` comment on its line or above its attributes, or in the \
-                     attribute itself ({})",
+                     in a `//` comment on its line or above its attributes, or {}",
                     found.first_line,
                     found.text,
                     found.kind,
@@ -77,11 +85,73 @@ fn suppressions(inputs: &Inputs) -> Vec<String> {
     violations
 }
 
+/// Whether a finding whose effect depends on where it is applies there: a
+/// `cfg` not known true or a `#[path]` on a test function or a module that
+/// holds tests (or, inner, on a test file), and an exit in a test.
+fn applies(inputs: &Inputs, path: &str, found: &attrs::Found) -> bool {
+    match found.kind {
+        "cfg" | "path" => {
+            let module = found.module.as_ref().is_some_and(|(name, attribute)| {
+                let default = module_target(path, name, None);
+                let target = module_target(path, name, attribute.as_deref());
+                let moved = found.kind == "cfg" || target != default;
+                moved
+                    && (holds_tests(&inputs.head_files, &inputs.head_sources, &default)
+                        || holds_tests(&inputs.base_files, &inputs.base_sources, &default))
+            });
+            (found.kind == "cfg" && found.test_item)
+                || module
+                || (found.inner && is_test_file(path))
+        }
+        "exit" => found.test_item || is_test_file(path),
+        _ => true,
+    }
+}
+
+fn excused(inputs: &Inputs, source: &Source<'_>, path: &str, found: &attrs::Found) -> bool {
+    let skips = matches!(found.kind, "shadow" | "exit" | "return");
+    justified(source, found) || (skips && trailer(&inputs.commits, "Asserts-changed", path))
+}
+
+/// The file `mod name;` in `parent` loads: its `#[path]`, relative to the
+/// parent's directory, or the default one.
+pub fn module_target(parent: &str, name: &str, attribute: Option<&str>) -> String {
+    match (attribute, parent.rsplit_once('/')) {
+        (Some(path), Some((directory, _))) => format!("{directory}/{path}"),
+        (Some(path), None) => path.to_owned(),
+        (None, _) => child_path(parent, name),
+    }
+}
+
+/// Whether a module file is a test file, holds test functions, or has a
+/// test file below its directory.
+pub fn holds_tests(files: &[String], sources: &BTreeMap<String, String>, target: &str) -> bool {
+    let directory = target.strip_suffix(".rs").unwrap_or(target);
+    let below = format!("{directory}/");
+    let tests = |path: &str| {
+        sources
+            .get(path)
+            .is_some_and(|text| attrs::test_count(&Source::rust(text)) > 0)
+    };
+    is_test_file(target)
+        || files
+            .iter()
+            .any(|file| file.starts_with(&below) && is_test_file(file))
+        || tests(target)
+        || tests(&format!("{directory}/mod.rs"))
+}
+
 fn remedy(kind: &str) -> &'static str {
     match kind {
         "ignore" => "`#[ignore = \"..\"]`",
         "should_panic" => "`expected = \"..\"`",
         "cfg-off" => "a cfg that is always false switches the code off; delete the code instead",
+        "cfg" => "make the cfg true in a test build (`cfg(test)`), or say why",
+        "path" => "keep the module's own file",
+        "shadow" | "exit" | "return" => {
+            "an `Asserts-changed:` trailer on the commit; this code keeps the checks after it \
+             from running"
+        }
         _ => "`reason = \"..\"`",
     }
 }
@@ -209,19 +279,6 @@ fn child_path(parent: &str, name: &str) -> String {
     }
 }
 
-/// The test module a line declares (`mod tests;`, `pub(crate) mod testing {`).
-fn test_module(code: &str) -> Option<&'static str> {
-    let mut words = code
-        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .filter(|word| !word.is_empty());
-    words.position(|word| word == "mod")?;
-    match words.next()? {
-        "tests" => Some("tests"),
-        "testing" => Some("testing"),
-        _ => None,
-    }
-}
-
 fn module_removals(inputs: &Inputs) -> Vec<String> {
     let mut violations = Vec::new();
     for file in &inputs.lines {
@@ -231,29 +288,49 @@ fn module_removals(inputs: &Inputs) -> Vec<String> {
         let Some(text) = inputs.base_sources.get(old) else {
             continue;
         };
-        let source = Source::rust(text);
-        for (line, raw) in &file.removed {
-            let Some(name) = source.line(*line).and_then(|(code, _)| test_module(code)) else {
+        for module in gates::modules(&Source::rust(text)) {
+            let Some((line, raw)) = file.removed.iter().find(|(line, _)| *line == module.line)
+            else {
                 continue;
             };
             let kept = file
                 .added
                 .iter()
                 .any(|(_, added)| added.trim() == raw.trim());
-            let child = child_path(old, name);
-            let retired = [old, child.as_str()]
+            let target = module_target(old, &module.name, module.path.as_deref());
+            let retired = [old, target.as_str()]
                 .iter()
                 .any(|path| trailer(&inputs.commits, "Retires", path));
-            if !kept && !retired {
+            let tests = holds_tests(&inputs.base_files, &inputs.base_sources, &target);
+            if tests && !kept && !retired {
                 violations.push(format!(
-                    "guard: test-module: {old}:{line}: `{}` was removed, which stops its tests \
-                     compiling; restore it, or add a `Retires: {child}` trailer to the commit",
+                    "guard: test-module: {old}:{line}: `{}` was removed, which stops the tests \
+                     in {target} compiling; restore it, or add a `Retires: {target}` trailer \
+                     to the commit",
                     raw.trim()
                 ));
             }
         }
     }
     violations
+}
+
+/// The module files the `mod name;` declarations of the changed Rust
+/// files load, with the `mod.rs` form, for [`holds_tests`] to read.
+pub fn module_files(sources: &BTreeMap<String, String>) -> Vec<String> {
+    let mut files = Vec::new();
+    for (path, text) in sources.iter().filter(|(path, _)| path.ends_with(".rs")) {
+        for module in gates::modules(&Source::rust(text)) {
+            let target = module_target(path, &module.name, module.path.as_deref());
+            let directory = target.strip_suffix(".rs").unwrap_or(&target).to_owned();
+            files.push(format!("{directory}/mod.rs"));
+            files.push(target);
+        }
+    }
+    files.retain(|file| !sources.contains_key(file));
+    files.sort();
+    files.dedup();
+    files
 }
 
 fn asserts(inputs: &Inputs) -> Vec<String> {

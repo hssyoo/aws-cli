@@ -2,7 +2,7 @@
 //! from its [`lex::mask`] so literals and comments are never code, and from
 //! the original text at the same offsets for the values of literals.
 
-use super::lex;
+use super::{gates, lex};
 
 /// A source and its mask, which share every byte offset.
 #[derive(Debug)]
@@ -64,10 +64,12 @@ impl<'a> Source<'a> {
     }
 }
 
-/// One suppression-like attribute.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One suppression-like attribute, or a statement that skips checks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Found {
-    /// `allow`, `expect`, `ignore`, `should_panic` or `cfg-off`.
+    /// `allow`, `expect`, `ignore`, `should_panic`, `cfg-off` (false in a
+    /// test build), `cfg` (not known true), `path`, or from
+    /// [`gates::escapes`](super::gates::escapes) `shadow`, `exit` or `return`.
     pub kind: &'static str,
     pub first_line: usize,
     pub last_line: usize,
@@ -75,10 +77,16 @@ pub struct Found {
     /// `expected = ".."`.
     pub reasoned: bool,
     pub text: String,
+    /// The item it is on is a test function, or it lies in one.
+    pub test_item: bool,
+    /// It is an inner attribute, on the module of its file.
+    pub inner: bool,
+    /// The module the item declares, and its `#[path]`, if any.
+    pub module: Option<(String, Option<String>)>,
 }
 
 /// Every attribute's `#` and closing `]` offsets.
-fn attributes(source: &Source<'_>) -> Vec<(usize, usize)> {
+pub(super) fn attributes(source: &Source<'_>) -> Vec<(usize, usize)> {
     let code = source.code.as_bytes();
     let mut found = Vec::new();
     let mut at = 0;
@@ -100,7 +108,7 @@ fn attributes(source: &Source<'_>) -> Vec<(usize, usize)> {
     found
 }
 
-fn skip_space(code: &[u8], mut at: usize) -> usize {
+pub(super) fn skip_space(code: &[u8], mut at: usize) -> usize {
     while code.get(at).is_some_and(u8::is_ascii_whitespace) {
         at += 1;
     }
@@ -108,7 +116,7 @@ fn skip_space(code: &[u8], mut at: usize) -> usize {
 }
 
 /// The offset of the bracket closing the one at `open`.
-fn closing(code: &[u8], open: usize) -> Option<usize> {
+pub(super) fn closing(code: &[u8], open: usize) -> Option<usize> {
     let mut depth = 0_usize;
     for (offset, byte) in code[open..].iter().enumerate() {
         match byte {
@@ -125,26 +133,32 @@ fn closing(code: &[u8], open: usize) -> Option<usize> {
     None
 }
 
-/// The suppression-like attributes of a source.
+/// The suppression-like attributes of a source, each with what its
+/// attribute stack is on.
 pub fn suppressions(source: &Source<'_>) -> Vec<Found> {
     let mut found = Vec::new();
-    for (hash, close) in attributes(source) {
-        let open = source.code[hash..close]
-            .find('[')
-            .map_or(hash, |at| hash + at);
-        let mut kinds = Vec::new();
-        classify(source, open + 1, close, &mut kinds);
-        for (kind, reasoned) in kinds {
-            found.push(Found {
-                kind,
-                first_line: source.line_of(hash),
-                last_line: source.line_of(close),
-                reasoned,
-                text: source.raw[hash..=close]
-                    .split_whitespace()
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            });
+    for group in gates::groups(source) {
+        for &(hash, close) in &group.attributes {
+            let open = source.code[hash..close]
+                .find('[')
+                .map_or(hash, |at| hash + at);
+            let mut kinds = Vec::new();
+            classify(source, open + 1, close, &mut kinds);
+            for (kind, reasoned) in kinds {
+                found.push(Found {
+                    kind,
+                    first_line: source.line_of(hash),
+                    last_line: source.line_of(close),
+                    reasoned,
+                    text: source.raw[hash..=close]
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    test_item: group.test,
+                    inner: source.code[hash + 1..open].contains('!'),
+                    module: group.module.clone(),
+                });
+            }
         }
     }
     found
@@ -176,14 +190,15 @@ fn classify(source: &Source<'_>, start: usize, end: usize, kinds: &mut Vec<(&'st
         "expect" => kinds.push(("expect", keyed(source, &args, "reason"))),
         "ignore" => kinds.push(("ignore", non_empty_string(value()))),
         "should_panic" => kinds.push(("should_panic", keyed(source, &args, "expected"))),
-        "cfg"
-            if args
-                .first()
-                .and_then(|&(from, to)| evaluate(&source.code[from..to]))
-                == Some(false) =>
-        {
-            kinds.push(("cfg-off", false));
+        "cfg" => {
+            let predicate = args.first().map(|&(from, to)| &source.raw[from..to]);
+            match predicate.map(|predicate| (evaluate(predicate), evaluate_ci(predicate))) {
+                Some((Some(false), _)) => kinds.push(("cfg-off", false)),
+                Some((_, Some(true))) | None => {}
+                Some(_) => kinds.push(("cfg", false)),
+            }
         }
+        "path" => kinds.push(("path", false)),
         _ => {}
     }
 }
@@ -228,7 +243,7 @@ fn keyed(source: &Source<'_>, args: &[(usize, usize)], key: &str) -> bool {
 }
 
 /// Whether a literal value is a string with non-blank text.
-fn non_empty_string(value: &str) -> bool {
+pub(super) fn non_empty_string(value: &str) -> bool {
     let value = value
         .trim()
         .trim_start_matches(['r', 'b'])
@@ -239,10 +254,38 @@ fn non_empty_string(value: &str) -> bool {
         .is_some_and(|text| !text.trim().is_empty())
 }
 
-/// A `cfg` predicate's value when the build is a test build and nothing
-/// else is known: `test`, `true` and `false`, and `all`, `any` and `not`
-/// over them. `None` when it depends on anything else.
+/// A `cfg` predicate's value in any test build: `test`, `true` and
+/// `false`, and `all`, `any` and `not` over them. `None` when it depends on
+/// anything else.
 pub fn evaluate(predicate: &str) -> Option<bool> {
+    evaluate_with(predicate, |atom| match atom {
+        "test" | "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    })
+}
+
+/// A `cfg` predicate's value in the Linux test build the gates run: also
+/// `unix`, `debug_assertions`, `target_os = "linux"` and
+/// `target_family = "unix"` true, and `windows`, `miri` and other targets
+/// false. Features and the rest stay unknown.
+pub fn evaluate_ci(predicate: &str) -> Option<bool> {
+    evaluate_with(predicate, |atom| {
+        let value = |key: &str| {
+            let rest = atom.strip_prefix(key)?.trim_start().strip_prefix('=')?;
+            Some(rest.trim().trim_matches('"').to_owned())
+        };
+        match atom {
+            "test" | "true" | "unix" | "debug_assertions" => Some(true),
+            "false" | "windows" | "miri" => Some(false),
+            _ => value("target_os")
+                .map(|os| os == "linux")
+                .or_else(|| value("target_family").map(|family| family == "unix")),
+        }
+    })
+}
+
+fn evaluate_with(predicate: &str, atom: fn(&str) -> Option<bool>) -> Option<bool> {
     let predicate = predicate.trim();
     let call = |name: &str| {
         predicate
@@ -252,21 +295,18 @@ pub fn evaluate(predicate: &str) -> Option<bool> {
             .and_then(|rest| rest.strip_suffix(')'))
     };
     if let Some(inner) = call("not") {
-        return evaluate(inner).map(|value| !value);
+        return evaluate_with(inner, atom).map(|value| !value);
     }
     let (inner, all) = match (call("all"), call("any")) {
         (Some(inner), _) => (inner, true),
         (_, Some(inner)) => (inner, false),
-        _ => {
-            return match predicate {
-                "test" | "true" => Some(true),
-                "false" => Some(false),
-                _ => None,
-            };
-        }
+        _ => return atom(predicate),
     };
     let source = Source::plain(inner);
-    let values: Vec<_> = split_top(&source).into_iter().map(evaluate).collect();
+    let values: Vec<_> = split_top(&source)
+        .into_iter()
+        .map(|part| evaluate_with(part, atom))
+        .collect();
     if values.contains(&Some(!all)) {
         Some(!all)
     } else if values.iter().all(Option::is_some) {
@@ -303,19 +343,21 @@ fn split_top<'a>(source: &Source<'a>) -> Vec<&'a str> {
 pub fn test_count(source: &Source<'_>) -> usize {
     attributes(source)
         .into_iter()
-        .filter(|&(hash, close)| {
-            let code = &source.code[hash..close];
-            let inner = code.split_once('[').map_or("", |(_, inner)| inner);
-            let path: String = inner
-                .split(['(', '=', ']'])
-                .next()
-                .unwrap_or_default()
-                .split_whitespace()
-                .collect();
-            let last = path.rsplit("::").next().unwrap_or_default();
-            matches!(last, "test" | "test_case" | "rstest")
-        })
+        .filter(|&(hash, close)| is_test_attribute(source, hash, close))
         .count()
+}
+
+pub(super) fn is_test_attribute(source: &Source<'_>, hash: usize, close: usize) -> bool {
+    let code = &source.code[hash..close];
+    let inner = code.split_once('[').map_or("", |(_, inner)| inner);
+    let path: String = inner
+        .split(['(', '=', ']'])
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect();
+    let last = path.rsplit("::").next().unwrap_or_default();
+    matches!(last, "test" | "test_case" | "rstest")
 }
 
 /// An assert statement: an identifier containing `assert`, then (after an
