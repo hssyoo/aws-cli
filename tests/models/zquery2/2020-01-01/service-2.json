@@ -1,0 +1,219 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zquery2",
+    "protocol": "query",
+    "protocols": [
+      "query"
+    ],
+    "serviceFullName": "Fake zquery2",
+    "serviceId": "Zquery2",
+    "signatureVersion": "v4",
+    "uid": "zquery2-2020-01-01",
+    "xmlNamespace": "https://zquery2.example.com/doc/",
+    "auth": [
+      "aws.auth#sigv4"
+    ]
+  },
+  "operations": {
+    "Tally": {
+      "name": "Tally",
+      "http": {
+        "method": "POST",
+        "requestUri": "/?tally"
+      },
+      "input": {
+        "shape": "TallyInput"
+      },
+      "output": {
+        "shape": "TallyOutput",
+        "resultWrapper": "TallyResult"
+      },
+      "errors": [
+        {
+          "shape": "Overdrawn",
+          "error": {
+            "code": "Overdrawn",
+            "httpStatusCode": 400
+          },
+          "exception": true
+        }
+      ],
+      "auth": [
+        "aws.auth#sigv4"
+      ]
+    },
+    "Idle": {
+      "name": "Idle",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "TallyInput"
+      },
+      "authtype": "none"
+    }
+  },
+  "shapes": {
+    "Big": {
+      "type": "long"
+    },
+    "BigList": {
+      "type": "list",
+      "member": {
+        "shape": "Big"
+      }
+    },
+    "Choice": {
+      "type": "structure",
+      "union": true,
+      "members": {
+        "Word": {
+          "shape": "Text"
+        },
+        "Number": {
+          "shape": "Int"
+        }
+      }
+    },
+    "Frac": {
+      "type": "float"
+    },
+    "Int": {
+      "type": "integer"
+    },
+    "IntList": {
+      "type": "list",
+      "member": {
+        "shape": "Int"
+      }
+    },
+    "NamedList": {
+      "type": "list",
+      "locationName": "Names",
+      "member": {
+        "shape": "Text"
+      }
+    },
+    "Overdrawn": {
+      "type": "structure",
+      "exception": true,
+      "error": {
+        "code": "Overdrawn",
+        "httpStatusCode": 400,
+        "senderFault": true
+      },
+      "members": {
+        "Message": {
+          "shape": "Text"
+        },
+        "Balance": {
+          "shape": "Frac"
+        }
+      }
+    },
+    "Ratio": {
+      "type": "double"
+    },
+    "RatioList": {
+      "type": "list",
+      "member": {
+        "shape": "Ratio"
+      }
+    },
+    "Rec": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "Text"
+        }
+      }
+    },
+    "RecList": {
+      "type": "list",
+      "member": {
+        "shape": "Rec",
+        "locationName": "Rec"
+      }
+    },
+    "RecMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Rec",
+        "locationName": "Rec"
+      }
+    },
+    "TallyInput": {
+      "type": "structure",
+      "members": {
+        "Ints": {
+          "shape": "IntList"
+        },
+        "Bigs": {
+          "shape": "BigList"
+        },
+        "Tags": {
+          "shape": "TextList",
+          "locationName": "Tag"
+        },
+        "Recs": {
+          "shape": "RecList"
+        },
+        "RecByName": {
+          "shape": "RecMap"
+        },
+        "Choice": {
+          "shape": "Choice"
+        }
+      }
+    },
+    "TallyOutput": {
+      "type": "structure",
+      "members": {
+        "Ratios": {
+          "shape": "RatioList"
+        },
+        "Ints": {
+          "shape": "IntList"
+        },
+        "Tags": {
+          "shape": "TextList",
+          "locationName": "Tag"
+        },
+        "Whens": {
+          "shape": "WhenList"
+        },
+        "Names": {
+          "shape": "NamedList"
+        },
+        "Choice": {
+          "shape": "Choice"
+        }
+      }
+    },
+    "Text": {
+      "type": "string"
+    },
+    "TextList": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      }
+    },
+    "When": {
+      "type": "timestamp"
+    },
+    "WhenList": {
+      "type": "list",
+      "member": {
+        "shape": "When",
+        "locationName": "At"
+      }
+    }
+  }
+}

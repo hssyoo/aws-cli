@@ -1,0 +1,281 @@
+{
+  "version": "1.0",
+  "parameters": {
+    "Region": {
+      "required": false,
+      "type": "String",
+      "builtIn": "AWS::Region",
+      "documentation": "The region."
+    },
+    "UseFIPS": {
+      "required": true,
+      "type": "Boolean",
+      "builtIn": "AWS::UseFIPS",
+      "default": false,
+      "documentation": "FIPS."
+    },
+    "UseDualStack": {
+      "required": true,
+      "type": "Boolean",
+      "builtIn": "AWS::UseDualStack",
+      "default": false,
+      "documentation": "Dual-stack."
+    },
+    "Endpoint": {
+      "required": false,
+      "type": "String",
+      "builtIn": "SDK::Endpoint",
+      "documentation": "A custom endpoint."
+    },
+    "Owner": {
+      "required": false,
+      "type": "String",
+      "documentation": "A context parameter."
+    },
+    "UseFast": {
+      "required": false,
+      "type": "Boolean",
+      "documentation": "A context parameter."
+    },
+    "Mode": {
+      "required": false,
+      "type": "String",
+      "documentation": "A context parameter."
+    },
+    "Keys": {
+      "required": false,
+      "type": "stringArray",
+      "documentation": "A context parameter."
+    },
+    "Tables": {
+      "required": false,
+      "type": "stringArray",
+      "documentation": "A context parameter."
+    },
+    "Table": {
+      "required": false,
+      "type": "String",
+      "documentation": "A context parameter."
+    },
+    "Accelerate": {
+      "required": false,
+      "type": "Boolean",
+      "documentation": "A context parameter."
+    },
+    "Label": {
+      "required": false,
+      "type": "String",
+      "documentation": "A context parameter."
+    }
+  },
+  "rules": [
+    {
+      "type": "endpoint",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Endpoint"
+            }
+          ]
+        }
+      ],
+      "endpoint": {
+        "url": {
+          "ref": "Endpoint"
+        }
+      }
+    },
+    {
+      "type": "endpoint",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Owner"
+            }
+          ]
+        },
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ]
+        }
+      ],
+      "endpoint": {
+        "url": "https://{Owner}.owner.zjson2.{Region}.amazonaws.com",
+        "properties": {},
+        "headers": {}
+      }
+    },
+    {
+      "type": "endpoint",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "UseFast"
+            }
+          ]
+        },
+        {
+          "fn": "booleanEquals",
+          "argv": [
+            {
+              "ref": "UseFast"
+            },
+            true
+          ]
+        },
+        {
+          "fn": "stringEquals",
+          "argv": [
+            {
+              "ref": "Mode"
+            },
+            "fast"
+          ]
+        },
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Keys"
+            }
+          ]
+        },
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Tables"
+            }
+          ]
+        },
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Table"
+            }
+          ]
+        },
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ]
+        }
+      ],
+      "endpoint": {
+        "url": "https://ctx.zjson2.{Region}.amazonaws.com",
+        "properties": {},
+        "headers": {}
+      }
+    },
+    {
+      "type": "tree",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ]
+        },
+        {
+          "fn": "aws.partition",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ],
+          "assign": "PartitionResult"
+        }
+      ],
+      "rules": [
+        {
+          "type": "endpoint",
+          "conditions": [
+            {
+              "fn": "booleanEquals",
+              "argv": [
+                {
+                  "ref": "UseFIPS"
+                },
+                true
+              ]
+            },
+            {
+              "fn": "booleanEquals",
+              "argv": [
+                {
+                  "ref": "UseDualStack"
+                },
+                true
+              ]
+            }
+          ],
+          "endpoint": {
+            "url": "https://zjson2-fips.{Region}.{PartitionResult#dualStackDnsSuffix}"
+          }
+        },
+        {
+          "type": "endpoint",
+          "conditions": [
+            {
+              "fn": "booleanEquals",
+              "argv": [
+                {
+                  "ref": "UseFIPS"
+                },
+                true
+              ]
+            }
+          ],
+          "endpoint": {
+            "url": "https://zjson2-fips.{Region}.{PartitionResult#dnsSuffix}"
+          }
+        },
+        {
+          "type": "endpoint",
+          "conditions": [
+            {
+              "fn": "booleanEquals",
+              "argv": [
+                {
+                  "ref": "UseDualStack"
+                },
+                true
+              ]
+            }
+          ],
+          "endpoint": {
+            "url": "https://zjson2.{Region}.{PartitionResult#dualStackDnsSuffix}"
+          }
+        },
+        {
+          "type": "endpoint",
+          "conditions": [],
+          "endpoint": {
+            "url": "https://zjson2.{Region}.{PartitionResult#dnsSuffix}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "conditions": [],
+      "error": "Invalid Configuration: Missing Region"
+    }
+  ]
+}

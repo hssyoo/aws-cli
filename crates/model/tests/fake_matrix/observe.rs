@@ -168,6 +168,14 @@ pub(crate) fn reached(
         let operation = named(keys, command)
             .ok_or_else(|| format!("runs `{command}`, which no operation of {service} is"))?;
         service_features_in(&model, ignored, row.scope(Some(operation)), &mut out);
+        // An operation with endpoint discovery first calls the service's
+        // endpoint operation, as botocore's discovery handler does.
+        let discovers = operations.and_then(|all| all.get(operation)?.get("endpointdiscovery"));
+        let endpoint = operations.into_iter().flatten();
+        let endpoint = endpoint.filter(|(_, found)| found.get("endpointoperation").is_some());
+        for (name, _) in endpoint.filter(|_| discovers.is_some()) {
+            service_features_in(&model, ignored, row.scope(Some(name)), &mut out);
+        }
         let paged = row.scope(None).success;
         if let (Some(pages), true) = (read("paginators-1")?, paged) {
             paginator_features_in(&pages, Some(operation), &mut out);

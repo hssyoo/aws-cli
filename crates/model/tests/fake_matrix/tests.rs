@@ -852,3 +852,37 @@ fn a_retried_success_cannot_observe_error_lines() -> Result<()> {
     assert!(lost.count() >= 25, "{}", found.join("\n"));
     Ok(())
 }
+
+/// An operation with endpoint discovery first calls the endpoint
+/// operation, so its row reaches that operation too; a row on an operation
+/// without discovery does not.
+#[test]
+fn a_discovering_row_reaches_the_endpoint_operation() -> Result<()> {
+    let http = json!({"method": "POST", "requestUri": "/"});
+    let model = json!({"metadata": {"protocol": "json"}, "operations": {
+        "Find": {"name": "Find", "http": http, "input": {"shape": "Empty"},
+                 "endpointdiscovery": {"required": true}},
+        "Plain": {"name": "Plain", "http": http, "input": {"shape": "Empty"}},
+        "Describe": {"name": "Describe", "http": http, "input": {"shape": "Empty"},
+                     "output": {"shape": "Endpoints"}, "endpointoperation": true}},
+        "shapes": {"Empty": {"type": "structure", "members": {}}, "Big": {"type": "long"},
+                   "Endpoints": {"type": "structure", "members": {"Period": {"shape": "Big"}}}}});
+    let text = model.to_string();
+    let root = scratch(
+        "observe-discovery",
+        &[("zdisco/2020-01-01/service-2.json", &text)],
+    )?;
+    let rows = [
+        row("find", &["zdisco", "find"]),
+        row("plain", &["zdisco", "plain"]),
+    ];
+    let reach = reach_of(&root, &rows);
+    std::fs::remove_dir_all(&root)?;
+    let reach = reach?;
+    let (find, plain) = (reach["find"].clone()?, reach["plain"].clone()?);
+    assert!(find.contains("op/endpointoperation") && find.contains("member/json/out/long/body"));
+    assert!(
+        !plain.contains("op/endpointoperation") && !plain.contains("member/json/out/long/body")
+    );
+    Ok(())
+}

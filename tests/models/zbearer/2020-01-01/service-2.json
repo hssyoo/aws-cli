@@ -1,0 +1,54 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zbearer",
+    "protocol": "rest-json",
+    "protocols": [
+      "rest-json"
+    ],
+    "serviceFullName": "Fake zbearer",
+    "serviceId": "Zbearer",
+    "signatureVersion": "bearer",
+    "uid": "zbearer-2020-01-01",
+    "auth": [
+      "smithy.api#httpBearerAuth"
+    ]
+  },
+  "operations": {
+    "Note": {
+      "name": "Note",
+      "http": {
+        "method": "POST",
+        "requestUri": "/note"
+      },
+      "input": {
+        "shape": "NoteInput"
+      },
+      "output": {
+        "shape": "NoteOutput"
+      }
+    }
+  },
+  "shapes": {
+    "NoteInput": {
+      "type": "structure",
+      "members": {
+        "Note": {
+          "shape": "Text"
+        }
+      }
+    },
+    "NoteOutput": {
+      "type": "structure",
+      "members": {
+        "Note": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Text": {
+      "type": "string"
+    }
+  }
+}

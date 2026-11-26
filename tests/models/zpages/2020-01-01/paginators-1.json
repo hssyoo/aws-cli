@@ -1,0 +1,25 @@
+{
+  "pagination": {
+    "ListPages": {
+      "input_token": [
+        "NextA",
+        "NextB"
+      ],
+      "output_token": [
+        "A.Next",
+        "B.Next"
+      ],
+      "limit_key": "Limit",
+      "more_results": "Page.Truncated",
+      "non_aggregate_keys": [
+        "Meta.Count"
+      ],
+      "result_key": "Items"
+    },
+    "ListOr": {
+      "input_token": "Marker",
+      "output_token": "NextToken || Marker",
+      "result_key": "Items"
+    }
+  }
+}
