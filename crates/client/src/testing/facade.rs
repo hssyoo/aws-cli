@@ -31,7 +31,6 @@ pub use crate::protocol::{BlobHandler, ParseOptions, Serialized, TimestampHandle
 pub use crate::testing::{FixedRuntime, InMemoryTransport};
 pub use cli_core::client_config::ClientSettings;
 pub use cli_core::client_config::user_agent::{Distribution, Host, Versions};
-pub use credentials::LoadError as CredentialLoadError;
 pub use model::shapes::Model;
 pub use timestamp::Timestamp;
 
@@ -518,6 +517,17 @@ pub fn client_case(case: ClientCase) -> Result<Client, CallError> {
             },
         },
     })
+}
+
+/// The error a call fails with when a provider's credential retrieval
+/// fails (botocore's `CredentialRetrievalError`), as the client's chain
+/// hands it to the call.
+pub fn credential_retrieval_error(provider: &'static str, message: &str) -> CallError {
+    let error = credentials::LoadError::CredentialRetrieval {
+        provider,
+        error_msg: message.to_owned(),
+    };
+    CallError::Credentials(error.to_string())
 }
 
 /// One call: its parsed output and `RetryAttempts`.

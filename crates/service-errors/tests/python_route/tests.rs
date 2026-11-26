@@ -17,8 +17,8 @@ use cli_core::client_config::{ClientSettings, Resolved, Source};
 use client::error::CallError;
 use client::http::{Headers, HttpResponse};
 use client::testing::facade::{
-    self, ClientCase, CredentialLoadError, Credentials, EndpointCase, EndpointData,
-    InMemoryTransport, Keys, Model, UserAgentCase,
+    self, ClientCase, Credentials, EndpointCase, EndpointData, InMemoryTransport, Keys, Model,
+    UserAgentCase,
 };
 use client::transport::TransportError;
 use model::value::Value;
@@ -246,12 +246,8 @@ fn native_failure(case: &Value) -> TestResult<CommandFailure> {
         // The process provider's failure as the credentials crate words
         // it, for the helper's stderr (`credentials::process`), reaching
         // the client's call as the model client's chain hands it over.
-        let error = CredentialLoadError::CredentialRetrieval {
-            provider: "custom-process",
-            error_msg: "boom\n".into(),
-        };
+        let error = facade::credential_retrieval_error("custom-process", "boom\n");
         let (model, _) = service_data("sts")?;
-        let error = CallError::Credentials(error.to_string());
         return Ok(service_errors::call_failure(&error, &model));
     }
     let (error, model) = native_error(case)?;
