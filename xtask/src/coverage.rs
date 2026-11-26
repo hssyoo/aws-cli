@@ -40,17 +40,9 @@ pub fn run(root: &Path, packages: &[String], filter: Option<&str>) -> Result<(),
     let output = process::output(&mut command)?;
     let tests = test_artifacts(&output.stdout)?;
     let profile = profiles.join("%p-%m.profraw");
-    // Every executable runs, as under the sanitizer modes, so one failure
-    // doesn't hide the rest; the lane still fails before it reports.
-    let mut failed = Vec::new();
-    for test in &tests {
-        if let Err(failure) = process::run(&mut test_command(test, &command, &profile, filter)) {
-            failed.push(failure.to_string());
-        }
-    }
-    if !failed.is_empty() {
-        return Err(deps::error(failed_runs(&failed)));
-    }
+    run_all(&tests, |test| {
+        process::run(&mut test_command(test, &command, &profile, filter))
+    })?;
     let mut artifacts: Vec<PathBuf> = tests.into_iter().map(|test| test.path).collect();
     let binary = build_cli(root, &directory)?;
     process::run(
@@ -80,13 +72,29 @@ struct TestArtifact {
     package: PathBuf,
 }
 
-/// The failure of a coverage run in which the test executables `failed`.
-fn failed_runs(failed: &[String]) -> String {
-    format!(
+/// Runs every test executable with `run`, as the sanitizer modes do, so
+/// one failure doesn't hide the rest, then fails, naming each executable
+/// that failed, before the lane reports.
+fn run_all(
+    tests: &[TestArtifact],
+    mut run: impl FnMut(&TestArtifact) -> Result<(), TaskError>,
+) -> Result<(), TaskError> {
+    let failed: Vec<String> = tests
+        .iter()
+        .filter_map(|test| {
+            run(test)
+                .err()
+                .map(|failure| format!("{}: {failure}", test.path.display()))
+        })
+        .collect();
+    if failed.is_empty() {
+        return Ok(());
+    }
+    Err(deps::error(format!(
         "coverage: {} test executables failed:\n{}",
         failed.len(),
         failed.join("\n")
-    )
+    )))
 }
 
 /// One test executable's run in its package directory under the build's
@@ -131,6 +139,18 @@ fn native_command(root: &Path, directory: &Path) -> Result<Command, TaskError> {
     let tools = deps::toolchain(root, &pins)?;
     let crt = deps::crt(root, &pins, &tools)?;
     let payload = python::build(root, &pins, &tools, &crt, !cfg!(windows))?;
+    Ok(cargo_command(root, directory, &tools, &crt, &payload))
+}
+
+/// The instrumented Cargo command over the managed `tools`, CRT prefix
+/// `crt` and Python `payload`. Each test run inherits its environment.
+fn cargo_command(
+    root: &Path,
+    directory: &Path,
+    tools: &deps::Toolchain,
+    crt: &Path,
+    payload: &python::PythonOutputs,
+) -> Command {
     let mut command = Command::new("cargo");
     tools.apply_environment(&mut command);
     command
@@ -138,21 +158,13 @@ fn native_command(root: &Path, directory: &Path) -> Result<Command, TaskError> {
         .env("CARGO_TARGET_DIR", directory.join("build"))
         .env("RUSTFLAGS", "-C instrument-coverage")
         .env("AWS_NATIVE_CRT_PREFIX", crt)
-        .env("AWS_NATIVE_CPYTHON_PREFIX", payload.cpython)
-        .env("AWS_NATIVE_FALLBACK_PREFIX", payload.fallback);
+        .env("AWS_NATIVE_CPYTHON_PREFIX", &payload.cpython)
+        .env("AWS_NATIVE_FALLBACK_PREFIX", &payload.fallback);
     tools.apply_c_tools(&mut command);
-    apply_test_compilers(&tools, &mut command);
+    // The native suite's compiler probes refuse to skip without these.
+    tools.apply_test_tools(&mut command);
     tools.apply_link(&mut command);
-    Ok(command)
-}
-
-/// Names the managed compilers that the test suites' compiler probes run,
-/// as `cargo xtask test` does; the native suite's probes refuse to skip
-/// without them. Each test run inherits them from the build's environment.
-fn apply_test_compilers(tools: &deps::Toolchain, command: &mut Command) {
     command
-        .env("AWS_NATIVE_TEST_CC", &tools.cc)
-        .env("AWS_NATIVE_TEST_CLANG", &tools.clang);
 }
 
 fn build_cli(root: &Path, directory: &Path) -> Result<PathBuf, TaskError> {

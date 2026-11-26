@@ -223,19 +223,26 @@ fn random_seed() -> u32 {
 /// names that compiler's libstdc++. The flags search that library's
 /// directory first, since clang links against the newest GCC installation
 /// it finds, which may lack the C++ library (a GCC installed without its
-/// C++ compiler beside an older complete one).
+/// C++ compiler beside an older complete one). The directory comes first
+/// for every library the link names, so that GCC's libgcc and libgcc_s
+/// serve the link too, beside the newer GCC's start files; the two are
+/// compatible. `CXX` names one program, without arguments, and the probe
+/// reads neither cc's target-specific `CXX_<target>` nor `CXXSTDLIB`.
 fn link_flags(root: &Path) -> Result<Option<String>, TaskError> {
     if !cfg!(target_os = "linux") {
         return Ok(None);
     }
     let tools = deps::toolchain(root, &deps::Pins::load(root)?)?;
     let compiler = std::env::var_os("CXX").unwrap_or_else(|| "c++".into());
+    let name = Path::new(&compiler).display().to_string();
     let printed =
-        process::output(Command::new(&compiler).arg(format!("-print-file-name={CXX_RUNTIME}")))?;
-    let runtime = runtime_directory(
-        &Path::new(&compiler).display().to_string(),
-        String::from_utf8_lossy(&printed.stdout).trim(),
-    )?;
+        process::output(Command::new(&compiler).arg(format!("-print-file-name={CXX_RUNTIME}")))
+            .map_err(|failure| {
+                deps::error(format!(
+                    "cannot ask the C++ compiler `{name}` for libFuzzer's {CXX_RUNTIME}: {failure}"
+                ))
+            })?;
+    let runtime = runtime_directory(&name, String::from_utf8_lossy(&printed.stdout).trim())?;
     let mut flags = Vec::new();
     for (flag, path) in [
         ("-Clinker=", &tools.clang),

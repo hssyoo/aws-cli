@@ -84,14 +84,24 @@ fn test_runs_pass_the_filter_first_under_the_build_environment() {
 }
 
 /// Coverage runs the native suite, whose compiler probes fail rather than
-/// skip without the managed compilers, so every test run names them.
+/// skip without the managed compilers, so the instrumented Cargo command
+/// names them and every test run inherits them.
 #[test]
 fn test_runs_name_the_managed_compilers() {
     let mut tools = crate::deps::keying_toolchain();
     tools.cc = PathBuf::from("/managed/bin/cc");
     tools.clang = PathBuf::from("/managed/bin/clang");
-    let mut build = Command::new("cargo");
-    apply_test_compilers(&tools, &mut build);
+    let payload = python::PythonOutputs {
+        cpython: PathBuf::from("/cpython"),
+        fallback: PathBuf::from("/fallback"),
+    };
+    let build = cargo_command(
+        Path::new("/workspace"),
+        Path::new("/workspace/target/coverage"),
+        &tools,
+        Path::new("/crt"),
+        &payload,
+    );
     let run = test_command(
         &unit_artifact(),
         &build,
@@ -102,6 +112,8 @@ fn test_runs_name_the_managed_compilers() {
     for (name, value) in [
         ("AWS_NATIVE_TEST_CC", "/managed/bin/cc"),
         ("AWS_NATIVE_TEST_CLANG", "/managed/bin/clang"),
+        ("AWS_NATIVE_CRT_PREFIX", "/crt"),
+        ("RUSTFLAGS", "-C instrument-coverage"),
     ] {
         assert!(
             environment.contains(&(name.as_ref(), Some(value.as_ref()))),
@@ -110,14 +122,38 @@ fn test_runs_name_the_managed_compilers() {
     }
 }
 
-/// A failing test executable fails the run, and every failure is named.
+/// Every test executable runs even after one fails, and the run then
+/// fails, naming each executable that failed and its failure.
 #[test]
-fn failed_runs_name_every_failing_test_executable() {
+fn a_failing_test_executable_fails_the_run_after_every_executable_runs() {
+    let tests = ["/a", "/b", "/c", "/d"].map(|path| TestArtifact {
+        path: PathBuf::from(path),
+        package: PathBuf::from("/w"),
+    });
+    let mut ran = Vec::new();
+    let message = run_all(&tests, |test| {
+        ran.push(test.path.clone());
+        if test.path == Path::new("/a") || test.path == Path::new("/c") {
+            Err(deps::error("exit status: 101"))
+        } else {
+            Ok(())
+        }
+    })
+    .err()
+    .map(|failure| failure.to_string())
+    .unwrap_or_default();
+    assert_eq!(ran, ["/a", "/b", "/c", "/d"].map(PathBuf::from));
     assert_eq!(
-        failed_runs(&[
-            "command \"/a\" failed".to_owned(),
-            "command \"/b\" failed".to_owned()
-        ]),
-        "coverage: 2 test executables failed:\ncommand \"/a\" failed\ncommand \"/b\" failed"
+        message,
+        "coverage: 2 test executables failed:\n/a: exit status: 101\n/c: exit status: 101"
     );
+    let mut count = 0;
+    assert!(
+        run_all(&tests[..2], |_| {
+            count += 1;
+            Ok(())
+        })
+        .is_ok()
+    );
+    assert_eq!(count, 2);
 }
