@@ -29,6 +29,9 @@ pub use self::crt::{CpythonLibraries, crt};
 pub use self::files::{CopyMode, copy_tree};
 pub use self::roots::{ROOTS_FILE, Roots};
 pub use self::system_crt::build as system_crt;
+/// Writes an executable that a test then runs while other tests fork.
+#[cfg(all(test, unix))]
+pub(crate) use self::tests::write_executable_out_of_process;
 pub use self::toolchain::{Toolchain, toolchain};
 use crate::file_lock::FileLock;
 use crate::{TaskError, process};
@@ -100,9 +103,7 @@ impl NativeEnvironment {
 
     /// Names the managed compilers that the test suites' compiler probes run.
     pub fn apply_test_tools(&self, command: &mut Command) {
-        command
-            .env("AWS_NATIVE_TEST_CC", &self.cc)
-            .env("AWS_NATIVE_TEST_CLANG", &self.clang);
+        apply_test_tools(command, &self.cc, &self.clang);
     }
 
     /// Link the command's musl executables through the toolchain's driver,
@@ -110,6 +111,23 @@ impl NativeEnvironment {
     pub fn apply_link(&self, command: &mut Command) {
         toolchain::link_through(self.link.as_deref(), command);
     }
+}
+
+impl Toolchain {
+    /// Names the managed compilers that the test suites' compiler probes run,
+    /// as `NativeEnvironment::apply_test_tools` does. It lives here, not in
+    /// `toolchain.rs`, which keys the toolchain stage.
+    pub fn apply_test_tools(&self, command: &mut Command) {
+        apply_test_tools(command, &self.cc, &self.clang);
+    }
+}
+
+/// Names `cc` and `clang` as the managed compilers that the test suites'
+/// compiler probes run, `AWS_NATIVE_TEST_CC` and `AWS_NATIVE_TEST_CLANG`.
+fn apply_test_tools(command: &mut Command, cc: &Path, clang: &Path) {
+    command
+        .env("AWS_NATIVE_TEST_CC", cc)
+        .env("AWS_NATIVE_TEST_CLANG", clang);
 }
 
 #[derive(Debug, Deserialize)]

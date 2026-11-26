@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(unix)]
+use crate::deps::write_executable_out_of_process;
 use std::ffi::OsStr;
 
 #[test]
@@ -74,10 +76,15 @@ fn stub_link_driver(name: &str, clang: &str) -> Result<(PathBuf, PathBuf)> {
     let mut tools = crate::deps::keying_toolchain();
     tools.prefix.clone_from(&directory);
     tools.clang = directory.join("clang");
-    write_executable(&tools.clang, clang)?;
+    // Both scripts run right after they're written, while other tests fork.
+    write_executable_out_of_process(&tools.clang, clang)?;
     let link = link_driver(&directory);
     let allowlist = "# Tool discovery.\nPATH\n\nTMPDIR\nProgramFiles(x86)\n";
-    write_executable(&link, &link_script(&tools, allowlist)?)?;
+    fs::create_dir_all(
+        link.parent()
+            .ok_or_else(|| error("bin/link has no directory"))?,
+    )?;
+    write_executable_out_of_process(&link, &link_script(&tools, allowlist)?)?;
     Ok((directory, link))
 }
 

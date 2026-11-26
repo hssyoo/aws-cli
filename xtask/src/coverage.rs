@@ -38,13 +38,12 @@ pub fn run(root: &Path, packages: &[String], filter: Option<&str>) -> Result<(),
         "--message-format=json",
     ]);
     let output = process::output(&mut command)?;
-    let mut artifacts = test_artifacts(&output.stdout)?;
+    let tests = test_artifacts(&output.stdout)?;
     let profile = profiles.join("%p-%m.profraw");
-    for artifact in &artifacts {
-        process::run(&mut test_command(
-            root, artifact, &command, &profile, filter,
-        ))?;
-    }
+    run_all(&tests, |test| {
+        process::run(&mut test_command(test, &command, &profile, filter))
+    })?;
+    let mut artifacts: Vec<PathBuf> = tests.into_iter().map(|test| test.path).collect();
     let binary = build_cli(root, &directory)?;
     process::run(
         Command::new(&binary)
@@ -65,22 +64,55 @@ pub fn run(root: &Path, packages: &[String], filter: Option<&str>) -> Result<(),
     Ok(())
 }
 
-/// One test executable's run under the build's environment, writing raw
-/// profiles to `profile`, with the libtest `filter`, if any, as its first
-/// argument, as `--sanitize-c` passes it. The `harness = false`
-/// interpreter tests (python-fallback `finder`, `exit_status`) ignore it and
-/// run in full, as they do under `cargo test -- FILTER`.
+/// A test executable and the package directory its tests resolve fixture
+/// paths against, where `cargo test` runs it.
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct TestArtifact {
+    path: PathBuf,
+    package: PathBuf,
+}
+
+/// Runs every test executable with `run`, as the sanitizer modes do, so
+/// one failure doesn't hide the rest, then fails, naming each executable
+/// that failed, before the lane reports.
+fn run_all(
+    tests: &[TestArtifact],
+    mut run: impl FnMut(&TestArtifact) -> Result<(), TaskError>,
+) -> Result<(), TaskError> {
+    let failed: Vec<String> = tests
+        .iter()
+        .filter_map(|test| {
+            run(test)
+                .err()
+                .map(|failure| format!("{}: {failure}", test.path.display()))
+        })
+        .collect();
+    if failed.is_empty() {
+        return Ok(());
+    }
+    Err(deps::error(format!(
+        "coverage: {} test executables failed:\n{}",
+        failed.len(),
+        failed.join("\n")
+    )))
+}
+
+/// One test executable's run in its package directory under the build's
+/// environment, writing raw profiles to `profile`, with the libtest
+/// `filter`, if any, as its first argument, as `--sanitize-c` passes it.
+/// The `harness = false` interpreter tests (python-fallback `finder`,
+/// `exit_status`) ignore it and run in full, as they do under
+/// `cargo test -- FILTER`.
 fn test_command(
-    root: &Path,
-    artifact: &Path,
+    artifact: &TestArtifact,
     build: &Command,
     profile: &Path,
     filter: Option<&str>,
 ) -> Command {
-    let mut command = Command::new(artifact);
+    let mut command = Command::new(&artifact.path);
     command
         .args(filter)
-        .current_dir(root)
+        .current_dir(&artifact.package)
         .envs(
             build
                 .get_envs()
@@ -107,6 +139,18 @@ fn native_command(root: &Path, directory: &Path) -> Result<Command, TaskError> {
     let tools = deps::toolchain(root, &pins)?;
     let crt = deps::crt(root, &pins, &tools)?;
     let payload = python::build(root, &pins, &tools, &crt, !cfg!(windows))?;
+    Ok(cargo_command(root, directory, &tools, &crt, &payload))
+}
+
+/// The instrumented Cargo command over the managed `tools`, CRT prefix
+/// `crt` and Python `payload`. Each test run inherits its environment.
+fn cargo_command(
+    root: &Path,
+    directory: &Path,
+    tools: &deps::Toolchain,
+    crt: &Path,
+    payload: &python::PythonOutputs,
+) -> Command {
     let mut command = Command::new("cargo");
     tools.apply_environment(&mut command);
     command
@@ -114,11 +158,13 @@ fn native_command(root: &Path, directory: &Path) -> Result<Command, TaskError> {
         .env("CARGO_TARGET_DIR", directory.join("build"))
         .env("RUSTFLAGS", "-C instrument-coverage")
         .env("AWS_NATIVE_CRT_PREFIX", crt)
-        .env("AWS_NATIVE_CPYTHON_PREFIX", payload.cpython)
-        .env("AWS_NATIVE_FALLBACK_PREFIX", payload.fallback);
+        .env("AWS_NATIVE_CPYTHON_PREFIX", &payload.cpython)
+        .env("AWS_NATIVE_FALLBACK_PREFIX", &payload.fallback);
     tools.apply_c_tools(&mut command);
+    // The native suite's compiler probes refuse to skip without these.
+    tools.apply_test_tools(&mut command);
     tools.apply_link(&mut command);
-    Ok(command)
+    command
 }
 
 fn build_cli(root: &Path, directory: &Path) -> Result<PathBuf, TaskError> {
@@ -173,7 +219,7 @@ fn llvm_tool(directory: &Path, name: &str) -> PathBuf {
         .with_extension(std::env::consts::EXE_EXTENSION)
 }
 
-fn test_artifacts(output: &[u8]) -> Result<Vec<PathBuf>, TaskError> {
+fn test_artifacts(output: &[u8]) -> Result<Vec<TestArtifact>, TaskError> {
     let mut artifacts = Vec::new();
     for line in output
         .split(|byte| *byte == b'\n')
@@ -185,7 +231,14 @@ fn test_artifacts(output: &[u8]) -> Result<Vec<PathBuf>, TaskError> {
             && value["profile"]["test"] == true
             && let Some(path) = value["executable"].as_str()
         {
-            artifacts.push(PathBuf::from(path));
+            let package = value["manifest_path"]
+                .as_str()
+                .and_then(|manifest| Path::new(manifest).parent())
+                .ok_or_else(|| deps::error(format!("test executable {path} has no package")))?;
+            artifacts.push(TestArtifact {
+                path: PathBuf::from(path),
+                package: package.to_owned(),
+            });
         }
     }
     artifacts.sort();

@@ -218,15 +218,36 @@ fn random_seed() -> u32 {
 /// AddressSanitizer rejects a statically linked libc, so it cannot link
 /// through the release build's musl driver. None elsewhere: a macOS
 /// campaign links with Apple's linker, as the release build does.
+///
+/// libFuzzer is C++, built by the host's C++ compiler, and its `-lstdc++`
+/// names that compiler's libstdc++. The flags search that library's
+/// directory first, since clang links against the newest GCC installation
+/// it finds, which may lack the C++ library (a GCC installed without its
+/// C++ compiler beside an older complete one). The directory comes first
+/// for every library the link names, so that GCC's libgcc and libgcc_s
+/// serve the link too, beside the newer GCC's start files; the two are
+/// compatible. `CXX` names one program, without arguments, and the probe
+/// reads neither cc's target-specific `CXX_<target>` nor `CXXSTDLIB`.
 fn link_flags(root: &Path) -> Result<Option<String>, TaskError> {
     if !cfg!(target_os = "linux") {
         return Ok(None);
     }
     let tools = deps::toolchain(root, &deps::Pins::load(root)?)?;
+    let compiler = std::env::var_os("CXX").unwrap_or_else(|| "c++".into());
+    let name = Path::new(&compiler).display().to_string();
+    let printed =
+        process::output(Command::new(&compiler).arg(format!("-print-file-name={CXX_RUNTIME}")))
+            .map_err(|failure| {
+                deps::error(format!(
+                    "cannot ask the C++ compiler `{name}` for libFuzzer's {CXX_RUNTIME}: {failure}"
+                ))
+            })?;
+    let runtime = runtime_directory(&name, String::from_utf8_lossy(&printed.stdout).trim())?;
     let mut flags = Vec::new();
     for (flag, path) in [
         ("-Clinker=", &tools.clang),
         ("-Clink-arg=--ld-path=", &tools.ld_lld),
+        ("-Clink-arg=-L", &runtime),
     ] {
         // Cargo splits RUSTFLAGS at whitespace, and cargo-fuzz reads only it.
         let path = path
@@ -234,13 +255,32 @@ fn link_flags(root: &Path) -> Result<Option<String>, TaskError> {
             .filter(|path| !path.contains(char::is_whitespace))
             .ok_or_else(|| {
                 deps::error(format!(
-                    "RUSTFLAGS cannot carry the pinned LLVM path {}",
+                    "RUSTFLAGS cannot carry the link path {}",
                     path.display()
                 ))
             })?;
         flags.push(format!("{flag}{path}"));
     }
     Ok(Some(flags.join(" ")))
+}
+
+/// The C++ runtime libFuzzer links against.
+const CXX_RUNTIME: &str = "libstdc++.so";
+
+/// The directory of the C++ runtime `compiler` printed for
+/// `-print-file-name`. A compiler that has no such library prints the bare
+/// name back.
+fn runtime_directory(compiler: &str, printed: &str) -> Result<PathBuf, TaskError> {
+    let path = Path::new(printed);
+    match path.parent() {
+        Some(directory) if path.is_absolute() && path.file_name() == Some(CXX_RUNTIME.as_ref()) => {
+            Ok(directory.to_owned())
+        }
+        _ => Err(deps::error(format!(
+            "the C++ compiler `{compiler}` has no {CXX_RUNTIME} for libFuzzer; \
+             install its C++ standard library development files"
+        ))),
+    }
 }
 
 fn options(args: &[String]) -> Result<Options<'_>, TaskError> {

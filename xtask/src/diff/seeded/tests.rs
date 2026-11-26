@@ -186,9 +186,11 @@ fn the_wrapper_changes_one_byte_and_the_attempts() -> Result<(), TaskError> {
     let script = format!(
         "#!/bin/bash\nprintf '%s' '{printed}'\necho \"$AWS_MAX_ATTEMPTS $*\" >&2\nexit 3\n"
     );
-    write_script(&cli, &script)?;
+    // Both scripts run right after they're written, while other tests fork.
+    fs::create_dir_all(&directory)?;
+    deps::write_executable_out_of_process(&cli, &script)?;
     let wrapper = directory.join("seeded");
-    write_script(&wrapper, &wrapper_script(&cli))?;
+    deps::write_executable_out_of_process(&wrapper, &wrapper_script(&cli))?;
     let output = Command::new(&wrapper).args(["a", "b c"]).output()?;
     fs::remove_dir_all(&directory)?;
     assert_eq!(output.status.code(), Some(3));
