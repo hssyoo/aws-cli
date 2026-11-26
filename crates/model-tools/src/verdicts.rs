@@ -1,9 +1,10 @@
 //! Each shipped operation's verdict, the rows of the golden
 //! `tests/verdicts/verdicts.tsv`: the client's static refusal by its
 //! reason and what it names, the operation's eligibility [`Standing`] and
-//! its paginator's verdict, each rendered by a stable name
-//! (`PythonReason::name()`, model keys, `Display` texts), never `Debug`.
-//! The signatures here are fixed; their bodies follow the product API.
+//! its paginator's verdict and configuration, and the model's API version,
+//! each rendered by a stable name (`PythonReason::name()`, model keys,
+//! `Display` texts), never `Debug`. The signatures here are fixed; their
+//! bodies follow the product API, and a body change is an oracle change.
 use crate::eligibility::{PythonReasonName, Standing, standing};
 use cli_core::cli_error::PythonReason;
 use client::admission::{Unsupported, static_refusal};
@@ -12,7 +13,11 @@ use command::models::ModelSource;
 use service_command::admit;
 
 /// The columns of a row, the TSV's first line.
-pub const HEADER: &str = "command\toperation\trefusal\trefused\tstanding\tpaginator";
+pub const HEADER: &str = "command\toperation\trefusal\trefused\tstanding\tpaginator\tapi_version";
+
+/// The standing of a root whose service does not load: its one row, with
+/// `-` for the operation.
+pub const UNLOADED: &str = "unloaded";
 
 /// One operation's verdict. `-` stands for none.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,11 +32,18 @@ pub struct Row {
     /// built-in, a parameter, or the paginator's refusal text.
     pub refused: String,
     /// The eligibility standing: `no_arguments`, `scalar_arguments`,
-    /// `required_not_scalar` or `refused:<reason>`.
+    /// `required_not_scalar`, `refused:<reason>`, or [`UNLOADED`].
     pub standing: String,
-    /// `native` (the native paginator runs it), `unpaged` (an entry whose
-    /// table has no paging options), `refused:<why>`, or `-` (no entry).
+    /// `native <config>` (the native paginator runs it), `unpaged <config>`
+    /// (an entry whose table has no paging options), `refused:<why>`, or
+    /// `-` (no entry). `<config>` is `in=… out=… more=… result=… keep=…
+    /// limit=…`: the input tokens, output tokens, `more_results`, result
+    /// keys, non-aggregate keys (each list comma-separated, `-` when empty)
+    /// and the limit key, written `<entry's>/<config's>` when the table's
+    /// and the paginator's differ.
     pub paginator: String,
+    /// The model's `metadata.apiVersion`, the version the search loaded.
+    pub api_version: String,
 }
 
 impl Row {
@@ -44,6 +56,7 @@ impl Row {
             &self.refused,
             &self.standing,
             &self.paginator,
+            &self.api_version,
         ]
         .map(|field| cell(field))
         .join("\t")
@@ -70,13 +83,22 @@ pub fn roots(source: &ModelSource<'_>) -> Vec<String> {
 }
 
 /// The rows of the root `root`'s operations, in its command table's
-/// order; none for a root whose service does not load.
+/// order; one [`UNLOADED`] row for a root whose service does not load.
 pub fn root_rows(source: &ModelSource<'_>, root: &str) -> Vec<Row> {
     let table = &customizations::TABLE[..];
     let Some(service) = source.service(root) else {
-        return Vec::new();
+        return vec![Row {
+            command: root.to_owned(),
+            operation: "-".to_owned(),
+            refusal: "-".to_owned(),
+            refused: "-".to_owned(),
+            standing: UNLOADED.to_owned(),
+            paginator: "-".to_owned(),
+            api_version: "-".to_owned(),
+        }];
     };
     let model = &service.model;
+    let api_version = model.metadata().api_version.as_deref().unwrap_or("-");
     let endpoints = EndpointData::load(source.search(), &service.name, model.metadata());
     let mut rows = Vec::new();
     for operation in &service.operations {
@@ -96,11 +118,24 @@ pub fn root_rows(source: &ModelSource<'_>, root: &str) -> Vec<Row> {
             .map(|unsupported| (admit::reason(&unsupported).name(), named(&unsupported))),
         };
         let (refusal, refused) = refusal.unwrap_or(("-", "-".to_owned()));
-        let paginator = match entry.map(|entry| entry.config.as_ref()) {
+        let paginator = match entry.map(|entry| (entry, entry.config.as_ref())) {
             None => "-".to_owned(),
-            Some(Err(refused)) => format!("refused:{refused}"),
-            Some(Ok(_)) if paged(source, root, operation) => "native".to_owned(),
-            Some(Ok(_)) => "unpaged".to_owned(),
+            Some((_, Err(refused))) => format!("refused:{refused}"),
+            Some((entry, Ok(found))) => configuration(
+                if paged(source, root, operation) {
+                    "native"
+                } else {
+                    "unpaged"
+                },
+                &found.input_token,
+                [
+                    &found.output_token,
+                    &found.result_key,
+                    &found.non_aggregate_keys,
+                ],
+                found.more_results.as_ref(),
+                [entry.limit_key.as_deref(), found.limit_key.as_deref()],
+            ),
         };
         rows.push(Row {
             command: root.to_owned(),
@@ -109,6 +144,7 @@ pub fn root_rows(source: &ModelSource<'_>, root: &str) -> Vec<Row> {
             refused,
             standing: standing_name(standing(source, table, root, operation)),
             paginator,
+            api_version: api_version.to_owned(),
         });
     }
     rows
@@ -144,6 +180,37 @@ fn named(unsupported: &Unsupported) -> String {
     }
 }
 
+/// A paginator configuration as `<state> in=… out=… more=… result=…
+/// keep=… limit=…` ([`Row::paginator`]): `keys` are the output tokens,
+/// result keys and non-aggregate keys, `limits` the entry's limit key and
+/// the configuration's.
+fn configuration<E: std::fmt::Display>(
+    state: &str,
+    input: &[String],
+    keys: [&Vec<E>; 3],
+    more: Option<&E>,
+    limits: [Option<&str>; 2],
+) -> String {
+    let [output, result, keep] =
+        keys.map(|items| list(&items.iter().map(ToString::to_string).collect::<Vec<_>>()));
+    let more = more.map_or_else(|| "-".to_owned(), ToString::to_string);
+    let limit = match limits {
+        [table, paginator] if table == paginator => table.unwrap_or("-").to_owned(),
+        [table, paginator] => format!("{}/{}", table.unwrap_or("-"), paginator.unwrap_or("-")),
+    };
+    let input = list(input);
+    format!("{state} in={input} out={output} more={more} result={result} keep={keep} limit={limit}")
+}
+
+/// A list comma-separated, `-` when empty.
+fn list(items: &[String]) -> String {
+    if items.is_empty() {
+        "-".to_owned()
+    } else {
+        items.join(",")
+    }
+}
+
 /// `unify_paging_params` gave the operation's table its paging options.
 fn paged(source: &ModelSource<'_>, command: &str, operation: &str) -> bool {
     source
@@ -152,10 +219,11 @@ fn paged(source: &ModelSource<'_>, command: &str, operation: &str) -> bool {
 }
 
 /// A field as one TSV cell: backslash, tab, carriage return and newline
-/// escaped, and `-` for an empty field.
+/// escaped, and `""` for an empty field, which `-` (none) never stands
+/// for.
 fn cell(field: &str) -> String {
     if field.is_empty() {
-        return "-".to_owned();
+        return "\"\"".to_owned();
     }
     let mut escaped = String::with_capacity(field.len());
     for character in field.chars() {
