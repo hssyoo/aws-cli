@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(unix)]
-use crate::deps::tests::write_executable_out_of_process;
+use crate::deps::write_executable_out_of_process;
 use std::ffi::OsStr;
 
 #[test]
