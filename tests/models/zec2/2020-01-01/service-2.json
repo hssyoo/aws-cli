@@ -1,0 +1,320 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zec2",
+    "protocol": "ec2",
+    "protocols": [
+      "ec2"
+    ],
+    "serviceFullName": "Fake zec2",
+    "serviceId": "Zec2",
+    "signatureVersion": "v4",
+    "uid": "zec2-2020-01-01",
+    "xmlNamespace": "http://zec2.example.com/doc/2020-01-01/",
+    "auth": [
+      "aws.auth#sigv4"
+    ]
+  },
+  "operations": {
+    "RunGadgets": {
+      "name": "RunGadgets",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "RunGadgetsRequest"
+      },
+      "output": {
+        "shape": "RunGadgetsResult"
+      }
+    }
+  },
+  "shapes": {
+    "Big": {
+      "type": "long"
+    },
+    "BigList": {
+      "type": "list",
+      "member": {
+        "shape": "Big",
+        "locationName": "item"
+      }
+    },
+    "Bytes": {
+      "type": "blob"
+    },
+    "Flag": {
+      "type": "boolean"
+    },
+    "Frac": {
+      "type": "float"
+    },
+    "Int": {
+      "type": "integer"
+    },
+    "IntList": {
+      "type": "list",
+      "member": {
+        "shape": "Int",
+        "locationName": "item"
+      }
+    },
+    "NamedList": {
+      "type": "list",
+      "locationName": "Name",
+      "member": {
+        "shape": "Text"
+      }
+    },
+    "Placement": {
+      "type": "structure",
+      "members": {
+        "Zone": {
+          "shape": "Text",
+          "locationName": "availabilityZone"
+        },
+        "Plain": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Ratio": {
+      "type": "double"
+    },
+    "RunGadgetsRequest": {
+      "type": "structure",
+      "members": {
+        "GadgetName": {
+          "shape": "Text",
+          "locationName": "gadgetName"
+        },
+        "Plain": {
+          "shape": "Text"
+        },
+        "DryRun": {
+          "shape": "Flag",
+          "locationName": "dryRun"
+        },
+        "Active": {
+          "shape": "Flag"
+        },
+        "Count": {
+          "shape": "Int",
+          "locationName": "count"
+        },
+        "Bare": {
+          "shape": "Int"
+        },
+        "Total": {
+          "shape": "Big",
+          "locationName": "total"
+        },
+        "Wide": {
+          "shape": "Big"
+        },
+        "Ratio": {
+          "shape": "Ratio",
+          "locationName": "ratio"
+        },
+        "Exact": {
+          "shape": "Ratio"
+        },
+        "Data": {
+          "shape": "Bytes",
+          "locationName": "data"
+        },
+        "Raw": {
+          "shape": "Bytes"
+        },
+        "Created": {
+          "shape": "When",
+          "locationName": "created"
+        },
+        "Stamp": {
+          "shape": "When"
+        },
+        "Ids": {
+          "shape": "TextList",
+          "locationName": "GadgetId",
+          "queryName": "GadgetId"
+        },
+        "Names": {
+          "shape": "TextList",
+          "locationName": "nameSet"
+        },
+        "Loose": {
+          "shape": "TextList"
+        },
+        "Sizes": {
+          "shape": "IntList",
+          "locationName": "sizeSet"
+        },
+        "Totals": {
+          "shape": "BigList",
+          "locationName": "totalSet"
+        },
+        "Labels": {
+          "shape": "NamedList",
+          "locationName": "labelSet"
+        },
+        "Tags": {
+          "shape": "TagList",
+          "locationName": "tagSet",
+          "queryName": "Tag"
+        },
+        "Placement": {
+          "shape": "Placement",
+          "locationName": "placement"
+        },
+        "Spot": {
+          "shape": "Placement"
+        },
+        "ClientToken": {
+          "shape": "Text",
+          "idempotencyToken": true
+        },
+        "Token": {
+          "shape": "Text",
+          "locationName": "clientToken",
+          "idempotencyToken": true
+        }
+      }
+    },
+    "RunGadgetsResult": {
+      "type": "structure",
+      "members": {
+        "GadgetName": {
+          "shape": "Text",
+          "locationName": "gadgetName"
+        },
+        "Plain": {
+          "shape": "Text"
+        },
+        "DryRun": {
+          "shape": "Flag",
+          "locationName": "dryRun"
+        },
+        "Active": {
+          "shape": "Flag"
+        },
+        "Count": {
+          "shape": "Int",
+          "locationName": "count"
+        },
+        "Bare": {
+          "shape": "Int"
+        },
+        "Total": {
+          "shape": "Big",
+          "locationName": "total"
+        },
+        "Wide": {
+          "shape": "Big"
+        },
+        "Ratio": {
+          "shape": "Ratio",
+          "locationName": "ratio"
+        },
+        "Exact": {
+          "shape": "Ratio"
+        },
+        "Data": {
+          "shape": "Bytes",
+          "locationName": "data"
+        },
+        "Raw": {
+          "shape": "Bytes"
+        },
+        "Created": {
+          "shape": "When",
+          "locationName": "created"
+        },
+        "Stamp": {
+          "shape": "When"
+        },
+        "Ids": {
+          "shape": "TextList",
+          "locationName": "GadgetId",
+          "queryName": "GadgetId"
+        },
+        "Names": {
+          "shape": "TextList",
+          "locationName": "nameSet"
+        },
+        "Loose": {
+          "shape": "TextList"
+        },
+        "Sizes": {
+          "shape": "IntList",
+          "locationName": "sizeSet"
+        },
+        "Totals": {
+          "shape": "BigList",
+          "locationName": "totalSet"
+        },
+        "Labels": {
+          "shape": "NamedList",
+          "locationName": "labelSet"
+        },
+        "Tags": {
+          "shape": "TagList",
+          "locationName": "tagSet",
+          "queryName": "Tag"
+        },
+        "Placement": {
+          "shape": "Placement",
+          "locationName": "placement"
+        },
+        "Spot": {
+          "shape": "Placement"
+        },
+        "Fraction": {
+          "shape": "Frac",
+          "locationName": "fraction"
+        },
+        "Part": {
+          "shape": "Frac"
+        },
+        "RequestId": {
+          "shape": "Text",
+          "locationName": "requestId"
+        }
+      }
+    },
+    "Tag": {
+      "type": "structure",
+      "members": {
+        "Key": {
+          "shape": "Text",
+          "locationName": "key"
+        },
+        "Value": {
+          "shape": "Text",
+          "locationName": "value"
+        }
+      }
+    },
+    "TagList": {
+      "type": "list",
+      "member": {
+        "shape": "Tag",
+        "locationName": "item"
+      }
+    },
+    "Text": {
+      "type": "string"
+    },
+    "TextList": {
+      "type": "list",
+      "member": {
+        "shape": "Text",
+        "locationName": "item"
+      }
+    },
+    "When": {
+      "type": "timestamp"
+    }
+  }
+}

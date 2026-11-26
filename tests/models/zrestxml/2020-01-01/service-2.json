@@ -1,0 +1,784 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zrestxml",
+    "protocol": "rest-xml",
+    "protocols": [
+      "rest-xml"
+    ],
+    "serviceFullName": "Fake zrestxml",
+    "serviceId": "Zrestxml",
+    "signatureVersion": "v4",
+    "uid": "zrestxml-2020-01-01",
+    "auth": [
+      "aws.auth#sigv4"
+    ]
+  },
+  "operations": {
+    "CreateGadget": {
+      "name": "CreateGadget",
+      "http": {
+        "method": "POST",
+        "requestUri": "/gadgets"
+      },
+      "input": {
+        "shape": "CreateGadgetRequest",
+        "locationName": "CreateGadgetRequest",
+        "xmlNamespace": {
+          "uri": "https://zrestxml.example.com/doc/2020-01-01/"
+        }
+      },
+      "output": {
+        "shape": "CreateGadgetOutput"
+      }
+    },
+    "PutWidget": {
+      "name": "PutWidget",
+      "http": {
+        "method": "PUT",
+        "requestUri": "/widgets/{WidgetName}/{Revision}?config"
+      },
+      "input": {
+        "shape": "PutWidgetRequest"
+      },
+      "output": {
+        "shape": "PutWidgetOutput"
+      },
+      "errors": [
+        {
+          "shape": "WidgetConflict"
+        }
+      ],
+      "httpChecksum": {
+        "requestAlgorithmMember": "ChecksumAlgorithm",
+        "requestChecksumRequired": true
+      }
+    },
+    "GetWidget": {
+      "name": "GetWidget",
+      "http": {
+        "method": "GET",
+        "requestUri": "/widgets/{WidgetName+}"
+      },
+      "input": {
+        "shape": "GetWidgetRequest"
+      },
+      "output": {
+        "shape": "GetWidgetOutput"
+      },
+      "errors": [
+        {
+          "shape": "WidgetNotFound"
+        }
+      ]
+    },
+    "HeadWidget": {
+      "name": "HeadWidget",
+      "http": {
+        "method": "HEAD",
+        "requestUri": "/widgets/{WidgetName}"
+      },
+      "input": {
+        "shape": "GetWidgetRequest"
+      },
+      "output": {
+        "shape": "HeadWidgetOutput"
+      },
+      "errors": [
+        {
+          "shape": "WidgetNotFound"
+        }
+      ]
+    },
+    "DeleteWidget": {
+      "name": "DeleteWidget",
+      "http": {
+        "method": "DELETE",
+        "requestUri": "/v1/widgets/{WidgetName}"
+      },
+      "input": {
+        "shape": "DeleteWidgetRequest"
+      },
+      "endpoint": {
+        "hostPrefix": "{AccountId}."
+      }
+    },
+    "PatchWidget": {
+      "name": "PatchWidget",
+      "http": {
+        "method": "PATCH",
+        "requestUri": "/widgets/{WidgetName}"
+      },
+      "input": {
+        "shape": "PatchWidgetRequest"
+      },
+      "httpChecksumRequired": true,
+      "unsignedPayload": true
+    },
+    "UploadWidgetData": {
+      "name": "UploadWidgetData",
+      "http": {
+        "method": "PUT",
+        "requestUri": "/widgets/{WidgetName}/data"
+      },
+      "input": {
+        "shape": "UploadWidgetDataRequest"
+      },
+      "authtype": "v4-unsigned-body"
+    },
+    "GetWidgetData": {
+      "name": "GetWidgetData",
+      "http": {
+        "method": "GET",
+        "requestUri": "/widgets/{WidgetName}/data"
+      },
+      "input": {
+        "shape": "GetWidgetRequest"
+      },
+      "output": {
+        "shape": "GetWidgetDataOutput"
+      }
+    }
+  },
+  "shapes": {
+    "AccountId": {
+      "type": "string"
+    },
+    "Algorithm": {
+      "type": "string"
+    },
+    "Big": {
+      "type": "long"
+    },
+    "Bytes": {
+      "type": "blob"
+    },
+    "Choice": {
+      "type": "structure",
+      "union": true,
+      "members": {
+        "Word": {
+          "shape": "Text"
+        },
+        "Number": {
+          "shape": "Int"
+        }
+      }
+    },
+    "CreateGadgetOutput": {
+      "type": "structure",
+      "members": {
+        "GadgetId": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "x-amz-gadget-id"
+        }
+      }
+    },
+    "CreateGadgetRequest": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "Text",
+          "locationName": "name"
+        },
+        "Plain": {
+          "shape": "Text"
+        },
+        "Enabled": {
+          "shape": "Flag",
+          "locationName": "enabled"
+        },
+        "Active": {
+          "shape": "Flag"
+        },
+        "Count": {
+          "shape": "Int",
+          "locationName": "count"
+        },
+        "Total": {
+          "shape": "Big"
+        },
+        "Ratio": {
+          "shape": "Ratio"
+        },
+        "Frac": {
+          "shape": "Frac"
+        },
+        "Data": {
+          "shape": "Bytes"
+        },
+        "Created": {
+          "shape": "When"
+        },
+        "CreatedIso": {
+          "shape": "WhenIso",
+          "locationName": "createdIso"
+        },
+        "Items": {
+          "shape": "TextList",
+          "locationName": "items"
+        },
+        "Numbers": {
+          "shape": "IntList"
+        },
+        "Flat": {
+          "shape": "PlainList",
+          "flattened": true
+        },
+        "FlatShape": {
+          "shape": "FlatList"
+        },
+        "Parts": {
+          "shape": "PartList"
+        },
+        "Labels": {
+          "shape": "TextMap"
+        },
+        "Grantee": {
+          "shape": "Grantee",
+          "locationName": "Grantee",
+          "xmlNamespace": {
+            "uri": "http://www.w3.org/2001/XMLSchema-instance"
+          }
+        },
+        "Nested": {
+          "shape": "Nested",
+          "locationName": "nested"
+        },
+        "Choice": {
+          "shape": "Choice"
+        },
+        "Attr": {
+          "shape": "Text",
+          "locationName": "attr",
+          "xmlAttribute": true
+        },
+        "CreatedRfc": {
+          "shape": "WhenRfc"
+        },
+        "Token": {
+          "shape": "Text",
+          "idempotencyToken": true
+        },
+        "Owner": {
+          "shape": "Text",
+          "contextParam": {
+            "name": "Owner"
+          }
+        }
+      },
+      "locationName": "CreateGadgetRequest",
+      "xmlNamespace": {
+        "uri": "https://zrestxml.example.com/doc/2020-01-01/"
+      }
+    },
+    "DeleteWidgetRequest": {
+      "type": "structure",
+      "required": [
+        "AccountId",
+        "WidgetName"
+      ],
+      "members": {
+        "AccountId": {
+          "shape": "AccountId",
+          "location": "header",
+          "locationName": "x-amz-account-id",
+          "hostLabel": true,
+          "contextParam": {
+            "name": "AccountId"
+          }
+        },
+        "WidgetName": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "WidgetName"
+        }
+      }
+    },
+    "Flag": {
+      "type": "boolean"
+    },
+    "FlatList": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      },
+      "flattened": true
+    },
+    "Frac": {
+      "type": "float"
+    },
+    "Gadget": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "Text",
+          "locationName": "name"
+        },
+        "Plain": {
+          "shape": "Text"
+        },
+        "Enabled": {
+          "shape": "Flag",
+          "locationName": "enabled"
+        },
+        "Active": {
+          "shape": "Flag"
+        },
+        "Count": {
+          "shape": "Int",
+          "locationName": "count"
+        },
+        "Total": {
+          "shape": "Big"
+        },
+        "Ratio": {
+          "shape": "Ratio"
+        },
+        "Frac": {
+          "shape": "Frac"
+        },
+        "Data": {
+          "shape": "Bytes"
+        },
+        "Created": {
+          "shape": "When"
+        },
+        "CreatedIso": {
+          "shape": "WhenIso",
+          "locationName": "createdIso"
+        },
+        "Items": {
+          "shape": "TextList",
+          "locationName": "items"
+        },
+        "Numbers": {
+          "shape": "IntList"
+        },
+        "Flat": {
+          "shape": "PlainList",
+          "flattened": true
+        },
+        "FlatShape": {
+          "shape": "FlatList"
+        },
+        "Parts": {
+          "shape": "PartList"
+        },
+        "Labels": {
+          "shape": "TextMap"
+        },
+        "Grantee": {
+          "shape": "Grantee",
+          "locationName": "Grantee",
+          "xmlNamespace": {
+            "uri": "http://www.w3.org/2001/XMLSchema-instance"
+          }
+        },
+        "Nested": {
+          "shape": "Nested",
+          "locationName": "nested"
+        },
+        "Choice": {
+          "shape": "Choice"
+        },
+        "Attr": {
+          "shape": "Text",
+          "locationName": "attr",
+          "xmlAttribute": true
+        }
+      }
+    },
+    "GetWidgetDataOutput": {
+      "type": "structure",
+      "payload": "Body",
+      "members": {
+        "Body": {
+          "shape": "Stream",
+          "streaming": true
+        },
+        "Kind": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "Content-Type"
+        }
+      }
+    },
+    "GetWidgetOutput": {
+      "type": "structure",
+      "payload": "Gadget",
+      "members": {
+        "Gadget": {
+          "shape": "Gadget"
+        },
+        "Exists": {
+          "shape": "Flag",
+          "location": "header",
+          "locationName": "x-amz-exists"
+        },
+        "Count": {
+          "shape": "Int",
+          "location": "header",
+          "locationName": "x-amz-count"
+        },
+        "Size": {
+          "shape": "Big",
+          "location": "header",
+          "locationName": "x-amz-size"
+        },
+        "Owner": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "x-amz-owner"
+        },
+        "Modified": {
+          "shape": "When",
+          "location": "header",
+          "locationName": "Last-Modified"
+        },
+        "Metadata": {
+          "shape": "HeaderMap",
+          "location": "headers",
+          "locationName": "x-amz-meta-"
+        }
+      }
+    },
+    "GetWidgetRequest": {
+      "type": "structure",
+      "required": [
+        "WidgetName"
+      ],
+      "members": {
+        "WidgetName": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "WidgetName"
+        }
+      }
+    },
+    "Grantee": {
+      "type": "structure",
+      "members": {
+        "Kind": {
+          "shape": "Text",
+          "locationName": "xsi:type",
+          "xmlAttribute": true
+        },
+        "Id": {
+          "shape": "Text"
+        }
+      },
+      "xmlNamespace": {
+        "prefix": "xsi",
+        "uri": "http://www.w3.org/2001/XMLSchema-instance"
+      }
+    },
+    "HeadWidgetOutput": {
+      "type": "structure",
+      "members": {
+        "Exists": {
+          "shape": "Flag",
+          "location": "header",
+          "locationName": "x-amz-exists"
+        },
+        "Owner": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "x-amz-owner"
+        }
+      }
+    },
+    "HeaderMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Text"
+      }
+    },
+    "Int": {
+      "type": "integer"
+    },
+    "IntList": {
+      "type": "list",
+      "member": {
+        "shape": "Int",
+        "locationName": "N"
+      }
+    },
+    "Nested": {
+      "type": "structure",
+      "locationName": "Nested",
+      "members": {
+        "Note": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Part": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "Text"
+        },
+        "Size": {
+          "shape": "Int"
+        }
+      }
+    },
+    "PartList": {
+      "type": "list",
+      "member": {
+        "shape": "Part",
+        "locationName": "Part"
+      }
+    },
+    "PatchWidgetRequest": {
+      "type": "structure",
+      "required": [
+        "WidgetName"
+      ],
+      "payload": "Config",
+      "members": {
+        "WidgetName": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "WidgetName"
+        },
+        "Config": {
+          "shape": "WidgetConfig",
+          "locationName": "WidgetConfiguration",
+          "xmlNamespace": {
+            "uri": "https://zrestxml.example.com/doc/2020-01-01/"
+          }
+        }
+      }
+    },
+    "PlainList": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      }
+    },
+    "PutWidgetOutput": {
+      "type": "structure",
+      "members": {
+        "ETag": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "ETag"
+        }
+      }
+    },
+    "PutWidgetRequest": {
+      "type": "structure",
+      "required": [
+        "WidgetName",
+        "Revision"
+      ],
+      "payload": "Config",
+      "members": {
+        "WidgetName": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "WidgetName",
+          "contextParam": {
+            "name": "WidgetName"
+          }
+        },
+        "Revision": {
+          "shape": "Int",
+          "location": "uri",
+          "locationName": "Revision"
+        },
+        "ChecksumAlgorithm": {
+          "shape": "Algorithm",
+          "location": "header",
+          "locationName": "x-amz-sdk-checksum-algorithm"
+        },
+        "ClientToken": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "x-amz-client-token",
+          "idempotencyToken": true
+        },
+        "Owner": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "x-amz-owner",
+          "contextParam": {
+            "name": "Owner"
+          }
+        },
+        "Enabled": {
+          "shape": "Flag",
+          "location": "header",
+          "locationName": "x-amz-enabled"
+        },
+        "Count": {
+          "shape": "Int",
+          "location": "header",
+          "locationName": "x-amz-count"
+        },
+        "Size": {
+          "shape": "Big",
+          "location": "header",
+          "locationName": "x-amz-size"
+        },
+        "Since": {
+          "shape": "When",
+          "location": "header",
+          "locationName": "x-amz-since"
+        },
+        "Tags": {
+          "shape": "PlainList",
+          "location": "header",
+          "locationName": "x-amz-tags"
+        },
+        "Metadata": {
+          "shape": "HeaderMap",
+          "location": "headers",
+          "locationName": "x-amz-meta-"
+        },
+        "Marker": {
+          "shape": "Text",
+          "location": "querystring",
+          "locationName": "marker",
+          "contextParam": {
+            "name": "Marker"
+          }
+        },
+        "Limit": {
+          "shape": "Int",
+          "location": "querystring",
+          "locationName": "limit"
+        },
+        "Force": {
+          "shape": "Flag",
+          "location": "querystring",
+          "locationName": "force"
+        },
+        "After": {
+          "shape": "When",
+          "location": "querystring",
+          "locationName": "after"
+        },
+        "Ids": {
+          "shape": "PlainList",
+          "location": "querystring",
+          "locationName": "id"
+        },
+        "Config": {
+          "shape": "WidgetConfig",
+          "locationName": "WidgetConfiguration",
+          "xmlNamespace": {
+            "uri": "https://zrestxml.example.com/doc/2020-01-01/"
+          }
+        }
+      }
+    },
+    "Ratio": {
+      "type": "double"
+    },
+    "Stream": {
+      "type": "blob",
+      "streaming": true
+    },
+    "Text": {
+      "type": "string"
+    },
+    "TextList": {
+      "type": "list",
+      "member": {
+        "shape": "Text",
+        "locationName": "Item"
+      }
+    },
+    "TextMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text",
+        "locationName": "K"
+      },
+      "value": {
+        "shape": "Text",
+        "locationName": "V"
+      }
+    },
+    "UploadWidgetDataRequest": {
+      "type": "structure",
+      "required": [
+        "WidgetName"
+      ],
+      "payload": "Body",
+      "members": {
+        "WidgetName": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "WidgetName"
+        },
+        "Body": {
+          "shape": "Stream",
+          "streaming": true
+        }
+      }
+    },
+    "When": {
+      "type": "timestamp"
+    },
+    "WhenIso": {
+      "type": "timestamp",
+      "timestampFormat": "iso8601"
+    },
+    "WhenRfc": {
+      "type": "timestamp",
+      "timestampFormat": "rfc822"
+    },
+    "WidgetConfig": {
+      "type": "structure",
+      "locationName": "WidgetConfiguration",
+      "xmlNamespace": {
+        "uri": "https://zrestxml.example.com/doc/2020-01-01/"
+      },
+      "members": {
+        "Label": {
+          "shape": "Text"
+        },
+        "Weight": {
+          "shape": "Int"
+        }
+      }
+    },
+    "WidgetConflict": {
+      "type": "structure",
+      "exception": true,
+      "error": {
+        "httpStatusCode": 409
+      },
+      "members": {
+        "Message": {
+          "shape": "Text"
+        }
+      }
+    },
+    "WidgetNotFound": {
+      "type": "structure",
+      "exception": true,
+      "error": {
+        "httpStatusCode": 404,
+        "senderFault": true
+      },
+      "members": {
+        "Message": {
+          "shape": "Text"
+        },
+        "Reasons": {
+          "shape": "TextList"
+        }
+      }
+    }
+  }
+}
