@@ -27,7 +27,7 @@ pub use crate::endpoint::EndpointData;
 pub use crate::error::{CallError, ParseError, SerializeError, ServiceError};
 pub use crate::hooks::Customization;
 pub use crate::http::{Headers, HttpRequest, HttpResponse};
-pub use crate::protocol::{ParseOptions, Serialized};
+pub use crate::protocol::{BlobHandler, ParseOptions, Serialized, TimestampHandler};
 pub use crate::testing::{FixedRuntime, InMemoryTransport};
 pub use cli_core::client_config::ClientSettings;
 pub use cli_core::client_config::user_agent::{Distribution, Host, Versions};
@@ -233,6 +233,36 @@ pub fn serialize_case(
         .operation(operation)
         .ok_or_else(|| SerializeError::new(no_operation(operation)))?;
     protocol.0.serialize(model, found, input)
+}
+
+/// Parser options from a timestamp and a blob handler. Harnesses build
+/// options only here, so the struct may grow.
+pub fn parse_options<'a>(
+    timestamp: TimestampHandler<'a>,
+    blob: BlobHandler<'a>,
+) -> ParseOptions<'a> {
+    ParseOptions { timestamp, blob }
+}
+
+/// botocore's parser defaults (`DEFAULT_TIMESTAMP_PARSER`, base64 blobs).
+pub fn botocore_options() -> ParseOptions<'static> {
+    ParseOptions::BOTOCORE
+}
+
+/// botocore's default timestamp parser over one wire value.
+///
+/// # Errors
+/// A value the parser refuses.
+pub fn botocore_timestamp(value: &Value) -> Result<Value, ParseError> {
+    (ParseOptions::BOTOCORE.timestamp)(value)
+}
+
+/// botocore's default blob parser (base64) over one wire value.
+///
+/// # Errors
+/// A value the parser refuses.
+pub fn botocore_blob(value: &Value) -> Result<Value, ParseError> {
+    (ParseOptions::BOTOCORE.blob)(value)
 }
 
 /// The output `protocol` parses from a successful `response`.

@@ -5,8 +5,8 @@
 use client::error::ParseError;
 use client::http::{Headers, HttpResponse};
 use client::testing::facade::{
-    Model, ParseOptions, ProtocolHandle, input_members, model_from_json, parse_case,
-    parse_error_case, protocol_named, serialize_case,
+    Model, ProtocolHandle, botocore_blob, botocore_timestamp, input_members, model_from_json,
+    parse_case, parse_error_case, parse_options, protocol_named, serialize_case,
 };
 use model::value::{Map, Value};
 use serde_json::Value as JsonDoc;
@@ -328,7 +328,7 @@ fn check_host(suite: &JsonDoc, prefix: &Option<String>, expected: &JsonDoc) -> R
 
 /// `_compliance_timestamp_parser`: seconds since the epoch, as a float.
 fn compliance_timestamp(value: &Value) -> std::result::Result<Value, ParseError> {
-    match (ParseOptions::BOTOCORE.timestamp)(value)? {
+    match botocore_timestamp(value)? {
         Value::Timestamp(at) => Ok(Value::Float(at.unix_micros() as f64 / 1e6)),
         other => Ok(other),
     }
@@ -360,10 +360,7 @@ fn output_case(protocol_name: &str, suite: &JsonDoc, case: &JsonDoc) -> Result<(
         headers: headers.unwrap_or_default(),
         body,
     };
-    let options = ParseOptions {
-        timestamp: &compliance_timestamp,
-        blob: ParseOptions::BOTOCORE.blob,
-    };
+    let options = parse_options(&compliance_timestamp, &botocore_blob);
     let (parsed, expected) = if is_error {
         let error = parse_error_case(protocol(protocol_name)?, &model, &name, &response, &options)?;
         let mut parsed = Map::new();

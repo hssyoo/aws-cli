@@ -5,8 +5,9 @@
 //! and validator targets (`model_json.rs`, `model_validate.rs`), copied
 //! from `model::fuzz`. Everything it reads goes through [`super::facade`].
 use super::facade::{
-    Headers, HttpResponse, Model, ParseError, ParseOptions, Validated, model_from_json,
-    operation_names, parse_case, parse_error_case, protocol_for_model, validate_case,
+    Headers, HttpResponse, Model, ParseError, ParseOptions, Validated, botocore_options,
+    model_from_json, operation_names, parse_case, parse_error_case, parse_options,
+    protocol_for_model, validate_case,
 };
 use model::value::{Map, Value};
 use std::sync::Arc;
@@ -39,10 +40,9 @@ const HEADERS: [(&str, &str); 7] = [
 
 /// The CLI's parser defaults for `cli_timestamp_format=wire`: both values
 /// as written.
-const WIRE: ParseOptions<'static> = ParseOptions {
-    timestamp: &wire_timestamp,
-    blob: &wire_blob,
-};
+fn wire() -> ParseOptions<'static> {
+    parse_options(&wire_timestamp, &wire_blob)
+}
 
 fn wire_timestamp(value: &Value) -> Result<Value, ParseError> {
     Ok(value.clone())
@@ -81,7 +81,7 @@ pub fn responses(models: &[Arc<Model>], bytes: &[u8]) {
         headers: Headers::from_pairs(headers),
         body: body.to_vec(),
     };
-    for options in [&ParseOptions::BOTOCORE, &WIRE] {
+    for options in &[botocore_options(), wire()] {
         if response.status < 300 {
             let _ = parse_case(protocol, model, operation, &response, options);
         } else {
