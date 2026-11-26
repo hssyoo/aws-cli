@@ -28,6 +28,9 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("awscli-config", &[]),
     ("build-support", &[]),
     ("crt-sys", &["build-support"]),
+    // The endpoint rules engine: a rule set's decoder and evaluator, and
+    // the partitions it reads, over `serde_json` only.
+    ("endpoint-rules", &[]),
     ("numa", &[]),
     ("pyload", &["sha256"]),
     // CPython's text primitives, one implementation each.
