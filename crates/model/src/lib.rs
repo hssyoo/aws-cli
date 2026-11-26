@@ -2,8 +2,9 @@
 //! paginators file parsed once ([`paginators`]), and the dynamic values,
 //! JSON writer, validator and name transform every consumer of them shares.
 //!
-//! [`frontend`], [`overlay`] and [`serde`] are the Smithy-shaped schema
-//! layer's roots, filled step by step.
+//! [`schema`] is the Smithy-shaped schema layer the arena moves onto;
+//! [`frontend`], [`overlay`] and [`serde`] are its roots, filled step by
+//! step.
 #![forbid(unsafe_code)]
 
 pub mod frontend;
@@ -14,6 +15,7 @@ pub mod paginators;
 pub mod payload;
 pub mod pyjson;
 pub mod pyrepr;
+pub mod schema;
 pub mod search;
 pub mod serde;
 pub mod shapes;
