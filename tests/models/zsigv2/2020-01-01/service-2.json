@@ -1,0 +1,53 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zsigv2",
+    "protocol": "query",
+    "protocols": [
+      "query"
+    ],
+    "serviceFullName": "Fake zsigv2",
+    "serviceId": "Zsigv2",
+    "signatureVersion": "v2",
+    "uid": "zsigv2-2020-01-01",
+    "xmlNamespace": "https://zsigv2.example.com/doc/"
+  },
+  "operations": {
+    "Note": {
+      "name": "Note",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "NoteInput"
+      },
+      "output": {
+        "shape": "NoteOutput",
+        "resultWrapper": "NoteResult"
+      }
+    }
+  },
+  "shapes": {
+    "NoteInput": {
+      "type": "structure",
+      "members": {
+        "Note": {
+          "shape": "Text"
+        }
+      }
+    },
+    "NoteOutput": {
+      "type": "structure",
+      "members": {
+        "Note": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Text": {
+      "type": "string"
+    }
+  }
+}

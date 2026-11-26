@@ -1,0 +1,196 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zpages",
+    "protocol": "json",
+    "protocols": [
+      "json"
+    ],
+    "serviceFullName": "Fake zpages",
+    "serviceId": "Zpages",
+    "signatureVersion": "v4",
+    "uid": "zpages-2020-01-01",
+    "jsonVersion": "1.1",
+    "targetPrefix": "Zpages",
+    "auth": [
+      "aws.auth#sigv4"
+    ]
+  },
+  "operations": {
+    "ListPages": {
+      "name": "ListPages",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "ListPagesInput"
+      },
+      "output": {
+        "shape": "ListPagesOutput"
+      }
+    },
+    "ListOr": {
+      "name": "ListOr",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "ListPagesInput"
+      },
+      "output": {
+        "shape": "ListPagesOutput"
+      }
+    },
+    "GetJobs": {
+      "name": "GetJobs",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "GetJobsInput"
+      },
+      "output": {
+        "shape": "GetJobsOutput"
+      },
+      "errors": [
+        {
+          "shape": "JobGone"
+        }
+      ]
+    }
+  },
+  "shapes": {
+    "Flag": {
+      "type": "boolean"
+    },
+    "GetJobsInput": {
+      "type": "structure",
+      "members": {
+        "Id": {
+          "shape": "Text"
+        }
+      }
+    },
+    "GetJobsOutput": {
+      "type": "structure",
+      "members": {
+        "Jobs": {
+          "shape": "Jobs"
+        },
+        "State": {
+          "shape": "Text"
+        },
+        "Ready": {
+          "shape": "Flag"
+        },
+        "Count": {
+          "shape": "Int"
+        }
+      }
+    },
+    "Int": {
+      "type": "integer"
+    },
+    "Job": {
+      "type": "structure",
+      "members": {
+        "State": {
+          "shape": "Text"
+        },
+        "Ready": {
+          "shape": "Flag"
+        }
+      }
+    },
+    "JobGone": {
+      "type": "structure",
+      "exception": true,
+      "members": {
+        "Message": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Jobs": {
+      "type": "list",
+      "member": {
+        "shape": "Job"
+      }
+    },
+    "ListPagesInput": {
+      "type": "structure",
+      "members": {
+        "NextA": {
+          "shape": "Text"
+        },
+        "NextB": {
+          "shape": "Text"
+        },
+        "Marker": {
+          "shape": "Text"
+        },
+        "Limit": {
+          "shape": "Int"
+        }
+      }
+    },
+    "ListPagesOutput": {
+      "type": "structure",
+      "members": {
+        "Items": {
+          "shape": "TextList"
+        },
+        "Page": {
+          "shape": "Page"
+        },
+        "Meta": {
+          "shape": "Meta"
+        },
+        "NextToken": {
+          "shape": "Text"
+        },
+        "Marker": {
+          "shape": "Text"
+        },
+        "A": {
+          "shape": "Page"
+        },
+        "B": {
+          "shape": "Page"
+        }
+      }
+    },
+    "Meta": {
+      "type": "structure",
+      "members": {
+        "Count": {
+          "shape": "Int"
+        }
+      }
+    },
+    "Page": {
+      "type": "structure",
+      "members": {
+        "Truncated": {
+          "shape": "Flag"
+        },
+        "Next": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Text": {
+      "type": "string"
+    },
+    "TextList": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      }
+    }
+  }
+}

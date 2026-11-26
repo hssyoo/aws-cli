@@ -1,0 +1,58 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zs3v4",
+    "protocol": "rest-xml",
+    "protocols": [
+      "rest-xml"
+    ],
+    "serviceFullName": "Fake zs3v4",
+    "serviceId": "Zs3v4",
+    "signatureVersion": "s3v4",
+    "uid": "zs3v4-2020-01-01",
+    "auth": [
+      "aws.auth#sigv4"
+    ]
+  },
+  "operations": {
+    "Note": {
+      "name": "Note",
+      "http": {
+        "method": "POST",
+        "requestUri": "/note"
+      },
+      "input": {
+        "shape": "NoteInput",
+        "locationName": "NoteRequest",
+        "xmlNamespace": {
+          "uri": "https://zs3v4.example.com/doc/"
+        }
+      },
+      "output": {
+        "shape": "NoteOutput"
+      }
+    }
+  },
+  "shapes": {
+    "NoteInput": {
+      "type": "structure",
+      "members": {
+        "Note": {
+          "shape": "Text"
+        }
+      }
+    },
+    "NoteOutput": {
+      "type": "structure",
+      "members": {
+        "Note": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Text": {
+      "type": "string"
+    }
+  }
+}

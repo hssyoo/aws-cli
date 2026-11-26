@@ -1,0 +1,74 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zrules",
+    "protocol": "json",
+    "protocols": [
+      "json"
+    ],
+    "serviceFullName": "Fake zrules",
+    "serviceId": "Zrules",
+    "signatureVersion": "v4",
+    "uid": "zrules-2020-01-01",
+    "jsonVersion": "1.1",
+    "targetPrefix": "Zrules",
+    "auth": [
+      "aws.auth#sigv4a",
+      "aws.auth#sigv4"
+    ]
+  },
+  "operations": {
+    "Route": {
+      "name": "Route",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "RouteInput"
+      },
+      "output": {
+        "shape": "RouteOutput"
+      },
+      "operationContextParams": {
+        "Names": {
+          "path": "Names"
+        }
+      }
+    }
+  },
+  "shapes": {
+    "RouteInput": {
+      "type": "structure",
+      "members": {
+        "Bucket": {
+          "shape": "Text",
+          "contextParam": {
+            "name": "Bucket"
+          }
+        },
+        "Names": {
+          "shape": "TextList"
+        }
+      }
+    },
+    "RouteOutput": {
+      "type": "structure",
+      "members": {
+        "Note": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Text": {
+      "type": "string"
+    },
+    "TextList": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      }
+    }
+  }
+}
