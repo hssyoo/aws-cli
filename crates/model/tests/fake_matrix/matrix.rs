@@ -1,5 +1,8 @@
 //! The comparison of the shipped models' census with the fakes', against
-//! the ratchet of gaps still open (`gaps.txt`).
+//! the ratchet of gaps still open (`gaps.txt`). The ratchet only shrinks:
+//! every open gap must be a line of `gaps-baseline.txt`, the list as B7a
+//! froze it, so no change can list a feature anew (re-listing a closed gap
+//! is the merge guard's to catch).
 use super::census::Census;
 use std::collections::BTreeSet;
 
@@ -14,9 +17,21 @@ pub(crate) fn listed(text: &str) -> Vec<&str> {
 
 /// One line per problem, empty when every shipped feature has a fake or an
 /// open gap and every open gap is still one.
-pub(crate) fn problems(real: &Census, fakes: &Census, gaps: &[&str]) -> Vec<String> {
+pub(crate) fn problems(
+    real: &Census,
+    fakes: &Census,
+    gaps: &[&str],
+    baseline: &[&str],
+) -> Vec<String> {
     let mut problems = Vec::new();
     let open: BTreeSet<&str> = gaps.iter().copied().collect();
+    let frozen: BTreeSet<&str> = baseline.iter().copied().collect();
+    for gap in open.difference(&frozen) {
+        problems.push(format!(
+            "gaps.txt line {gap} is not in gaps-baseline.txt: the list only shrinks; \
+             fake the feature instead"
+        ));
+    }
     for pair in gaps.windows(2) {
         if pair[0] >= pair[1] {
             problems.push(format!(
