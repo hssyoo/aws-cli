@@ -199,7 +199,10 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     args, forwarded = parser.parse_known_args()
     # Workers pytest-xdist starts from any other option would share the
     # host's CRT process lock; only run.py's own `-n` isolates them.
-    addopts = shlex.split(os.environ.get("PYTEST_ADDOPTS", ""))
+    try:
+        addopts = shlex.split(os.environ.get("PYTEST_ADDOPTS", ""))
+    except ValueError as error:
+        parser.error(f"PYTEST_ADDOPTS: {error}")
     for source, tokens in (("arguments", forwarded), ("PYTEST_ADDOPTS", addopts)):
         if any(is_xdist_option(token) for token in tokens):
             parser.error(
@@ -220,18 +223,38 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
     return args, forwarded
 
 
+# pytest-xdist's options that start, place or rerun workers.
+XDIST_LONG_OPTIONS: Final = frozenset(
+    ("--tx", "--dist", "--numprocesses", "--maxprocesses", "--looponfail")
+)
+XDIST_SHORT_FLAGS: Final = frozenset("ndf")
+# pytest's short options that take a value, which the rest of a cluster
+# such as `-kfoo` or `-rfE` spells.
+PYTEST_SHORT_VALUE_OPTIONS: Final = frozenset("kmpcoWr")
+
+
 def is_xdist_option(token: str) -> bool:
-    """Whether `token` is a pytest-xdist option that starts or places
-    workers, in any of its spellings (`--tx=SPEC`, `-n8`, `-d`)."""
-    name = token.split("=", 1)[0]
-    if name in ("--tx", "--dist", "--numprocesses", "--maxprocesses", "-d"):
-        return True
-    return token.startswith("-n") and not token.startswith("--")
+    """Whether `token` is a pytest-xdist worker option in any spelling:
+    `--tx=SPEC`, `-n8`, or a cluster of short flags such as `-xn8` or `-qd`.
+    A cluster's letters count up to the first that takes a value."""
+    if token.startswith("--"):
+        return token.split("=", 1)[0] in XDIST_LONG_OPTIONS
+    if not token.startswith("-"):
+        return False
+    for letter in token[1:]:
+        if letter in XDIST_SHORT_FLAGS:
+            return True
+        if letter in PYTEST_SHORT_VALUE_OPTIONS:
+            return False
+    return False
 
 
 def worker_count(value: str) -> int:
     """`-n`'s value: a count of workers, or `auto` for one per CPU."""
     if value == "auto":
+        # The CPUs this process may run on, as xdist's own `auto` counts.
+        if hasattr(os, "sched_getaffinity"):
+            return len(os.sched_getaffinity(0))
         return os.cpu_count() or 1
     try:
         count = int(value)
@@ -343,19 +366,18 @@ def upstream_issue_ledger(known_gaps: Path, cache_dir: Path) -> Path:
     return ledger
 
 
-def run_suite(
+def pytest_command(
     suite: Suite,
-    runtime_requirements: Path,
-    env: dict[str, str],
+    venv_python: Path,
     source: Path,
     pytest_args: Sequence[str],
     workers: int,
-) -> int:
-    venv_python = harness_venv.ensure_venv(
-        suite.venv,
-        [runtime_requirements, suite.test_requirements],
-        VENV_DEPS_REVISION,
-    )
+) -> list[str]:
+    """The command that runs `suite`. Serially, pytest-xdist is disabled,
+    so an xdist option from any source fails the run rather than start
+    workers that share the CRT process lock. With `workers`, each worker,
+    and the controller, which checks the lock as the run starts, gets its
+    own lock directory."""
     command = [
         str(venv_python),
         "-m",
@@ -369,19 +391,35 @@ def run_suite(
         suite.tests,
         *pytest_args,
     ]
-    if workers:
-        # `-n N` is `--dist load --tx N*popen`; each worker's interpreter,
-        # and the controller, which checks the lock as the run starts, get
-        # their own lock directory.
-        isolated = shlex.join([str(ISOLATED_CRT_LOCK), str(venv_python)])
-        command = [
-            str(ISOLATED_CRT_LOCK),
-            *command,
-            "--dist",
-            "load",
-            "--tx",
-            f"{workers}*popen//python={isolated}",
-        ]
+    if not workers:
+        return [*command, "-p", "no:xdist", "-p", "no:xdist.looponfail"]
+    # `-n N` is `--dist load --tx N*popen`, with each worker's interpreter
+    # run through the wrapper.
+    isolated = shlex.join([str(ISOLATED_CRT_LOCK), str(venv_python)])
+    return [
+        str(ISOLATED_CRT_LOCK),
+        *command,
+        "--dist",
+        "load",
+        "--tx",
+        f"{workers}*popen//python={isolated}",
+    ]
+
+
+def run_suite(
+    suite: Suite,
+    runtime_requirements: Path,
+    env: dict[str, str],
+    source: Path,
+    pytest_args: Sequence[str],
+    workers: int,
+) -> int:
+    venv_python = harness_venv.ensure_venv(
+        suite.venv,
+        [runtime_requirements, suite.test_requirements],
+        VENV_DEPS_REVISION,
+    )
+    command = pytest_command(suite, venv_python, source, pytest_args, workers)
     try:
         result = subprocess.run(
             command,
