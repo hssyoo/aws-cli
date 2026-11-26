@@ -146,3 +146,33 @@ fn fuzz_and_workspace_lockfiles_pin_the_declared_arbitrary() -> Result<(), TaskE
     assert_eq!(pins[0], pins[1]);
     Ok(())
 }
+
+/// libFuzzer links against the libstdc++ the C++ compiler names, and a
+/// compiler that names none, or any other file, fails with a fix.
+#[test]
+fn campaigns_link_the_cxx_compilers_runtime() -> Result<(), TaskError> {
+    assert_eq!(
+        runtime_directory("c++", "/usr/lib/gcc/x86_64-linux/11/libstdc++.so")?,
+        Path::new("/usr/lib/gcc/x86_64-linux/11")
+    );
+    for printed in [
+        "libstdc++.so",
+        "",
+        "lib/libstdc++.so",
+        "/usr/lib/libstdc++.so.6",
+        "/usr/lib/libc++.so",
+        "/",
+    ] {
+        let message = runtime_directory("g++", printed)
+            .err()
+            .map(|failure| failure.to_string())
+            .unwrap_or_default();
+        assert_eq!(
+            message,
+            "the C++ compiler `g++` has no libstdc++.so for libFuzzer; \
+             install its C++ standard library development files",
+            "{printed:?}"
+        );
+    }
+    Ok(())
+}
