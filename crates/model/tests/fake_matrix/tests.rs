@@ -708,6 +708,12 @@ fn a_row_reaches_only_its_reply_kinds_and_the_members_it_sends() -> Result<()> {
 
 /// The shipped map against the corpus with some rows removed.
 fn problems_without(removed: impl Fn(&Row) -> bool, rename: (&str, &str)) -> Result<Vec<String>> {
+    problems_after(|rows| rows.retain(|row| !removed(row)), rename)
+}
+
+/// The shipped map against the corpus after `edit`, with the entries of
+/// row `rename.0` moved to row `rename.1`.
+fn problems_after(edit: impl FnOnce(&mut Vec<Row>), rename: (&str, &str)) -> Result<Vec<String>> {
     let matrix = repository().join("crates/model/tests/fake_matrix");
     let (baseline, gaps) = (
         read(matrix.join("gaps-baseline.txt"))?,
@@ -719,7 +725,7 @@ fn problems_without(removed: impl Fn(&Row) -> bool, rename: (&str, &str)) -> Res
         .filter(|line| !open.contains(line))
         .collect();
     let mut rows = rows(&repository().join("tests/diff/corpus"))?;
-    rows.retain(|row| !removed(row));
+    edit(&mut rows);
     let reach = reach_of(&repository().join("tests/models"), &rows)?;
     let text = read(matrix.join("observed.txt"))?;
     let mut map = mapped(&text)?;
@@ -782,5 +788,67 @@ fn the_gap_baseline_is_pinned() -> Result<()> {
         (730, BASELINE_FNV),
         "gaps-baseline.txt changed"
     );
+    Ok(())
+}
+
+/// rev-b7c R-M1: a non-`wait` call ends at its outcome. A retried 503
+/// before a 200 is a success, a 404 after a 200 is never consumed, a 503
+/// before a 404 is an error; a `wait` row matches every reply.
+#[test]
+fn a_row_is_scoped_by_its_outcome_reply() -> Result<()> {
+    let root = seeded_fake("observe-outcome")?;
+    let rows = [
+        replying("retried", &["zseen", "shown"], &[503, 200]),
+        replying("unconsumed", &["zseen", "shown"], &[200, 404]),
+        replying("failed", &["zseen", "shown"], &[503, 404]),
+        replying("throttled", &["zseen", "shown"], &[503]),
+        replying("waited", &["zseen", "wait", "shown-ready"], &[404, 200]),
+    ];
+    let reach = reach_of(&root, &rows);
+    std::fs::remove_dir_all(&root)?;
+    let reach = reach?;
+    let (err, out) = (
+        "shape/json/err/structure/exception",
+        "member/json/out/string/body",
+    );
+    for (row, error, success) in [
+        ("retried", false, true),
+        ("unconsumed", false, true),
+        ("failed", true, false),
+        ("throttled", true, false),
+        ("waited", true, true),
+    ] {
+        let found = reach[row].clone()?;
+        assert_eq!(
+            (found.contains(err), found.contains(out)),
+            (error, success),
+            "{row}"
+        );
+    }
+    Ok(())
+}
+
+/// rev-b7c R-M1's repro: a 503 retried before get-gadget's 200, the
+/// missing row deleted and its entries moved to get-gadget. Every rest-json
+/// error line it held loses its observer.
+#[test]
+fn a_retried_success_cannot_observe_error_lines() -> Result<()> {
+    let (row, missing) = (
+        "fakes-zrestjson2-get-gadget",
+        "fakes-zrestjson2-get-gadget-missing",
+    );
+    let found = problems_after(
+        |rows| {
+            rows.retain(|candidate| candidate.id != missing);
+            for candidate in rows.iter_mut().filter(|candidate| candidate.id == row) {
+                candidate.statuses.insert(0, 503);
+            }
+        },
+        (missing, row),
+    )?;
+    let lost = found
+        .iter()
+        .filter(|p| p.starts_with("gap line") && p.contains("rest-json/err/"));
+    assert!(lost.count() >= 25, "{}", found.join("\n"));
     Ok(())
 }

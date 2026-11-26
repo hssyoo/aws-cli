@@ -17,8 +17,7 @@ mod forms;
 mod matrix;
 #[path = "fake_matrix/observe.rs"]
 mod observe;
-// Named for the crate, so `--filter fake_matrix` selects these tests.
 #[path = "fake_matrix/tests.rs"]
-mod fake_matrix;
+mod tests;
 #[path = "fake_matrix/walk.rs"]
 mod walk;

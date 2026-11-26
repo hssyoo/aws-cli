@@ -7,8 +7,8 @@
 //! the waiter `wait` names) must hold the feature. A feature a fake only
 //! declares, on an operation no row runs, therefore cannot close its line.
 //! The call's own direction counts too: output features need a success
-//! reply among the row's responses, error features an error reply (status
-//! 300 or more), and top-level input members an argument that sends them.
+//! outcome, error features an error outcome (status 300 or more; see
+//! [`Row::scope`]), and top-level input members an argument that sends them.
 use super::census::{Error, Features, Ignored, load, services};
 use super::forms::{paginator_features_in, rule_set_features, waiter_features_in};
 use super::walk::{Scope, service_features_in};
@@ -26,15 +26,25 @@ pub(crate) struct Row {
 }
 
 impl Row {
-    /// The part of an operation this row's call reaches.
+    /// The part of an operation this row's call reaches. A `wait` row
+    /// matches every reply against its acceptors, so each reply counts. Any
+    /// other call ends at its outcome: the first reply that is not a
+    /// transient status botocore retries, or the last reply when all are,
+    /// so a retried 503 before a 200 is no error and a 404 after a 200 is
+    /// never consumed.
     fn scope<'r>(&'r self, only: Option<&'r str>) -> Scope<'r> {
+        let retried = |status: &&u64| [429, 500, 502, 503, 504].contains(*status);
+        let outcome = self.statuses.iter().find(|status| !retried(status));
+        let outcome = outcome.or(self.statuses.last());
+        let counted: Vec<u64> = if self.argv.get(1).is_some_and(|command| command == "wait") {
+            self.statuses.clone()
+        } else {
+            outcome.into_iter().copied().collect()
+        };
         Scope {
             only,
-            success: self
-                .statuses
-                .iter()
-                .any(|status| (200..300).contains(status)),
-            error: self.statuses.iter().any(|status| *status >= 300),
+            success: counted.iter().any(|status| (200..300).contains(status)),
+            error: counted.iter().any(|status| *status >= 300),
             argv: Some(&self.argv),
         }
     }
