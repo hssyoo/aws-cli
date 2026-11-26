@@ -7,5 +7,6 @@
 //! still disagree. The tally per directory is written to
 //! `$CARGO_TARGET_TMPDIR/endpoint-rules-replay.txt`.
 
+// The tests live in a sibling `tests.rs`, as `test_placement` requires.
 #[path = "replay/tests.rs"]
 mod tests;
