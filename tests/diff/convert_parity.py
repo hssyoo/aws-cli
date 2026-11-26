@@ -19,6 +19,8 @@ user would type for the case's operation and input on the in-tree CLI.
   shadow (iam's `MaxItems`) its own option back.
 - replies: `responses`, or the one `response`, as they are; headers keep
   their order. A fake-model case reads its models from `tests/models`.
+- `"requests": 0` on a row whose case's call sends no request (checked
+  below), which the harness then holds each run to.
 
 What the CLI would read otherwise fails the conversion: a blob not in the
 case encoding, a value argparse takes for an option (a leading `-`) or the
@@ -215,6 +217,10 @@ def corpus(source: Path, cases: Path, models: Path) -> str:
         sent, expected = wire.cli(line), wire.oracle(case)
         if found := difference(sent, expected):
             wrong.append(f"{line['id']}: {found}")
+        if not expected:
+            # The case's call sends nothing (a validation case): the row says
+            # so, and the harness fails a run that sends any.
+            line["requests"] = 0
         wrong += [f"{line['id']}: {miss}" for miss in mutation_misses(wire, case, sent, expected)]
     if wrong:
         raise SystemExit("rows that do not send their case's requests:\n" + "\n".join(wrong))

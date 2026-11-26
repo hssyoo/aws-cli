@@ -145,3 +145,26 @@ fn the_parity_corpus_holds_one_row_per_parity_case() -> Result<(), TaskError> {
     assert_eq!(fake, 58);
     Ok(())
 }
+
+#[test]
+fn a_row_declares_only_that_it_sends_no_request() {
+    // B3.3 (G-042b).
+    let row = |fields: &str| format!("{{\"id\":\"r\",\"argv\":[\"x\"],\"responses\":[]{fields}}}");
+    for count in ["1", "2"] {
+        assert_eq!(
+            failure(&row(&format!(",\"requests\":{count}"))),
+            "rows.jsonl:1: row r: requests may only declare 0, a row that sends none"
+        );
+    }
+    for value in ["-1", "\"0\""] {
+        let error = failure(&row(&format!(",\"requests\":{value}")));
+        assert!(error.starts_with("rows.jsonl:1: "), "{value}: {error}");
+    }
+    let declared = |value: &str| {
+        parse("rows.jsonl", &row(&format!(",\"requests\":{value}")))
+            .ok()
+            .and_then(|rows| rows.first().map(|row| row.requests))
+    };
+    assert_eq!(declared("0"), Some(Some(0)));
+    assert_eq!(declared("null"), Some(None));
+}

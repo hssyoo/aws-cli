@@ -7,8 +7,9 @@ The job (JSON, written by `cargo xtask diff`) names:
   AWS_CLI_NATIVE_ROUTER (`native` or `python`), or `unset` to leave it out;
 - `rows`: each an `id`, `argv`, `env` (a null value removes a variable),
   `data_path` (AWS_DATA_PATH, or null), `responses` (each a `status`,
-  `headers` as ordered pairs, and a `body` or `body_base64`) and an optional
-  `timeout_s`;
+  `headers` as ordered pairs, and a `body` or `body_base64`), an optional
+  `timeout_s`, and an optional `requests` (0), which `cargo xtask diff`
+  checks;
 - `scratch`, a directory this owns, and `captures`, the output file.
 
 One `localstub` server listens behind its TLS intercept proxy for the whole

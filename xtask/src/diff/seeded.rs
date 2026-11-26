@@ -11,8 +11,10 @@
 //!
 //! The stand-in (`tests/diff/standin.py`, rows `tests/diff/standin.jsonl`)
 //! runs against itself: a run that outlives its timeout and a request the
-//! stub cannot parse must differ by their uncoverable fingerprints alone,
-//! and the base environment, a row's variables, the reply sequence, the
+//! stub cannot parse must differ by their uncoverable fingerprints alone, as
+//! must a row that sends no request undeclared and one that sends a request
+//! though it declares none; a fresh UUID in a header must match once
+//! normalized; and the base environment, a row's variables, the reply sequence, the
 //! request limit and a chunked body's framing must reach the capture as
 //! documented.
 
@@ -35,13 +37,24 @@ pub const EXPECTED: [&str; 2] = [
     "stdout:$.ThingId",
 ];
 /// The stand-in rows that must differ from themselves, and by what.
-const STANDIN_DIFFERS: [(&str, &[&str]); 2] = [
+const STANDIN_DIFFERS: [(&str, &[&str]); 4] = [
+    (
+        "standin-declared-none",
+        &["requests:declared:0:a", "requests:declared:0:b"],
+    ),
     (
         "standin-malformed",
         &["harness:a:protocol_error", "harness:b:protocol_error"],
     ),
+    (
+        "standin-no-request",
+        &["requests:declared:none:a", "requests:declared:none:b"],
+    ),
     ("standin-timeout", &["timeout:both"]),
 ];
+/// The stand-in row whose request carries a fresh UUID in a header, which
+/// must differ between the runs as sent and match once normalized.
+const STANDIN_HEADER_UUID: (&str, &str) = ("standin-header-uuid", "X-Token");
 /// Lines the stand-in's environment must hold, and prefixes it must not.
 const ENV_HOLDS: [&str; 6] = [
     "AWS_PAGER=",
@@ -166,6 +179,7 @@ pub fn check_standin(report: &Report, captures: &[Capture]) -> Result<(), TaskEr
     if framing != Some((b"hello".as_slice(), Some(expected))) {
         problems.push(format!("standin-chunked sent {framing:?}"));
     }
+    problems.extend(header_uuid(captures));
     let env = printed("standin-env").unwrap_or_default();
     let lines: Vec<&str> = env.lines().collect();
     let missing = ENV_HOLDS.iter().filter(|line| !lines.contains(line));
@@ -181,6 +195,30 @@ pub fn check_standin(report: &Report, captures: &[Capture]) -> Result<(), TaskEr
         return Ok(());
     }
     Err(failure(&problems.join("\n"), report))
+}
+
+/// A problem unless the header-UUID row sent a fresh UUID on each side.
+fn header_uuid(captures: &[Capture]) -> Option<String> {
+    let (id, name) = STANDIN_HEADER_UUID;
+    let tokens: Vec<Option<&str>> = ["a", "b"]
+        .into_iter()
+        .map(|side| {
+            let capture = captures
+                .iter()
+                .find(|capture| capture.id == id && capture.side == side)?;
+            let request = capture.requests.first()?;
+            let (_, value) = request.headers.iter().find(|(header, _)| header == name)?;
+            Some(value.as_str())
+        })
+        .collect();
+    let fresh = matches!(tokens.as_slice(), [Some(x), Some(y)]
+        if x != y && [x, y].iter().all(|token| super::normalize::is_uuid(token.as_bytes())));
+    if !fresh {
+        return Some(format!(
+            "{id} must send a fresh UUID in {name} on each side, not {tokens:?}"
+        ));
+    }
+    None
 }
 
 /// The seeded binary's script, running `binary`.
