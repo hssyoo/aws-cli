@@ -1,0 +1,41 @@
+# cargo-deny policy for the workspace (`cargo deny check`). It covers the
+# root workspace and its Cargo.lock; `fuzz` is a separate workspace.
+
+[graph]
+all-features = true
+
+[advisories]
+# Every RustSec vulnerability fails the check; unmaintained, unsound and
+# yanked crates fail it too. An accepted advisory goes in `ignore` with its
+# id and a reason.
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Exactly the licenses the current lockfile needs. Every external crate is
+# MIT, Apache-2.0 or a choice of the two, except unicode-ident, which also
+# carries Unicode-3.0 for its tables. memchr's "Unlicense OR MIT" is
+# satisfied by MIT. The workspace's own crates are Apache-2.0.
+allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+confidence-threshold = 0.93
+
+[licenses.private]
+# Workspace crates are `publish = false`; their license is still checked.
+ignore = false
+
+[bans]
+# Two versions of one crate are worth knowing about, not a failure
+# (winnow 0.7 and 1.0 come in through toml today).
+multiple-versions = "warn"
+wildcards = "deny"
+# Path dependencies between workspace crates carry no version.
+allow-wildcard-paths = true
+
+[sources]
+# crates.io only; the lockfile has no git or other registry sources.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
