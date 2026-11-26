@@ -1,10 +1,11 @@
 #![no_main]
-use model::shapes::Model;
+use client::testing::facade::{Model, model_from_json};
+use std::sync::Arc;
 use std::sync::LazyLock;
 
 /// The fake query, json 1.0, json 1.1 and rest-json models the responses are
 /// read with.
-static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
+static MODELS: LazyLock<Vec<Arc<Model>>> = LazyLock::new(|| {
     [
         &include_bytes!("../../tests/models/zquery/2020-01-01/service-2.json")[..],
         include_bytes!("../../tests/models/zjson/2020-01-01/service-2.json"),
@@ -12,7 +13,7 @@ static MODELS: LazyLock<Vec<Model>> = LazyLock::new(|| {
         include_bytes!("../../tests/models/zrestjson/2020-01-01/service-2.json"),
     ]
     .into_iter()
-    .filter_map(|bytes| Model::from_json(bytes).ok())
+    .filter_map(|bytes| model_from_json(bytes).ok())
     .collect()
 });
 

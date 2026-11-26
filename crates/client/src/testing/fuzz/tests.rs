@@ -1,9 +1,10 @@
 //! The stable replay of the parser fuzz targets: each target's curated
 //! inputs under `fuzz/corpus/<target>`, every prefix of each, then a seeded
 //! sweep, through the same bodies the targets run.
-use super::{responses, starting_token, xml};
-use model::shapes::Model;
+use super::{model_json, responses, starting_token, validate, xml};
+use crate::testing::facade::{Model, model_from_json};
 use std::path::Path;
+use std::sync::Arc;
 
 const QUERY: &[u8] = include_bytes!("../../../../../tests/models/zquery/2020-01-01/service-2.json");
 const JSON: &[u8] = include_bytes!("../../../../../tests/models/zjson/2020-01-01/service-2.json");
@@ -13,10 +14,10 @@ const REST_JSON: &[u8] =
     include_bytes!("../../../../../tests/models/zrestjson/2020-01-01/service-2.json");
 
 /// The fake models the response and validation targets read with.
-fn models() -> Vec<Model> {
+fn models() -> Vec<Arc<Model>> {
     [QUERY, JSON, JSON11, REST_JSON]
         .into_iter()
-        .filter_map(|bytes| Model::from_json(bytes).ok())
+        .filter_map(|bytes| model_from_json(bytes).ok())
         .collect()
 }
 
@@ -82,10 +83,10 @@ fn the_starting_token_target_replays() -> std::io::Result<()> {
 #[test]
 fn the_model_targets_replay() -> std::io::Result<()> {
     let models = models();
-    replay("model_json", model::fuzz::model_json)?;
+    replay("model_json", model_json)?;
     replay("model_validate", |bytes| {
         for model in &models {
-            model::fuzz::validate(model, bytes);
+            validate(model, bytes);
         }
     })
 }

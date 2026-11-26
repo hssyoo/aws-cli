@@ -4,11 +4,14 @@
 //! read from `protocol-tests-ignore-list.json` when the test runs.
 use client::error::ParseError;
 use client::http::{Headers, HttpResponse};
-use client::protocol::{ParseOptions, Protocol, json::Json, query::Query, rest_json::RestJson};
-use model::shapes::{Model, Operation, ShapeKind};
+use client::testing::facade::{
+    Model, ProtocolHandle, botocore_blob, botocore_timestamp, input_members, model_from_json,
+    parse_case, parse_error_case, parse_options, protocol_named, serialize_case,
+};
 use model::value::{Map, Value};
 use serde_json::Value as JsonDoc;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -67,7 +70,7 @@ fn number(value: &Value) -> Option<f64> {
 
 /// One case's model: the suite's description with the case as its only
 /// operation, under `given.name` or `OperationName`.
-fn case_model(suite: &JsonDoc, case: &JsonDoc, wrap_output: bool) -> Result<(Model, String)> {
+fn case_model(suite: &JsonDoc, case: &JsonDoc, wrap_output: bool) -> Result<(Arc<Model>, String)> {
     let name = case["given"]["name"]
         .as_str()
         .unwrap_or("OperationName")
@@ -82,7 +85,7 @@ fn case_model(suite: &JsonDoc, case: &JsonDoc, wrap_output: bool) -> Result<(Mod
     let mut operations = serde_json::Map::new();
     operations.insert(name.clone(), given);
     object.insert("operations".into(), JsonDoc::Object(operations));
-    Ok((Model::from_value(&description)?, name))
+    Ok((model_from_json(&serde_json::to_vec(&description)?)?, name))
 }
 
 /// The query output case's `resultWrapper`, set when the output shape has
@@ -154,12 +157,12 @@ fn bytes_to_text(value: Value) -> Value {
     }
 }
 
-fn protocol(name: &str) -> &'static dyn Protocol {
-    match name {
-        "query" => &Query,
-        "rest-json" => &RestJson,
-        _ => &Json,
-    }
+fn protocol(name: &str) -> Result<ProtocolHandle> {
+    let name = match name {
+        "query" | "rest-json" => name,
+        _ => "json",
+    };
+    Ok(protocol_named(name).ok_or("protocol")?)
 }
 
 /// The protocol a suite file's cases speak.
@@ -173,9 +176,8 @@ fn protocol_of(file: &str) -> &str {
 /// `test_input_compliance` for one case.
 fn input_case(protocol_name: &str, suite: &JsonDoc, case: &JsonDoc) -> Result<()> {
     let (model, name) = case_model(suite, case, false)?;
-    let operation = model.operation(&name).ok_or("operation")?;
     let params = special_floats_in(Value::from_serde(&case["params"]));
-    let request = protocol(protocol_name).serialize(&model, operation, &params)?;
+    let request = serialize_case(protocol(protocol_name)?, &model, &name, &params)?;
     let expected = &case["serialized"];
     if let Some(body) = expected["body"].as_str()
         && !same_body(protocol_name, &request.body, body.as_bytes())?
@@ -186,7 +188,7 @@ fn input_case(protocol_name: &str, suite: &JsonDoc, case: &JsonDoc) -> Result<()
         )
         .into());
     }
-    let lists = list_headers(&model, operation);
+    let lists = list_headers(&model, &name);
     check_headers(protocol_name, &lists, &request.headers, expected)?;
     let mut path = request.path.clone();
     if !request.query.is_empty() {
@@ -221,22 +223,17 @@ fn same_body(protocol_name: &str, actual: &[u8], expected: &[u8]) -> Result<bool
 
 /// The input's `header` list members `_clean_list_header_values` reads:
 /// each header's name, and whether its items are timestamps.
-fn list_headers(model: &Model, operation: &Operation) -> Vec<(String, bool)> {
-    let Some(input) = operation.input else {
-        return Vec::new();
-    };
-    model
-        .members(input)
-        .iter()
+fn list_headers(model: &Model, operation: &str) -> Vec<(String, bool)> {
+    input_members(model, operation)
+        .into_iter()
         .filter_map(|member| {
-            let shape = model.shape(member.shape);
-            let ShapeKind::List { member: item } = shape.kind else {
+            if member.type_name != "list" {
                 return None;
-            };
-            let name = shape.traits.name.as_deref()?;
-            (shape.traits.location.as_deref() == Some("header")).then(|| {
-                let timestamps = matches!(model.shape(item).kind, ShapeKind::Timestamp);
-                (name.to_owned(), timestamps)
+            }
+            let name = member.location_name?;
+            (member.location.as_deref() == Some("header")).then(|| {
+                let timestamps = member.item_type_name.as_deref() == Some("timestamp");
+                (name, timestamps)
             })
         })
         .collect()
@@ -331,7 +328,7 @@ fn check_host(suite: &JsonDoc, prefix: &Option<String>, expected: &JsonDoc) -> R
 
 /// `_compliance_timestamp_parser`: seconds since the epoch, as a float.
 fn compliance_timestamp(value: &Value) -> std::result::Result<Value, ParseError> {
-    match (ParseOptions::BOTOCORE.timestamp)(value)? {
+    match botocore_timestamp(value)? {
         Value::Timestamp(at) => Ok(Value::Float(at.unix_micros() as f64 / 1e6)),
         other => Ok(other),
     }
@@ -341,7 +338,6 @@ fn compliance_timestamp(value: &Value) -> std::result::Result<Value, ParseError>
 fn output_case(protocol_name: &str, suite: &JsonDoc, case: &JsonDoc) -> Result<()> {
     let is_error = case.get("error").is_some();
     let (model, name) = case_model(suite, case, protocol_name == "query" && !is_error)?;
-    let operation = model.operation(&name).ok_or("operation")?;
     let raw = &case["response"];
     let body = match raw["body"].as_str() {
         Some(body) => body.as_bytes().to_vec(),
@@ -364,12 +360,9 @@ fn output_case(protocol_name: &str, suite: &JsonDoc, case: &JsonDoc) -> Result<(
         headers: headers.unwrap_or_default(),
         body,
     };
-    let options = ParseOptions {
-        timestamp: &compliance_timestamp,
-        blob: ParseOptions::BOTOCORE.blob,
-    };
+    let options = parse_options(&compliance_timestamp, &botocore_blob);
     let (parsed, expected) = if is_error {
-        let error = protocol(protocol_name).parse_error(&model, operation, &response, &options)?;
+        let error = parse_error_case(protocol(protocol_name)?, &model, &name, &response, &options)?;
         let mut parsed = Map::new();
         let kept: Map = error
             .error
@@ -384,7 +377,7 @@ fn output_case(protocol_name: &str, suite: &JsonDoc, case: &JsonDoc) -> Result<(
         (parsed, expected_error(case))
     } else {
         let Value::Map(mut parsed) =
-            protocol(protocol_name).parse(&model, operation, &response, &options)?
+            parse_case(protocol(protocol_name)?, &model, &name, &response, &options)?
         else {
             return Err("not a structure".into());
         };

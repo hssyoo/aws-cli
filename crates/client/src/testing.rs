@@ -10,6 +10,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use timestamp::Timestamp;
 
+pub mod facade;
 pub mod fuzz;
 #[cfg(test)]
 mod tests;
