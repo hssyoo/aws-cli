@@ -17,18 +17,25 @@ mod tests;
 /// Whether the workspace's source defines the item a [`crate::hooks::Basis`]
 /// path names. The first segment names a crate (`service_command` is
 /// `crates/service-command/src`), the segments after it name modules by
-/// file (`a::b` is `a/b.rs` or `a/b/mod.rs`), and the last names an item
-/// defined at the top of that module's file (a `fn`, `struct`, `enum`,
-/// `trait`, `type`, `const` or `static`) or re-exported there by a
-/// `pub use`. When the second-to-last segment names a type or trait
-/// instead, the last is a method: a `fn` in an `impl` of that type, or in
-/// the trait, in the module that holds it (`client::call::Client::prepare`
-/// is `prepare` in an `impl Client` in `crates/client/src/call.rs`).
+/// file (`a::b` is `a/b.rs` or `a/b/mod.rs`, which its parent's file
+/// declares with `mod b`), and the last names an item defined at the top
+/// of that module's file (a `fn`, `struct`, `enum`, `trait`, `type`,
+/// `const` or `static`) or re-exported there by a `pub use`. When the
+/// second-to-last segment names a type or trait instead, the last is a
+/// method: a `fn` directly in an `impl` of that type, or in the trait, in
+/// that module's file (`client::call::Client::prepare` is `prepare` in an
+/// `impl Client` in `crates/client/src/call.rs`). Comments never declare.
 /// `workspace` is the repository's root.
+///
+/// The source is read line by line as rustfmt lays it out, and these do
+/// not resolve: inline `mod x { .. }` and `#[path]` modules, glob and
+/// nested-brace `pub use`, a method whose `impl` is in another module, and
+/// a method reached through a re-exported type.
 ///
 /// # Errors
 /// A source file that cannot be read, or an ambiguous path: one whose
-/// module has two files, or that names both an item and a method.
+/// module has two files, that names both an item and a method, or whose
+/// method two trait `impl`s define and no inherent `impl` does.
 pub fn defines(workspace: &Path, path: &str) -> io::Result<bool> {
     let segments: Vec<&str> = path.split("::").collect();
     let resolver = Resolver { workspace, path };
@@ -117,7 +124,7 @@ impl Resolver<'_> {
                 name => {
                     let mut child = module.clone();
                     child.path.push(name.to_owned());
-                    if self.file(&child)?.is_some() {
+                    if self.file(&child)?.is_some() && self.declares_module(&module, name)? {
                         module = child;
                     } else if let Some(root) = self.crate_root(name).filter(|_| index == 0) {
                         module = root;
@@ -157,6 +164,14 @@ impl Resolver<'_> {
         Ok(as_item || as_method)
     }
 
+    /// Whether `parent`'s file declares `mod name` at its top.
+    fn declares_module(&self, parent: &Module, name: &str) -> io::Result<bool> {
+        let source = self.source(parent)?.unwrap_or_default();
+        Ok(source
+            .lines()
+            .any(|line| !indented(line) && declares(line, &["mod"], name)))
+    }
+
     /// The source of the file that holds `module`, if one does.
     fn source(&self, module: &Module) -> io::Result<Option<String>> {
         self.file(module)?.map(std::fs::read_to_string).transpose()
@@ -170,7 +185,7 @@ impl Resolver<'_> {
         };
         if source
             .lines()
-            .any(|line| !indented(line) && declares(line, name))
+            .any(|line| !indented(line) && declares(line, &KINDS, name))
         {
             return Ok(true);
         }
@@ -183,25 +198,40 @@ impl Resolver<'_> {
         Ok(false)
     }
 
-    /// Whether `module` has a `fn method` in an `impl` of `owner` or in the
-    /// trait `owner`.
+    /// Whether `module` has a `fn method` directly in an inherent `impl` of
+    /// `owner` or in the trait `owner`, or else in exactly one trait `impl`
+    /// for `owner` (in two, the path is ambiguous).
     fn method(&self, module: &Module, owner: &str, method: &str) -> io::Result<bool> {
         let Some(source) = self.source(module)? else {
             return Ok(false);
         };
-        let mut lines = source.lines();
+        let (mut lines, mut trait_impls) = (source.lines(), 0);
         while let Some(header) = lines.next() {
             if indented(header) || header.trim_end().ends_with('}') {
                 continue;
             }
-            if owner_of(header).is_some_and(|name| name == owner) {
-                let mut block = lines.by_ref().take_while(|line| !line.starts_with('}'));
-                if block.any(|line| declares(line, method)) {
+            let Some((name, trait_impl)) = owner_of(header) else {
+                continue;
+            };
+            let block = lines.by_ref().take_while(|line| !line.starts_with('}'));
+            let member = |line: &&str| line.starts_with("    ") && !indented(&line[4..]);
+            if name == owner
+                && block
+                    .filter(member)
+                    .any(|line| declares(line, &KINDS, method))
+            {
+                if !trait_impl {
                     return Ok(true);
                 }
+                trait_impls += 1;
             }
         }
-        Ok(false)
+        if trait_impls > 1 {
+            return Err(self.ambiguous(&format!(
+                "{trait_impls} trait impls for `{owner}` define `{method}`"
+            )));
+        }
+        Ok(trait_impls == 1)
     }
 }
 
@@ -217,19 +247,27 @@ fn identifier(text: &str) -> &str {
     &text[..end]
 }
 
-/// Whether `line` declares an item called `name`.
-fn declares(line: &str, name: &str) -> bool {
-    let words: Vec<&str> = line.split_whitespace().collect();
+/// Whether `line`, outside its `//` comment, declares a `kinds` item
+/// called `name`.
+fn declares(line: &str, kinds: &[&str], name: &str) -> bool {
+    let words: Vec<&str> = code(line).split_whitespace().collect();
     words
         .windows(2)
-        .any(|pair| KINDS.contains(&pair[0]) && identifier(pair[1]) == name)
+        .any(|pair| kinds.contains(&pair[0]) && identifier(pair[1]) == name)
 }
 
-/// The type an `impl` header implements for, or the trait a `trait`
-/// header declares, read with its generics removed.
-fn owner_of(header: &str) -> Option<String> {
+/// `line` up to any `//` comment (`///` and `//!` docs included).
+fn code(line: &str) -> &str {
+    line.split("//").next().unwrap_or_default()
+}
+
+/// The type an `impl` header implements for, with whether the `impl` is
+/// of a trait, or the trait a `trait` header declares; read with its
+/// generics removed, and only from a header that opens with the keyword
+/// (after `pub` or `unsafe`).
+fn owner_of(header: &str) -> Option<(String, bool)> {
     let mut depth = 0;
-    let bare: String = header
+    let bare: String = code(header)
         .chars()
         .filter(|&c| {
             depth += i32::from(c == '<') - i32::from(c == '>');
@@ -239,15 +277,15 @@ fn owner_of(header: &str) -> Option<String> {
     let words: Vec<&str> = bare.split_whitespace().collect();
     let keyword = words
         .iter()
-        .take(3)
-        .position(|word| matches!(*word, "impl" | "trait"))?;
+        .position(|word| !(word.starts_with("pub") || *word == "unsafe"))
+        .filter(|&at| matches!(words[at], "impl" | "trait"))?;
     let named = match words[keyword] {
         "impl" => words.iter().rposition(|word| *word == "for"),
         _ => None,
     };
     let target = words.get(named.unwrap_or(keyword) + 1)?;
     let last = target.trim_start_matches('&').rsplit("::").next()?;
-    Some(identifier(last).to_owned())
+    Some((identifier(last).to_owned(), named.is_some()))
 }
 
 /// Each name a top-level `pub use` in `source` makes visible
@@ -256,6 +294,7 @@ fn reexports(source: &str) -> Vec<(String, Vec<String>)> {
     let mut found = Vec::new();
     let mut statement: Option<String> = None;
     for line in source.lines() {
+        let line = code(line);
         if let Some(text) = statement.as_mut() {
             text.push_str(line);
         } else if !indented(line) {
