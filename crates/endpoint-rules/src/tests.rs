@@ -281,8 +281,12 @@ fn host_labels() {
 #[test]
 fn parse_url_splits_as_the_crt_parser_does() -> Result<(), Error> {
     let fields = |url: &str| -> Option<Vec<String>> {
-        let EvalValue::Record(fields) =
-            stdlib::call(ir::FnId::ParseUrl, &[Some(EvalValue::str(url))]).ok()??
+        let EvalValue::Record(fields) = stdlib::call(
+            ir::FnId::ParseUrl,
+            &[Some(EvalValue::str(url))],
+            &Partitions::empty(),
+        )
+        .ok()??
         else {
             return None;
         };
@@ -388,7 +392,7 @@ fn substring_and_uri_encode() -> Result<(), Error> {
             Some(EvalValue::Int(stop)),
             Some(EvalValue::Bool(reverse)),
         ];
-        stdlib::call(ir::FnId::Substring, &args)
+        stdlib::call(ir::FnId::Substring, &args, &Partitions::empty())
     };
     assert_eq!(sub("abcdef", 1, 3, false)?, Some(EvalValue::str("bc")));
     assert_eq!(sub("abcdef", 1, 3, true)?, Some(EvalValue::str("de")));
@@ -396,7 +400,11 @@ fn substring_and_uri_encode() -> Result<(), Error> {
         assert_eq!(sub("abcdef", start, stop, false)?, None);
     }
     assert_eq!(sub("abcdé", 0, 1, false)?, None);
-    let encoded = stdlib::call(ir::FnId::UriEncode, &[Some(EvalValue::str("a b/é~-_."))])?;
+    let encoded = stdlib::call(
+        ir::FnId::UriEncode,
+        &[Some(EvalValue::str("a b/é~-_."))],
+        &Partitions::empty(),
+    )?;
     assert_eq!(encoded, Some(EvalValue::str("a%20b%2F%C3%A9~-_.")));
     Ok(())
 }
@@ -413,4 +421,237 @@ fn errors_display_the_crt_texts() {
         "endpoint resolution failed"
     );
     assert_eq!(EvalError::new("x").detail(), "x");
+}
+
+fn aws(
+    id: ir::FnId,
+    args: &[EvalValue],
+    partitions: &Partitions,
+) -> Result<Option<EvalValue>, EvalError> {
+    let args: Vec<_> = args.iter().cloned().map(Some).collect();
+    stdlib::call(id, &args, partitions)
+}
+
+#[test]
+fn arns_parse_as_the_crt_engine_does() -> Result<(), Error> {
+    let parse = |arn: &str| {
+        aws(
+            ir::FnId::AwsParseArn,
+            &[EvalValue::str(arn)],
+            &Partitions::empty(),
+        )
+    };
+    let Some(parsed) = parse("arn:aws:s3:us-west-2:123:accesspoint/a:b//c")? else {
+        return Err("no arn".into());
+    };
+    let field = |key: &str| parsed.field(key).cloned();
+    assert_eq!(field("partition"), Some(EvalValue::str("aws")));
+    assert_eq!(field("region"), Some(EvalValue::str("us-west-2")));
+    assert_eq!(field("accountId"), Some(EvalValue::str("123")));
+    let ids = ["accesspoint", "a", "b", "", "c"].map(EvalValue::str);
+    assert_eq!(field("resourceId"), Some(EvalValue::Array(ids.into())));
+    assert!(
+        parse("arn:aws:s3:::r")?.is_some(),
+        "region and account may be empty"
+    );
+    for none in [
+        "arn:aws:s3:r:a",
+        "arx:aws:s3:r:a:x",
+        "arn::s3:r:a:x",
+        "arn:aws::r:a:x",
+        "arn:aws:s3:r:a:",
+    ] {
+        assert_eq!(parse(none)?, None, "{none}");
+    }
+    Ok(())
+}
+
+#[test]
+fn virtual_hostable_buckets() -> Result<(), Error> {
+    let hostable = |bucket: &str, subdomains| {
+        let args = [EvalValue::str(bucket), EvalValue::Bool(subdomains)];
+        aws(
+            ir::FnId::AwsIsVirtualHostableS3Bucket,
+            &args,
+            &Partitions::empty(),
+        )
+    };
+    let yes = Some(EvalValue::Bool(true));
+    let no = Some(EvalValue::Bool(false));
+    assert_eq!(hostable("abc", false)?, yes);
+    assert_eq!(hostable(&"a".repeat(63), false)?, yes);
+    assert_eq!(
+        hostable("a.b.c", true)?,
+        yes,
+        "labels may be short; the whole is 3 or more"
+    );
+    for (bucket, subdomains) in [
+        ("ab", false),
+        (&"a".repeat(64)[..], false),
+        ("aBc", false),
+        ("a.bc", false),
+        ("1.2.3.4", true),
+        ("a..b", true),
+        (&format!("a.{}", "b".repeat(62))[..], true),
+    ] {
+        assert_eq!(hostable(bucket, subdomains)?, no, "{bucket}");
+    }
+    Ok(())
+}
+
+/// A partitions document with a region override, a description and two
+/// regexes.
+fn partitions() -> Result<Partitions, DecodeError> {
+    let doc = json!({"version": "1.1", "partitions": [
+        {"id": "aws", "regionRegex": "^(us|eu)\\-\\w+\\-\\d+$",
+         "outputs": {"name": "aws", "dnsSuffix": "amazonaws.com", "supportsFIPS": true},
+         "regions": {"us-east-1": {"description": "N. Virginia"},
+                     "aws-global": {"description": "global", "dnsSuffix": "global.example",
+                                    "extra": "x"}}},
+        {"id": "other", "regionRegex": "^o\\-\\w+\\-\\d+$",
+         "outputs": {"name": "other", "dnsSuffix": "o.example"}},
+    ]});
+    Partitions::decode(doc.to_string().as_bytes())
+}
+
+#[test]
+fn partitions_match_regions_as_the_crt_engine_does() -> Result<(), Error> {
+    let partitions = partitions()?;
+    let suffix = |region: &str| -> Result<Option<EvalValue>, EvalError> {
+        let found = aws(
+            ir::FnId::AwsPartition,
+            &[EvalValue::str(region)],
+            &partitions,
+        )?;
+        Ok(found.and_then(|p| p.field("dnsSuffix").cloned()))
+    };
+    let s = EvalValue::str;
+    assert_eq!(
+        suffix("aws-global")?,
+        Some(s("global.example")),
+        "a region's override"
+    );
+    assert_eq!(
+        suffix("us-east-1")?,
+        Some(s("amazonaws.com")),
+        "a description is not an output"
+    );
+    assert_eq!(suffix("o-west-2")?, Some(s("o.example")));
+    assert_eq!(
+        suffix("o-west-2x")?,
+        Some(s("o.example")),
+        "a match need not reach the end"
+    );
+    assert_eq!(
+        suffix("o-we5t-2")?,
+        Some(s("amazonaws.com")),
+        "\\w is a letter: falls back to aws"
+    );
+    assert_eq!(
+        suffix(&format!("o-{}-1", "w".repeat(46)))?,
+        Some(s("o.example")),
+        "50 bytes"
+    );
+    assert_eq!(
+        suffix(&format!("o-{}-1", "w".repeat(47)))?,
+        Some(s("amazonaws.com")),
+        "51 bytes"
+    );
+    assert_eq!(suffix("")?, Some(s("amazonaws.com")));
+    let global = aws(ir::FnId::AwsPartition, &[s("aws-global")], &partitions)?.ok_or("none")?;
+    let EvalValue::Record(fields) = global else {
+        return Err("not a record".into());
+    };
+    let keys: Vec<&str> = fields.iter().map(|(k, _)| &**k).collect();
+    assert_eq!(
+        keys,
+        ["name", "supportsFIPS", "dnsSuffix", "extra"],
+        "an override moves to the end"
+    );
+    let none = aws(
+        ir::FnId::AwsPartition,
+        &[s("us-east-1")],
+        &Partitions::empty(),
+    );
+    assert!(none.is_err(), "no aws partition to fall back to");
+    Ok(())
+}
+
+fn one_partition(regex: &str) -> serde_json::Value {
+    json!({"version": "1.1", "partitions": [{"id": "aws", "regionRegex": regex, "outputs": {}}]})
+}
+
+/// Regexes outside the CRT engine's subset are refused, with its text.
+#[test]
+fn partitions_refuse_unsupported_regexes() {
+    for regex in [
+        "us-east",
+        "^us$x",
+        "^us\\-\\w+\\-\\d+",
+        "^(us|use)\\-\\d+$",
+        "^(us||eu)$",
+        "^()$",
+        "^+a$",
+        "^a*b$",
+        "^(a-b)$",
+        "^[a]$",
+        "^a\\$",
+        &format!("^{}$", "a".repeat(59)),
+    ] {
+        let error = Partitions::decode(one_partition(regex).to_string().as_bytes()).err();
+        assert_eq!(
+            error.map(|e| e.to_string()).as_deref(),
+            Some("invalid endpoint partitions"),
+            "{regex}"
+        );
+    }
+    for regex in [
+        "^a*$",
+        "^a.+\\-b$",
+        "^(a|b)+\\-c$",
+        &format!("^{}$", "a".repeat(58)),
+    ] {
+        assert!(
+            Partitions::decode(one_partition(regex).to_string().as_bytes()).is_ok(),
+            "{regex}"
+        );
+    }
+    for bad in [
+        json!({"partitions": []}),
+        json!({"version": "1", "partitions": [{"outputs": {}}]}),
+        json!({"version": "1", "partitions": [{"id": "a", "outputs": {"x": null}}]}),
+    ] {
+        assert!(
+            Partitions::decode(bad.to_string().as_bytes()).is_err(),
+            "{bad}"
+        );
+    }
+}
+
+/// The shipped partitions decode.
+#[test]
+fn the_shipped_partitions_decode() -> Result<(), Error> {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../aws-cli/awscli/botocore/data/partitions.json"
+    );
+    let partitions = Partitions::decode(&std::fs::read(path)?)?;
+    let name = |region: &str| -> Result<Option<EvalValue>, EvalError> {
+        let found = aws(
+            ir::FnId::AwsPartition,
+            &[EvalValue::str(region)],
+            &partitions,
+        )?;
+        Ok(found.and_then(|p| p.field("name").cloned()))
+    };
+    for (region, partition) in [
+        ("us-gov-west-1", "aws-us-gov"),
+        ("cn-north-9", "aws-cn"),
+        ("eusc-de-east-9", "aws-eusc"),
+        ("us-isob-east-9", "aws-iso-b"),
+        ("mars-east-1", "aws"),
+    ] {
+        assert_eq!(name(region)?, Some(EvalValue::str(partition)), "{region}");
+    }
+    Ok(())
 }

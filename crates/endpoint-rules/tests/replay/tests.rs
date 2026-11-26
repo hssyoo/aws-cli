@@ -97,6 +97,7 @@ fn mismatch(got: &Result<Outcome, EvalError>, expect: &Value) -> Option<String> 
 }
 
 struct Tally {
+    partitions: Partitions,
     report: String,
     dirs: usize,
     cases: usize,
@@ -115,9 +116,8 @@ impl Tally {
             .get("testCases")
             .and_then(Value::as_array)
             .ok_or("no testCases")?;
-        let partitions = Partitions::empty();
         let library = Library {
-            partitions: &partitions,
+            partitions: &self.partitions,
         };
         let mut passed = 0;
         for (index, case) in cases.iter().enumerate() {
@@ -142,9 +142,8 @@ impl Tally {
     }
 }
 
-/// Every directory's cases replay to their expectations, but the listed
-/// disagreements; a rule set that does not decode needs an AWS function
-/// (`aws.*`), which this step does not have yet.
+/// Every directory's rule set decodes, and its cases replay to their
+/// expectations, but the listed disagreements.
 #[test]
 fn the_suite_replays() -> Result<(), Error> {
     let root = repo().join("aws-cli/tests/functional/botocore/endpoint-rules");
@@ -153,14 +152,15 @@ fn the_suite_replays() -> Result<(), Error> {
         .collect::<Result<_, std::io::Error>>()?;
     services.sort();
     assert_eq!(services.len(), 437, "the suite's directories");
+    let partitions = repo().join("aws-cli/awscli/botocore/data/partitions.json");
     let mut tally = Tally {
+        partitions: Partitions::decode(&std::fs::read(partitions)?)?,
         report: String::new(),
         dirs: 0,
         cases: 0,
         failures: Vec::new(),
         disagreements_seen: Vec::new(),
     };
-    let mut needs_aws = 0;
     for service in &services {
         let Some(path) = rule_set(service)? else {
             assert!(
@@ -172,14 +172,6 @@ fn the_suite_replays() -> Result<(), Error> {
         };
         match Program::decode(&std::fs::read(path)?) {
             Ok(program) => tally.replay(service, &program)?,
-            Err(error) if error.detail().starts_with("unknown function \"aws.") => {
-                needs_aws += 1;
-                writeln!(
-                    tally.report,
-                    "{service}: needs AWS functions ({})",
-                    error.detail()
-                )?;
-            }
             Err(error) => tally
                 .failures
                 .push(format!("{service}: {}", error.detail())),
@@ -187,8 +179,7 @@ fn the_suite_replays() -> Result<(), Error> {
     }
     writeln!(
         tally.report,
-        "total: {} directories replayed, {} cases, {needs_aws} need AWS functions, \
-         {} listed disagreements",
+        "total: {} directories replayed, {} cases, {} listed disagreements",
         tally.dirs,
         tally.cases,
         tally.disagreements_seen.len()
@@ -203,7 +194,12 @@ fn the_suite_replays() -> Result<(), Error> {
         tally.failures.len(),
         tally.failures.join("\n")
     );
-    assert!(tally.dirs > 0);
+    assert_eq!(
+        tally.dirs,
+        services.len() - NO_RULE_SET.len(),
+        "directories replayed"
+    );
+    assert_eq!(tally.disagreements_seen.len(), DISAGREEMENTS.len());
     Ok(())
 }
 

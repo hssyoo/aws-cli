@@ -6,11 +6,11 @@
 //! siblings.
 use crate::error::EvalError;
 use crate::ir::{Condition, EvalValue, Expr, Header, PathPart, Rule, RuleSet, TemplatePart};
-use crate::{Endpoint, Outcome, Params, stdlib};
+use crate::{Endpoint, Library, Outcome, Params, stdlib};
 
 type Result<T> = std::result::Result<T, EvalError>;
 
-pub(crate) fn evaluate(rules: &RuleSet, args: &Params) -> Result<Outcome> {
+pub(crate) fn evaluate(rules: &RuleSet, args: &Params, lib: &Library<'_>) -> Result<Outcome> {
     let mut scope = vec![None; usize::from(rules.scope_len)];
     for param in &rules.params {
         let value = args.get(param.slot).cloned();
@@ -30,18 +30,21 @@ pub(crate) fn evaluate(rules: &RuleSet, args: &Params) -> Result<Outcome> {
     if rules.rules.is_empty() {
         return Err(EvalError::new("the rule set has no rules"));
     }
-    Eval { scope }.rules(&rules.rules)?.ok_or_else(exhausted)
+    Eval { scope, lib }
+        .rules(&rules.rules)?
+        .ok_or_else(exhausted)
 }
 
 fn exhausted() -> EvalError {
     EvalError::new("no rule matched")
 }
 
-struct Eval {
+struct Eval<'a> {
     scope: Vec<Option<EvalValue>>,
+    lib: &'a Library<'a>,
 }
 
-impl Eval {
+impl Eval<'_> {
     fn rules(&mut self, rules: &[Rule]) -> Result<Option<Outcome>> {
         for rule in rules {
             if let Some(outcome) = self.rule(rule)? {
@@ -130,7 +133,7 @@ impl Eval {
                     .iter()
                     .map(|arg| self.expr(arg))
                     .collect::<Result<Vec<_>>>()?;
-                stdlib::call(*id, &args)
+                stdlib::call(*id, &args, self.lib.partitions)
             }
             Expr::GetAttr(target, path) => get_attr(self.expr(target)?.as_ref(), path),
             Expr::Array(items) => {

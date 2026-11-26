@@ -1,7 +1,8 @@
-//! The rules language's standard library 1.0, as the CRT engine
+//! The rules language's standard library 1.0 and the AWS functions, as the CRT engine
 //! implements it (`endpoints_standard_lib.c`, with `aws-c-common`'s URI
 //! parser and host checks): each function takes its arguments' exact
 //! types, and an unset or mistyped argument fails evaluation.
+use crate::Partitions;
 use crate::error::EvalError;
 use crate::ir::{EvalValue, FnId};
 use std::sync::Arc;
@@ -34,7 +35,11 @@ fn int(arg: &Arg, name: &str) -> Result<i64, EvalError> {
 }
 
 /// Calls `id` on its evaluated arguments; `None` is an unset result.
-pub(crate) fn call(id: FnId, args: &[Arg]) -> Result<Option<EvalValue>, EvalError> {
+pub(crate) fn call(
+    id: FnId,
+    args: &[Arg],
+    partitions: &Partitions,
+) -> Result<Option<EvalValue>, EvalError> {
     let bool_of = |flag| Ok(Some(EvalValue::Bool(flag)));
     match (id, args) {
         (FnId::IsSet, [value]) => bool_of(value.is_some()),
@@ -59,8 +64,53 @@ pub(crate) fn call(id: FnId, args: &[Arg]) -> Result<Option<EvalValue>, EvalErro
             int(stop, "substring")?,
             boolean(reverse, "substring")?,
         )),
+        (FnId::AwsPartition, [region]) => {
+            Ok(Some(partitions.lookup(string(region, "aws.partition")?)?))
+        }
+        (FnId::AwsParseArn, [arn]) => Ok(parse_arn(string(arn, "aws.parseArn")?)),
+        (FnId::AwsIsVirtualHostableS3Bucket, [bucket, subdomains]) => {
+            let name = "aws.isVirtualHostableS3Bucket";
+            bool_of(is_virtual_hostable_bucket(
+                string(bucket, name)?,
+                boolean(subdomains, name)?,
+            ))
+        }
         _ => Err(EvalError::new(format!("{id:?}: wrong number of arguments"))),
     }
+}
+
+/// `aws.parseArn`: `arn:partition:service:region:account:resource`, the
+/// partition, service and resource not empty, the resource split at each
+/// `/` and `:`.
+fn parse_arn(arn: &str) -> Option<EvalValue> {
+    let parts: Vec<&str> = arn.splitn(6, ':').collect();
+    let [prefix, partition, service, region, account, resource] = parts[..] else {
+        return None;
+    };
+    if prefix != "arn" || partition.is_empty() || service.is_empty() || resource.is_empty() {
+        return None;
+    }
+    let ids = resource
+        .split(['/', ':'])
+        .map(EvalValue::str)
+        .collect::<Vec<_>>();
+    let fields: [(&str, EvalValue); 5] = [
+        ("partition", EvalValue::str(partition)),
+        ("service", EvalValue::str(service)),
+        ("region", EvalValue::str(region)),
+        ("accountId", EvalValue::str(account)),
+        ("resourceId", EvalValue::Array(ids.into())),
+    ];
+    Some(EvalValue::Record(fields.map(|(k, v)| (k.into(), v)).into()))
+}
+
+/// `aws.isVirtualHostableS3Bucket`: 3 to 63 bytes in all, no capital, a
+/// host label (or labels, with `subdomains`) and not an IPv4 address.
+fn is_virtual_hostable_bucket(bucket: &str, subdomains: bool) -> bool {
+    (3..=63).contains(&bucket.len())
+        && !bucket.bytes().any(|b| b.is_ascii_uppercase())
+        && is_valid_host_label(bucket, subdomains)
+        && !is_ipv4(bucket.as_bytes())
 }
 
 /// `aws_is_valid_host_label`: labels of 1 to 63 letters, digits and `-`,

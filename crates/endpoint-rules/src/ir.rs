@@ -187,6 +187,9 @@ pub(crate) enum FnId {
     ParseUrl,
     Substring,
     UriEncode,
+    AwsPartition,
+    AwsParseArn,
+    AwsIsVirtualHostableS3Bucket,
 }
 
 impl FnId {
@@ -201,6 +204,9 @@ impl FnId {
             "parseURL" => (Self::ParseUrl, 1),
             "substring" => (Self::Substring, 4),
             "uriEncode" => (Self::UriEncode, 1),
+            "aws.partition" => (Self::AwsPartition, 1),
+            "aws.parseArn" => (Self::AwsParseArn, 1),
+            "aws.isVirtualHostableS3Bucket" => (Self::AwsIsVirtualHostableS3Bucket, 2),
             _ => return None,
         })
     }

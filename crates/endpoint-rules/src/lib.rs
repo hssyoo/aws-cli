@@ -31,12 +31,14 @@ mod decode;
 mod error;
 mod eval;
 mod ir;
+mod partitions;
 mod stdlib;
 mod template;
 
 pub use decode::decode_rule_set;
 pub use error::{DecodeError, Document, EvalError};
 pub use ir::{EvalValue, ParamType, ParameterDef, RuleSet, Slot};
+pub use partitions::Partitions;
 
 /// A decoded rule set, ready to evaluate. Only the tree form exists; a
 /// BDD form would sit beside it and share the conditions, expressions,
@@ -62,9 +64,9 @@ impl Program {
         self.params().iter().find(|param| param.name() == name)
     }
     /// Evaluates the program for `args`.
-    pub fn evaluate(&self, args: &Params, _lib: &Library<'_>) -> Result<Outcome, EvalError> {
+    pub fn evaluate(&self, args: &Params, lib: &Library<'_>) -> Result<Outcome, EvalError> {
         match self {
-            Self::Tree(rules) => eval::evaluate(rules, args),
+            Self::Tree(rules) => eval::evaluate(rules, args, lib),
         }
     }
 }
@@ -112,19 +114,6 @@ pub struct Endpoint {
 #[derive(Debug, Clone, Copy)]
 pub struct Library<'a> {
     pub partitions: &'a Partitions,
-}
-
-/// The partitions `aws.partition` matches a region against.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Partitions {
-    _decoded_later: (),
-}
-
-impl Partitions {
-    /// No partitions.
-    pub fn empty() -> Self {
-        Self { _decoded_later: () }
-    }
 }
 
 #[cfg(test)]

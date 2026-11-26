@@ -27,6 +27,12 @@ impl DecodeError {
             detail: detail.into(),
         }
     }
+    pub(crate) fn partitions(detail: impl Into<Box<str>>) -> Self {
+        Self {
+            document: Document::Partitions,
+            detail: detail.into(),
+        }
+    }
     /// The document that failed.
     pub fn document(&self) -> Document {
         self.document
