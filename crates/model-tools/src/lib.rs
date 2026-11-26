@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 pub mod dump;
 pub mod eligibility;
+pub mod verdicts;
 
 // The census bin and the tests read the CLI's customization table.
 use customizations as _;
