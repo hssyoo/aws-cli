@@ -690,8 +690,8 @@ fn no_entry_covers_the_differences_past_the_named_ones() -> Result<(), TaskError
     Ok(())
 }
 
-// B3.3 (G-042b): each fails on 17a368a34, where a row that sent nothing
-// passed.
+// B3.3 (G-042b). On 17a368a34 a row that sent nothing passed; these name the
+// field it lacked, so they do not build there.
 
 fn sends_one() -> Value {
     json!({"requests": [request("/", &[("X-Amz-Target", "T.A")], "{}")]})

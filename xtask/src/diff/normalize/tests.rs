@@ -257,7 +257,8 @@ fn fields_keep_a_missing_equals_and_empty_fields() {
     assert_eq!(fields("a&a&&b").empty, [Some(("a".to_owned(), 1))]);
 }
 
-// B3.3 (G-042a): each fails on 17a368a34, where a header's UUID stayed raw.
+// B3.3 (G-042a). All but `a_header_uuid_the_row_gives_stays`, a guard against
+// over-normalizing, fail on 17a368a34, where a header's UUID stayed raw.
 
 /// The headers of `request` after normalizing it alone, with `inputs`.
 fn headers_of(request: &Request, inputs: &[&str]) -> Vec<(String, String)> {
