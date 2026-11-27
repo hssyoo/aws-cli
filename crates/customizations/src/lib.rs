@@ -155,6 +155,8 @@ pub static EC2: Customization = Customization {
     setting_defaults: &[],
     builtins: &[],
     interceptors: &[],
+    retry_classifiers: &[],
+    long_polling: false,
     replaces: &[(
         "botocore.handlers.ParameterAlias.alias_parameter_in_call",
         Basis::Inert {
