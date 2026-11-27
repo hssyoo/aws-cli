@@ -186,40 +186,6 @@ fn lowercase_headers(headers: &Headers) -> Map {
     map
 }
 
-/// `ResponseParser._has_unknown_tagged_union_member`: for a union, the tag
-/// of a member the model does not know, or `Err` when the response sets
-/// other than exactly one member. `present` names the set members.
-pub(super) fn unknown_union_member(
-    shape: Schema<'_>,
-    present: &[&Key],
-) -> Result<Option<Key>, ParseError> {
-    if !is_union(shape) {
-        return Ok(None);
-    }
-    let present: Vec<&Key> = present
-        .iter()
-        .copied()
-        .filter(|name| **name != *"__type")
-        .collect();
-    let [tag] = present[..] else {
-        return Err(ParseError::new(format!(
-            "Invalid service response: {} must have one and only one member set.",
-            name(shape)
-        )));
-    };
-    let known = shape.members().any(|member| *tag == *wire_name(member));
-    Ok((!known).then(|| tag.clone()))
-}
-
-/// `_handle_unknown_tagged_union_member`: the tag as the `str` it is.
-pub(super) fn unknown_member_value(tag: Key) -> Map {
-    let mut name = Map::new();
-    name.insert("name".into(), tag.to_value());
-    let mut parsed = Map::new();
-    parsed.insert("SDK_UNKNOWN_MEMBER".into(), Value::Map(name));
-    parsed
-}
-
 /// botocore's default `timestamp_parser`, `parse_timestamp`, as an instant:
 /// a number or text `float()` reads is seconds since the epoch, other text
 /// ISO 8601 or RFC 822. A zone-less time is taken as UTC.
@@ -402,11 +368,6 @@ pub(super) fn is_structure(shape: Schema<'_>) -> bool {
 /// says the reference's truthiness differs from the type's.
 pub(super) fn is_document(shape: Schema<'_>) -> bool {
     (shape.shape_type() == ShapeType::Document) != shape.has_trait(traits::DOCUMENT)
-}
-
-/// A truthy `union`, as [`is_document`] reads `document`.
-pub(super) fn is_union(shape: Schema<'_>) -> bool {
-    (shape.shape_type() == ShapeType::Union) != shape.has_trait(traits::UNION)
 }
 
 /// The headers as botocore's `HeadersDict` iterates them: each name once,
