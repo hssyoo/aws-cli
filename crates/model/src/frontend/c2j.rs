@@ -20,6 +20,9 @@ pub(crate) mod keys;
 mod read;
 mod traits;
 
+#[cfg(test)]
+mod tests;
+
 use traits::C2jTraits;
 
 type Object = Map<String, Json>;
