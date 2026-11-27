@@ -6,8 +6,9 @@
 //! The client sends no endpoint headers, so a resolution that returns any
 //! is refused ([`Unsupported::EndpointHeaders`]): of the rule sets this
 //! botocore ships, only s3control's returns them.
-use crate::admission::Unsupported;
+use crate::admission::{Unsupported, operation_schema};
 use crate::error::CallError;
+use model::schema::OperationSchema;
 use model::shapes::{Metadata, Model, Operation};
 use model::source::{Kind, LoadError, Source, load_data_bytes, load_service_bytes};
 use model::value::Value;
@@ -482,9 +483,10 @@ pub fn provider_params(
     account_id: Option<&str>,
 ) -> EndpointParams {
     let mut params = EndpointParams::default();
+    let schema = operation_schema(model, operation);
     for def in &data.parameters {
-        let value = static_param(operation, &def.name)
-            .or_else(|| context_param(model, operation, input, &def.name))
+        let value = static_param(schema, &def.name)
+            .or_else(|| context_param(schema, input, &def.name))
             .or_else(|| match def.builtin.as_deref()? {
                 "AWS::Auth::AccountId" => account_id.map(|id| ParamValue::String(id.to_owned())),
                 builtin => builtins.get(builtin).cloned(),
@@ -510,52 +512,46 @@ pub fn missing_client_context(
     model: &Model,
     operation: &Operation,
 ) -> Option<String> {
-    let bound = |name: &str| {
-        static_param(operation, name).is_some()
-            || operation.input.is_some_and(|shape| {
-                model.members(shape).iter().any(|member| {
-                    model.shape(member.shape).traits.context_param.as_deref() == Some(name)
-                })
-            })
-    };
+    let schema = operation_schema(model, operation);
+    let bound =
+        |name: &str| static_param(schema, name).is_some() || context_member(schema, name).is_some();
+    let declared = model.schema().service().client_context_params();
     data.parameters
         .iter()
         .filter(|def| def.required && !def.has_default && def.builtin.is_none())
-        .filter(|def| {
-            model
-                .client_context_params()
-                .iter()
-                .any(|param| *param.name == *def.name)
-        })
+        .filter(|def| declared.iter().any(|param| *param.name == *def.name))
         .find(|def| !bound(&def.name))
         .map(|def| def.name.clone())
 }
 
-fn static_param(operation: &Operation, name: &str) -> Option<ParamValue> {
-    let (_, value) = operation
-        .static_context_params
-        .iter()
-        .find(|(param, _)| &**param == name)?;
+fn static_param(operation: Option<OperationSchema<'_>>, name: &str) -> Option<ParamValue> {
+    let (_, value) = operation?
+        .static_context_params()
+        .find(|(param, _)| *param == name)?;
     param_value(value)
+}
+
+/// The first input member whose `contextParam` names `name`.
+fn context_member<'s>(operation: Option<OperationSchema<'s>>, name: &str) -> Option<&'s str> {
+    operation?
+        .input()?
+        .members()
+        .find(|member| member.context_param() == Some(name))?
+        .member_name()
 }
 
 /// `OperationModel.context_parameters`: the input member whose
 /// `contextParam` names `name`, and its value in `input`.
 fn context_param(
-    model: &Model,
-    operation: &Operation,
+    operation: Option<OperationSchema<'_>>,
     input: &Value,
     name: &str,
 ) -> Option<ParamValue> {
-    let shape = operation.input?;
-    let member = model
-        .members(shape)
-        .iter()
-        .find(|member| model.shape(member.shape).traits.context_param.as_deref() == Some(name))?;
+    let member = context_member(operation, name)?;
     let Value::Map(input) = input else {
         return None;
     };
-    param_value(input.get(&member.name)?)
+    param_value(input.get(member)?)
 }
 
 fn param_value(value: &Value) -> Option<ParamValue> {

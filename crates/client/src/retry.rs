@@ -2,11 +2,13 @@
 //! (`botocore/retries/standard.py`), on the parts it shares with the S3
 //! client ([`cli_core::retry`]): what the `classify_retry` stage sees of an
 //! attempt and may decide, the classification, and the handler.
+use crate::admission::operation_schema;
 use crate::error::ServiceError;
 use crate::http::HttpResponse;
 use crate::transport::TransportError;
 pub use cli_core::retry::ErrorKind;
 use cli_core::retry::{Quota, backoff_ceiling};
+use model::schema::{OperationSchema, TypeRegistry};
 use model::shapes::{Model, Operation};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
@@ -76,9 +78,12 @@ pub fn classify(model: &Model, operation: &Operation, attempt: &Attempt<'_>) -> 
         Attempt::Response { response, error } => (*response, *error),
     };
     let code = error.and_then(ServiceError::code);
-    let modeled = code.and_then(|code| modeled_retryable(model, operation, code));
+    let registry = model.schema().registry();
+    let schema = operation_schema(model, operation);
+    let modeled = code.and_then(|code| modeled_retryable(registry, schema?, code));
     let unmodeled_429 = response.status == THROTTLING_STATUS
-        && !code.is_some_and(|code| is_modeled(model, operation, code));
+        && !code
+            .is_some_and(|code| schema.is_some_and(|schema| is_modeled(registry, schema, code)));
     let throttled = code.is_some_and(|code| THROTTLED_CODES.contains(&code));
     let retryable = code.is_some_and(|code| TRANSIENT_CODES.contains(&code))
         || TRANSIENT_STATUSES.contains(&response.status)
@@ -99,10 +104,14 @@ pub fn classify(model: &Model, operation: &Operation, attempt: &Attempt<'_>) -> 
 
 /// `ModeledRetryErrorDetector.detect_error_type`: the kind of the
 /// operation's first retryable error shape whose code is `code`.
-fn modeled_retryable(model: &Model, operation: &Operation, code: &str) -> Option<ErrorKind> {
-    operation.errors.iter().find_map(|&shape| {
-        let retryable = model.shape(shape).traits.retryable.as_ref()?;
-        (model.error_code(shape) == Some(code)).then_some(if retryable.throttling {
+fn modeled_retryable(
+    registry: TypeRegistry<'_>,
+    operation: OperationSchema<'_>,
+    code: &str,
+) -> Option<ErrorKind> {
+    operation.errors().find_map(|error| {
+        let retryable = error.retryable()?;
+        (registry.error_code(error) == Some(code)).then_some(if retryable.throttling {
             ErrorKind::Throttling
         } else {
             ErrorKind::Transient
@@ -111,11 +120,10 @@ fn modeled_retryable(model: &Model, operation: &Operation, code: &str) -> Option
 }
 
 /// `ModeledRetryErrorDetector.is_modeled_error`.
-fn is_modeled(model: &Model, operation: &Operation, code: &str) -> bool {
+fn is_modeled(registry: TypeRegistry<'_>, operation: OperationSchema<'_>, code: &str) -> bool {
     operation
-        .errors
-        .iter()
-        .any(|&shape| model.error_code(shape) == Some(code))
+        .errors()
+        .any(|error| registry.error_code(error) == Some(code))
 }
 
 /// `ExponentialBackoff._get_retry_after_delay`: `x-amz-retry-after` in

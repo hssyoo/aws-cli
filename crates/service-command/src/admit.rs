@@ -14,6 +14,7 @@ use client::hooks::Customization;
 use client::paginate::PaginationConfig;
 use command::models::ModelSource;
 use model::paginators::Config;
+use model::schema::{Schema, ShapeType};
 use model::shapes::{Model, ShapeId, ShapeKind};
 use model::validate::{Validation, validate_input};
 use model::value::Value;
@@ -214,40 +215,91 @@ pub fn reason(unsupported: &Unsupported) -> PythonReason {
 /// carries its own offset.
 pub fn reaches_epoch_timestamp(model: &Model, shape: ShapeId) -> bool {
     let json = client::protocol::epoch_timestamps(model).unwrap_or(false);
-    reaches(model, shape, &mut Vec::new(), &|found| {
-        matches!(found.kind, ShapeKind::Timestamp)
-            && match found.traits.timestamp_format.as_deref() {
+    let Some(schema) = schema_of(model, shape) else {
+        return false;
+    };
+    reaches(schema, &mut Vec::new(), &|found| {
+        found.shape_type() == ShapeType::Timestamp
+            && match found.timestamp_format_text() {
                 Some(format) => format == "unixTimestamp",
                 None => json,
             }
     })
 }
 
-fn reaches(
-    model: &Model,
-    shape: ShapeId,
-    seen: &mut Vec<ShapeId>,
-    wanted: &dyn Fn(&model::shapes::Shape) -> bool,
+/// The schema the C2J front-end built for the arena's `shape`: a named
+/// shape, an operation's input, output or error reference, or a member,
+/// list member, map key or value reference of a named shape. Every arena
+/// shape is one of these, since a reference's own shape keeps its target's
+/// children. Both readings keep the same order of each.
+fn schema_of(model: &Model, shape: ShapeId) -> Option<Schema<'_>> {
+    let schema = model.schema();
+    for (operation, view) in model.operations().iter().zip(schema.service().operations()) {
+        let refs = [
+            (operation.input, view.input()),
+            (operation.output, view.output()),
+        ];
+        let errors = operation
+            .errors
+            .iter()
+            .map(|id| Some(*id))
+            .zip(view.errors().map(Some));
+        if let Some((_, found)) = refs
+            .into_iter()
+            .chain(errors)
+            .find(|(id, _)| *id == Some(shape))
+        {
+            return found;
+        }
+    }
+    for (named, view) in model.named_shapes().zip(schema.named()) {
+        if named == shape {
+            return Some(view);
+        }
+        let found = match model.shape(named).kind {
+            ShapeKind::Structure { .. } => model
+                .members(named)
+                .iter()
+                .zip(view.members())
+                .find(|(member, _)| member.shape == shape)
+                .map(|(_, member)| member),
+            ShapeKind::List { member } => view.list_member().filter(|_| member == shape),
+            ShapeKind::Map { key, value } => [(key, view.map_key()), (value, view.map_value())]
+                .into_iter()
+                .find(|(id, _)| *id == shape)
+                .and_then(|(_, found)| found),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+/// Whether `wanted` holds for `shape` or a schema it reaches through
+/// members, list members, map keys and values, whatever its type says.
+fn reaches<'s>(
+    shape: Schema<'s>,
+    seen: &mut Vec<Schema<'s>>,
+    wanted: &dyn Fn(Schema<'s>) -> bool,
 ) -> bool {
     if seen.contains(&shape) {
         return false;
     }
     seen.push(shape);
-    let found = model.shape(shape);
-    if wanted(found) {
+    if wanted(shape) {
         return true;
     }
-    match found.kind {
-        ShapeKind::Structure { .. } => model
-            .members(shape)
-            .iter()
-            .any(|member| reaches(model, member.shape, seen, wanted)),
-        ShapeKind::List { member } => reaches(model, member, seen, wanted),
-        ShapeKind::Map { key, value } => {
-            reaches(model, key, seen, wanted) || reaches(model, value, seen, wanted)
-        }
-        _ => false,
-    }
+    let children = shape
+        .list_member()
+        .into_iter()
+        .chain(shape.map_key())
+        .chain(shape.map_value());
+    shape
+        .members()
+        .chain(children)
+        .any(|child| reaches(child, seen, wanted))
 }
 
 #[cfg(test)]

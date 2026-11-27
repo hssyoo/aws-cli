@@ -233,3 +233,108 @@ fn a_blob_payload_at_either_end_is_streaming() -> Result<()> {
         }
     })
 }
+
+/// Every shape id the arena hands out: the named shapes, their members,
+/// list members, map keys and values, and the operations' references.
+fn arena_ids(model: &Model) -> Vec<ShapeId> {
+    let mut ids = Vec::new();
+    for named in model.named_shapes() {
+        ids.push(named);
+        match model.shape(named).kind {
+            ShapeKind::Structure { .. } => {
+                ids.extend(model.members(named).iter().map(|member| member.shape));
+            }
+            ShapeKind::List { member } => ids.push(member),
+            ShapeKind::Map { key, value } => ids.extend([key, value]),
+            _ => {}
+        }
+    }
+    for operation in model.operations() {
+        ids.extend(operation.input.iter().chain(&operation.output));
+        ids.extend(operation.errors.iter().copied());
+    }
+    ids
+}
+
+/// The schema of each arena shape reads as the arena does: its type, its
+/// `timestampFormat` and its children.
+fn check_schema_of(label: &str, model: &Model) -> std::result::Result<(), String> {
+    for id in arena_ids(model) {
+        let shape = model.shape(id);
+        let schema =
+            schema_of(model, id).ok_or_else(|| format!("{label}: {} unmapped", shape.name))?;
+        let children = match shape.kind {
+            ShapeKind::Structure { .. } => model.members(id).len(),
+            ShapeKind::List { .. } => 1,
+            ShapeKind::Map { .. } => 2,
+            _ => 0,
+        };
+        let found = schema.members().len()
+            + usize::from(schema.list_member().is_some())
+            + 2 * usize::from(schema.map_key().is_some());
+        let same = schema.type_name() == command::models::kind_name(&shape.kind)
+            && schema.timestamp_format_text() == shape.traits.timestamp_format.as_deref()
+            && found == children;
+        if !same {
+            return Err(format!("{label}: {} reads differently", shape.name));
+        }
+    }
+    Ok(())
+}
+
+/// `schema_of` finds a schema for every arena shape of every shipped and
+/// fake model, and the schema it finds reads as the arena shape does.
+#[test]
+fn every_arena_shape_has_the_schema_it_reads_as() -> Result<()> {
+    use model::source::{DirSource, Kind, Source};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut count = 0;
+    for dir in ["aws-cli/awscli/botocore/data", "tests/models"] {
+        let source = DirSource::new(root.join(dir));
+        for service in source.services(Kind::Service)? {
+            let model = Model::load(&source, &service).map_err(|e| format!("{service}: {e}"))?;
+            check_schema_of(&service, &model)?;
+            count += 1;
+        }
+    }
+    assert!(count > 400, "only {count} models read");
+    Ok(())
+}
+
+/// A member's own `timestampFormat` decides, not its target's: the walk
+/// reads the reference's schema, and an arena id of a reference maps to it.
+#[test]
+fn a_reference_s_timestamp_format_decides_the_local_zone() -> Result<()> {
+    let model = Model::from_json(
+        br#"{
+          "metadata": {"protocol": "query"},
+          "operations": {
+            "Get": {"name": "Get", "output": {"shape": "Out"}},
+            "Put": {"name": "Put", "output": {"shape": "Plain"}}
+          },
+          "shapes": {
+            "Out": {"type": "structure", "members": {
+              "Stamps": {"shape": "Stamps"}
+            }},
+            "Stamps": {"type": "list",
+              "member": {"shape": "Time", "timestampFormat": "unixTimestamp"}},
+            "Plain": {"type": "structure", "members": {"At": {"shape": "Time"}}},
+            "Time": {"type": "timestamp"}
+          }
+        }"#,
+    )?;
+    let output = |name: &str| model.operation(name).and_then(|found| found.output);
+    let (Some(get), Some(put)) = (output("Get"), output("Put")) else {
+        panic!("outputs");
+    };
+    assert!(reaches_epoch_timestamp(&model, get));
+    assert!(!reaches_epoch_timestamp(&model, put));
+    let stamps = model.shape_named("Stamps").ok_or("Stamps")?;
+    let ShapeKind::List { member } = model.shape(stamps).kind else {
+        panic!("Stamps is a list");
+    };
+    assert!(reaches_epoch_timestamp(&model, member));
+    let time = model.shape_named("Time").ok_or("Time")?;
+    assert!(!reaches_epoch_timestamp(&model, time));
+    check_schema_of("inline", &model).map_err(Into::into)
+}
