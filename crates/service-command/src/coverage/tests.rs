@@ -32,7 +32,8 @@ fn every_row_is_a_registry_entry_under_its_pattern() -> Result<()> {
     })
 }
 
-/// sts, lambda (whose table both editors edit) and the fake models meet
+/// sts, lambda (whose table both editors edit), ec2 (argrename and
+/// toplevelbool) and the fake models meet
 /// only covered initializers, and every row is met by one of them: the
 /// table is the cross-cutting set, no more.
 #[test]
@@ -44,6 +45,7 @@ fn the_cross_cutting_initializers_are_covered_and_all_are_met() -> Result<()> {
             ("lambda", "get-account-settings"),
             ("zquery", "get-thing"),
             ("zjson", "measure"),
+            ("ec2", "describe-regions"),
         ] {
             let found = matches(&models, command, operation);
             let everything = replacing_all(&models, command, operation);
@@ -278,6 +280,74 @@ fn every_core_router_refusal_refuses_where_the_customization_acts() -> Result<()
     Ok(())
 }
 
+/// argrename's row is reached by exactly the patterns the registry lists
+/// it under, each of which is one of its maps' event portions: the port
+/// covers every service the registry initializes it for.
+#[test]
+fn the_rename_row_is_reached_by_the_registry_s_patterns_alone() -> Result<()> {
+    with_models(|models| {
+        let row = CLI
+            .iter()
+            .find(|row| row.reached == Reached::Renames)
+            .unwrap_or_else(|| panic!("no rename row"));
+        let listed: Vec<&str> = models
+            .patterns()
+            .registry
+            .iter()
+            .filter(|(_, entries)| entries.iter().any(|entry| entry.name() == row.entry))
+            .map(|(pattern, _)| &**pattern)
+            .collect();
+        assert!(listed.len() > 50, "{listed:?}");
+        assert!(
+            listed.iter().all(|pattern| row.reached.by(pattern)),
+            "{listed:?}"
+        );
+        for portion in command::models::argedits::rename_portions() {
+            let pattern = format!("building-argument-table.{portion}");
+            assert!(
+                listed.contains(&pattern.as_str()),
+                "{pattern} is not listed"
+            );
+        }
+        for pattern in [
+            "building-argument-table.ec2",
+            "building-argument-table.*",
+            "building-argument-table",
+            "building-argument-table.ec2.describe-regions",
+            "building-command-table.ec2",
+            "operation-args-parsed.ec2.*",
+        ] {
+            assert!(!row.reached.by(pattern), "{pattern}");
+        }
+    })
+}
+
+/// `ParameterAlias('Filter', 'Filters')` acts only on params holding
+/// `Filters` for an input with a `Filter` member; no ec2 input has both,
+/// so no parse of the arguments the derivation gives can hold both.
+#[test]
+fn no_ec2_input_has_both_filter_members() -> Result<()> {
+    with_models(|models| {
+        let service = models.service("ec2").unwrap_or_else(|| panic!("ec2"));
+        let mut with_filter = 0;
+        for operation in service.model.schema().service().operations() {
+            let Some(input) = operation.input() else {
+                continue;
+            };
+            let has = |name: &str| {
+                input
+                    .members()
+                    .any(|member| member.member_name() == Some(name))
+            };
+            if has("Filter") {
+                with_filter += 1;
+                assert!(!has("Filters"), "{}", operation.name());
+            }
+        }
+        assert!(with_filter > 0, "no ec2 input has Filter");
+    })
+}
+
 /// The case of `entry`, whose native invocation is checked to route
 /// native, and the verdict of its acting one.
 fn routed(entry: &str) -> Result<(&'static Case, Verdict)> {
@@ -364,6 +434,18 @@ const CASES: &[(&str, Case)] = &[
     (
         ".add_generate_presigned_url",
         with_argv(IDENTITY, &["eks", "get-token", "--cluster-name", "c"]),
+    ),
+    (
+        ".alias_parameter_in_call",
+        with_argv(
+            &["ec2", "describe-regions"],
+            &[
+                "ec2",
+                "describe-flow-logs",
+                "--cli-input-json",
+                r#"{"Filters": []}"#,
+            ],
+        ),
     ),
     (
         ".register_cli_input_args",

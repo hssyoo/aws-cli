@@ -55,6 +55,9 @@ pub const MAX_ITEMS_WARNING: &str =
 pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Binding, PythonReason> {
     let paging = table.paging.as_ref();
     let raw = &parsed.args.namespace;
+    if let Some(failure) = bool_conflict(table, raw) {
+        return Ok(Binding::Raised(failure));
+    }
     let mut paginate = paging.is_some() && paginate_global(parsed);
     if let Some(paging) = paging {
         paginate &= !manual_token(paging, raw);
@@ -73,6 +76,13 @@ pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Binding, PythonRe
         .map(|argument| restored(argument, shadowed))
     {
         let dest = dest_of(argument);
+        if let Origin::BoolValue { member, value, .. } = &argument.origin {
+            if let Some(flag) = bool_value(*value, &parsed.values, &dest)? {
+                let value = Map::from_iter([("Value".to_owned(), Value::Bool(flag))]);
+                input.insert(member.to_string(), Value::Map(value));
+            }
+            continue;
+        }
         let Some(value) = parsed.values.value(&dest).filter(|value| !value.is_null()) else {
             continue;
         };
@@ -100,6 +110,49 @@ pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Binding, PythonRe
 }
 
 const PAGINATION_CONFIG: &str = "PaginationConfig";
+
+/// What a `toplevelbool` argument's `add_to_params` stores under
+/// `Value`: `PositiveBooleanArgument` given without a value, true (with
+/// one, the unpack loop already deferred it); `NegativeBooleanParameter`
+/// given, false; one left out (`_NOT_SPECIFIED`), nothing.
+fn bool_value(
+    positive: bool,
+    values: &Namespace,
+    dest: &str,
+) -> Result<Option<bool>, PythonReason> {
+    if !values.is_explicit(dest) {
+        return Ok(None);
+    }
+    match (positive, values.value(dest)) {
+        (true, Some(Parsed::Null)) => Ok(Some(true)),
+        (false, Some(Parsed::Bool(true))) => Ok(Some(false)),
+        _ => Err(PythonReason::UnsupportedValue),
+    }
+}
+
+/// `validate_boolean_mutex_groups` on `operation-args-parsed.ec2.*`, whose
+/// handlers run before the operation's own (the paging check's): the first
+/// pair both of whose arguments were given raises.
+fn bool_conflict(table: &Table, raw: &Namespace) -> Option<CommandFailure> {
+    let given = |name: &str| {
+        table
+            .arguments
+            .iter()
+            .find(|argument| &*argument.name == name)
+            .is_some_and(|argument| raw.is_explicit(&dest_of(argument)))
+    };
+    let (positive, negative) = table
+        .bool_pairs
+        .iter()
+        .find(|(positive, negative)| given(positive) && given(negative))?;
+    Some(CommandFailure {
+        message: format!(
+            "Cannot specify both the \"--{positive}\" option and the \"--{negative}\" option."
+        )
+        .into_bytes(),
+        ..CommandFailure::new(Category::ParamValidation)
+    })
+}
 
 /// `argument`, or the argument it shadowed, which `check_should_enable_
 /// pagination` put back in the table when it turned paging off.
@@ -245,7 +298,8 @@ fn scalar(value: &Parsed) -> Result<Value, PythonReason> {
     }
 }
 
-/// Whether a paging handler raises or writes before `_build_call_parameters`
+/// Whether `validate_boolean_mutex_groups` raises, or a paging handler
+/// raises or writes, before `_build_call_parameters`
 /// unpacks the value that failed (`parsed.stopped_dest`), which is then
 /// Python's to report: `ensure_paging_params_not_set`'s error on
 /// `operation-args-parsed`, before every argument; or, with paging on,
@@ -253,10 +307,13 @@ fn scalar(value: &Parsed) -> Result<Value, PythonReason> {
 /// not positive and raises when `int()` does, only when it comes before
 /// the failing argument in the table.
 pub fn precedes_unpack_failure(table: &Table, parsed: &ParseResult<'_>) -> bool {
+    let raw = &parsed.args.namespace;
+    if bool_conflict(table, raw).is_some() {
+        return true;
+    }
     let Some(paging) = table.paging.as_ref() else {
         return false;
     };
-    let raw = &parsed.args.namespace;
     let paginate = paginate_global(parsed) && !manual_token(paging, raw);
     if !paginate {
         return paging_params_set(paging, raw).is_some();

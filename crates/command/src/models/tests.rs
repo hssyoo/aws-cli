@@ -201,7 +201,7 @@ fn booleans_pair_with_their_negations_and_stay_optional() -> Result<()> {
         assert_eq!(negation.action, awscli_argparse::Action::StoreFalse);
         assert_eq!(negation.dest.as_deref(), Some("force"));
         assert!(
-            force.default_null && !force.required,
+            force.default == ArgDefault::Null && !force.required,
             "required booleans parse as optional"
         );
         let get = source
@@ -459,5 +459,39 @@ fn client_creation_rows_are_the_service_s_and_the_generic_ones() -> Result<()> {
 fn a_user_model_s_client_meets_the_generic_rows() -> Result<()> {
     with_source(Some(fake_models()), |source| {
         assert_eq!(client_handlers(source, "zjson", "measure"), generic(source));
+    })
+}
+
+/// argrename and toplevelbool on ec2's tables, in the emitter's order:
+/// create-image's `no-no-reboot` is renamed `reboot`, set last before the
+/// cross-cutting options; on modify-instance-attribute the ec2-wide
+/// `no-disable-api-termination` rename runs before toplevelbool makes that
+/// name, so the pair keeps it.
+#[test]
+fn ec2_tables_take_the_renames_and_pulled_up_pairs() -> Result<()> {
+    with_source(None, |source| {
+        let image = source
+            .table("ec2", "create-image")
+            .unwrap_or_else(|| panic!("create-image"));
+        let names = names(image);
+        assert_eq!(names[names.len() - 4], "reboot");
+        assert!(!names.contains(&"no-no-reboot"));
+        assert_eq!(argument(image, "reboot").dest.as_deref(), Some("no_reboot"));
+        let modify = source
+            .table("ec2", "modify-instance-attribute")
+            .unwrap_or_else(|| panic!("modify-instance-attribute"));
+        let names = self::names(modify);
+        assert!(names.contains(&"no-disable-api-termination"));
+        assert!(!names.contains(&"enable-api-termination"));
+        assert_eq!(modify.bool_pairs.len(), 5);
+        assert_eq!(
+            argument(modify, "ebs-optimized").default,
+            ArgDefault::NotSpecified
+        );
+        let run = source
+            .table("ec2", "run-instances")
+            .unwrap_or_else(|| panic!("run-instances"));
+        let renamed = argument(run, "enable-api-termination");
+        assert_eq!(renamed.dest.as_deref(), Some("disable_api_termination"));
     })
 }

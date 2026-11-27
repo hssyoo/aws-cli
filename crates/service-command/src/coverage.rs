@@ -66,6 +66,11 @@ pub enum Reached {
     /// met only by a root's own table event, and an editor met through any
     /// other pattern is still uncovered.
     RootTable,
+    /// `building-argument-table.<portion>` for each event portion of
+    /// argrename's two maps (`command::models::argedits::ARGUMENT_RENAMES`
+    /// and `HIDDEN_ALIASES`, ported whole): the services and operations it
+    /// renames arguments of, and no other pattern.
+    Renames,
 }
 
 impl Reached {
@@ -74,6 +79,11 @@ impl Reached {
         match self {
             Self::Pattern(own) => own == pattern,
             Self::RootTable => root_table_event(pattern),
+            Self::Renames => pattern
+                .strip_prefix("building-argument-table.")
+                .is_some_and(|portion| {
+                    command::models::argedits::rename_portions().any(|own| own == portion)
+                }),
         }
     }
 }
@@ -313,6 +323,32 @@ pub static CLI: &[Row] = &[
         basis: Basis::Inert {
             acts_when: "a structure, map or list of them is supplied",
             refused_as: OPTION,
+        },
+    },
+    Row {
+        reached: Reached::Renames,
+        entry: "awscli.customizations.argrename.register_arg_renames",
+        table: TableEdit::Reproduced {
+            how: "each rename and hidden alias of the operation's table event, in order",
+        },
+        // rename_arg and hidden_alias act on the table alone
+        // (argrename.py); a renamed argument keeps its member and binds
+        // under it, a boolean through the dest it was built with.
+        basis: Basis::Implemented {
+            at: "command::models::argedits::apply",
+        },
+    },
+    Row {
+        reached: Reached::Pattern("building-argument-table.ec2.*"),
+        entry: "awscli.customizations.toplevelbool.register_bool_params",
+        table: TableEdit::Reproduced {
+            how: "--flag and --no-flag for each structure(Value: boolean) member",
+        },
+        // pull_up_bool edits the table; the pairs bind {"Value": true} and
+        // {"Value": false}, and validate_boolean_mutex_groups' error on
+        // operation-args-parsed.ec2.* is raised first (toplevelbool.py).
+        basis: Basis::Implemented {
+            at: "service_command::bind::bind",
         },
     },
     // The table editors. Their handlers act on the building of a table,
