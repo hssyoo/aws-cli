@@ -257,19 +257,14 @@ fn the_name_mapping_and_its_replacement() -> Result<()> {
     Ok(())
 }
 
-/// The codec writes too: the root element is named by the `locationName`
-/// of the shape first written, whose absence is `KeyError: 'name'`.
+/// The codec reads only: its serializer refuses.
 #[test]
-fn the_xml_codec_serializes() -> Result<()> {
+fn the_xml_codec_does_not_serialize() -> Result<()> {
     let model = model()?;
     assert_eq!(XML.media_type(), "text/xml");
-    let name = shape(&model, "Out")?.member("Name").ok_or("Name")?;
-    let mut serializer = XML.serializer();
-    serializer.write_string(name, &Value::String("a&b".into()))?;
-    assert_eq!(serializer.finish()?, b"<name>a&amp;b</name>");
     let mut serializer = XML.serializer();
     let refused = serializer.write_string(shape(&model, "S")?, &Value::String("s".into()));
-    assert_eq!(refused.as_ref().map_err(SerdeError::message), Err("'name'"));
+    assert!(refused.is_err());
     assert!(serializer.finish().is_err());
     Ok(())
 }
