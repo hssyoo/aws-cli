@@ -22,9 +22,12 @@ use std::borrow::Cow;
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
+pub mod argedits;
 mod table;
 #[doc(inline)]
-pub use table::{DerivedArgument, Origin, Paging, PagingToken, Table, Unpack, ValueType};
+pub use table::{
+    ArgDefault, DerivedArgument, Origin, Paging, PagingToken, Table, Unpack, ValueType,
+};
 
 /// The tests' parsed paginator entries.
 #[cfg(test)]
@@ -279,7 +282,9 @@ impl<'a> ModelSource<'a> {
         let (index, model_operation) = service.position(operation)?;
         Some(service.tables.get(index)?.get_or_init(|| {
             let entry = service.paginator(model_operation.name());
-            let mut table = table::derive(model_operation, entry, &self.special);
+            let mut table = table::derive_edited(model_operation, entry, &self.special, |table| {
+                argedits::apply(table, model_operation, &self.patterns, command, operation);
+            });
             let events = [
                 format!("building-command-table.{command}_{operation}"),
                 format!("before-building-argument-table-parser.{command}.{operation}"),
@@ -363,10 +368,11 @@ fn argparse(argument: &DerivedArgument) -> Argument<'_> {
         action: argument.action,
         nargs: argument.nargs,
         constant: argument.constant.map(DefaultValue::String),
-        default: if argument.default_null {
-            DefaultValue::Null
-        } else {
-            DefaultValue::None
+        default: match argument.default {
+            ArgDefault::Unset => DefaultValue::None,
+            // argparse holds the sentinel where a native namespace holds
+            // null; binding tells them apart by explicitness.
+            ArgDefault::Null | ArgDefault::NotSpecified => DefaultValue::Null,
         },
         choices: argument.choices,
         required: argument.required,

@@ -230,6 +230,29 @@ impl Patterns {
         edits
     }
 
+    /// The registry initializers `events`, emitted in turn, initialize, in
+    /// the order they are initialized: for each event, the entries of the
+    /// patterns that match it in `prefix_search`'s order, each listed
+    /// entry once (`LazyInitEmitter._ensure_initialized`).
+    pub fn initialized(&self, events: &[String]) -> Vec<String> {
+        let mut order: Vec<String> = Vec::new();
+        for event in events {
+            let mut matching: Vec<&(Box<str>, Vec<Entry>)> = self
+                .registry
+                .iter()
+                .filter(|(pattern, _)| pattern_matches(pattern, event))
+                .collect();
+            matching.sort_by(|(a, _), (b, _)| emission_order(a, b));
+            for entry in matching.into_iter().flat_map(|(_, entries)| entries) {
+                let name = entry.name();
+                if !order.contains(&name) {
+                    order.push(name);
+                }
+            }
+        }
+        order
+    }
+
     /// The awscli entries whose patterns match one of `events`, by
     /// `module.function`.
     pub fn registry_entries(&self, events: &[String]) -> BTreeSet<String> {
@@ -451,6 +474,34 @@ fn builtin(row: &Json) -> Result<Builtin, PatternError> {
         handler: text(handler, "builtin handler")?,
         section,
     })
+}
+
+/// The order `PrefixTrie.prefix_search` gives two patterns that both match
+/// one event: its stack walk visits a node's literal child, all of its
+/// subtree, before its `*` child, and a node before its children, and it
+/// collects each node's values ahead of those visited before it
+/// (`extendleft`). So the pattern visited later comes first: the deeper of
+/// a pattern and its prefix, and at the first part they differ in, the
+/// `*`.
+pub fn emission_order(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (mut left, mut right) = (a.split('.'), b.split('.'));
+    loop {
+        match (left.next(), right.next()) {
+            (None, None) => return Ordering::Equal,
+            // The shorter is the ancestor, visited first, collected last.
+            (None, Some(_)) => return Ordering::Greater,
+            (Some(_), None) => return Ordering::Less,
+            (Some(x), Some(y)) if x == y => {}
+            (Some(x), Some(_)) => {
+                return if x == "*" {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
+            }
+        }
+    }
 }
 
 /// botocore's hierarchical match (`PrefixTrie.prefix_search`): the
