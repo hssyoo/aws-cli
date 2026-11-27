@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 type Object = Map<String, Json>;
 
-/// A model with an uninterpreted key at every level the arena reads, each
+/// A model with an uninterpreted key at every level the front-end reads, each
 /// beside an ignored key at the same level.
 const EVERY_LEVEL: &str = r#"{
   "version": "2.0", "documentation": "d", "newTop": 1,
@@ -40,7 +40,7 @@ fn keys(found: &[&Uninterpreted]) -> Vec<String> {
 #[test]
 fn every_level_records_what_it_does_not_interpret() -> Result<()> {
     let model = Model::from_json(EVERY_LEVEL.as_bytes())?;
-    let all: Vec<&Uninterpreted> = model.uninterpreted().iter().collect();
+    let all: Vec<&Uninterpreted> = model.schema().uninterpreted().iter().collect();
     assert_eq!(
         keys(&all),
         [
@@ -68,12 +68,16 @@ fn every_level_records_what_it_does_not_interpret() -> Result<()> {
 #[test]
 fn an_operation_reaches_its_own_its_shapes_and_the_service_s() -> Result<()> {
     let model = Model::from_json(EVERY_LEVEL.as_bytes())?;
-    let go = model.operation("Go").ok_or("Go")?;
-    let reached = keys(&model.uninterpreted_reached(go));
-    assert_eq!(reached.len(), model.uninterpreted().len(), "{reached:?}");
-    let other = model.operation("Other").ok_or("Other")?;
+    let go = model.schema().service().operation("Go").ok_or("Go")?;
+    let reached = keys(&model.schema().uninterpreted_reached(go));
     assert_eq!(
-        keys(&model.uninterpreted_reached(other)),
+        reached.len(),
+        model.schema().uninterpreted().len(),
+        "{reached:?}"
+    );
+    let other = model.schema().service().operation("Other").ok_or("Other")?;
+    assert_eq!(
+        keys(&model.schema().uninterpreted_reached(other)),
         [
             "newTop",
             "metadata.newMeta",
@@ -83,7 +87,7 @@ fn an_operation_reaches_its_own_its_shapes_and_the_service_s() -> Result<()> {
     Ok(())
 }
 
-/// The arena's fast trait test answers exactly for the trait key lists.
+/// The front-end's fast trait test answers exactly for the trait key lists.
 #[test]
 fn the_trait_key_match_is_the_trait_key_lists() {
     let listed: Vec<&str> = super::super::traits::TRAIT_KEYS.to_vec();
@@ -104,7 +108,7 @@ fn a_model_of_known_and_ignored_keys_has_none() -> Result<()> {
           "documentation": "d", "deprecated": true, "deprecatedMessage": "m"}},
           "sparse": true}, "S": {"type": "string", "pattern": ".*"}}}"#,
     )?;
-    assert_eq!(model.uninterpreted(), &[]);
+    assert_eq!(model.schema().uninterpreted(), &[]);
     Ok(())
 }
 
@@ -113,7 +117,7 @@ fn a_model_of_known_and_ignored_keys_has_none() -> Result<()> {
 /// the readers named here. They only document (`documentation`), or read a
 /// key of that name somewhere other than where it is ignored: `version` in
 /// waiter configs, `deprecated` on an operation (`OperationModel.
-/// deprecated`, which the arena reads), a rule-set parameter
+/// deprecated`, which the front-end reads), a rule-set parameter
 /// (`endpoint_provider.py`) and an `endpoints.json` entry (`regions.py`),
 /// never on the document; `serviceFullName` and `serviceAbbreviation` in
 /// `utils.get_service_module_name`, which names a client's Python class.
@@ -223,12 +227,12 @@ fn ignored_occurrences(json: &Json, counts: &mut BTreeMap<String, usize>) {
 /// Counts, per uninterpreted key of `service`, the operations reaching it,
 /// and checks every recorded key is reached.
 fn count_reached(service: &str, model: &Model, reached: &mut BTreeMap<String, usize>) {
-    for operation in model.operations() {
-        for key in model.uninterpreted_reached(operation) {
+    for operation in model.schema().service().operations() {
+        for key in model.schema().uninterpreted_reached(operation) {
             *reached.entry(format!("{service} {key}")).or_default() += 1;
         }
     }
-    for key in model.uninterpreted() {
+    for key in model.schema().uninterpreted() {
         let row = format!("{service} {key}");
         assert!(reached.contains_key(&row), "{row}");
     }
@@ -274,7 +278,7 @@ fn census_of_the_shipped_models() -> Result<()> {
         let json: Json = serde_json::from_slice(&bytes)?;
         ignored_occurrences(&json, &mut ignored);
         let model = Model::from_value(&json)?;
-        operations += model.operations().len();
+        operations += model.schema().service().operations().len();
         count_reached(service, &model, &mut reached);
     }
     let heading = format!("{} services, {operations} operations\n", services.len());

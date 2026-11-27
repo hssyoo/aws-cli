@@ -1,10 +1,10 @@
-//! botocore's service models, read at run time into one arena, a service's
-//! paginators file parsed once ([`paginators`]), and the dynamic values,
-//! JSON writer, validator and name transform every consumer of them shares.
-//!
-//! [`schema`] is the Smithy-shaped schema layer the arena moves onto;
-//! [`frontend`], [`overlay`] and [`serde`] are its roots, filled step by
-//! step.
+//! botocore's service models, read at run time: a C2J front-end
+//! ([`frontend`]) builds a model's Smithy-shaped schemas ([`schema`]), and
+//! the botocore overlay ([`overlay`]) holds what botocore reads beside
+//! them. Beside those, a service's paginators file parsed once
+//! ([`paginators`]), and the dynamic values, JSON writer, validator and
+//! name transform every consumer of them shares; [`serde`] is a root
+//! filled step by step.
 #![forbid(unsafe_code)]
 
 pub mod frontend;

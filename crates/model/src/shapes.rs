@@ -1,179 +1,15 @@
-//! One service model in one arena: botocore's `ServiceModel`,
-//! `OperationModel` and `Shape` objects, resolved once at load.
-//!
-//! Every shape reference resolves to a [`ShapeId`]. A reference that adds
-//! traits gets its own shape: the target's kind with the reference's keys
-//! laid over the target's, as `ShapeResolver.resolve_shape_ref` copies the
-//! target's model and updates it. A reference whose keys change no trait
-//! (only `documentation`, say) resolves to the target itself.
-use crate::schema::SchemaSet;
+//! One service model: the C2J front-end's schemas of a `service-2.json`
+//! and the botocore overlay read beside them.
+use crate::overlay::{BotocoreMetadata, BotocoreOverlay, ServiceFacts};
 use crate::schema::projection::{self, Botocore};
+use crate::schema::{BuildError, SchemaSet};
 use crate::source::{Kind, LoadError, Source, load_service_model};
-use crate::value::Value;
 
-mod build;
-mod traits;
-
+pub use crate::overlay::BotocoreMetadata as Metadata;
 pub use crate::schema::{Site, Uninterpreted};
-pub use traits::{Bound, ErrorTrait, Flag, Retryable, Traits, XmlNamespace};
 
-/// A shape in a [`Model`]'s arena.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Ord, PartialOrd)]
-pub struct ShapeId(u32);
-
-impl ShapeId {
-    fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-/// A structure's members: a range of the model's member table.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Members {
-    start: u32,
-    len: u32,
-}
-
-/// A shape's `type`, with its children for the compound ones.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ShapeKind {
-    Structure {
-        members: Members,
-    },
-    List {
-        member: ShapeId,
-    },
-    Map {
-        key: ShapeId,
-        value: ShapeId,
-    },
-    String,
-    Integer,
-    Long,
-    Boolean,
-    Float,
-    Double,
-    Timestamp,
-    Blob,
-    /// A type botocore has no class or validator for; botocore loads it and
-    /// fails only when it is used.
-    Other(Box<str>),
-}
-
-/// A shape: its model name (shared by the shapes references derive from
-/// it), kind and resolved traits.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Shape {
-    pub name: Box<str>,
-    pub kind: ShapeKind,
-    pub traits: Traits,
-}
-
-/// A structure member, in model order.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Member {
-    pub name: Box<str>,
-    pub shape: ShapeId,
-}
-
-/// The service's `metadata` keys a client reads.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Metadata {
-    pub api_version: Option<Box<str>>,
-    pub endpoint_prefix: Option<Box<str>>,
-    pub protocol: Option<Box<str>>,
-    pub protocols: Option<Box<[Box<str>]>>,
-    pub json_version: Option<Box<str>>,
-    pub target_prefix: Option<Box<str>>,
-    pub service_id: Option<Box<str>>,
-    pub signature_version: Option<Box<str>>,
-    pub signing_name: Option<Box<str>>,
-    pub uid: Option<Box<str>>,
-    pub xml_namespace: Option<Box<str>>,
-    pub auth: Option<Box<[Box<str>]>>,
-    /// `ServiceModel.is_query_compatible`: the key is present.
-    pub aws_query_compatible: bool,
-}
-
-impl Metadata {
-    /// `ServiceId.hyphenize()`: `serviceId` lowercased, as Python's
-    /// `str.lower` does, with each space a hyphen. botocore keys its
-    /// per-call events on it.
-    pub fn hyphenized_service_id(&self) -> Option<String> {
-        self.service_id
-            .as_deref()
-            .map(|id| id.to_lowercase().replace(' ', "-"))
-    }
-}
-
-/// One of `ServiceModel.client_context_parameters`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClientContextParam {
-    pub name: Box<str>,
-    pub type_name: Box<str>,
-}
-
-/// An operation's `http` object. `requestUri` is botocore's REST
-/// serializers' (`serialize.py`), which the query and json serializers do
-/// not read: it is held for the REST protocols, not ignored.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Http {
-    pub method: Option<Box<str>>,
-    pub request_uri: Option<Box<str>>,
-}
-
-/// An operation's `endpointdiscovery` object.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct EndpointDiscovery {
-    pub required: bool,
-}
-
-/// An operation's `httpChecksum` object.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct HttpChecksum {
-    pub request_algorithm_member: Option<Box<str>>,
-    pub request_checksum_required: bool,
-    pub request_validation_mode_member: Option<Box<str>>,
-    pub response_algorithms: Box<[Box<str>]>,
-}
-
-/// `staticContextParams`: each name with its `value`.
-pub type StaticContextParams = Box<[(Box<str>, Value)]>;
-/// `operationContextParams`: each name with its `path`.
-pub type OperationContextParams = Box<[(Box<str>, Box<str>)]>;
-
-/// An operation, as `OperationModel` reads it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Operation {
-    /// The key in `operations`, the name callers use.
-    pub name: Box<str>,
-    /// The `name` field, sent on the wire (`OperationModel.wire_name`).
-    pub wire_name: Option<Box<str>>,
-    pub http: Http,
-    pub input: Option<ShapeId>,
-    pub output: Option<ShapeId>,
-    pub errors: Box<[ShapeId]>,
-    pub endpoint_discovery: Option<EndpointDiscovery>,
-    /// `endpointoperation`.
-    pub endpoint_operation: bool,
-    pub auth: Option<Box<[Box<str>]>>,
-    /// `authtype`.
-    pub auth_type: Option<Box<str>>,
-    pub unsigned_payload: bool,
-    pub http_checksum_required: bool,
-    pub http_checksum: Option<HttpChecksum>,
-    /// `requestcompression.encodings`.
-    pub request_compression: Option<Box<[Box<str>]>>,
-    /// `staticContextParams`: each name with its `value` (`None` when absent).
-    pub static_context_params: StaticContextParams,
-    /// `operationContextParams`: each name with its `path`.
-    pub operation_context_params: OperationContextParams,
-    /// `endpoint.hostPrefix`.
-    pub host_prefix: Option<Box<str>>,
-}
-
-/// Why a service description is not one the arena can hold. Each names the
-/// exception botocore would raise once the part is used.
+/// Why a service description is not one the model can hold. Each names
+/// the exception botocore would raise once the part is used.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ModelError {
@@ -193,7 +29,7 @@ pub enum ModelError {
         shape: Box<str>,
         name: &'static str,
     },
-    /// More shapes than a `ShapeId` can number.
+    /// More shapes than a schema id can number.
     TooLarge,
 }
 
@@ -213,6 +49,17 @@ impl std::fmt::Display for ModelError {
 
 impl std::error::Error for ModelError {}
 
+/// A schema builder's refusal, as the model's error for the same fault.
+impl From<BuildError> for ModelError {
+    fn from(error: BuildError) -> Self {
+        match error {
+            BuildError::NoShapeFound(name) => Self::NoShapeFound(name),
+            BuildError::TooLarge => Self::TooLarge,
+            other => Self::InvalidShape(other.to_string().into()),
+        }
+    }
+}
+
 /// The service directory of a model read from bytes, which names its
 /// shape ids' namespace.
 const UNNAMED: &str = "model";
@@ -220,197 +67,70 @@ const UNNAMED: &str = "model";
 /// A service model.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Model {
-    metadata: Metadata,
-    client_context_params: Box<[ClientContextParam]>,
-    operations: Box<[Operation]>,
-    shapes: Box<[Shape]>,
-    members: Box<[Member]>,
-    /// Named shapes come first, in model order.
-    named: usize,
-    /// Named shape ids sorted by name.
-    by_name: Box<[ShapeId]>,
-    /// The keys the arena did not interpret, in document order.
-    uninterpreted: Box<[Uninterpreted]>,
-    /// The C2J front-end's reading of the same description.
-    schema: SchemaSet,
+    schemas: SchemaSet,
+    overlay: BotocoreOverlay,
 }
 
 impl Model {
-    /// The service's latest `service-2` model from a source, extras merged.
+    /// The service's latest `service-2` model from a source, extras
+    /// merged, with its overlay.
+    ///
+    /// # Errors
+    /// The model or its paginators file could not be read.
     pub fn load(source: &impl Source, service: &str) -> Result<Self, LoadError> {
         let document = load_service_model(source, service, Kind::Service)?;
         let namespace = crate::frontend::c2j::namespace(service);
-        Ok(build::build(&document.json, &namespace)?)
+        let schemas = crate::frontend::c2j::build(&document.json, &namespace)?;
+        let metadata = BotocoreMetadata::from_c2j(&document.json);
+        let overlay = BotocoreOverlay::load(source, service, metadata)?;
+        Ok(Self { schemas, overlay })
     }
 
     /// A model from `service-2.json` bytes, as the protocol suite builds one
     /// per case.
+    ///
+    /// # Errors
+    /// The bytes are not a model.
     pub fn from_json(bytes: &[u8]) -> Result<Self, ModelError> {
         let json: serde_json::Value = serde_json::from_slice(bytes).map_err(ModelError::Json)?;
         Self::from_value(&json)
     }
 
-    /// A model from a parsed service description.
+    /// A model from a parsed service description: no paginators and no
+    /// waiters.
+    ///
+    /// # Errors
+    /// The description is not a model.
     pub fn from_value(json: &serde_json::Value) -> Result<Self, ModelError> {
-        build::build(json, &crate::frontend::c2j::namespace(UNNAMED))
+        let namespace = crate::frontend::c2j::namespace(UNNAMED);
+        let schemas = crate::frontend::c2j::build(json, &namespace)?;
+        let metadata = BotocoreMetadata::from_c2j(json);
+        let overlay = BotocoreOverlay::detached(UNNAMED, metadata);
+        Ok(Self { schemas, overlay })
     }
 
-    /// The schemas the C2J front-end built from the same description.
+    /// The schemas the C2J front-end built.
     pub const fn schema(&self) -> &SchemaSet {
-        &self.schema
+        &self.schemas
     }
 
-    /// [`projection::render`] of the schemas with this model's botocore
+    pub const fn overlay(&self) -> &BotocoreOverlay {
+        &self.overlay
+    }
+
+    /// What protocols and signers read of the service.
+    pub fn facts(&self) -> ServiceFacts<'_> {
+        ServiceFacts::new(&self.overlay, self.schemas.service())
+    }
+
+    /// The overlay's botocore metadata.
+    pub const fn metadata(&self) -> &Metadata {
+        &self.overlay.metadata
+    }
+
+    /// [`projection::render`] of the schemas with the overlay's botocore
     /// metadata: the text the frozen projection digests hold.
     pub fn projection(&self) -> String {
-        let metadata = &self.metadata;
-        let botocore = Botocore {
-            protocol: metadata.protocol.as_deref(),
-            protocols: metadata.protocols.as_deref(),
-            json_version: metadata.json_version.as_deref(),
-            target_prefix: metadata.target_prefix.as_deref(),
-            signature_version: metadata.signature_version.as_deref(),
-            uid: metadata.uid.as_deref(),
-        };
-        projection::render(&self.schema, &botocore)
-    }
-
-    pub const fn metadata(&self) -> &Metadata {
-        &self.metadata
-    }
-
-    pub fn client_context_params(&self) -> &[ClientContextParam] {
-        &self.client_context_params
-    }
-
-    /// The operations in model order (`ServiceModel.operation_names`).
-    pub fn operations(&self) -> &[Operation] {
-        &self.operations
-    }
-
-    pub fn operation(&self, name: &str) -> Option<&Operation> {
-        self.operations
-            .iter()
-            .find(|operation| &*operation.name == name)
-    }
-
-    /// The named shapes in model order.
-    pub fn named_shapes(&self) -> impl ExactSizeIterator<Item = ShapeId> + '_ {
-        (0..self.named).map(build::id)
-    }
-
-    pub fn shape(&self, id: ShapeId) -> &Shape {
-        &self.shapes[id.index()]
-    }
-
-    /// The number of named shapes (`len(ServiceModel.shape_names)`).
-    #[cfg(test)]
-    pub const fn shape_count(&self) -> usize {
-        self.named
-    }
-
-    /// `ServiceModel.shape_for(name)` without member traits.
-    pub fn shape_named(&self, name: &str) -> Option<ShapeId> {
-        let found = self
-            .by_name
-            .binary_search_by(|id| (*self.shape(*id).name).cmp(name))
-            .ok()?;
-        Some(self.by_name[found])
-    }
-
-    /// A structure's members in model order; empty for any other kind.
-    pub fn members(&self, id: ShapeId) -> &[Member] {
-        match self.shape(id).kind {
-            ShapeKind::Structure { members } => {
-                let start = members.start as usize;
-                &self.members[start..start + members.len as usize]
-            }
-            _ => &[],
-        }
-    }
-
-    /// `ServiceModel.error_shapes`: named shapes marked `exception`, in
-    /// model order.
-    pub fn error_shapes(&self) -> impl Iterator<Item = ShapeId> + '_ {
-        (0..self.named)
-            .map(build::id)
-            .filter(|id| self.shape(*id).traits.is(Flag::Exception))
-    }
-
-    /// `StructureShape.error_code`: `error.code`, else the shape's name, for
-    /// an exception shape.
-    pub fn error_code(&self, id: ShapeId) -> Option<&str> {
-        let shape = self.shape(id);
-        if !shape.traits.is(Flag::Exception) {
-            return None;
-        }
-        let code = shape
-            .traits
-            .error
-            .as_ref()
-            .and_then(|error| error.code.as_deref());
-        Some(code.filter(|code| !code.is_empty()).unwrap_or(&shape.name))
-    }
-
-    /// Every key the arena did not interpret, in document order.
-    pub fn uninterpreted(&self) -> &[Uninterpreted] {
-        &self.uninterpreted
-    }
-
-    /// The uninterpreted keys a call of `operation` reaches: the service's,
-    /// the operation's own, and those of every shape its input, output and
-    /// errors reach. The shapes are walked only when some shape has one.
-    pub fn uninterpreted_reached(&self, operation: &Operation) -> Vec<&Uninterpreted> {
-        let shaped = self
-            .uninterpreted
-            .iter()
-            .any(|key| matches!(key.site, Site::Shape(_)));
-        let reached = if shaped {
-            self.reached_shape_names(operation)
-        } else {
-            std::collections::HashSet::new()
-        };
-        self.uninterpreted
-            .iter()
-            .filter(|key| match &key.site {
-                Site::Service => true,
-                Site::Operation(name) => *name == operation.name,
-                Site::Shape(name) => reached.contains(&**name),
-            })
-            .collect()
-    }
-
-    /// The names of the shapes `operation`'s input, output and errors reach.
-    fn reached_shape_names(&self, operation: &Operation) -> std::collections::HashSet<&str> {
-        let mut seen = vec![false; self.shapes.len()];
-        let mut names = std::collections::HashSet::new();
-        let roots = operation.input.iter().chain(&operation.output);
-        let mut stack: Vec<ShapeId> = roots.chain(operation.errors.iter()).copied().collect();
-        while let Some(id) = stack.pop() {
-            if std::mem::replace(&mut seen[id.index()], true) {
-                continue;
-            }
-            let shape = self.shape(id);
-            names.insert(&*shape.name);
-            match &shape.kind {
-                ShapeKind::Structure { .. } => {
-                    stack.extend(self.members(id).iter().map(|member| member.shape));
-                }
-                ShapeKind::List { member } => stack.push(*member),
-                ShapeKind::Map { key, value } => stack.extend([*key, *value]),
-                _ => {}
-            }
-        }
-        names
-    }
-
-    /// `ServiceModel.shape_for_error_code`: the last error shape with the code.
-    pub fn shape_for_error_code(&self, code: &str) -> Option<ShapeId> {
-        self.error_shapes()
-            .filter(|id| self.error_code(*id) == Some(code))
-            .last()
+        projection::render(&self.schemas, &Botocore::from(&self.overlay.metadata))
     }
 }
-
-#[cfg(test)]
-mod tests;

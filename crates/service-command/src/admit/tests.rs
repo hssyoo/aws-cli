@@ -5,7 +5,6 @@
 use super::*;
 use crate::ServiceSource;
 use crate::testing::{Result, parsed, replacing_all, with_models};
-use model::shapes::{ShapeId, ShapeKind};
 
 fn outcome(
     source: &ServiceSource<'_>,
@@ -235,144 +234,8 @@ fn a_blob_payload_at_either_end_is_streaming() -> Result<()> {
     })
 }
 
-/// The schema the C2J front-end built for the arena's `shape`, the bridge
-/// [`reaches_epoch_timestamp`] read through before it took a schema: a named
-/// shape, an operation's input, output or error reference, or a member,
-/// list member, map key or value reference of a named shape. Every arena
-/// shape is one of these, since a reference's own shape keeps its target's
-/// children. Both readings keep the same order of each.
-fn schema_of(model: &Model, shape: ShapeId) -> Option<Schema<'_>> {
-    let schema = model.schema();
-    for (operation, view) in model.operations().iter().zip(schema.service().operations()) {
-        let refs = [
-            (operation.input, view.input()),
-            (operation.output, view.output()),
-        ];
-        let errors = operation
-            .errors
-            .iter()
-            .map(|id| Some(*id))
-            .zip(view.errors().map(Some));
-        if let Some((_, found)) = refs
-            .into_iter()
-            .chain(errors)
-            .find(|(id, _)| *id == Some(shape))
-        {
-            return found;
-        }
-    }
-    for (named, view) in model.named_shapes().zip(schema.named()) {
-        if named == shape {
-            return Some(view);
-        }
-        let found = match model.shape(named).kind {
-            ShapeKind::Structure { .. } => model
-                .members(named)
-                .iter()
-                .zip(view.members())
-                .find(|(member, _)| member.shape == shape)
-                .map(|(_, member)| member),
-            ShapeKind::List { member } => view.list_member().filter(|_| member == shape),
-            ShapeKind::Map { key, value } => [(key, view.map_key()), (value, view.map_value())]
-                .into_iter()
-                .find(|(id, _)| *id == shape)
-                .and_then(|(_, found)| found),
-            _ => None,
-        };
-        if found.is_some() {
-            return found;
-        }
-    }
-    None
-}
-
-/// botocore's `type_name` for an arena shape kind.
-fn kind_name(kind: &ShapeKind) -> &str {
-    match kind {
-        ShapeKind::Structure { .. } => "structure",
-        ShapeKind::List { .. } => "list",
-        ShapeKind::Map { .. } => "map",
-        ShapeKind::String => "string",
-        ShapeKind::Integer => "integer",
-        ShapeKind::Long => "long",
-        ShapeKind::Boolean => "boolean",
-        ShapeKind::Float => "float",
-        ShapeKind::Double => "double",
-        ShapeKind::Timestamp => "timestamp",
-        ShapeKind::Blob => "blob",
-        ShapeKind::Other(name) => name,
-    }
-}
-
-/// Every shape id the arena hands out: the named shapes, their members,
-/// list members, map keys and values, and the operations' references.
-fn arena_ids(model: &Model) -> Vec<ShapeId> {
-    let mut ids = Vec::new();
-    for named in model.named_shapes() {
-        ids.push(named);
-        match model.shape(named).kind {
-            ShapeKind::Structure { .. } => {
-                ids.extend(model.members(named).iter().map(|member| member.shape));
-            }
-            ShapeKind::List { member } => ids.push(member),
-            ShapeKind::Map { key, value } => ids.extend([key, value]),
-            _ => {}
-        }
-    }
-    for operation in model.operations() {
-        ids.extend(operation.input.iter().chain(&operation.output));
-        ids.extend(operation.errors.iter().copied());
-    }
-    ids
-}
-
-/// The schema of each arena shape reads as the arena does: its type, its
-/// `timestampFormat` and its children.
-fn check_schema_of(label: &str, model: &Model) -> std::result::Result<(), String> {
-    for id in arena_ids(model) {
-        let shape = model.shape(id);
-        let schema =
-            schema_of(model, id).ok_or_else(|| format!("{label}: {} unmapped", shape.name))?;
-        let children = match shape.kind {
-            ShapeKind::Structure { .. } => model.members(id).len(),
-            ShapeKind::List { .. } => 1,
-            ShapeKind::Map { .. } => 2,
-            _ => 0,
-        };
-        let found = schema.members().len()
-            + usize::from(schema.list_member().is_some())
-            + 2 * usize::from(schema.map_key().is_some());
-        let same = schema.type_name() == kind_name(&shape.kind)
-            && schema.timestamp_format_text() == shape.traits.timestamp_format.as_deref()
-            && found == children;
-        if !same {
-            return Err(format!("{label}: {} reads differently", shape.name));
-        }
-    }
-    Ok(())
-}
-
-/// `schema_of` finds a schema for every arena shape of every shipped and
-/// fake model, and the schema it finds reads as the arena shape does.
-#[test]
-fn every_arena_shape_has_the_schema_it_reads_as() -> Result<()> {
-    use model::source::{DirSource, Kind, Source};
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut count = 0;
-    for dir in ["aws-cli/awscli/botocore/data", "tests/models"] {
-        let source = DirSource::new(root.join(dir));
-        for service in source.services(Kind::Service)? {
-            let model = Model::load(&source, &service).map_err(|e| format!("{service}: {e}"))?;
-            check_schema_of(&service, &model)?;
-            count += 1;
-        }
-    }
-    assert!(count > 400, "only {count} models read");
-    Ok(())
-}
-
 /// A member's own `timestampFormat` decides, not its target's: the walk
-/// reads the reference's schema, and an arena id of a reference maps to it.
+/// reads the reference's schema.
 #[test]
 fn a_reference_s_timestamp_format_decides_the_local_zone() -> Result<()> {
     let model = Model::from_json(
@@ -411,5 +274,66 @@ fn a_reference_s_timestamp_format_decides_the_local_zone() -> Result<()> {
     assert!(reaches_epoch_timestamp(&model, member));
     let time = set.shape_named("Time").ok_or("Time")?;
     assert!(!reaches_epoch_timestamp(&model, time));
-    check_schema_of("inline", &model).map_err(Into::into)
+    Ok(())
+}
+
+/// Whether `schema`, or a schema its target's members, list member, map
+/// key or value reach, is an epoch timestamp: the walk through each
+/// reference's target, which `reaches` takes through the reference.
+fn epoch_through_targets(
+    schema: Schema<'_>,
+    json: bool,
+    seen: &mut Vec<model::schema::SchemaId>,
+) -> bool {
+    let epoch = schema.shape_type() == ShapeType::Timestamp
+        && schema
+            .timestamp_format_text()
+            .map_or(json, |format| format == "unixTimestamp");
+    let index = schema.index();
+    if epoch {
+        return true;
+    }
+    if seen.contains(&index) {
+        return false;
+    }
+    seen.push(index);
+    let target = schema.target();
+    let children = (target.members())
+        .chain(target.list_member())
+        .chain(target.map_key())
+        .chain(target.map_value());
+    let children: Vec<Schema<'_>> = children.collect();
+    children
+        .into_iter()
+        .any(|child| epoch_through_targets(child, json, seen))
+}
+
+/// Every output of every shipped and fake model reaches an epoch
+/// timestamp exactly when the walk through each reference's target does:
+/// a reference's own schema carries its target's children.
+#[test]
+fn every_output_reaches_an_epoch_timestamp_as_its_targets_do() -> Result<()> {
+    use model::source::{DirSource, Kind, Source};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let (mut count, mut epochs) = (0, 0);
+    for dir in ["aws-cli/awscli/botocore/data", "tests/models"] {
+        let source = DirSource::new(root.join(dir));
+        for service in source.services(Kind::Service)? {
+            let model = Model::load(&source, &service).map_err(|e| format!("{service}: {e}"))?;
+            let json = client::protocol::epoch_timestamps(&model).unwrap_or(false);
+            for operation in model.schema().service().operations() {
+                let Some(output) = operation.output() else {
+                    continue;
+                };
+                let expected = epoch_through_targets(output, json, &mut Vec::new());
+                let label = format!("{service} {}", operation.name());
+                assert_eq!(reaches_epoch_timestamp(&model, output), expected, "{label}");
+                epochs += usize::from(expected);
+            }
+            count += 1;
+        }
+    }
+    assert!(count > 400, "only {count} models read");
+    assert!(epochs > 100, "only {epochs} outputs reach an epoch");
+    Ok(())
 }

@@ -12,11 +12,11 @@ use crate::patterns::{Match, Patterns, Subject, TableEdit, TableOp};
 use crate::registry::OperationSource;
 use awscli_argparse::tables::RequiredOverride;
 use awscli_argparse::{Argument, CliType, DefaultValue};
-use model::paginators::{Entry, Paginators};
+use model::paginators::Entry;
 use model::schema::OperationSchema;
 use model::search::SearchSource;
 use model::shapes::Model;
-use model::source::{Kind, LoadError, Source, load_service_model};
+use model::source::{Kind, LoadError, Source};
 use model::xform::{SpecialCases, xform_name};
 use std::borrow::Cow;
 use std::cell::OnceCell;
@@ -26,6 +26,8 @@ mod table;
 #[doc(inline)]
 pub use table::{DerivedArgument, Origin, Paging, PagingToken, Table, Unpack, ValueType};
 
+/// The tests' parsed paginator entries.
+#[cfg(test)]
 type Json = serde_json::Value;
 
 /// A loaded service: its model, its command table and its operations'
@@ -49,7 +51,6 @@ pub struct Service {
     /// The model is the payload's alone (`SearchSource::packed`), the one
     /// whose client the pack observed.
     pub packed: bool,
-    pages: Paginators,
     /// Each of `operations`' index in the model's operations.
     indices: Vec<usize>,
     tables: Vec<OnceCell<Table>>,
@@ -71,7 +72,7 @@ impl Service {
     /// The paginators file's entry for the model operation `operation`
     /// (`PaginatorModel.get_paginator`), parsed once as the service loaded.
     pub fn paginator(&self, operation: &str) -> Option<&Entry> {
-        self.pages.get(operation)
+        self.model.overlay().paginators.get(operation)
     }
 }
 
@@ -224,6 +225,8 @@ impl<'a> ModelSource<'a> {
     }
 
     fn load(&self, command: &str, service: &str) -> Option<Service> {
+        // A paginators file that cannot be read fails the load, which
+        // leaves the service to Python, which fails as it reads it.
         let model = Model::load(&self.models, service).ok()?;
         let packed = self.models.packed(service).ok()?;
         let mut table: Vec<(String, Option<usize>)> = (model.schema().service())
@@ -239,7 +242,7 @@ impl<'a> ModelSource<'a> {
         for edit in self.patterns.table_edits(command) {
             edit_table(&mut table, edit);
         }
-        if self.has_waiters(service) {
+        if model.overlay().has_waiters(&self.models) {
             edit_table(&mut table, &TableEdit::Set("wait".into()));
         }
         let choices = table.iter().map(|(name, _)| name.clone()).collect();
@@ -247,9 +250,6 @@ impl<'a> ModelSource<'a> {
             .into_iter()
             .filter_map(|(name, index)| Some((name, index?)))
             .unzip();
-        // A paginators file that cannot be read leaves the service to
-        // Python, which fails as it reads it.
-        let pages = Paginators::load(&self.models, service).ok()?;
         let tables = operations.iter().map(|_| OnceCell::new()).collect();
         Some(Service {
             customized: self.edits(&[format!("building-command-table.{command}")]),
@@ -259,21 +259,8 @@ impl<'a> ModelSource<'a> {
             model: std::sync::Arc::new(model),
             operations,
             choices,
-            pages,
             indices,
             tables,
-        })
-    }
-
-    /// `get_waiter_model_from_service_model` and `waiter_names`: a waiter
-    /// model the search finds, holding a waiter.
-    fn has_waiters(&self, service: &str) -> bool {
-        load_service_model(&self.models, service, Kind::Waiters).is_ok_and(|document| {
-            document
-                .json
-                .get("waiters")
-                .and_then(Json::as_object)
-                .is_some_and(|waiters| !waiters.is_empty())
         })
     }
 
@@ -291,7 +278,7 @@ impl<'a> ModelSource<'a> {
         let service = self.service(command)?;
         let (index, model_operation) = service.position(operation)?;
         Some(service.tables.get(index)?.get_or_init(|| {
-            let entry = service.pages.get(model_operation.name());
+            let entry = service.paginator(model_operation.name());
             let mut table = table::derive(model_operation, entry, &self.special);
             let events = [
                 format!("building-command-table.{command}_{operation}"),
@@ -332,8 +319,8 @@ impl<'a> ModelSource<'a> {
         let service = self.service(command)?;
         let table = self.table(command, operation)?;
         let model_operation = service.operation(operation)?;
-        let metadata = service.model.metadata();
-        let service_id = metadata.hyphenized_service_id().unwrap_or_default();
+        let facts = service.model.facts();
+        let service_id = facts.hyphenized_service_id().unwrap_or_default();
         let arguments: Vec<&str> = table
             .arguments
             .iter()
@@ -341,7 +328,7 @@ impl<'a> ModelSource<'a> {
             .collect();
         let subject = Subject {
             service: &service.name,
-            endpoint_prefix: metadata.endpoint_prefix.as_deref().unwrap_or_default(),
+            endpoint_prefix: facts.endpoint_prefix().unwrap_or_default(),
             service_id: &service_id,
             command,
             operation: model_operation.name(),

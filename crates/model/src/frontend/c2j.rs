@@ -16,11 +16,12 @@ use crate::shapes::ModelError;
 use serde_json::{Map, Value as Json};
 use std::collections::HashMap;
 
-#[cfg(any(test, feature = "testing"))]
-pub mod arena;
 pub(crate) mod keys;
 mod read;
 mod traits;
+
+#[cfg(test)]
+mod tests;
 
 use traits::C2jTraits;
 

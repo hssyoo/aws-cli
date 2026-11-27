@@ -2,8 +2,8 @@
 //! shape, member, operation, operation root and uninterpreted key, with
 //! every slot, flag, cold trait and operation read in botocore's terms.
 //! Two readings of one description are the same exactly when their
-//! projections are, which the C2J front-end's arena comparison, the frozen
-//! digests and a later `schema-diff` use.
+//! projections are, which the frozen digests and a later `schema-diff`
+//! use.
 //!
 //! The lines are built from views ([`ServiceView`], [`OperationView`],
 //! [`TraitsView`]) any reader of a description can fill; [`render`] fills
@@ -64,6 +64,19 @@ pub struct Botocore<'a> {
     pub target_prefix: Option<&'a str>,
     pub signature_version: Option<&'a str>,
     pub uid: Option<&'a str>,
+}
+
+impl<'a> From<&'a crate::overlay::BotocoreMetadata> for Botocore<'a> {
+    fn from(metadata: &'a crate::overlay::BotocoreMetadata) -> Self {
+        Self {
+            protocol: metadata.protocol.as_deref(),
+            protocols: metadata.protocols.as_deref(),
+            json_version: metadata.json_version.as_deref(),
+            target_prefix: metadata.target_prefix.as_deref(),
+            signature_version: metadata.signature_version.as_deref(),
+            uid: metadata.uid.as_deref(),
+        }
+    }
 }
 
 /// The service's reads.

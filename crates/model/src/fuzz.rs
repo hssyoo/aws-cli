@@ -2,29 +2,21 @@
 //! (`fuzz/fuzz_targets/model_json.rs`, `validate_params.rs`), which the
 //! stable replay test (`client::testing::fuzz`'s tests) also runs. No
 //! input may panic.
-use crate::frontend::c2j::arena;
 use crate::shapes::Model;
 use crate::validate::{Validation, validate_input};
 use crate::value::{Map, Value};
 
-/// `Model::from_json` over any bytes: a model or an error. The C2J
-/// front-end reads a model the arena reads as the arena does (the same
-/// projection) and refuses the rest with the arena's error. Every
-/// operation of a model it builds validates an empty input.
+/// `Model::from_json` over any bytes: a model or an error. A model it
+/// builds renders its projection, and every operation validates an empty
+/// input.
 pub fn model_json(bytes: &[u8]) {
     let Ok(json) = serde_json::from_slice::<serde_json::Value>(bytes) else {
         return;
     };
-    let schema = crate::frontend::c2j::build(&json, &crate::frontend::c2j::namespace("fuzz"));
-    let model = match Model::from_value(&json) {
-        Ok(model) => model,
-        Err(error) => {
-            let refused = schema.err().map(|error| error.to_string());
-            assert_eq!(refused, Some(error.to_string()));
-            return;
-        }
+    let Ok(model) = Model::from_value(&json) else {
+        return;
     };
-    assert_eq!(arena::render(&model), model.projection());
+    assert!(!model.projection().is_empty());
     for operation in model.schema().service().operations() {
         report(validate_input(operation, &Value::Map(Map::new())));
     }
