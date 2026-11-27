@@ -1,7 +1,7 @@
 //! [`SchemaSetBuilder::finish`]: the checks, the named-first renumbering,
 //! the effective trait tables and the lookups.
 use super::{
-    BuildError, ColdEntries, Draft, DraftChildren, DraftId, DraftRole, DraftTraits,
+    BuildError, ColdEntries, Draft, DraftChildren, DraftId, DraftRole, DraftTraits, EMPTY_SET,
     SchemaSetBuilder,
 };
 use crate::schema::known::KnownTraits;
@@ -24,14 +24,15 @@ struct Tables {
 }
 
 impl Tables {
-    fn known(&mut self, known: &KnownTraits, strings: &Interner) -> Result<u32, BuildError> {
+    fn known(&mut self, known: KnownTraits, strings: &Interner) -> Result<u32, BuildError> {
+        // Index 0 is the empty set, which names no string.
+        if known == self.known[0] {
+            return Ok(0);
+        }
         if known.strings().any(|id| !strings.contains(id)) {
             return Err(BuildError::Foreign);
         }
-        if *known == KnownTraits::default() {
-            return Ok(0);
-        }
-        self.known.push(known.clone());
+        self.known.push(known);
         index(self.known.len() - 1)
     }
 
@@ -204,36 +205,41 @@ fn schema_data(
     // (known, cold) of each draft once laid out; targets come first.
     let mut sets = vec![(0, 0); builder.drafts.len()];
     let mut schemas = Vec::with_capacity(order.len());
+    let positions = positions(builder)?;
     for &id in order {
         let draft = &builder.drafts[id.index()];
         let from = source(draft, id);
         let target = &builder.drafts[from.index()];
+        // A set (but the empty one) has one draft, so it moves to the table, where
+        // its target's is read back: laid out first, or the prelude's, empty.
         let (known, cold, own_traits) = match &draft.traits {
             DraftTraits::Inherit => (sets[from.index()].0, sets[from.index()].1, false),
-            DraftTraits::Own(known, cold) if from != id => {
+            DraftTraits::Own(set, cold) if from != id => {
+                let set = std::mem::take(&mut builder.known_sets[*set as usize]);
+                let target_known = &tables.known[sets[from.index()].0 as usize];
                 let same = matches!(&target.traits,
-                    DraftTraits::Own(k, c) if k == known && same_cold(c, cold));
+                    DraftTraits::Own(_, c) if *target_known == set && same_cold(c, cold));
                 if same {
                     (sets[from.index()].0, sets[from.index()].1, false)
                 } else {
-                    let known = tables.known(known, &builder.strings)?;
+                    let known = tables.known(set, &builder.strings)?;
                     (known, tables.cold(cold, &mut builder.strings)?, true)
                 }
             }
-            DraftTraits::Own(known, cold) => {
-                let known = tables.known(known, &builder.strings)?;
+            DraftTraits::Own(EMPTY_SET, cold) if from == id => {
+                (0, tables.cold(cold, &mut builder.strings)?, false)
+            }
+            DraftTraits::Own(set, cold) => {
+                let set = std::mem::take(&mut builder.known_sets[*set as usize]);
+                let known = tables.known(set, &builder.strings)?;
                 (known, tables.cold(cold, &mut builder.strings)?, false)
             }
         };
         sets[id.index()] = (known, cold);
         let role = match draft.role {
-            DraftRole::Member {
-                container,
+            DraftRole::Member { name, target, .. } => Role::Member {
                 name,
-                target,
-            } => Role::Member {
-                name,
-                index: member_index(builder, container, id)?,
+                index: positions[id.index()],
                 target: remap(target),
             },
             DraftRole::Overlay { .. } => Role::Overlay,
@@ -267,17 +273,22 @@ fn same_cold(a: &[(Box<str>, Json)], b: &[(Box<str>, Json)]) -> bool {
             .all(|(id, value)| get(b, id).as_ref() == Some(value))
 }
 
-fn member_index(
-    builder: &SchemaSetBuilder,
-    container: DraftId,
-    member: DraftId,
-) -> Result<u32, BuildError> {
-    let position = match &builder.drafts[container.index()].children {
-        DraftChildren::Members(list) => list.iter().position(|id| *id == member),
-        DraftChildren::Map(Some((_, value))) if *value == member => Some(1),
-        _ => Some(0),
-    };
-    index(position.unwrap_or(0))
+/// Each member's index in its container: its place among a structure's
+/// members, 1 for a map's value, else 0.
+fn positions(builder: &SchemaSetBuilder) -> Result<Vec<u32>, BuildError> {
+    let mut positions = vec![0; builder.drafts.len()];
+    for draft in &builder.drafts {
+        match &draft.children {
+            DraftChildren::Members(list) => {
+                for (position, member) in list.iter().enumerate() {
+                    positions[member.index()] = index(position)?;
+                }
+            }
+            DraftChildren::Map(Some((_, value))) => positions[value.index()] = 1,
+            _ => {}
+        }
+    }
+    Ok(positions)
 }
 
 /// The named range sorted by short name; two shapes with one name clash.

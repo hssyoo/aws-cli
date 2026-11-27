@@ -10,10 +10,10 @@ use super::cold::{ColdEntries, ColdTraits};
 use super::id::{ShapeIdError, offsets};
 use super::known::KnownTraits;
 use super::operation::{OperationData, OperationIndex, ServiceData};
-use super::strings::{Interner, StrId};
+use super::strings::{Interner, StrId, hash};
 use super::types::{PRELUDE, PRELUDE_NAMESPACE, ShapeType};
 use super::uninterpreted::{Site, Uninterpreted};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 mod layout;
 
@@ -141,11 +141,18 @@ enum DraftChildren {
     Map(Option<(DraftId, DraftId)>),
 }
 
+/// A draft's traits: its own (an index into
+/// [`SchemaSetBuilder::known_sets`] and the cold entries), or its target's.
 #[derive(Clone, Debug, PartialEq)]
 enum DraftTraits {
-    Own(Box<KnownTraits>, ColdEntries),
+    Own(KnownSet, ColdEntries),
     Inherit,
 }
+
+/// An index into [`SchemaSetBuilder::known_sets`]; [`EMPTY_SET`] is the
+/// empty set every draft starts with.
+type KnownSet = u32;
+const EMPTY_SET: KnownSet = 0;
 
 #[derive(Clone, Debug)]
 struct Draft {
@@ -165,20 +172,32 @@ pub struct SchemaSetBuilder {
     namespace: Box<str>,
     strings: Interner,
     drafts: Vec<Draft>,
-    by_fqn: HashMap<Box<str>, DraftId>,
+    /// Each named, placeholder or prelude draft by its interned id.
+    /// Indexed by the id's [`StrId`]; `None` past the end or for another text.
+    by_fqn: Vec<Option<DraftId>>,
+    /// Each draft's own known traits, by [`KnownSet`]; each set but the
+    /// shared empty one, [`EMPTY_SET`], has one draft.
+    known_sets: Vec<KnownTraits>,
     /// Named shapes in declaration order.
     order: Vec<DraftId>,
     overlays: Vec<DraftId>,
     operations: Vec<(OperationData, Box<str>, u16, OperationShapes)>,
     operation_names: HashSet<Box<str>>,
-    /// Each structure or union member by its container and name.
-    member_names: HashSet<(DraftId, StrId)>,
+    /// Each member of a structure or union with at least [`SCAN_MEMBERS`]
+    /// by its container and its name's hash.
+    member_names: HashSet<(DraftId, u32)>,
+    /// A shape id while it is built.
+    scratch: String,
     service: ServiceData,
     uninterpreted: Vec<Uninterpreted>,
 }
 
-fn own_traits() -> DraftTraits {
-    DraftTraits::Own(Box::default(), Vec::new())
+/// A structure with fewer members than this is checked for a duplicate
+/// name by a scan, not through [`SchemaSetBuilder::member_names`].
+const SCAN_MEMBERS: usize = 16;
+
+const fn own_traits() -> DraftTraits {
+    DraftTraits::Own(EMPTY_SET, Vec::new())
 }
 
 fn children_for(shape_type: ShapeType) -> DraftChildren {
@@ -198,12 +217,14 @@ impl SchemaSetBuilder {
             namespace: namespace.into(),
             strings: Interner::default(),
             drafts: Vec::new(),
-            by_fqn: HashMap::new(),
+            by_fqn: Vec::new(),
+            known_sets: vec![KnownTraits::default()],
             order: Vec::new(),
             overlays: Vec::new(),
             operations: Vec::new(),
             operation_names: HashSet::new(),
             member_names: HashSet::new(),
+            scratch: String::new(),
             service: ServiceData::default(),
             uninterpreted: Vec::new(),
         };
@@ -211,9 +232,24 @@ impl SchemaSetBuilder {
             let fqn = format!("{PRELUDE_NAMESPACE}#{name}");
             let type_name = builder.default_type_name(&fqn, shape_type, None)?;
             let draft = builder.push(&fqn, shape_type, Some(type_name), DraftRole::Prelude)?;
-            builder.by_fqn.insert(fqn.into(), draft);
+            builder.index_shape(draft);
         }
         Ok(builder)
+    }
+
+    /// Room ahead of time for a model of about `shapes` named shapes, with
+    /// about three members, list members or map entries and three distinct
+    /// texts each, and `operations` operations: a hint, which changes no
+    /// result.
+    pub fn reserve(&mut self, shapes: usize, operations: usize) {
+        self.operations.reserve(operations);
+        self.operation_names.reserve(operations);
+        let drafts = shapes.saturating_mul(4);
+        self.drafts.reserve(drafts);
+        self.known_sets.reserve(drafts);
+        let texts = shapes.saturating_mul(3);
+        self.strings
+            .reserve(drafts, texts, drafts.saturating_mul(48));
     }
 
     /// Interns a text for a [`KnownTraits`] slot.
@@ -228,20 +264,23 @@ impl SchemaSetBuilder {
         type_name: Option<StrId>,
         role: DraftRole,
     ) -> Result<DraftId, BuildError> {
-        self.push_with(fqn, shape_type, type_name, role, own_traits())
+        let at = offsets(fqn)?;
+        let id = self.intern(fqn)?;
+        self.push_with((id, at), shape_type, type_name, role, own_traits())
     }
 
+    /// Pushes a draft of the interned id `id`, whose `#` and `$` offsets
+    /// are `at`.
     fn push_with(
         &mut self,
-        fqn: &str,
+        (id, (sharp_at, dollar_at)): (StrId, (u16, Option<u16>)),
         shape_type: ShapeType,
         type_name: Option<StrId>,
         role: DraftRole,
         traits: DraftTraits,
     ) -> Result<DraftId, BuildError> {
-        let (sharp_at, dollar_at) = offsets(fqn)?;
         let draft = Draft {
-            id: self.intern(fqn)?,
+            id,
             sharp_at,
             dollar_at,
             shape_type,
@@ -266,8 +305,16 @@ impl SchemaSetBuilder {
         self.intern(text)
     }
 
-    fn qualified(&self, name: &str) -> String {
-        format!("{}#{name}", self.namespace)
+    /// Runs `f` on `name`'s full id, built in the scratch buffer.
+    fn with_qualified<T>(&mut self, name: &str, f: impl FnOnce(&mut Self, &str) -> T) -> T {
+        let mut fqn = std::mem::take(&mut self.scratch);
+        fqn.clear();
+        fqn.push_str(&self.namespace);
+        fqn.push('#');
+        fqn.push_str(name);
+        let result = f(self, &fqn);
+        self.scratch = fqn;
+        result
     }
 
     fn draft(&self, id: DraftId) -> Result<&Draft, BuildError> {
@@ -289,8 +336,9 @@ impl SchemaSetBuilder {
         shape_type: ShapeType,
         type_name: Option<&str>,
     ) -> Result<DraftId, BuildError> {
-        let fqn = self.qualified(name);
-        self.declare_id(&fqn, shape_type, type_name)
+        self.with_qualified(name, |builder, fqn| {
+            builder.declare_id(fqn, shape_type, type_name)
+        })
     }
 
     /// Declares a named shape by its full id.
@@ -300,18 +348,18 @@ impl SchemaSetBuilder {
         shape_type: ShapeType,
         type_name: Option<&str>,
     ) -> Result<DraftId, BuildError> {
-        if offsets(fqn)?.1.is_some() {
+        let at = offsets(fqn)?;
+        if at.1.is_some() {
             return Err(BuildError::InvalidShape(fqn.into()));
         }
         let type_name = self.default_type_name(fqn, shape_type, type_name)?;
-        let id = match self.by_fqn.get(fqn) {
-            Some(&id) if self.drafts[id.index()].role == DraftRole::Placeholder => id,
+        // The id is interned where a new draft would intern it, so one
+        // lookup serves both.
+        let interned = self.intern(fqn)?;
+        let id = match self.by_fqn.get(interned.index()).copied().flatten() {
+            Some(id) if self.drafts[id.index()].role == DraftRole::Placeholder => id,
             Some(_) => return Err(BuildError::Duplicate(fqn.into())),
-            None => {
-                let id = self.push(fqn, shape_type, None, DraftRole::Placeholder)?;
-                self.by_fqn.insert(fqn.into(), id);
-                id
-            }
+            None => self.push_shape((interned, at), shape_type)?,
         };
         let draft = &mut self.drafts[id.index()];
         draft.shape_type = shape_type;
@@ -325,27 +373,61 @@ impl SchemaSetBuilder {
     /// A shape in the builder's namespace, declared or not yet: one never
     /// declared fails [`Self::finish`] with `NoShapeFound`.
     pub fn reference(&mut self, name: &str) -> Result<DraftId, BuildError> {
-        let fqn = self.qualified(name);
-        self.reference_id(&fqn)
+        self.with_qualified(name, Self::reference_id)
     }
 
     pub fn reference_id(&mut self, fqn: &str) -> Result<DraftId, BuildError> {
-        if let Some(id) = self.by_fqn.get(fqn) {
-            return Ok(*id);
+        if let Some(id) = self.lookup(fqn) {
+            return Ok(id);
         }
-        if offsets(fqn)?.1.is_some() {
+        let at = offsets(fqn)?;
+        if at.1.is_some() {
             return Err(BuildError::InvalidShape(fqn.into()));
         }
-        let id = self.push(fqn, ShapeType::Unknown, None, DraftRole::Placeholder)?;
-        self.by_fqn.insert(fqn.into(), id);
+        let interned = self.intern(fqn)?;
+        self.push_shape((interned, at), ShapeType::Unknown)
+    }
+
+    /// The named, placeholder or prelude draft with this full id.
+    fn lookup(&self, fqn: &str) -> Option<DraftId> {
+        let id = self.strings.find(fqn)?;
+        self.by_fqn.get(id.index()).copied().flatten()
+    }
+
+    /// Makes a shape draft findable by [`Self::lookup`].
+    fn index_shape(&mut self, draft: DraftId) {
+        let id = self.drafts[draft.index()].id.index();
+        if self.by_fqn.len() <= id {
+            self.by_fqn.resize(id + 1, None);
+        }
+        self.by_fqn[id] = Some(draft);
+    }
+
+    /// A placeholder for a shape id, findable by [`Self::lookup`].
+    fn push_shape(
+        &mut self,
+        fqn: (StrId, (u16, Option<u16>)),
+        shape_type: ShapeType,
+    ) -> Result<DraftId, BuildError> {
+        let traits = own_traits();
+        let id = self.push_with(fqn, shape_type, None, DraftRole::Placeholder, traits)?;
+        self.index_shape(id);
         Ok(id)
+    }
+
+    /// A new known set's index.
+    fn known_set(&mut self, known: KnownTraits) -> Result<KnownSet, BuildError> {
+        if known == self.known_sets[EMPTY_SET as usize] {
+            return Ok(EMPTY_SET);
+        }
+        let set = u32::try_from(self.known_sets.len()).map_err(|_| BuildError::TooLarge)?;
+        self.known_sets.push(known);
+        Ok(set)
     }
 
     /// A prelude shape by its [`PRELUDE`] name.
     pub fn prelude(&self, name: &str) -> Option<DraftId> {
-        self.by_fqn
-            .get(&*format!("{PRELUDE_NAMESPACE}#{name}"))
-            .copied()
+        self.lookup(&format!("{PRELUDE_NAMESPACE}#{name}"))
     }
 
     /// Records the cold map's unknown traits as uninterpreted keys.
@@ -358,11 +440,14 @@ impl SchemaSetBuilder {
         entries
     }
 
-    fn resolved(&mut self, traits: MemberTraits) -> DraftTraits {
-        match traits {
+    fn resolved(&mut self, traits: MemberTraits) -> Result<DraftTraits, BuildError> {
+        Ok(match traits {
             MemberTraits::Inherit => DraftTraits::Inherit,
-            MemberTraits::Resolved(known, cold) => DraftTraits::Own(known, self.take_cold(cold)),
-        }
+            MemberTraits::Resolved(known, cold) => {
+                let set = self.known_set(*known)?;
+                DraftTraits::Own(set, self.take_cold(cold))
+            }
+        })
     }
 
     /// Sets a named shape's own traits.
@@ -379,7 +464,8 @@ impl SchemaSetBuilder {
             return Err(BuildError::InvalidTarget(self.fqn(id)));
         }
         let entries = self.take_cold(cold);
-        self.drafts[id.index()].traits = DraftTraits::Own(Box::new(known), entries);
+        let set = self.known_set(known)?;
+        self.drafts[id.index()].traits = DraftTraits::Own(set, entries);
         Ok(())
     }
 
@@ -401,18 +487,41 @@ impl SchemaSetBuilder {
         traits: MemberTraits,
     ) -> Result<DraftId, BuildError> {
         self.check_target(target)?;
-        let container_fqn = self.strings.get(self.draft(container)?.id);
-        let mut fqn = String::with_capacity(container_fqn.len() + 1 + name.len());
-        fqn.push_str(container_fqn);
-        fqn.push('$');
-        fqn.push_str(name);
-        let role = DraftRole::Member {
-            container,
-            name: self.intern(name)?,
-            target,
+        let parent = self.draft(container)?;
+        let (parent_id, parent_sharp) = (parent.id, parent.sharp_at);
+        let traits = self.resolved(traits)?;
+        // A plain name (not empty, no `#` or `$`) after a named shape's id
+        // makes an id whose offsets are the shape's and its end; any other
+        // fails as `offsets` fails it.
+        let parent_len = self.strings.get(parent_id).len();
+        let plain = !name.is_empty() && !name.bytes().any(|byte| byte == b'#' || byte == b'$');
+        let dollar_at = match u16::try_from(parent_len) {
+            Ok(at) if plain && parent_len + 1 + name.len() <= usize::from(u16::MAX) => at,
+            _ => {
+                let fqn = format!("{}${name}", self.strings.get(parent_id));
+                return Err(offsets(&fqn).err().unwrap_or(ShapeIdError::TooLong).into());
+            }
         };
-        let traits = self.resolved(traits);
-        self.push_with(&fqn, ShapeType::Unknown, None, role, traits)
+        let member = DraftId(u32::try_from(self.drafts.len()).map_err(|_| BuildError::TooLarge)?);
+        let (id, name) = self
+            .strings
+            .push_member(parent_id, name)
+            .ok_or(BuildError::TooLarge)?;
+        self.drafts.push(Draft {
+            id,
+            sharp_at: parent_sharp,
+            dollar_at: Some(dollar_at),
+            shape_type: ShapeType::Unknown,
+            type_name: None,
+            role: DraftRole::Member {
+                container,
+                name,
+                target,
+            },
+            children: DraftChildren::None,
+            traits,
+        });
+        Ok(member)
     }
 
     /// The draft of a named shape (not a placeholder) to add children to.
@@ -432,21 +541,70 @@ impl SchemaSetBuilder {
         target: DraftId,
         traits: MemberTraits,
     ) -> Result<DraftId, BuildError> {
-        let DraftChildren::Members(_) = &self.parent(parent)?.children else {
+        let DraftChildren::Members(members) = &self.parent(parent)?.children else {
             return Err(BuildError::InvalidParent(self.fqn(parent)));
         };
-        let interned = self.intern(name)?;
-        if self.member_names.contains(&(parent, interned)) {
+        let count = members.len();
+        if self.has_member(parent, name) {
             return Err(BuildError::DuplicateMember(
                 format!("{}${name}", self.fqn(parent)).into(),
             ));
         }
         let member = self.new_member(parent, name, target, traits)?;
-        self.member_names.insert((parent, interned));
         if let DraftChildren::Members(members) = &mut self.drafts[parent.index()].children {
             members.push(member);
         }
+        // A short member list is scanned; a long one is indexed, from the
+        // member that makes it long, by each name's hash.
+        if count + 1 == SCAN_MEMBERS {
+            for index in 0..SCAN_MEMBERS {
+                let hash = hash(self.member_name(parent, index));
+                self.member_names.insert((parent, hash));
+            }
+        } else if count + 1 > SCAN_MEMBERS {
+            self.member_names.insert((parent, hash(name)));
+        }
         Ok(member)
+    }
+
+    /// Room for `additional` more members of a structure or union: a
+    /// hint, which changes no result.
+    pub fn reserve_members(&mut self, parent: DraftId, additional: usize) {
+        let draft = self.drafts.get_mut(parent.index());
+        if let Some(DraftChildren::Members(members)) = draft.map(|draft| &mut draft.children) {
+            members.reserve_exact(additional);
+        }
+    }
+
+    /// The name of a structure's `index`th member; `""` past its members.
+    fn member_name(&self, parent: DraftId, index: usize) -> &str {
+        let DraftChildren::Members(members) = &self.drafts[parent.index()].children else {
+            return "";
+        };
+        match members
+            .get(index)
+            .map(|member| self.drafts[member.index()].role)
+        {
+            Some(DraftRole::Member { name, .. }) => self.strings.get(name),
+            _ => "",
+        }
+    }
+
+    /// Whether a structure already has a member of this name.
+    fn has_member(&self, parent: DraftId, name: &str) -> bool {
+        let DraftChildren::Members(members) = &self.drafts[parent.index()].children else {
+            return false;
+        };
+        let count = members.len();
+        if count >= SCAN_MEMBERS && !self.member_names.contains(&(parent, hash(name))) {
+            return false;
+        }
+        members
+            .iter()
+            .any(|member| match self.drafts[member.index()].role {
+                DraftRole::Member { name: id, .. } => self.strings.is(id, name),
+                _ => false,
+            })
     }
 
     /// Sets a list's member (`$member`).
@@ -503,11 +661,13 @@ impl SchemaSetBuilder {
         if traits == MemberTraits::Inherit {
             return Ok(target);
         }
-        let draft = self.drafts[target.index()].clone();
+        let traits = self.resolved(traits)?;
+        let draft = &self.drafts[target.index()];
         let overlay = Draft {
             role: DraftRole::Overlay { target },
-            traits: self.resolved(traits),
-            ..draft
+            traits,
+            children: draft.children.clone(),
+            ..*draft
         };
         let id = DraftId(u32::try_from(self.drafts.len()).map_err(|_| BuildError::TooLarge)?);
         self.drafts.push(overlay);
@@ -521,10 +681,11 @@ impl SchemaSetBuilder {
         data: OperationData,
         shapes: OperationShapes,
     ) -> Result<OperationIndex, BuildError> {
-        let fqn = self.qualified(&data.name);
-        let (sharp_at, dollar_at) = offsets(&fqn)?;
+        let (fqn, (sharp_at, dollar_at)) = self.with_qualified(&data.name, |_, fqn| {
+            offsets(fqn).map(|at| (Box::<str>::from(fqn), at))
+        })?;
         if dollar_at.is_some() {
-            return Err(BuildError::InvalidShape(fqn.into()));
+            return Err(BuildError::InvalidShape(fqn));
         }
         if !self.operation_names.insert(data.name.clone()) {
             return Err(BuildError::DuplicateOperation(data.name));
@@ -540,7 +701,7 @@ impl SchemaSetBuilder {
             }
         }
         let index = u32::try_from(self.operations.len()).map_err(|_| BuildError::TooLarge)?;
-        self.operations.push((data, fqn.into(), sharp_at, shapes));
+        self.operations.push((data, fqn, sharp_at, shapes));
         Ok(OperationIndex(index))
     }
 

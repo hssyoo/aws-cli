@@ -13,24 +13,29 @@ use std::sync::Arc;
 
 type Object = Map<String, Json>;
 
-/// The flag keys with their [`Flag`]. `event`, `document` and `union` have
-/// no slot: [`C2jTraits`] keeps their values for the cold map and the type.
-const FLAG_KEYS: [(&str, Flag); 14] = [
-    ("flattened", Flag::XmlFlattened),
-    ("streaming", Flag::Streaming),
-    ("xmlAttribute", Flag::XmlAttribute),
-    ("eventstream", Flag::EventStream),
-    ("eventheader", Flag::EventHeader),
-    ("eventpayload", Flag::EventPayload),
-    ("jsonvalue", Flag::JsonValue),
-    ("hostLabel", Flag::HostLabel),
-    ("sensitive", Flag::Sensitive),
-    ("idempotencyToken", Flag::IdempotencyToken),
-    ("exception", Flag::Error),
-    ("endpointdiscoveryid", Flag::EndpointDiscoveryId),
-    ("requiresLength", Flag::RequiresLength),
-    ("deprecated", Flag::Deprecated),
-];
+/// The flag key's [`Flag`]. `event`, `document` and `union` have no slot:
+/// [`C2jTraits`] keeps their values for the cold map and the type. A
+/// `match`, which compiles to a switch on the length, where a table is a
+/// search.
+const fn flag(key: &str) -> Option<Flag> {
+    Some(match key.as_bytes() {
+        b"flattened" => Flag::XmlFlattened,
+        b"streaming" => Flag::Streaming,
+        b"xmlAttribute" => Flag::XmlAttribute,
+        b"eventstream" => Flag::EventStream,
+        b"eventheader" => Flag::EventHeader,
+        b"eventpayload" => Flag::EventPayload,
+        b"jsonvalue" => Flag::JsonValue,
+        b"hostLabel" => Flag::HostLabel,
+        b"sensitive" => Flag::Sensitive,
+        b"idempotencyToken" => Flag::IdempotencyToken,
+        b"exception" => Flag::Error,
+        b"endpointdiscoveryid" => Flag::EndpointDiscoveryId,
+        b"requiresLength" => Flag::RequiresLength,
+        b"deprecated" => Flag::Deprecated,
+        _ => return None,
+    })
+}
 
 /// The C2J trait keys of a shape or reference, as `match` runs them for
 /// every key of every reference at no measurable cost (the tests keep it
@@ -86,21 +91,21 @@ pub(super) fn trait_subkeys(key: &str) -> Option<&'static [&'static str]> {
 }
 
 /// The resolved trait keys of a shape as one reference sees it: the slots,
-/// and the raw values of the keys with no slot.
+/// and the raw values of the keys with no slot, borrowed from the document.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct C2jTraits {
+pub(super) struct C2jTraits<'a> {
     pub(super) known: KnownTraits,
-    pub(super) event: Option<Json>,
-    pub(super) document: Option<Json>,
-    pub(super) union: Option<Json>,
+    pub(super) event: Option<&'a Json>,
+    pub(super) document: Option<&'a Json>,
+    pub(super) union: Option<&'a Json>,
 }
 
-impl C2jTraits {
+impl<'a> C2jTraits<'a> {
     /// Lays every trait key of `object` over the traits held; `shape`
     /// names the shape in an error, as the arena names it.
     pub(super) fn apply(
         &mut self,
-        object: &Object,
+        object: &'a Object,
         shape: &str,
         builder: &mut SchemaSetBuilder,
     ) -> Result<(), ModelError> {
@@ -120,11 +125,11 @@ impl C2jTraits {
     fn apply_key(
         &mut self,
         key: &str,
-        value: &Json,
+        value: &'a Json,
         builder: &mut SchemaSetBuilder,
     ) -> Result<(), Invalid> {
-        if let Some((_, flag)) = FLAG_KEYS.iter().find(|(name, _)| *name == key) {
-            self.known.flags.set(*flag, truthy(value));
+        if let Some(flag) = flag(key) {
+            self.known.flags.set(flag, truthy(value));
             return Ok(());
         }
         let known = &mut self.known;
@@ -133,9 +138,9 @@ impl C2jTraits {
             Ok(Some(builder.intern(text)?))
         };
         match key {
-            "event" => self.event = Some(value.clone()),
-            "document" => self.document = Some(value.clone()),
-            "union" => self.union = Some(value.clone()),
+            "event" => self.event = Some(value),
+            "document" => self.document = Some(value),
+            "union" => self.union = Some(value),
             "locationName" => {
                 let name = text("locationName")?;
                 (known.location_name, known.json_name, known.xml_name) = (name, name, name);
@@ -166,7 +171,7 @@ impl C2jTraits {
     /// `structure` with a truthy `document` is a document, else with a
     /// truthy `union` a union.
     pub(super) fn shape_type(&self, type_name: &str) -> ShapeType {
-        let truthy = |value: &Option<Json>| value.as_ref().is_some_and(truthy);
+        let truthy = |value: &Option<&Json>| value.is_some_and(truthy);
         match type_name {
             "structure" if truthy(&self.document) => ShapeType::Document,
             "structure" if truthy(&self.union) => ShapeType::Union,
@@ -189,15 +194,15 @@ impl C2jTraits {
     /// a `document` or `union` whose truthiness the type does not say.
     pub(super) fn cold(&self, shape_type: ShapeType) -> Result<ColdTraits, BuildError> {
         let mut cold = ColdTraits::default();
-        if let Some(event) = &self.event {
+        if let Some(event) = self.event {
             cold.insert(traits::EVENT.as_str(), event.clone())?;
         }
         let unsaid = [
-            (traits::DOCUMENT, &self.document, ShapeType::Document),
-            (traits::UNION, &self.union, ShapeType::Union),
+            (traits::DOCUMENT, self.document, ShapeType::Document),
+            (traits::UNION, self.union, ShapeType::Union),
         ];
         for (id, value, expressed) in unsaid {
-            if let Some(value) = value.as_ref()
+            if let Some(value) = value
                 && truthy(value) != (shape_type == expressed)
             {
                 cold.insert(id.as_str(), value.clone())?;
@@ -210,7 +215,7 @@ impl C2jTraits {
     /// `target`'s: a reference that changes them changes what botocore
     /// reads of a structure, which a member's type cannot say.
     pub(super) fn changed_kind(&self, target: &Self) -> impl Iterator<Item = &'static str> {
-        let truthy = |value: &Option<Json>| value.as_ref().is_some_and(truthy);
+        let truthy = |value: &Option<&Json>| value.is_some_and(truthy);
         [
             (
                 "document",

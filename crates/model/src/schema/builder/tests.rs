@@ -348,3 +348,50 @@ fn a_member_with_the_targets_traits_shares_them() -> Result<()> {
     assert_eq!(flags, [(false, true), (true, false)]);
     Ok(())
 }
+
+#[test]
+fn a_duplicate_member_is_refused_however_many_members_a_structure_has() -> Result<()> {
+    // Below `SCAN_MEMBERS` the builder scans; from it on, a hash set answers.
+    let mut b = builder()?;
+    let string = string(&b)?;
+    let s = b.declare("S", ShapeType::Structure, None)?;
+    let names: Vec<String> = (0..40).map(|index| format!("m{index}")).collect();
+    for (index, name) in names.iter().enumerate() {
+        b.add_member(s, name, string, INHERIT)?;
+        for earlier in [0, index / 2, index] {
+            let again = b.add_member(s, &names[earlier], string, INHERIT);
+            let fqn = format!("t#S${}", names[earlier]);
+            assert_eq!(again, Err(BuildError::DuplicateMember(fqn.into())));
+        }
+    }
+    let set = b.finish()?;
+    let shape = set.shape_named("S").ok_or("no S")?;
+    let found: Vec<_> = shape.members().map(|m| m.member_name()).collect();
+    assert_eq!(
+        found,
+        names
+            .iter()
+            .map(|name| Some(name.as_str()))
+            .collect::<Vec<_>>()
+    );
+    for (index, member) in shape.members().enumerate() {
+        assert_eq!(member.id().as_str(), format!("t#S${}", names[index]));
+        assert_eq!(member.id().member(), Some(names[index].as_str()));
+        assert_eq!(member.member_index(), Some(index));
+    }
+    Ok(())
+}
+
+#[test]
+fn a_member_id_fails_as_the_whole_id_fails_to_parse() -> Result<()> {
+    let mut b = builder()?;
+    let string = string(&b)?;
+    let s = b.declare("S", ShapeType::Structure, None)?;
+    let long = "n".repeat(usize::from(u16::MAX));
+    for name in ["", "a$b", "a#b", "#", "$", long.as_str()] {
+        let expected = offsets(&format!("t#S${name}")).map_err(BuildError::from);
+        let added = b.add_member(s, name, string, INHERIT);
+        assert_eq!(added.map(|_| ()), expected.map(|_| ()), "{name:.8}");
+    }
+    Ok(())
+}
