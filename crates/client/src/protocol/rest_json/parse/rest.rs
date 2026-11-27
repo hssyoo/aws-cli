@@ -166,54 +166,6 @@ fn update(parsed: &mut Map, members: Value) -> Result<(), ParseError> {
     }
 }
 
-/// `BaseRestParser._handle_string` for a `jsonvalue` header
-/// (`is_json_value_header`): the text base64-decoded and read as JSON.
-/// `None` for any other string, which stays as it is.
-pub(super) fn json_value(shape: Schema<'_>, value: &Value) -> Option<Result<Value, ParseError>> {
-    let header = shape.location() == Some("header");
-    (header && shape.flag(Flag::JsonValue)).then(|| json_value_of(value))
-}
-
-/// `json.loads(base64.b64decode(value).decode('utf-8'))`.
-fn json_value_of(value: &Value) -> Result<Value, ParseError> {
-    let Value::String(text) = value else {
-        return Err(ParseError::new(format!(
-            "argument should be a bytes-like object or ASCII string, not '{}'",
-            common::short_type(value)
-        )));
-    };
-    if !text.is_ascii() {
-        return Err(ParseError::new(
-            "string argument should contain only ASCII characters",
-        ));
-    }
-    let bytes = pytext::base64::decode(text).map_err(ParseError::new)?;
-    match model::pyjson::loads(common::decoded(&bytes)?) {
-        Ok(value) => Ok(value),
-        Err(model::pyjson::LoadError::Invalid(message)) => Err(ParseError::new(message)),
-        Err(model::pyjson::LoadError::Limit(limit)) => Err(common::beyond_limit(limit)),
-    }
-}
-
-/// `BaseRestParser._handle_list`'s split: a header list's text as its
-/// comma-separated parts, each stripped, as RFC 7230 lists them. `None`
-/// for a list that is no header or is a list already.
-pub(super) fn header_items(shape: Schema<'_>, value: &Value) -> Option<Result<Value, ParseError>> {
-    if shape.location() != Some("header") {
-        return None;
-    }
-    match value {
-        Value::List(_) => None,
-        Value::String(text) => {
-            let parts = text
-                .split(',')
-                .map(|part| Value::String(pytext::text::strip(part).to_owned()));
-            Some(Ok(Value::List(parts.collect())))
-        }
-        other => Some(Err(no_attribute(other, "split"))),
-    }
-}
-
 /// The `AttributeError` of `value.name` on a value without that method.
 pub(super) fn no_attribute(value: &Value, name: &str) -> ParseError {
     ParseError::new(format!(
