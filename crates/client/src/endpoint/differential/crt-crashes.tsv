@@ -1,0 +1,10 @@
+dynamodb	Endpoint = Boolean(true) (wrong type)	Failed { text: "endpoint resolution failed", detail: "parseURL: an argument is unset or of the wrong type" }
+dynamodb	Endpoint = StringArray(["us-east-1"]) (wrong type)	Failed { text: "endpoint resolution failed", detail: "parseURL: an argument is unset or of the wrong type" }
+importexport	Endpoint = Boolean(true) (wrong type)	Failed { text: "endpoint resolution failed", detail: "parseURL: an argument is unset or of the wrong type" }
+importexport	Endpoint = StringArray(["us-east-1"]) (wrong type)	Failed { text: "endpoint resolution failed", detail: "parseURL: an argument is unset or of the wrong type" }
+s3	Endpoint = Boolean(true) (wrong type)	Failed { text: "endpoint resolution failed", detail: "parseURL: an argument is unset or of the wrong type" }
+s3	Endpoint = StringArray(["us-east-1"]) (wrong type)	Failed { text: "endpoint resolution failed", detail: "parseURL: an argument is unset or of the wrong type" }
+s3control	Endpoint = Boolean(true) (wrong type)	Failed { text: "endpoint resolution failed", detail: "parseURL: an argument is unset or of the wrong type" }
+s3control	Endpoint = StringArray(["us-east-1"]) (wrong type)	Failed { text: "endpoint resolution failed", detail: "parseURL: an argument is unset or of the wrong type" }
+sdb	Endpoint = Boolean(true) (wrong type)	Failed { text: "endpoint resolution failed", detail: "parseURL: an argument is unset or of the wrong type" }
+sdb	Endpoint = StringArray(["us-east-1"]) (wrong type)	Failed { text: "endpoint resolution failed", detail: "parseURL: an argument is unset or of the wrong type" }

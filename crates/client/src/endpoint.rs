@@ -758,4 +758,6 @@ fn auth_schemes(properties: &[u8]) -> Vec<SchemeProps> {
 mod legacy;
 
 #[cfg(test)]
+mod differential;
+#[cfg(test)]
 mod tests;
