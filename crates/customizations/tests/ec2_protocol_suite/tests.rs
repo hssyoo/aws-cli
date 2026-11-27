@@ -144,10 +144,10 @@ fn bytes_to_text(value: Value) -> Value {
 /// `test_input_compliance` for one case: the body as bytes, the expected
 /// headers (`Content-Type` with `; charset=utf-8` added) and no forbidden
 /// one, the URI, the method, and the host.
-fn input_case(suite: &JsonDoc, case: &JsonDoc) -> Result<()> {
+fn input_case(protocol: ProtocolHandle, suite: &JsonDoc, case: &JsonDoc) -> Result<()> {
     let (model, name) = case_model(suite, case)?;
     let params = special_floats_in(Value::from_serde(&case["params"]));
-    let request = serialize_case(ec2()?, &model, &name, &params)?;
+    let request = serialize_case(protocol, &model, &name, &params)?;
     let expected = &case["serialized"];
     if let Some(body) = expected["body"].as_str()
         && request.body != body.as_bytes()
@@ -244,7 +244,7 @@ fn compliance_timestamp(value: &Value) -> std::result::Result<Value, ParseError>
 /// `test_output_compliance` for one case. An error case compares the whole
 /// parsed dict, as Python's `assert_equal` does: every field of `Error`
 /// and every other key the error parse leaves at the top.
-fn output_case(suite: &JsonDoc, case: &JsonDoc) -> Result<()> {
+fn output_case(protocol: ProtocolHandle, suite: &JsonDoc, case: &JsonDoc) -> Result<()> {
     let is_error = case.get("error").is_some();
     let (model, name) = case_model(suite, case)?;
     let raw = &case["response"];
@@ -268,7 +268,7 @@ fn output_case(suite: &JsonDoc, case: &JsonDoc) -> Result<()> {
     };
     let options = parse_options(&compliance_timestamp, &botocore_blob);
     let (parsed, expected) = if is_error {
-        let error = parse_error_case(ec2()?, &model, &name, &response, &options)?;
+        let error = parse_error_case(protocol, &model, &name, &response, &options)?;
         let mut parsed = Map::new();
         parsed.insert("Error".into(), Value::Map(error.error));
         for (key, value) in error.members {
@@ -276,7 +276,8 @@ fn output_case(suite: &JsonDoc, case: &JsonDoc) -> Result<()> {
         }
         (parsed, expected_error(case))
     } else {
-        let Value::Map(mut parsed) = parse_case(ec2()?, &model, &name, &response, &options)? else {
+        let Value::Map(mut parsed) = parse_case(protocol, &model, &name, &response, &options)?
+        else {
             return Err("not a structure".into());
         };
         parsed.remove("ResponseMetadata");
@@ -320,7 +321,9 @@ struct Tally {
     ignored_passing: usize,
 }
 
-fn run(kind: &str) -> Result<Tally> {
+/// Every case of `kind` under `protocol`, the ignored ones run but not
+/// counted, and a report of the counts on stderr.
+fn run(protocol: ProtocolHandle, kind: &str) -> Result<Tally> {
     let list = read(protocols_dir().join("protocol-tests-ignore-list.json"))?;
     let suites = read(protocols_dir().join(kind).join(format!("{FILE}.json")))?;
     let mut tally = Tally::default();
@@ -336,9 +339,9 @@ fn run(kind: &str) -> Result<Tally> {
                 continue;
             }
             let outcome = if kind == "input" {
-                input_case(suite, case)
+                input_case(protocol, suite, case)
             } else {
-                output_case(suite, case)
+                output_case(protocol, suite, case)
             };
             if ignored(&list, kind, description, case["id"].as_str()) {
                 tally.ignored += 1;
@@ -366,8 +369,8 @@ fn run(kind: &str) -> Result<Tally> {
 
 /// Every case of a kind passes but the ignored ones, and the suite is not
 /// empty: a file that stopped loading cases would pass vacuously.
-fn assert_suite(kind: &str, at_least: usize) -> Result<()> {
-    let tally = run(kind)?;
+fn assert_suite(kind: &str, at_least: usize, ignored: usize) -> Result<()> {
+    let tally = run(ec2()?, kind)?;
     assert!(
         tally.failed.is_empty(),
         "{} failed:\n{}",
@@ -379,17 +382,20 @@ fn assert_suite(kind: &str, at_least: usize) -> Result<()> {
         "only {} {kind} cases ran",
         tally.passed
     );
+    // As many ignored as the list names for ec2's cases: an ignore rule that
+    // matched more would hide failures.
+    assert_eq!(tally.ignored, ignored, "ignored {kind} cases");
     Ok(())
 }
 
 #[test]
 fn botocore_s_ec2_input_suite_passes() -> Result<()> {
-    assert_suite("input", 20)
+    assert_suite("input", 20, 8)
 }
 
 #[test]
 fn botocore_s_ec2_output_suite_passes() -> Result<()> {
-    assert_suite("output", 25)
+    assert_suite("output", 25, 2)
 }
 
 /// Switched off: the façade's admitted registry has no `ec2`, so neither
@@ -400,3 +406,69 @@ fn ec2_is_reachable_only_through_the_switched_off_registry() {
     assert!(built_protocol_named(FILE).is_some());
     assert!(built_protocol_named("query").is_some());
 }
+
+/// The suites tell the protocols apart: awsQuery, whose serializer and
+/// parser ec2's only adjust, fails cases of each.
+#[test]
+fn the_suites_fail_the_query_protocol() -> Result<()> {
+    let query = protocol_named("query").ok_or("query")?;
+    // Output: the error case, by its `RequestID` left at the top, which a
+    // comparison of `Code` and `Message` alone would miss.
+    for (kind, at_least) in [("input", 3), ("output", 1)] {
+        let tally = run(query, kind)?;
+        assert!(tally.failed.len() >= at_least, "{kind}: {:?}", tally.failed);
+    }
+    Ok(())
+}
+
+/// A missing suite file fails rather than passing empty.
+#[test]
+fn a_missing_suite_fails() -> Result<()> {
+    assert!(run(ec2()?, "absent").is_err());
+    Ok(())
+}
+
+/// The header check fails a wrong or missing `Content-Type`, a missing
+/// expected header and a forbidden one.
+#[test]
+fn the_header_check_is_strict() {
+    let sent = |pairs: &[(&str, &str)]| Headers::from_pairs(pairs.iter().copied());
+    let form = "application/x-www-form-urlencoded; charset=utf-8";
+    let expected = serde_json::json!({
+        "headers": {"Content-Type": "application/x-www-form-urlencoded", "X-A": "1"},
+        "forbidHeaders": ["X-B"],
+    });
+    assert!(check_headers(&sent(&[("Content-Type", form), ("X-A", "1")]), &expected).is_ok());
+    let wrong = [
+        ("Content-Type", "application/x-www-form-urlencoded"),
+        ("X-A", "1"),
+    ];
+    assert!(check_headers(&sent(&wrong), &expected).is_err());
+    assert!(check_headers(&sent(&[("X-A", "1")]), &expected).is_err());
+    assert!(check_headers(&sent(&[("Content-Type", form)]), &expected).is_err());
+    let forbidden = [("Content-Type", form), ("X-A", "1"), ("X-B", "2")];
+    assert!(check_headers(&sent(&forbidden), &expected).is_err());
+}
+
+/// Python's `==` sees an extra key, a missing one, a nested difference and
+/// a different list order, and only numbers cross types.
+#[test]
+fn python_equality_is_strict_where_python_is() -> Result<()> {
+    let value = |text: &str| Value::from_json(text.as_bytes());
+    let base = value(r#"{"Error": {"Code": "C", "Message": "m"}, "A": [1, 2]}"#)?;
+    for other in [
+        r#"{"Error": {"Code": "C", "Message": "m", "Type": "Sender"}, "A": [1, 2]}"#,
+        r#"{"Error": {"Code": "C"}, "A": [1, 2]}"#,
+        r#"{"Error": {"Code": "C", "Message": "m"}, "A": [2, 1]}"#,
+        r#"{"Error": {"Code": "C", "Message": "m"}, "A": [1, 2], "B": null}"#,
+        r#"{"Error": {"Code": "C", "Message": "m"}, "A": ["1", 2]}"#,
+    ] {
+        assert!(!python_eq(&base, &value(other)?), "{other}");
+    }
+    let same = value(r#"{"A": [1.0, true], "Error": {"Message": "m", "Code": "C"}}"#)?;
+    let base = value(r#"{"Error": {"Code": "C", "Message": "m"}, "A": [1, 1]}"#)?;
+    assert!(python_eq(&base, &same));
+    Ok(())
+}
+
+mod fakes;
