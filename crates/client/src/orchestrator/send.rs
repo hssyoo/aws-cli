@@ -5,17 +5,16 @@ use super::prepare::{
     resolve_auth_scheme, resolve_endpoint,
 };
 use super::{after_prepare, find};
-use crate::auth::{self, AuthScheme};
+use crate::auth::SelectedAuth;
 use crate::call::{Client, Output, Prepared};
 use crate::checksum::CallChecksums;
-use crate::credentials::SigningCredentials;
 use crate::endpoint;
 use crate::error::{CallError, ParseError, ServiceError};
 use crate::http::{HttpRequest, HttpResponse, Method};
+use crate::identity::Identity;
 use crate::interceptors::InterceptorContext;
 use crate::retry::{self, Attempt, ErrorKind, RetryDecision};
 use crate::transport::TransportError;
-use cli_core::client_config::user_agent::Features;
 use model::value::Value;
 use std::time::Duration;
 
@@ -133,7 +132,7 @@ fn refresh_for_identity(
         modify_before_retry_loop(client, ctx, &mut request).map_err(after_prepare)?;
         apply_checksums(client, ctx, &mut request);
         prepared.request = request;
-        prepared.scheme =
+        prepared.auth =
             resolve_auth_scheme(client, ctx.operation, &endpoint).map_err(after_prepare)?;
     }
     Ok(())
@@ -148,14 +147,14 @@ fn deferred_account_id(client: &Client) -> Result<Option<String>, CallError> {
     {
         return Ok(None);
     }
-    let credentials = (client.components.identity_resolver)
-        .credentials()
-        .map_err(|error| CallError::Credentials(error.0))?;
-    Ok(credentials.and_then(|credentials| credentials.account_id))
+    match client.components.identity_resolver.resolve_identity()? {
+        Some(Identity::Credentials(credentials)) => Ok(credentials.account_id),
+        _ => Ok(None),
+    }
 }
 
-/// One attempt's request: `modify_before_signing`, then for a SigV4
-/// scheme the identity and the signature, then `modify_before_transmit`.
+/// One attempt's request: `modify_before_signing`, then the identity and
+/// signature of the call's scheme, then `modify_before_transmit`.
 fn attempt_request(
     client: &Client,
     ctx: &mut InterceptorContext<'_>,
@@ -165,19 +164,7 @@ fn attempt_request(
 ) -> Result<HttpRequest, CallError> {
     let mut request = prepared.request.clone();
     modify_before_signing(client, ctx, &mut request)?;
-    if let AuthScheme::SigV4 {
-        signing_region,
-        signing_name,
-    } = &prepared.scheme
-    {
-        let credentials = resolve_identity(client)?;
-        let signer = Signer {
-            region: signing_region,
-            name: signing_name,
-            credentials: &credentials,
-        };
-        sign(client, &signer, prepared.features, &mut request);
-    }
+    sign(client, prepared, &mut request)?;
     modify_before_transmit(client, ctx, &mut request, invocation, ttl)?;
     Ok(request)
 }
@@ -197,30 +184,23 @@ fn modify_before_signing(
     Ok(())
 }
 
-/// The credentials, asked of the source on every attempt: the source
-/// refreshes what is due (during a backoff too), and nothing here caches.
-/// An error, or none, ends the call without a retry.
-fn resolve_identity(client: &Client) -> Result<SigningCredentials, CallError> {
-    (client.components.identity_resolver)
-        .credentials()
-        .map_err(|error| CallError::Credentials(error.0))?
-        .ok_or(CallError::NoCredentials)
-}
-
-/// What one SigV4 signature is made with.
-struct Signer<'a> {
-    region: &'a str,
-    name: &'a str,
-    credentials: &'a SigningCredentials,
-}
-
-/// The `User-Agent` with the credential source's feature ids, then the
-/// signature. The provider registers its feature ids as it answers, and
-/// `rebuild_and_replace_user_agent_handler` rebuilds the header after the
-/// signer, which does not sign `User-Agent`.
-fn sign(client: &Client, signer: &Signer<'_>, features: Features, request: &mut HttpRequest) {
-    if let Some(method) = client.components.identity_resolver.method() {
-        let mut features = features;
+/// The scheme's identity, asked of its resolver on every attempt (the
+/// source refreshes what is due, during a backoff too, and nothing here
+/// caches); then the `User-Agent` with the resolver's credential feature
+/// ids; then the signature. An identity error, or none, ends the call
+/// without a retry. The provider registers its feature ids as it answers,
+/// and `rebuild_and_replace_user_agent_handler` rebuilds the header after
+/// the signer, which does not sign `User-Agent`. The anonymous identity of
+/// an unsigned call reads no credentials and names no provider.
+fn sign(client: &Client, prepared: &Prepared, request: &mut HttpRequest) -> Result<(), CallError> {
+    let components = &client.components;
+    let SelectedAuth { option, scheme } = &prepared.auth;
+    let resolver = scheme.identity_resolver(components);
+    let identity = resolver
+        .resolve_identity()?
+        .ok_or(CallError::NoCredentials)?;
+    if let Some(method) = resolver.method() {
+        let mut features = prepared.features;
         features.extend(
             cli_core::client_config::user_agent::credential_features(method)
                 .iter()
@@ -229,8 +209,7 @@ fn sign(client: &Client, signer: &Signer<'_>, features: Features, request: &mut 
         let agent = crate::useragent::header(&client.settings, &client.user_agent, features);
         request.headers.set("User-Agent", agent);
     }
-    let now = client.components.runtime.now();
-    auth::sign(signer.region, signer.name, signer.credentials, now, request);
+    (scheme.signer()).sign_http_request(request, &identity, option, components)
 }
 
 /// The core's `modify_before_transmit`: the unsigned headers, after the

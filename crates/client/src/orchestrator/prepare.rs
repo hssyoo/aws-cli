@@ -2,7 +2,7 @@
 //! runtime, so every refusal comes before any credential provider runs.
 use super::{find, prepare_hook_error};
 use crate::admission::Unsupported;
-use crate::auth::{self, AuthScheme};
+use crate::auth::{self, AuthSchemeOptionResolverParams, SelectedAuth};
 use crate::call::{Client, Prepared};
 use crate::checksum::{self, CallChecksums};
 use crate::endpoint::{self, ResolvedEndpoint};
@@ -39,12 +39,12 @@ pub(crate) fn prepare(
     let mut request = apply_endpoint(client, &serialized, &endpoint.url, features)?;
     modify_before_retry_loop(client, &mut ctx, &mut request)?;
     apply_checksums(client, &mut ctx, &mut request);
-    let scheme = resolve_auth_scheme(client, operation, &endpoint)?;
+    let auth = resolve_auth_scheme(client, operation, &endpoint)?;
     Ok(Prepared {
         operation: operation.name().to_owned(),
         slots: ctx.into_state(),
         request,
-        scheme,
+        auth,
         serialized,
         features,
         input,
@@ -223,19 +223,25 @@ pub(super) fn apply_checksums(
     }
 }
 
-/// The scheme botocore's selection gives (`choose-signer`), a component,
-/// not a hook.
+/// The auth option botocore's selection gives (`choose-signer`), from the
+/// client's option resolver, and the client's scheme that serves it: the
+/// components, not a hook. Either may refuse, before any credential.
 pub(super) fn resolve_auth_scheme(
     client: &Client,
     operation: OperationSchema<'_>,
     endpoint: &ResolvedEndpoint,
-) -> Result<AuthScheme, CallError> {
-    auth::select(
-        &client.model,
-        &client.service,
-        operation,
-        endpoint,
-        client.settings.signing.value,
-        client.region.as_deref(),
-    )
+) -> Result<SelectedAuth, CallError> {
+    let components = &client.components;
+    let options =
+        components
+            .auth_scheme_option_resolver
+            .resolve(&AuthSchemeOptionResolverParams {
+                model: &client.model,
+                service: &client.service,
+                operation,
+                endpoint,
+                signing_enabled: client.settings.signing.value,
+                client_region: client.region.as_deref(),
+            })?;
+    auth::choose(options, components.auth_schemes)
 }
