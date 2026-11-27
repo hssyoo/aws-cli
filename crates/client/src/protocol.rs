@@ -143,7 +143,7 @@ pub trait Protocol: Sync + std::fmt::Debug {
     ) -> Result<ServiceError, ParseError>;
 }
 
-mod common;
+pub(crate) mod common;
 pub mod json;
 pub mod query;
 pub mod rest_json;

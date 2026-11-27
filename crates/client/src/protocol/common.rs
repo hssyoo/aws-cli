@@ -274,7 +274,7 @@ pub(super) fn decode_blob(value: &Value) -> Result<Value, ParseError> {
 
 /// `Serializer._convert_timestamp_to_str`: the value as an instant, then in
 /// `format` (`iso8601`, `unixtimestamp` or `rfc822`, any case).
-pub(super) fn timestamp_out(value: &Value, format: &str) -> Result<Value, SerializeError> {
+pub(crate) fn timestamp_out(value: &Value, format: &str) -> Result<Value, SerializeError> {
     let at = instant(value)
         .ok_or_else(|| SerializeError::new(format!("Invalid timestamp \"{}\"", py_str(value))))?;
     match format.to_ascii_lowercase().as_str() {
@@ -289,7 +289,7 @@ pub(super) fn timestamp_out(value: &Value, format: &str) -> Result<Value, Serial
 }
 
 /// `Serializer._get_base64`: text is encoded as UTF-8 first.
-pub(super) fn base64_in(value: &Value) -> Result<String, SerializeError> {
+pub(crate) fn base64_in(value: &Value) -> Result<String, SerializeError> {
     match value {
         Value::String(text) => Ok(pytext::base64::encode(text.as_bytes())),
         Value::PyString(text) => {
@@ -306,7 +306,7 @@ pub(super) fn base64_in(value: &Value) -> Result<String, SerializeError> {
 }
 
 /// `Serializer._handle_float`: the three special values as text.
-pub(super) fn special_float(value: &Value) -> Value {
+pub(crate) fn special_float(value: &Value) -> Value {
     match value {
         Value::Float(number) if number.is_nan() => Value::String("NaN".into()),
         Value::Float(number) if *number == f64::INFINITY => Value::String("Infinity".into()),
@@ -369,7 +369,7 @@ pub(super) fn member_name(member: Schema<'_>) -> &str {
 
 /// A member's `locationName`, else its name: the key the JSON and XML
 /// bodies hold it under.
-pub(super) fn wire_name(member: Schema<'_>) -> &str {
+pub(crate) fn wire_name(member: Schema<'_>) -> &str {
     member
         .location_name()
         .unwrap_or_else(|| member_name(member))
@@ -383,7 +383,7 @@ pub(super) fn list_member(shape: Schema<'_>) -> Result<Schema<'_>, String> {
 }
 
 /// A map's key and value, which every map the front-end builds has.
-pub(super) fn map_entry(shape: Schema<'_>) -> Result<(Schema<'_>, Schema<'_>), String> {
+pub(crate) fn map_entry(shape: Schema<'_>) -> Result<(Schema<'_>, Schema<'_>), String> {
     shape
         .map_key()
         .zip(shape.map_value())
@@ -426,7 +426,7 @@ pub(super) fn distinct(headers: &Headers) -> Vec<(String, String)> {
 
 /// `bytes.decode('utf-8')`, whose `UnicodeDecodeError` the parsers let
 /// through with CPython's text.
-pub(super) fn decoded(bytes: &[u8]) -> Result<&str, ParseError> {
+pub(crate) fn decoded(bytes: &[u8]) -> Result<&str, ParseError> {
     pytext::text::decode_utf8(bytes).map_err(ParseError::new)
 }
 
@@ -434,7 +434,7 @@ pub(super) fn decoded(bytes: &[u8]) -> Result<&str, ParseError> {
 /// the native client's reader holds ([`model::pyjson::MAX_DEPTH`]): its own
 /// limit, named, where Python would read it. Invalid text that deep is not
 /// the limit: it is `{'message': body}`, as in Python.
-pub(super) fn beyond_limit(limit: model::pyjson::Limit) -> ParseError {
+pub(crate) fn beyond_limit(limit: model::pyjson::Limit) -> ParseError {
     ParseError::new(format!(
         "native client limit: the response holds {limit}, which the native client does not \
          represent"
