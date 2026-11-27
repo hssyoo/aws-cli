@@ -1,16 +1,12 @@
 //! A wire protocol: how an operation's input becomes a request and a
-//! response becomes its output or a service error. [`ClientProtocol`] is
-//! the interface, [`compat`] botocore's drivers over it, and [`registry`]
-//! botocore's choice of one. The implementations: [`query`] (awsQuery),
-//! [`json`] (awsJson 1.0 and 1.1, with the query-compatible mode) and
-//! [`rest_json`] (restJson1).
-use crate::admission::Unsupported;
-use crate::error::{CallError, ParseError, SerializeError, ServiceError};
-use crate::http::{Headers, HttpRequest, HttpResponse, Method, Url};
-use model::schema::{OperationSchema, Schema, TraitId, TypeRegistry};
-use model::serde::Codec;
-use model::shapes::Model;
-use model::value::{Map, Value};
+//! response becomes its output or a service error. One implementation per
+//! protocol family: [`query`], [`json`] (1.0 and 1.1, with the
+//! query-compatible mode) and [`rest_json`].
+use crate::error::{ParseError, SerializeError, ServiceError};
+use crate::http::{Headers, HttpResponse, Method};
+use model::schema::OperationSchema;
+use model::shapes::{Metadata, Model};
+use model::value::Value;
 
 /// A request before it has an endpoint: botocore's request dict, as a
 /// serializer returns it (`Serializer.serialize_to_request`). The call
@@ -101,123 +97,56 @@ impl ParseOptions<'static> {
     };
 }
 
-/// A wire protocol (smithy-rs's `ClientProtocol`): the request for an
-/// input, and botocore's three parse steps (`_do_parse`, `_do_error_parse`,
-/// `_do_modeled_error_parse`), which [`compat`]'s drivers combine as
-/// `ResponseParser.parse` does. A protocol implements only the steps; the
-/// botocore name it answers to lives in the [`registry`] alone.
-pub trait ClientProtocol: Sync + std::fmt::Debug {
-    /// The Smithy protocol trait the protocol implements.
-    fn protocol_id(&self) -> TraitId;
-    /// The codec of its bodies, both ways; `None` when the two directions
-    /// differ (awsQuery writes a form and reads XML).
-    fn payload_codec(&self) -> Option<&dyn Codec>;
-    /// Where it departs from Smithy as botocore does.
-    fn compat(&self) -> &BotocoreCompat;
-    /// The request for `operation` with `input`, which validation passed
-    /// (`Serializer.serialize_to_request`).
+pub trait Protocol: Sync + std::fmt::Debug {
+    /// The protocol's name, as a model's `protocol` and `protocols` spell
+    /// it.
+    fn name(&self) -> &'static str;
+    /// Whether a timestamp member with no `timestampFormat` goes over the
+    /// wire as an epoch number (`JSONSerializer.TIMESTAMP_FORMAT`,
+    /// `unixtimestamp`) rather than ISO 8601 text (`QuerySerializer`'s and
+    /// the XML protocols' `iso8601`).
+    fn epoch_timestamps(&self) -> bool;
+    /// The request for `operation` with `input`, which validation passed.
     ///
     /// # Errors
     /// An input the protocol cannot put on the wire.
-    fn serialize_request(
+    fn serialize(
         &self,
+        model: &Model,
         operation: OperationSchema<'_>,
         input: &Value,
-        model: &Model,
     ) -> Result<Serialized, SerializeError>;
-    /// The serialized request joined to the endpoint with the call's
-    /// `User-Agent` (`prepare_request_dict`, the SRA's
-    /// `updateServiceEndpoint`).
-    ///
-    /// # Errors
-    /// An endpoint that is not a URL.
-    fn update_endpoint(
-        &self,
-        request: &Serialized,
-        endpoint_url: &str,
-        user_agent: &str,
-    ) -> Result<HttpRequest, CallError> {
-        join(request.clone(), endpoint_url, user_agent)
-    }
-    /// `_do_parse`: the output of a response the drivers did not take for
-    /// an error.
-    ///
-    /// # Errors
-    /// `ResponseParserError`: a body the protocol cannot read.
-    fn deserialize_response(
-        &self,
-        operation: OperationSchema<'_>,
-        shape: Option<Schema<'_>>,
-        response: &HttpResponse,
-        options: &ParseOptions<'_>,
-    ) -> Result<Value, ParseError>;
-    /// `_do_error_parse`: the `Error` and `ResponseMetadata` botocore
-    /// reads from an error response.
-    ///
-    /// # Errors
-    /// `ResponseParserError`: a body the protocol cannot read.
-    fn parse_error_metadata(&self, response: &HttpResponse) -> Result<Map, ParseError>;
-    /// `_do_modeled_error_parse`: a modelled error shape's members.
-    ///
-    /// # Errors
-    /// `ResponseParserError`: a body the protocol cannot read.
-    fn deserialize_modeled_error(
-        &self,
-        shape: Schema<'_>,
-        response: &HttpResponse,
-        options: &ParseOptions<'_>,
-    ) -> Result<Map, ParseError>;
-    /// A streamed output, read from the response as it arrives. Reserved:
-    /// no protocol streams yet.
-    fn deserialize_streaming(
-        &self,
-        _operation: OperationSchema<'_>,
-        _response: &mut HttpResponse,
-    ) -> Option<Result<Value, ParseError>> {
-        None
-    }
-    /// The output of a successful response: [`compat::parse`]. Protocols
-    /// keep this; a test double may answer for the whole driver.
+    /// The output of a successful response.
     ///
     /// # Errors
     /// `ResponseParserError`: a body the protocol cannot read.
     fn parse(
         &self,
+        model: &Model,
         operation: OperationSchema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
-    ) -> Result<Value, ParseError> {
-        compat::parse(self, operation, operation.output(), response, options)
-    }
-    /// The service error a response with a status of 300 or more carries:
-    /// [`compat::parse_error`], with `registry` naming the modelled errors.
-    /// Protocols keep this; a test double may answer for the whole driver.
+    ) -> Result<Value, ParseError>;
+    /// The service error a response with a status of 300 or more carries,
+    /// as botocore parses it (`ResponseParser.parse`, whose error path
+    /// starts at 301), its modelled members included
+    /// (`Endpoint._add_modeled_error_fields`).
     ///
     /// # Errors
     /// `ResponseParserError`: a body the protocol cannot read.
     fn parse_error(
         &self,
+        model: &Model,
         operation: OperationSchema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
-        registry: TypeRegistry<'_>,
-    ) -> Result<ServiceError, ParseError> {
-        compat::parse_error(self, operation, response, options, registry)
-    }
+    ) -> Result<ServiceError, ParseError>;
 }
 
 mod common;
-pub mod compat;
 pub mod json;
 pub mod query;
-pub mod registry;
 pub mod rest_json;
-
-pub use compat::BotocoreCompat;
-pub use json::{AWS_JSON_1_0, AWS_JSON_1_1, HttpRpcProtocol};
-pub use query::{AWS_QUERY, AwsQueryProtocol};
-pub use registry::{ProtocolRegistry, Unresolved, resolved_protocol};
-pub use rest_json::{HttpBindingProtocol, REST_JSON_1};
 
 /// What the codecs share with the protocols: botocore's serializer
 /// conversions, wire names and body decoding.
@@ -225,9 +154,23 @@ pub(crate) use common::{
     base64_in, beyond_limit, decoded, map_entry, special_float, timestamp_out, wire_name,
 };
 
+/// The protocols implemented, which admission asks about without building
+/// a client.
+static IMPLEMENTED: &[&'static dyn Protocol] = &[&query::Query, &json::Json, &rest_json::RestJson];
+
+/// Why a model has no protocol botocore would speak.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Unresolved {
+    /// `UnsupportedServiceProtocolsError`: `protocols` lists none botocore
+    /// supports.
+    Unsupported(Vec<String>),
+    /// `UndefinedModelAttributeError`: neither `protocols` nor `protocol`.
+    Missing,
+}
+
 /// botocore's priority order (`PRIORITY_ORDERED_SUPPORTED_PROTOCOLS`,
-/// botocore/utils.py), which [`registry::resolved_protocol`] reads.
-pub(crate) const PRIORITY: [&str; 6] = [
+/// botocore/utils.py).
+const PRIORITY: [&str; 6] = [
     "json",
     "rest-json",
     "rest-xml",
@@ -236,72 +179,46 @@ pub(crate) const PRIORITY: [&str; 6] = [
     "ec2",
 ];
 
-/// The protocols implemented, under the botocore names that select them,
-/// which admission asks about without building a client.
-pub static IMPLEMENTED: ProtocolRegistry = ProtocolRegistry::new(&[
-    ("query", &AWS_QUERY),
-    ("json", &AWS_JSON_1_1),
-    ("json", &AWS_JSON_1_0),
-    ("rest-json", &REST_JSON_1),
-]);
+/// The protocol botocore speaks to a service (`ServiceModel.
+/// resolved_protocol`): with a nonempty `protocols`, the first of
+/// [`PRIORITY`] it lists; otherwise `protocol`.
+///
+/// # Errors
+/// See [`Unresolved`].
+pub fn resolved_protocol(metadata: &Metadata) -> Result<&str, Unresolved> {
+    match metadata.protocols.as_deref() {
+        Some(listed) if !listed.is_empty() => PRIORITY
+            .into_iter()
+            .find(|protocol| listed.iter().any(|name| &**name == *protocol))
+            .ok_or_else(|| Unresolved::Unsupported(listed.iter().map(|n| n.to_string()).collect())),
+        _ => metadata.protocol.as_deref().ok_or(Unresolved::Missing),
+    }
+}
 
 /// Whether `model`'s service sends a timestamp member with no
 /// `timestampFormat` as an epoch number; `None` when its protocol is not
 /// implemented.
 pub fn epoch_timestamps(model: &Model) -> Option<bool> {
-    for_model(model).map(compat::timestamps_epoch)
+    for_model(model).map(Protocol::epoch_timestamps)
 }
 
 /// The implementation of the protocol botocore speaks to `model`'s service;
 /// `None` when that protocol is not implemented, even if another the model
 /// lists is, or when the model has none.
-pub fn for_model(model: &Model) -> Option<&'static dyn ClientProtocol> {
-    select(model).ok()
+pub fn for_model(model: &Model) -> Option<&'static dyn Protocol> {
+    select(model.metadata(), IMPLEMENTED)
 }
 
-/// [`for_model`], refused as [`Unsupported::Protocol`] with the name
-/// botocore resolves (empty when it resolves none).
-///
-/// # Errors
-/// See above.
-pub fn select(model: &Model) -> Result<&'static dyn ClientProtocol, Unsupported> {
-    IMPLEMENTED.resolve(model.metadata())
+fn select(
+    metadata: &Metadata,
+    implemented: &[&'static dyn Protocol],
+) -> Option<&'static dyn Protocol> {
+    let name = resolved_protocol(metadata).ok()?;
+    implemented
+        .iter()
+        .copied()
+        .find(|protocol| protocol.name() == name)
 }
 
-/// `prepare_request_dict`: the serialized request joined to the endpoint
-/// (`_urljoin`), its host prefix before the endpoint's host, its query
-/// after the endpoint's, and `User-Agent` set after the serializer's
-/// headers. Host prefix injection is always on: the router sends
-/// `disable_host_prefix_injection` to Python.
-fn join(
-    serialized: Serialized,
-    endpoint: &str,
-    user_agent: &str,
-) -> Result<HttpRequest, CallError> {
-    let mut url = Url::parse(endpoint)
-        .ok_or_else(|| CallError::Endpoint(format!("Invalid endpoint: {endpoint}")))?;
-    if let Some(prefix) = &serialized.host_prefix {
-        url.authority.insert_str(0, prefix);
-    }
-    let path = &serialized.path;
-    if !(path.is_empty() || path == "/") {
-        match (url.path.strip_suffix('/'), path.starts_with('/')) {
-            (Some(base), true) => url.path = format!("{base}{path}"),
-            _ => url.path.push_str(path),
-        }
-    }
-    if !serialized.query.is_empty() {
-        if !url.query.is_empty() {
-            url.query.push('&');
-        }
-        url.query.push_str(&serialized.query);
-    }
-    let mut headers = serialized.headers;
-    headers.set("User-Agent", user_agent);
-    Ok(HttpRequest {
-        method: serialized.method,
-        url,
-        headers,
-        body: serialized.body,
-    })
-}
+#[cfg(test)]
+mod tests;
