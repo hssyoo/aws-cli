@@ -1,4 +1,5 @@
 use super::*;
+use crate::codec::json::load as body_json;
 use crate::protocol::ParseOptions;
 use model::value::Key;
 
@@ -210,13 +211,13 @@ fn a_body_past_the_reader_s_limit_fails_naming_the_limit() -> Result<(), Box<dyn
     assert!(output(&[], br#"{"Doc": [1,}"#).is_ok());
     let invalid = format!("{{\"Doc\": {}1,]", "[".repeat(model::pyjson::MAX_DEPTH));
     assert_eq!(
-        json::load(invalid.as_bytes())?,
+        body_json(invalid.as_bytes())?,
         Value::Map(Map::from_iter([(
             "message".to_owned(),
             Value::String(invalid)
         )]))
     );
-    let lone = json::load(br#"{"Doc": "a\ud800b"}"#)?;
+    let lone = body_json(br#"{"Doc": "a\ud800b"}"#)?;
     assert_eq!(
         lone.get("Doc"),
         Some(&Value::from_text(model::value::Wtf8Buf::from_code_points(

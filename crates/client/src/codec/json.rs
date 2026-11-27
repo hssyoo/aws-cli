@@ -14,7 +14,7 @@
 //! and read a `jsonvalue` header. Which one reads is the codec's
 //! [`Handlers`], fixed on its `static` instance.
 use crate::error::ParseError;
-use crate::protocol::common;
+use crate::protocol as common;
 use model::pyjson::{LoadError, Options};
 use model::pyrepr::{
     float_from_py_text, int_from_py_text, int_from_text, py_repr, py_short_type_name, py_str,
