@@ -9,7 +9,7 @@ use crate::codec::xml::{self as codec, Node, XmlDeserializer, by_name, replaced}
 use crate::error::ParseError;
 use crate::http::HttpResponse;
 use crate::protocol::ParseOptions;
-use crate::protocol::rest_json::parse::rest;
+use crate::protocol::rest_json::rest;
 use crate::xml::Element;
 use model::pyrepr::{float_from_text, int_from_text, py_repr, py_short_type_name};
 use model::schema::{Schema, ShapeType};

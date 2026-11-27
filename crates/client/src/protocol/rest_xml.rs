@@ -11,7 +11,7 @@
 //! Built but not admitted: [`REST_XML`] is in [`super::SWITCHED_OFF`],
 //! which only tests read, and not in [`super::IMPLEMENTED`], so admission
 //! still refuses a rest-xml service.
-use super::rest_json::serialize::{
+use super::rest_json::{
     Payload, encode_payload, joined_query, no_items, partition, render_uri_template, split_uri,
 };
 use super::{BotocoreCompat, ClientProtocol, HttpBindingProtocol, ParseOptions, Serialized};
