@@ -471,5 +471,6 @@ fn python_equality_is_strict_where_python_is() -> Result<()> {
     Ok(())
 }
 
+// The lint keeps `#[test]`s in files named tests.rs; this one is the fake rows'.
 #[path = "fakes/tests.rs"]
 mod fakes;
