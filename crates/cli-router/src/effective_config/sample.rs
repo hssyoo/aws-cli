@@ -67,7 +67,7 @@ fn sample_record_value(field: Field, source: Source) -> Option<&'static str> {
         Field::Transfer => return sample_transfer_value(key),
         Field::MemoryLimit => "512",
         Field::S3Endpoint if key == "addressing_style" => "virtual",
-        Field::S3Endpoint => "true",
+        Field::S3Endpoint | Field::PayloadSigning => "true",
         Field::AppId | Field::ExecutionEnv => "sample",
     })
 }
