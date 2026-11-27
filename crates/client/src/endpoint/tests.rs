@@ -743,3 +743,124 @@ fn a_required_client_context_parameter_needs_the_operation() -> TestResult {
     );
     Ok(())
 }
+
+const PARTITIONS: &str = r#"{"version": "1.1", "partitions": [{"id": "aws",
+    "regionRegex": "^(us|eu)\\-\\w+\\-\\d+$", "regions": {},
+    "outputs": {"name": "aws", "dnsSuffix": "example.com", "dualStackDnsSuffix": "example.com",
+    "supportsFIPS": true, "supportsDualStack": true, "implicitGlobalRegion": "us-east-1"}}]}"#;
+
+/// A rule set that reads its `Endpoint` with `parseURL`, else its region.
+const PARSED: &str = r#"{"version": "1.0", "parameters": {
+    "Region": {"type": "String", "builtIn": "AWS::Region", "required": false},
+    "Endpoint": {"type": "String", "builtIn": "SDK::Endpoint", "required": false}},
+    "rules": [
+      {"conditions": [{"fn": "isSet", "argv": [{"ref": "Endpoint"}]},
+                      {"fn": "parseURL", "argv": [{"ref": "Endpoint"}], "assign": "url"}],
+       "type": "endpoint", "endpoint": {"url": "{url#scheme}://{url#authority}"}},
+      {"conditions": [], "type": "endpoint",
+       "endpoint": {"url": "https://zjson.{Region}.example.com",
+       "properties": {"authSchemes": [{"name": "sigv4", "signingRegion": "{Region}",
+         "signingName": "zjson", "disableDoubleEncoding": true}]}}}]}"#;
+
+fn region(name: &str) -> EndpointParams {
+    let mut params = EndpointParams::default();
+    params.set("Region", ParamValue::String(name.into()));
+    params
+}
+
+/// The rule set and partitions are decoded on the first resolution, not
+/// before, and a clone made before then shares that decode: every client
+/// (and page) of a call resolves with one decode.
+#[test]
+fn clones_share_one_lazy_decode() -> TestResult {
+    let data = EndpointData::from_documents(
+        PARSED.as_bytes().to_vec(),
+        PARTITIONS.as_bytes().to_vec(),
+        None,
+    )?;
+    assert!(data.program.get().is_none() && data.partition_table.get().is_none());
+    let clone = data.clone();
+    let resolved = resolve(&clone, &region("us-west-2"))?;
+    assert_eq!(resolved.url, "https://zjson.us-west-2.example.com");
+    let (Some(Ok(ours)), Some(Ok(theirs))) = (data.program.get(), clone.program.get()) else {
+        return Err("the original did not see the clone's decode".into());
+    };
+    assert!(Arc::ptr_eq(ours, theirs));
+    assert!(matches!(data.partition_table.get(), Some(Ok(_))));
+    // A later resolution reuses it.
+    resolve(&data, &region("eu-west-1"))?;
+    let Some(Ok(again)) = data.program.get() else {
+        return Err("the decode went away".into());
+    };
+    assert!(Arc::ptr_eq(ours, again));
+    Ok(())
+}
+
+/// The `authSchemes` of the native engine's properties become the
+/// endpoint's schemes, each member of its own type.
+#[test]
+fn auth_schemes_come_from_the_native_properties() -> TestResult {
+    let data = EndpointData::from_documents(
+        PARSED.as_bytes().to_vec(),
+        PARTITIONS.as_bytes().to_vec(),
+        None,
+    )?;
+    let resolved = resolve(&data, &region("us-west-2"))?;
+    assert_eq!(
+        resolved.auth_schemes,
+        [SchemeProps {
+            name: "sigv4".into(),
+            signing_name: Some("zjson".into()),
+            signing_region: Some("us-west-2".into()),
+            signing_region_set: None,
+            disable_double_encoding: Some(true),
+        }]
+    );
+    let mut custom = region("us-west-2");
+    custom.set(
+        "Endpoint",
+        ParamValue::String("http://localhost:4566/x".into()),
+    );
+    let resolved = resolve(&data, &custom)?;
+    assert_eq!(resolved.url, "http://localhost:4566");
+    assert!(resolved.auth_schemes.is_empty());
+    Ok(())
+}
+
+/// A document the engine cannot decode fails each resolution with the CRT
+/// engine's text, the rule set's before the partitions'; and a parameter of
+/// the wrong type, which crashed the CRT engine, fails as an evaluation.
+#[test]
+fn engine_failures_keep_the_crt_texts() -> TestResult {
+    let failure = |rules: &str, partitions: &str, params: &EndpointParams| {
+        let data = EndpointData::from_documents(
+            rules.as_bytes().to_vec(),
+            partitions.as_bytes().to_vec(),
+            None,
+        )?;
+        let result = resolve(&data, params);
+        // A second resolution fails alike, from the cached error.
+        assert_eq!(result, resolve(&data, params));
+        match result {
+            Err(CallError::Endpoint(text)) => Ok::<_, Box<dyn std::error::Error>>(text),
+            other => Err(format!("{other:?}").into()),
+        }
+    };
+    let bad_rules = r#"{"version": "1.0", "parameters": {}, "rules": 5}"#;
+    let params = region("us-west-2");
+    assert_eq!(
+        failure(bad_rules, "[]", &params)?,
+        "invalid endpoint ruleset"
+    );
+    assert_eq!(
+        failure(PARSED, "[]", &params)?,
+        "invalid endpoint partitions"
+    );
+    let mut wrong = region("us-west-2");
+    wrong.set("Endpoint", ParamValue::Boolean(true));
+    assert_eq!(
+        failure(PARSED, PARTITIONS, &wrong)?,
+        "endpoint resolution failed"
+    );
+    Ok(())
+}
