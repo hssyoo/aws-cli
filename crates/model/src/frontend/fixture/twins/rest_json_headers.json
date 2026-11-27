@@ -1,0 +1,101 @@
+{
+  "smithy": "2.0",
+  "shapes": {
+    "aws.protocoltests.restjson#RestJson": {
+      "type": "service",
+      "version": "2019-12-16",
+      "operations": [{ "target": "aws.protocoltests.restjson#InputAndOutputWithHeaders" }],
+      "traits": {
+        "aws.api#service": { "sdkId": "Rest Json Protocol", "endpointPrefix": "restjson" },
+        "aws.auth#sigv4": { "name": "RestJson" },
+        "aws.protocols#restJson1": {},
+        "smithy.api#title": "RestJson"
+      }
+    },
+    "aws.protocoltests.restjson#InputAndOutputWithHeaders": {
+      "type": "operation",
+      "input": { "target": "aws.protocoltests.restjson#InputAndOutputWithHeadersIO" },
+      "output": { "target": "smithy.api#Unit" },
+      "traits": {
+        "smithy.api#http": { "method": "POST", "uri": "/InputAndOutputWithHeaders", "code": 200 },
+        "smithy.api#documentation": "The example tests how requests and responses are serialized when there is no input or output payload but there are HTTP header bindings."
+      }
+    },
+    "aws.protocoltests.restjson#Boolean": { "type": "boolean" },
+    "aws.protocoltests.restjson#BooleanList": {
+      "type": "list",
+      "member": { "target": "aws.protocoltests.restjson#Boolean" }
+    },
+    "aws.protocoltests.restjson#Double": { "type": "double" },
+    "aws.protocoltests.restjson#Float": { "type": "float" },
+    "aws.protocoltests.restjson#FooEnum": {
+      "type": "enum",
+      "members": {
+        "FOO": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": "Foo" } },
+        "BAZ": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": "Baz" } },
+        "BAR": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": "Bar" } },
+        "ONE": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": "1" } },
+        "ZERO": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": "0" } }
+      }
+    },
+    "aws.protocoltests.restjson#FooEnumList": {
+      "type": "list",
+      "member": { "target": "aws.protocoltests.restjson#FooEnum" }
+    },
+    "aws.protocoltests.restjson#InputAndOutputWithHeadersIO": {
+      "type": "structure",
+      "members": {
+        "headerString": { "target": "aws.protocoltests.restjson#String", "traits": { "smithy.api#httpHeader": "X-String" } },
+        "headerByte": { "target": "aws.protocoltests.restjson#Integer", "traits": { "smithy.api#httpHeader": "X-Byte" } },
+        "headerShort": { "target": "aws.protocoltests.restjson#Integer", "traits": { "smithy.api#httpHeader": "X-Short" } },
+        "headerInteger": { "target": "aws.protocoltests.restjson#Integer", "traits": { "smithy.api#httpHeader": "X-Integer" } },
+        "headerLong": { "target": "aws.protocoltests.restjson#Long", "traits": { "smithy.api#httpHeader": "X-Long" } },
+        "headerFloat": { "target": "aws.protocoltests.restjson#Float", "traits": { "smithy.api#httpHeader": "X-Float" } },
+        "headerDouble": { "target": "aws.protocoltests.restjson#Double", "traits": { "smithy.api#httpHeader": "X-Double" } },
+        "headerTrueBool": { "target": "aws.protocoltests.restjson#Boolean", "traits": { "smithy.api#httpHeader": "X-Boolean1" } },
+        "headerFalseBool": { "target": "aws.protocoltests.restjson#Boolean", "traits": { "smithy.api#httpHeader": "X-Boolean2" } },
+        "headerStringList": { "target": "aws.protocoltests.restjson#StringList", "traits": { "smithy.api#httpHeader": "X-StringList" } },
+        "headerStringSet": { "target": "aws.protocoltests.restjson#StringSet", "traits": { "smithy.api#httpHeader": "X-StringSet" } },
+        "headerIntegerList": { "target": "aws.protocoltests.restjson#IntegerList", "traits": { "smithy.api#httpHeader": "X-IntegerList" } },
+        "headerBooleanList": { "target": "aws.protocoltests.restjson#BooleanList", "traits": { "smithy.api#httpHeader": "X-BooleanList" } },
+        "headerTimestampList": { "target": "aws.protocoltests.restjson#TimestampList", "traits": { "smithy.api#httpHeader": "X-TimestampList" } },
+        "headerEnum": { "target": "aws.protocoltests.restjson#FooEnum", "traits": { "smithy.api#httpHeader": "X-Enum" } },
+        "headerEnumList": { "target": "aws.protocoltests.restjson#FooEnumList", "traits": { "smithy.api#httpHeader": "X-EnumList" } },
+        "headerIntegerEnum": { "target": "aws.protocoltests.restjson#IntegerEnum", "traits": { "smithy.api#httpHeader": "X-IntegerEnum" } },
+        "headerIntegerEnumList": { "target": "aws.protocoltests.restjson#IntegerEnumList", "traits": { "smithy.api#httpHeader": "X-IntegerEnumList" } }
+      }
+    },
+    "aws.protocoltests.restjson#Integer": { "type": "integer" },
+    "aws.protocoltests.restjson#IntegerEnum": {
+      "type": "intEnum",
+      "members": {
+        "A": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": 1 } },
+        "B": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": 2 } },
+        "C": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": 3 } }
+      }
+    },
+    "aws.protocoltests.restjson#IntegerEnumList": {
+      "type": "list",
+      "member": { "target": "aws.protocoltests.restjson#IntegerEnum" }
+    },
+    "aws.protocoltests.restjson#IntegerList": {
+      "type": "list",
+      "member": { "target": "aws.protocoltests.restjson#Integer" }
+    },
+    "aws.protocoltests.restjson#Long": { "type": "long" },
+    "aws.protocoltests.restjson#String": { "type": "string" },
+    "aws.protocoltests.restjson#StringList": {
+      "type": "list",
+      "member": { "target": "aws.protocoltests.restjson#String" }
+    },
+    "aws.protocoltests.restjson#StringSet": {
+      "type": "list",
+      "member": { "target": "aws.protocoltests.restjson#String" }
+    },
+    "aws.protocoltests.restjson#Timestamp": { "type": "timestamp" },
+    "aws.protocoltests.restjson#TimestampList": {
+      "type": "list",
+      "member": { "target": "aws.protocoltests.restjson#Timestamp" }
+    }
+  }
+}

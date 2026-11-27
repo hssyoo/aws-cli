@@ -2,3 +2,5 @@
 //! source. [`c2j`] reads botocore's `service-2.json`; a test-only Smithy AST
 //! fixture and, later, the Smithy JSON AST join it.
 pub mod c2j;
+#[cfg(test)]
+mod fixture;
