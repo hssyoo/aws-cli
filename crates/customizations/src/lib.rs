@@ -3,13 +3,14 @@
 //! directory name, and `core`, which names the handlers every service runs
 //! that the client's pipeline itself implements.
 //!
-//! [`TABLE`] is the table a client chooses from (`Hooks::for_service`).
+//! [`TABLE`] is the table a client chooses from
+//! (`ServicePlugins::for_service`).
 #![forbid(unsafe_code)]
 use cli_core::cli_error::PythonReason;
-use client::hooks::{
-    Basis, CallContext, Customization, HookError, Interceptor, Refusal, Scope, SettingDefault,
-};
+use client::hooks::{Basis, Customization, HookError, Refusal, Scope, SettingDefault};
+use client::interceptors::InterceptorContext;
 use client::retry::{Attempt, RetryDecision};
+use client::runtime_components::ClassifyRetry;
 use std::time::Duration;
 
 /// A basis implemented at the Rust item `at`.
@@ -70,6 +71,8 @@ pub static CORE: Customization = Customization {
     setting_defaults: &[],
     builtins: &[],
     interceptors: &[],
+    retry_classifiers: &[],
+    long_polling: false,
     replaces: &[
         (
             "botocore.handlers.generate_idempotent_uuid",
@@ -177,7 +180,9 @@ pub static DYNAMODB: Customization = Customization {
     scope: Scope::service("dynamodb"),
     setting_defaults: &DYNAMODB_RETRIES,
     builtins: &[],
-    interceptors: &[&DynamodbChecksum],
+    interceptors: &[],
+    retry_classifiers: &[&DynamodbChecksum],
+    long_polling: false,
     replaces: &[(
         "botocore.discovery.block_endpoint_discovery_required_operations",
         Basis::Inert {
@@ -195,6 +200,8 @@ pub static DYNAMODB_STREAMS: Customization = Customization {
     setting_defaults: &DYNAMODB_RETRIES,
     builtins: &[],
     interceptors: &[],
+    retry_classifiers: &[],
+    long_polling: false,
     replaces: &[],
 };
 
@@ -214,7 +221,9 @@ pub static STS: Customization = Customization {
     scope: Scope::service("sts"),
     setting_defaults: &[],
     builtins: &[],
-    interceptors: &[&StsIdpRetry],
+    interceptors: &[],
+    retry_classifiers: &[&StsIdpRetry],
+    long_polling: false,
     replaces: &[(
         "botocore.handlers.disable_signing",
         implemented("client::auth::select"),
@@ -224,10 +233,13 @@ pub static STS: Customization = Customization {
 #[derive(Debug)]
 struct StsIdpRetry;
 
-impl Interceptor for StsIdpRetry {
+impl ClassifyRetry for StsIdpRetry {
+    fn name(&self) -> &'static str {
+        "sts-idp-communication-error"
+    }
     fn classify_retry(
         &self,
-        _: &mut CallContext<'_>,
+        _: &mut InterceptorContext<'_>,
         attempt: &Attempt<'_>,
     ) -> Option<RetryDecision> {
         let Attempt::Response {
@@ -243,14 +255,17 @@ impl Interceptor for StsIdpRetry {
 #[derive(Debug)]
 struct DynamodbChecksum;
 
-impl Interceptor for DynamodbChecksum {
+impl ClassifyRetry for DynamodbChecksum {
+    fn name(&self) -> &'static str {
+        "dynamodb-crc32"
+    }
     /// `RetryDDBChecksumError.is_retryable`: the body's CRC32 differs from
     /// `x-amz-crc32`, read with Python's `int()`. That read is unguarded,
     /// so a header it cannot read raises its `ValueError` and fails the
     /// call; a negative or huge value simply mismatches.
     fn classify_retry(
         &self,
-        _: &mut CallContext<'_>,
+        _: &mut InterceptorContext<'_>,
         attempt: &Attempt<'_>,
     ) -> Option<RetryDecision> {
         let Attempt::Response { response, .. } = attempt else {
@@ -282,7 +297,9 @@ const fn long_polling(
         scope: Scope::operation(service, operation),
         setting_defaults: &[],
         builtins: &[],
-        interceptors: &[&LongPoll],
+        interceptors: &[],
+        retry_classifiers: &[],
+        long_polling: true,
         replaces: &[],
     }
 }
@@ -297,15 +314,6 @@ pub static SWF_POLL_FOR_ACTIVITY_TASK: Customization =
     long_polling("swf-activity-long-poll", "swf", "PollForActivityTask");
 pub static SWF_POLL_FOR_DECISION_TASK: Customization =
     long_polling("swf-decision-long-poll", "swf", "PollForDecisionTask");
-
-#[derive(Debug)]
-struct LongPoll;
-
-impl Interceptor for LongPoll {
-    fn long_polls(&self) -> bool {
-        true
-    }
-}
 
 /// `binascii.crc32`: CRC-32 (IEEE 802.3), bit by bit.
 fn crc32(bytes: &[u8]) -> u32 {

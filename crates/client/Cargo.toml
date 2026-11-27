@@ -16,6 +16,8 @@ credentials = { path = "../credentials" }
 crt = { path = "../crt" }
 # The rules engine every endpoint resolves with.
 endpoint-rules = { path = "../endpoint-rules" }
+# The JMESPath engine operationContextParams paths evaluate with.
+jmespath = { path = "../jmespath" }
 model = { path = "../model" }
 pytext = { path = "../pytext" }
 sigv4 = { path = "../sigv4" }
@@ -27,6 +29,7 @@ serde_json.workspace = true
 awscli-argparse = { path = "../awscli-argparse", features = ["testing"] }
 crt = { path = "../crt", features = ["loopback"] }
 model = { path = "../model", features = ["testing"] }
+pytext = { path = "../pytext", features = ["testing"] }
 sigv4 = { path = "../sigv4", features = ["testing"] }
 timestamp = { path = "../timestamp", features = ["testing"] }
 

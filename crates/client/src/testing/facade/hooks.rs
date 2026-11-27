@@ -4,15 +4,17 @@
 //! read the sleeps a call asked for.
 //!
 //! Like the rest of the façade, these produce data and decide nothing:
-//! each adapter records what its stage was given, and the harness compares.
+//! each adapter records what its position was given, and the harness compares.
 //! Their signatures are frozen with the characterization tests; when the
 //! call loop's stages change (interceptors, orchestrator), the bodies here
 //! follow them.
 use super::{CallError, Client, ClientCase, Customization, FixedRuntime};
 use crate::endpoint::{EndpointConfig, EndpointInputs};
-use crate::hooks::{CallContext, HookError, HookResult, Interceptor, Order, Scope};
+use crate::hooks::{HookError, HookResult, Order, Scope};
 use crate::http::{HttpRequest, HttpResponse};
+use crate::interceptors::{Intercept, InterceptorContext};
 use crate::retry::{Attempt, RetryDecision};
+use crate::runtime_components::ClassifyRetry;
 use crate::useragent::{SessionExtras, UserAgentContext};
 use model::value::Value;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -50,22 +52,47 @@ impl<T: Clone> Seen<T> {
 }
 
 /// A table of one customization of every call holding `interceptor`.
-fn table(id: &'static str, interceptor: Box<dyn Interceptor + Send>) -> Table {
-    scoped_table(id, Scope::ALL, interceptor)
+fn table(id: &'static str, interceptor: Box<dyn Intercept + Send>) -> Table {
+    let interceptor: &'static dyn Intercept = Box::leak(interceptor);
+    let interceptors: &'static [&'static dyn Intercept] = Box::leak(Box::new([interceptor]));
+    leak(Customization {
+        interceptors,
+        ..customization(id, Scope::ALL)
+    })
 }
 
-/// A table of one customization of `scope` holding `interceptor`.
-fn scoped_table(id: &'static str, scope: Scope, interceptor: Box<dyn Interceptor + Send>) -> Table {
-    let interceptor: &'static dyn Interceptor = Box::leak(interceptor);
-    let interceptors: &'static [&'static dyn Interceptor] = Box::leak(Box::new([interceptor]));
-    let customization: &'static Customization = Box::leak(Box::new(Customization {
+/// A table of one customization of `scope` holding `classifier`.
+fn classifier_table(
+    id: &'static str,
+    scope: Scope,
+    classifier: Box<dyn ClassifyRetry + Send>,
+) -> Table {
+    let classifier: &'static dyn ClassifyRetry = Box::leak(classifier);
+    let retry_classifiers: &'static [&'static dyn ClassifyRetry] =
+        Box::leak(Box::new([classifier]));
+    leak(Customization {
+        retry_classifiers,
+        ..customization(id, scope)
+    })
+}
+
+/// A customization of `scope` that adds nothing.
+const fn customization(id: &'static str, scope: Scope) -> Customization {
+    Customization {
         id,
         scope,
         setting_defaults: &[],
         builtins: &[],
-        interceptors,
+        interceptors: &[],
+        retry_classifiers: &[],
+        long_polling: false,
         replaces: &[],
-    }));
+    }
+}
+
+/// A table of `customization` alone.
+fn leak(customization: Customization) -> Table {
+    let customization: &'static Customization = Box::leak(Box::new(customization));
     Box::leak(Box::new([customization]))
 }
 
@@ -78,18 +105,25 @@ pub fn combined(tables: &[Table]) -> Table {
 #[derive(Debug)]
 struct LastModifyInput(Seen<Value>);
 
-impl Interceptor for LastModifyInput {
+impl Intercept for LastModifyInput {
+    fn name(&self) -> &'static str {
+        "characterization-last-modify-input"
+    }
     fn order(&self) -> Order {
         Order::Last
     }
-    fn modify_input(&self, _: &mut CallContext<'_>, input: &mut Value) -> HookResult {
+    fn modify_before_serialization(
+        &self,
+        _: &mut InterceptorContext<'_>,
+        input: &mut Value,
+    ) -> HookResult {
         self.0.push(input.clone());
         Ok(())
     }
 }
 
-/// An [`Order::Last`] `modify_input` interceptor (`register_last` on
-/// `before-parameter-build`), which records the input it is given.
+/// An [`Order::Last`] `modify_before_serialization` hook (`register_last`
+/// on `before-parameter-build`), which records the input it is given.
 pub fn last_modify_input() -> (Table, Seen<Value>) {
     let seen = Seen::new();
     let table = table(
@@ -105,16 +139,23 @@ struct BeforeSign {
     fails: Option<String>,
 }
 
-impl Interceptor for BeforeSign {
-    fn before_sign(&self, cx: &mut CallContext<'_>, _: &mut HttpRequest) -> HookResult {
-        self.seen.push(cx.attempt);
+impl Intercept for BeforeSign {
+    fn name(&self) -> &'static str {
+        "characterization-before-sign"
+    }
+    fn modify_before_signing(
+        &self,
+        ctx: &mut InterceptorContext<'_>,
+        _: &mut HttpRequest,
+    ) -> HookResult {
+        self.seen.push(ctx.attempt);
         self.fails
             .as_ref()
             .map_or(Ok(()), |message| Err(HookError::Failed(message.clone())))
     }
 }
 
-/// A `before_sign` interceptor (`before-sign`), which records each
+/// A `modify_before_signing` hook (`before-sign`), which records each
 /// attempt's number (1 for the first) and lets it go on.
 pub fn before_sign_attempts() -> (Table, Seen<u32>) {
     let seen = Seen::new();
@@ -125,8 +166,8 @@ pub fn before_sign_attempts() -> (Table, Seen<u32>) {
     (table("characterization-before-sign", Box::new(hook)), seen)
 }
 
-/// A `before_sign` interceptor that records each attempt's number, then
-/// raises with `message` (a handler's exception, [`HookError::Failed`]).
+/// A `modify_before_signing` hook that records each attempt's number,
+/// then raises with `message` (a handler's exception, [`HookError::Failed`]).
 pub fn failing_before_sign(message: &str) -> (Table, Seen<u32>) {
     let seen = Seen::new();
     let hook = BeforeSign {
@@ -145,18 +186,21 @@ struct FailingShortCircuit {
     message: String,
 }
 
-impl Interceptor for FailingShortCircuit {
-    fn before_transmit(
+impl Intercept for FailingShortCircuit {
+    fn name(&self) -> &'static str {
+        "characterization-failing-short-circuit"
+    }
+    fn short_circuit_transmit(
         &self,
-        cx: &mut CallContext<'_>,
+        ctx: &mut InterceptorContext<'_>,
         _: &HttpRequest,
     ) -> Result<Option<HttpResponse>, HookError> {
-        self.seen.push(cx.attempt);
+        self.seen.push(ctx.attempt);
         Err(HookError::Failed(self.message.clone()))
     }
 }
 
-/// A `before_transmit` interceptor (`before-send`, the stage that may
+/// A `short_circuit_transmit` hook (`before-send`, the position that may
 /// answer in place of sending) that records each attempt's number, then
 /// raises with `message`.
 pub fn failing_short_circuit(message: &str) -> (Table, Seen<u32>) {
@@ -174,14 +218,21 @@ pub fn failing_short_circuit(message: &str) -> (Table, Seen<u32>) {
 #[derive(Debug)]
 struct DeferringClassifier(Seen<u32>);
 
-impl Interceptor for DeferringClassifier {
-    fn classify_retry(&self, cx: &mut CallContext<'_>, _: &Attempt<'_>) -> Option<RetryDecision> {
-        self.0.push(cx.attempt);
+impl ClassifyRetry for DeferringClassifier {
+    fn name(&self) -> &'static str {
+        "characterization-deferring-classifier"
+    }
+    fn classify_retry(
+        &self,
+        ctx: &mut InterceptorContext<'_>,
+        _: &Attempt<'_>,
+    ) -> Option<RetryDecision> {
+        self.0.push(ctx.attempt);
         None
     }
 }
 
-/// A retry classifier (`classify_retry`, a service's `needs-retry`
+/// A retry classifier (a service's `needs-retry`
 /// handler such as DynamoDB's checksum check) that records each attempt it
 /// is asked about and leaves the decision to standard mode. It applies to
 /// `operation` of `service`, or to every operation of `service` for
@@ -195,9 +246,9 @@ pub fn deferring_classifier(
         Some(operation) => Scope::operation(service, operation),
         None => Scope::service(service),
     };
-    let hook = Box::new(DeferringClassifier(seen.clone()));
+    let classifier = Box::new(DeferringClassifier(seen.clone()));
     (
-        scoped_table("characterization-deferring-classifier", scope, hook),
+        classifier_table("characterization-deferring-classifier", scope, classifier),
         seen,
     )
 }
