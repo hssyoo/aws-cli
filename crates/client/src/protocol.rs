@@ -3,7 +3,8 @@
 //! the interface, [`compat`] botocore's drivers over it, and [`registry`]
 //! botocore's choice of one. The implementations: [`query`] (awsQuery),
 //! [`json`] (awsJson 1.0 and 1.1, with the query-compatible mode) and
-//! [`rest_json`] (restJson1).
+//! [`rest_json`] (restJson1); [`rest_xml`] (restXml) is built but not yet
+//! admitted ([`STAGED`]).
 use crate::admission::Unsupported;
 use crate::error::{CallError, ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method, Url};
@@ -212,12 +213,14 @@ pub mod json;
 pub mod query;
 pub mod registry;
 pub mod rest_json;
+pub mod rest_xml;
 
 pub use compat::BotocoreCompat;
 pub use json::{AWS_JSON_1_0, AWS_JSON_1_1, HttpRpcProtocol};
 pub use query::{AWS_QUERY, AwsQueryProtocol};
 pub use registry::{ProtocolRegistry, Unresolved, resolved_protocol};
 pub use rest_json::{HttpBindingProtocol, REST_JSON_1};
+pub use rest_xml::REST_XML;
 
 /// What the codecs share with the protocols: botocore's serializer
 /// conversions, wire names and body decoding.
@@ -243,6 +246,18 @@ pub static IMPLEMENTED: ProtocolRegistry = ProtocolRegistry::new(&[
     ("json", &AWS_JSON_1_1),
     ("json", &AWS_JSON_1_0),
     ("rest-json", &REST_JSON_1),
+]);
+
+/// [`IMPLEMENTED`] and the protocols built but not yet admitted (restXml):
+/// what tests replay through the protocol drivers. Admission reads
+/// [`IMPLEMENTED`] alone, so a service speaking one of these still refuses
+/// as [`Unsupported::Protocol`].
+pub static STAGED: ProtocolRegistry = ProtocolRegistry::new(&[
+    ("query", &AWS_QUERY),
+    ("json", &AWS_JSON_1_1),
+    ("json", &AWS_JSON_1_0),
+    ("rest-json", &REST_JSON_1),
+    ("rest-xml", &REST_XML),
 ]);
 
 /// Whether `model`'s service sends a timestamp member with no
