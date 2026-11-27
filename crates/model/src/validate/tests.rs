@@ -354,14 +354,19 @@ fn every_arena_shape_finds_a_schema_that_reads_the_same() -> Result<()> {
 
 /// A reference that sets or clears `document` or `union` changes what
 /// botocore validates (its `resolve_shape_ref` copies the target and
-/// updates it), though a member's type is its target's.
+/// updates it), though a member's type is its target's. Also: the input
+/// is validated, not the output; `required` reports in its own order; and
+/// `jsonvalue` without a header location is a plain string.
 #[test]
 fn a_reference_that_changes_document_or_union_validates_as_botocore_reads_it() -> Result<()> {
     let description = serde_json::json!({
         "metadata": {"protocol": "json"},
-        "operations": {"Op": {"name": "Op", "input": {"shape": "In"}}},
+        "operations": {"Op": {"name": "Op", "input": {"shape": "In"}, "output": {"shape": "Plain"}}},
         "shapes": {
-            "In": {"type": "structure", "members": {
+            "In": {"type": "structure", "required": ["Absent2", "Absent1"], "members": {
+                "Absent1": {"shape": "Free"},
+                "Absent2": {"shape": "Free"},
+                "Named": {"shape": "Free", "locationName": "n", "jsonvalue": true},
                 "AsDocument": {"shape": "Plain", "document": true},
                 "AsUnion": {"shape": "Doc", "document": false, "union": true},
                 "AsPlain": {"shape": "Doc", "document": false},
@@ -373,10 +378,7 @@ fn a_reference_that_changes_document_or_union_validates_as_botocore_reads_it() -
                        "members": {"A": {"shape": "Free"}, "B": {"shape": "Free"}}},
             "Free": {"type": "string"}}});
     let model = Model::from_value(&description)?;
-    let input = model
-        .operation("Op")
-        .and_then(|op| op.input)
-        .ok_or("input")?;
+    let operation = model.operation("Op").ok_or("Op")?;
     let mut params = Map::new();
     let mut document = Map::new();
     document.insert("Z".into(), Value::Blob(b"x".to_vec()));
@@ -384,15 +386,20 @@ fn a_reference_that_changes_document_or_union_validates_as_botocore_reads_it() -
     params.insert("AsUnion".into(), json("{}"));
     params.insert("AsPlain".into(), json(r#"{"Z":1}"#));
     params.insert("Cleared".into(), json(r#"{"A":"a","B":"b"}"#));
-    let Validation::Invalid(report) = validate(&model, input, &Value::Map(params)) else {
+    params.insert("Named".into(), Value::Integer(1));
+    let Validation::Invalid(report) = validate_input(&model, operation, &Value::Map(params)) else {
         return Err("the parameters validated".into());
     };
     let expected = [
+        "Missing required parameter in input: \"Absent2\"",
+        "Missing required parameter in input: \"Absent1\"",
         "Invalid type for document parameter Z, value: b'x', type: <class 'bytes'>, valid \
          types: <class 'str'>, <class 'int'>, <class 'bool'>, <class 'float'>, <class 'list'>, \
          <class 'dict'>",
         "Must set one of the following keys for tagged unionstructure AsUnion: A. B.",
         "Unknown parameter in AsPlain: \"Z\", must be one of: A, B",
+        "Invalid type for parameter Named, value: 1, type: <class 'int'>, valid types: <class \
+         'str'>",
     ];
     assert_eq!(report.errors().collect::<Vec<_>>(), expected);
     Ok(())
