@@ -145,10 +145,14 @@ pub trait Protocol: Sync + std::fmt::Debug {
 
 mod common;
 pub mod json;
-/// The serializers' shared conversions, for the codecs.
-pub(crate) use common::{base64_in, special_float, timestamp_out};
 pub mod query;
 pub mod rest_json;
+
+/// What the codecs share with the protocols: botocore's serializer
+/// conversions, wire names and body decoding.
+pub(crate) use common::{
+    base64_in, beyond_limit, decoded, map_entry, special_float, timestamp_out, wire_name,
+};
 
 /// The protocols implemented, which admission asks about without building
 /// a client.

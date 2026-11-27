@@ -186,40 +186,6 @@ fn lowercase_headers(headers: &Headers) -> Map {
     map
 }
 
-/// `ResponseParser._has_unknown_tagged_union_member`: for a union, the tag
-/// of a member the model does not know, or `Err` when the response sets
-/// other than exactly one member. `present` names the set members.
-pub(super) fn unknown_union_member(
-    shape: Schema<'_>,
-    present: &[&Key],
-) -> Result<Option<Key>, ParseError> {
-    if !is_union(shape) {
-        return Ok(None);
-    }
-    let present: Vec<&Key> = present
-        .iter()
-        .copied()
-        .filter(|name| **name != *"__type")
-        .collect();
-    let [tag] = present[..] else {
-        return Err(ParseError::new(format!(
-            "Invalid service response: {} must have one and only one member set.",
-            name(shape)
-        )));
-    };
-    let known = shape.members().any(|member| *tag == *wire_name(member));
-    Ok((!known).then(|| tag.clone()))
-}
-
-/// `_handle_unknown_tagged_union_member`: the tag as the `str` it is.
-pub(super) fn unknown_member_value(tag: Key) -> Map {
-    let mut name = Map::new();
-    name.insert("name".into(), tag.to_value());
-    let mut parsed = Map::new();
-    parsed.insert("SDK_UNKNOWN_MEMBER".into(), Value::Map(name));
-    parsed
-}
-
 /// botocore's default `timestamp_parser`, `parse_timestamp`, as an instant:
 /// a number or text `float()` reads is seconds since the epoch, other text
 /// ISO 8601 or RFC 822. A zone-less time is taken as UTC.
@@ -369,7 +335,7 @@ pub(super) fn member_name(member: Schema<'_>) -> &str {
 
 /// A member's `locationName`, else its name: the key the JSON and XML
 /// bodies hold it under.
-pub(super) fn wire_name(member: Schema<'_>) -> &str {
+pub(crate) fn wire_name(member: Schema<'_>) -> &str {
     member
         .location_name()
         .unwrap_or_else(|| member_name(member))
@@ -383,7 +349,7 @@ pub(super) fn list_member(shape: Schema<'_>) -> Result<Schema<'_>, String> {
 }
 
 /// A map's key and value, which every map the front-end builds has.
-pub(super) fn map_entry(shape: Schema<'_>) -> Result<(Schema<'_>, Schema<'_>), String> {
+pub(crate) fn map_entry(shape: Schema<'_>) -> Result<(Schema<'_>, Schema<'_>), String> {
     shape
         .map_key()
         .zip(shape.map_value())
@@ -404,11 +370,6 @@ pub(super) fn is_document(shape: Schema<'_>) -> bool {
     (shape.shape_type() == ShapeType::Document) != shape.has_trait(traits::DOCUMENT)
 }
 
-/// A truthy `union`, as [`is_document`] reads `document`.
-pub(super) fn is_union(shape: Schema<'_>) -> bool {
-    (shape.shape_type() == ShapeType::Union) != shape.has_trait(traits::UNION)
-}
-
 /// The headers as botocore's `HeadersDict` iterates them: each name once,
 /// spelled as it first came, with [`header`]'s value.
 pub(super) fn distinct(headers: &Headers) -> Vec<(String, String)> {
@@ -426,7 +387,7 @@ pub(super) fn distinct(headers: &Headers) -> Vec<(String, String)> {
 
 /// `bytes.decode('utf-8')`, whose `UnicodeDecodeError` the parsers let
 /// through with CPython's text.
-pub(super) fn decoded(bytes: &[u8]) -> Result<&str, ParseError> {
+pub(crate) fn decoded(bytes: &[u8]) -> Result<&str, ParseError> {
     pytext::text::decode_utf8(bytes).map_err(ParseError::new)
 }
 
@@ -434,7 +395,7 @@ pub(super) fn decoded(bytes: &[u8]) -> Result<&str, ParseError> {
 /// the native client's reader holds ([`model::pyjson::MAX_DEPTH`]): its own
 /// limit, named, where Python would read it. Invalid text that deep is not
 /// the limit: it is `{'message': body}`, as in Python.
-pub(super) fn beyond_limit(limit: model::pyjson::Limit) -> ParseError {
+pub(crate) fn beyond_limit(limit: model::pyjson::Limit) -> ParseError {
     ParseError::new(format!(
         "native client limit: the response holds {limit}, which the native client does not \
          represent"
