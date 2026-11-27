@@ -1,0 +1,6 @@
+{
+  "protocol": "rest-json",
+  "protocols": ["rest-json"],
+  "signatureVersion": "v4",
+  "uid": "rest-json-protocol-2019-12-16"
+}
