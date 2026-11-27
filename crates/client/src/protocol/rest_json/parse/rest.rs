@@ -10,7 +10,7 @@ use model::value::{Map, Value};
 
 /// What `BaseRestParser` leaves to its subclass: `_initial_body_parse`,
 /// and `_parse_shape` with the subclass's handlers.
-pub(super) trait Body {
+pub(in crate::protocol) trait Body {
     /// The body as `_initial_body_parse` reads it.
     type Parsed;
     /// `_initial_body_parse`.
@@ -23,7 +23,7 @@ pub(super) trait Body {
 
 /// `BaseRestParser._do_parse`: `ResponseMetadata` first, then the
 /// output's members.
-pub(super) fn do_parse(
+pub(in crate::protocol) fn do_parse(
     body: &impl Body,
     shape: Option<Schema<'_>>,
     response: &HttpResponse,
@@ -41,7 +41,7 @@ pub(super) fn do_parse(
 
 /// `BaseRestParser._do_modeled_error_parse`: the error shape's members,
 /// those outside the body included.
-pub(super) fn do_modeled_error_parse(
+pub(in crate::protocol) fn do_modeled_error_parse(
     body: &impl Body,
     shape: Schema<'_>,
     response: &HttpResponse,
@@ -65,7 +65,7 @@ fn add_modeled_parse(
 
 /// `_populate_response_metadata`: `x-amzn-requestid` as `RequestId`, else
 /// `x-amz-request-id` with `x-amz-id-2` as `HostId`.
-fn response_metadata(headers: &Headers) -> Map {
+pub(in crate::protocol) fn response_metadata(headers: &Headers) -> Map {
     let mut metadata = Map::new();
     if let Some(id) = headers.joined("x-amzn-requestid") {
         metadata.insert("RequestId".into(), Value::String(id));

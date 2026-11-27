@@ -9,7 +9,7 @@ use crate::protocol::ParseOptions;
 use model::schema::Schema;
 use model::value::{Map, Value};
 
-mod rest;
+pub(in crate::protocol) mod rest;
 
 /// `BaseRestParser._do_parse` with `codec`.
 pub(super) fn do_parse(
