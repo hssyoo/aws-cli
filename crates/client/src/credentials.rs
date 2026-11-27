@@ -25,8 +25,9 @@ impl std::fmt::Debug for SigningCredentials {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CredentialError(pub String);
 
-/// Where a client's credentials come from.
-pub trait CredentialSource: Send + Sync + std::fmt::Debug {
+/// Where a client's credentials come from. Every source is the client's
+/// identity resolver ([`crate::identity::ResolveIdentity`]).
+pub trait CredentialSource: crate::identity::ResolveIdentity {
     /// The credentials to sign one request with, refreshed first if they
     /// are due: `None` for a chain that found none, botocore's
     /// `NoCredentialsError` case.

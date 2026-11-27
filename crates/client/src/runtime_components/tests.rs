@@ -110,7 +110,7 @@ fn components_hold_what_the_client_was_built_from() -> TestResult {
     assert_eq!(components.retry_strategy.max_attempts(), 10);
     assert!(components.plugins.long_polls("Any"));
     assert!(matches!(
-        components.identity_resolver.credentials(),
+        components.identity_resolver.resolve_identity(),
         Ok(None)
     ));
     assert!(Arc::ptr_eq(

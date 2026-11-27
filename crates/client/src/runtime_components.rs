@@ -2,13 +2,16 @@
 //! that every call and page of the client shares one retry quota.
 //!
 //! A slot with one implementation is a concrete type (decision D4: the
-//! standard retry strategy, the endpoint resolver); a trait object only
-//! where two or more exist (protocol, transport, runtime, credentials).
+//! standard retry strategy, the endpoint resolver, the auth option
+//! resolver); a trait object only where two or more exist (protocol, auth
+//! schemes, identity, transport, runtime).
 //! Plugins configure a client by data ([`crate::runtime_plugin`]) and never
 //! receive the components.
+use crate::auth::{AUTH_SCHEMES, AuthScheme, AuthSchemeOptionResolver};
 use crate::credentials::CredentialSource;
 use crate::endpoint::{EndpointConfig, EndpointData, EndpointParams, ResolvedEndpoint};
 use crate::error::CallError;
+use crate::identity::ResolveIdentity;
 use crate::interceptors::InterceptorContext;
 use crate::protocol::ClientProtocol;
 use crate::retry::{Attempt, ErrorKind, RetryDecision, Standard};
@@ -71,7 +74,11 @@ pub struct RuntimeComponents {
     pub endpoint_resolver: EndpointResolver,
     /// The one strategy, and so the one quota, of all the client's calls.
     pub retry_strategy: Standard,
-    pub identity_resolver: Arc<dyn CredentialSource>,
+    pub auth_scheme_option_resolver: AuthSchemeOptionResolver,
+    /// The schemes an auth option is matched to, in order.
+    pub auth_schemes: &'static [&'static dyn AuthScheme],
+    /// The credentials SigV4 signs with, asked on every attempt.
+    pub identity_resolver: Arc<dyn ResolveIdentity>,
     pub http_client: Arc<dyn Transport>,
     pub runtime: Arc<dyn Runtime>,
     /// The interceptors, retry classifiers, long-polling scopes and
@@ -89,6 +96,8 @@ impl RuntimeComponents {
                 config: parts.endpoint,
             },
             retry_strategy,
+            auth_scheme_option_resolver: AuthSchemeOptionResolver,
+            auth_schemes: &AUTH_SCHEMES,
             identity_resolver: parts.credentials,
             http_client: parts.transport,
             runtime: parts.runtime,

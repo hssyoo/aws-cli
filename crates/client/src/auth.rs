@@ -3,26 +3,169 @@
 //! `RequestSigner._choose_signer`, `set_operation_specific_signer`), and
 //! SigV4 signing over the `sigv4` crate. SigV4 and none are implemented;
 //! every other auth type is an admission refusal.
+//!
+//! The SRA's auth components, as the orchestrator runs them: the client's
+//! [`AuthSchemeOptionResolver`] gives the call's options in `prepare` (it
+//! may refuse), the first option an [`AuthScheme`] of the client serves is
+//! chosen, and on every attempt that scheme's identity resolver and
+//! [`Sign`]er sign the request. A new scheme (S3's SigV4, unsigned body,
+//! SigV4a, bearer) is one more [`AuthScheme`] in [`AUTH_SCHEMES`], with the
+//! fields it reads added to [`SigningOverrides`].
 use crate::admission::Unsupported;
 use crate::credentials::SigningCredentials;
 use crate::endpoint::ResolvedEndpoint;
 use crate::error::CallError;
 use crate::http::{Headers, HttpRequest};
+use crate::identity::{Identity, ResolveIdentity};
+use crate::runtime_components::RuntimeComponents;
 use model::schema::OperationSchema;
 use model::shapes::Model;
 use timestamp::Timestamp;
 
-/// A request's auth scheme, with what signing needs from the endpoint.
+mod schemes;
+
+pub use schemes::{
+    AUTH_SCHEMES, NO_AUTH, NoAuthScheme, NoAuthSigner, SIGV4, SigV4AuthScheme, SigV4Signer,
+};
+
+/// An auth scheme's Smithy shape id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AuthSchemeId(&'static str);
+
+impl AuthSchemeId {
+    /// `aws.auth#sigv4`.
+    pub const SIGV4: Self = Self("aws.auth#sigv4");
+    /// `smithy.api#noAuth`.
+    pub const NO_AUTH: Self = Self("smithy.api#noAuth");
+
+    /// The shape id.
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+/// What a scheme signs with that the option resolver decides.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SigningOverrides {
+    /// The signing region: the endpoint's, else the client's.
+    pub region: Option<String>,
+    /// The signing name: the endpoint's, else the model's.
+    pub name: Option<String>,
+}
+
+/// One way a call may be authenticated.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum AuthScheme {
-    /// SigV4 (`v4`), for the signing region and service name.
-    SigV4 {
-        signing_region: String,
-        signing_name: String,
-    },
-    /// Sent unsigned (`smithy.api#noAuth`, `--no-sign-request`).
-    None,
+pub struct AuthSchemeOption {
+    pub scheme_id: AuthSchemeId,
+    pub signing: SigningOverrides,
+}
+
+impl AuthSchemeOption {
+    /// Sent unsigned.
+    pub fn no_auth() -> Self {
+        Self {
+            scheme_id: AuthSchemeId::NO_AUTH,
+            signing: SigningOverrides::default(),
+        }
+    }
+}
+
+/// What the option resolver decides from.
+#[derive(Clone, Copy, Debug)]
+pub struct AuthSchemeOptionResolverParams<'a> {
+    pub model: &'a Model,
+    /// The model directory name.
+    pub service: &'a str,
+    pub operation: OperationSchema<'a>,
+    pub endpoint: &'a ResolvedEndpoint,
+    /// False for an unsigned client (`--no-sign-request`).
+    pub signing_enabled: bool,
+    pub client_region: Option<&'a str>,
+}
+
+/// The auth option resolver: botocore's choice ([`select`]). One
+/// implementation, so a concrete type (decision D4).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AuthSchemeOptionResolver;
+
+impl AuthSchemeOptionResolver {
+    /// The call's options in order of preference: exactly one today,
+    /// botocore's choice.
+    ///
+    /// # Errors
+    /// [`select`]'s, which refuse the call before any credential is read.
+    pub fn resolve(
+        &self,
+        p: &AuthSchemeOptionResolverParams<'_>,
+    ) -> Result<Vec<AuthSchemeOption>, CallError> {
+        let option = select(
+            p.model,
+            p.service,
+            p.operation,
+            p.endpoint,
+            p.signing_enabled,
+            p.client_region,
+        )?;
+        Ok(vec![option])
+    }
+}
+
+/// A way of authenticating a request: the identity it signs as and how it
+/// signs.
+pub trait AuthScheme: Sync + std::fmt::Debug {
+    fn scheme_id(&self) -> AuthSchemeId;
+    /// Where the identity comes from: the client's resolver, or the
+    /// scheme's own.
+    fn identity_resolver<'a>(&self, rc: &'a RuntimeComponents) -> &'a dyn ResolveIdentity;
+    fn signer(&self) -> &dyn Sign;
+}
+
+/// Signs a request as one scheme does.
+pub trait Sign: Sync + std::fmt::Debug {
+    /// Signs `request` as `identity`, with what `option` decided.
+    ///
+    /// # Errors
+    /// An identity or option the scheme cannot sign with.
+    fn sign_http_request(
+        &self,
+        request: &mut HttpRequest,
+        identity: &Identity,
+        option: &AuthSchemeOption,
+        rc: &RuntimeComponents,
+    ) -> Result<(), CallError>;
+}
+
+/// The option a call signs with and the scheme that serves it.
+#[derive(Clone, Debug)]
+pub struct SelectedAuth {
+    pub option: AuthSchemeOption,
+    pub scheme: &'static dyn AuthScheme,
+}
+
+/// The first of `options` one of `schemes` serves, as the SRA chooses.
+///
+/// # Errors
+/// [`Unsupported::Auth`] when none is served, so the call is refused
+/// before any credential is read.
+pub fn choose(
+    options: Vec<AuthSchemeOption>,
+    schemes: &[&'static dyn AuthScheme],
+) -> Result<SelectedAuth, CallError> {
+    let mut first = None;
+    for option in options {
+        if let Some(scheme) = schemes
+            .iter()
+            .find(|scheme| scheme.scheme_id() == option.scheme_id)
+        {
+            return Ok(SelectedAuth {
+                option,
+                scheme: *scheme,
+            });
+        }
+        first.get_or_insert(option.scheme_id);
+    }
+    let named = first.map_or("no auth scheme", AuthSchemeId::as_str);
+    Err(CallError::Unsupported(Unsupported::Auth(named.to_owned())))
 }
 
 /// `AUTH_TYPE_TO_SIGNATURE_VERSION`, for the auth types botocore signs with
@@ -100,7 +243,7 @@ pub fn static_refusal(model: &Model, operation: OperationSchema<'_>) -> Option<U
     }
 }
 
-/// The scheme of a call of `operation` that resolved to `endpoint`, and the
+/// The option of a call of `operation` that resolved to `endpoint`, and the
 /// signing region and name it signs with.
 ///
 /// The endpoint's `authSchemes`, when it has any, replace the operation's
@@ -119,7 +262,7 @@ pub fn select(
     endpoint: &ResolvedEndpoint,
     signing: bool,
     client_region: Option<&str>,
-) -> Result<AuthScheme, CallError> {
+) -> Result<AuthSchemeOption, CallError> {
     let mut auth_type = operation_auth_type(operation).map_err(CallError::Unsupported)?;
     let mut context = None;
     if !endpoint.auth_schemes.is_empty() {
@@ -135,7 +278,7 @@ pub fn select(
         None => client_signature_version(model, signing).map_err(CallError::Unsupported)?,
     };
     match version.as_deref() {
-        None | Some("none") => return Ok(AuthScheme::None),
+        None | Some("none") => return Ok(AuthSchemeOption::no_auth()),
         Some("v4") if operation.unsigned_payload() => {
             return Err(CallError::Unsupported(Unsupported::UnsignedPayload));
         }
@@ -152,9 +295,12 @@ pub fn select(
         Some(default.unwrap_or(service).to_owned())
     });
     match (region, name) {
-        (Some(signing_region), Some(signing_name)) => Ok(AuthScheme::SigV4 {
-            signing_region,
-            signing_name,
+        (Some(region), Some(name)) => Ok(AuthSchemeOption {
+            scheme_id: AuthSchemeId::SIGV4,
+            signing: SigningOverrides {
+                region: Some(region),
+                name: Some(name),
+            },
         }),
         _ => Err(CallError::NoRegion),
     }
@@ -201,3 +347,6 @@ pub fn sign(
     let headers = Headers::from_pairs(signed.apply(&base));
     request.headers = headers;
 }
+
+#[cfg(test)]
+mod tests;
