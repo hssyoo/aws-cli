@@ -1,0 +1,147 @@
+{
+  "version": "1.0",
+  "parameters": {
+    "Region": {
+      "required": false,
+      "type": "String",
+      "builtIn": "AWS::Region",
+      "documentation": "The region."
+    },
+    "UseFIPS": {
+      "required": true,
+      "type": "Boolean",
+      "builtIn": "AWS::UseFIPS",
+      "default": false,
+      "documentation": "FIPS."
+    },
+    "UseDualStack": {
+      "required": true,
+      "type": "Boolean",
+      "builtIn": "AWS::UseDualStack",
+      "default": false,
+      "documentation": "Dual-stack."
+    },
+    "Endpoint": {
+      "required": false,
+      "type": "String",
+      "builtIn": "SDK::Endpoint",
+      "documentation": "A custom endpoint."
+    }
+  },
+  "rules": [
+    {
+      "type": "endpoint",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Endpoint"
+            }
+          ]
+        }
+      ],
+      "endpoint": {
+        "url": {
+          "ref": "Endpoint"
+        }
+      }
+    },
+    {
+      "type": "tree",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ]
+        },
+        {
+          "fn": "aws.partition",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ],
+          "assign": "PartitionResult"
+        }
+      ],
+      "rules": [
+        {
+          "type": "endpoint",
+          "conditions": [
+            {
+              "fn": "booleanEquals",
+              "argv": [
+                {
+                  "ref": "UseFIPS"
+                },
+                true
+              ]
+            },
+            {
+              "fn": "booleanEquals",
+              "argv": [
+                {
+                  "ref": "UseDualStack"
+                },
+                true
+              ]
+            }
+          ],
+          "endpoint": {
+            "url": "https://zchecksum-fips.{Region}.{PartitionResult#dualStackDnsSuffix}"
+          }
+        },
+        {
+          "type": "endpoint",
+          "conditions": [
+            {
+              "fn": "booleanEquals",
+              "argv": [
+                {
+                  "ref": "UseFIPS"
+                },
+                true
+              ]
+            }
+          ],
+          "endpoint": {
+            "url": "https://zchecksum-fips.{Region}.{PartitionResult#dnsSuffix}"
+          }
+        },
+        {
+          "type": "endpoint",
+          "conditions": [
+            {
+              "fn": "booleanEquals",
+              "argv": [
+                {
+                  "ref": "UseDualStack"
+                },
+                true
+              ]
+            }
+          ],
+          "endpoint": {
+            "url": "https://zchecksum.{Region}.{PartitionResult#dualStackDnsSuffix}"
+          }
+        },
+        {
+          "type": "endpoint",
+          "conditions": [],
+          "endpoint": {
+            "url": "https://zchecksum.{Region}.{PartitionResult#dnsSuffix}"
+          }
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "conditions": [],
+      "error": "Invalid Configuration: Missing Region"
+    }
+  ]
+}
