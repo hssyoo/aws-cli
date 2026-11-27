@@ -181,16 +181,41 @@ enum At<'a> {
     Attribute(&'a str),
 }
 
+/// Where an error shape's members are read from: `_get_error_root`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ErrorRoot {
+    /// `BaseXMLResponseParser`'s: an `ErrorResponse` root's `Error` child.
+    #[default]
+    ErrorResponse,
+    /// `EC2QueryParser`'s: the first `Error` within an `Errors` child,
+    /// whatever the root's name.
+    Errors,
+}
+
 /// A cursor over a parsed tree, at the node a value is read from. XML
 /// holds no `null`.
 #[derive(Clone, Debug)]
 pub struct XmlDeserializer<'a> {
     at: At<'a>,
+    errors: ErrorRoot,
 }
 
 impl<'a> XmlDeserializer<'a> {
     pub const fn new(node: Node<'a>) -> Self {
-        Self { at: At::Node(node) }
+        Self::with_error_root(node, ErrorRoot::ErrorResponse)
+    }
+
+    /// A cursor whose error shapes read from `errors`'s root.
+    pub const fn with_error_root(node: Node<'a>, errors: ErrorRoot) -> Self {
+        Self {
+            at: At::Node(node),
+            errors,
+        }
+    }
+
+    /// A cursor at `node` within the same document.
+    const fn at(&self, node: Node<'a>) -> Self {
+        Self::with_error_root(node, self.errors)
     }
 
     /// The node a structure, list or map reads; an attribute holds only
@@ -216,7 +241,7 @@ impl ShapeDeserializer for XmlDeserializer<'_> {
     ) -> Result<Read, SerdeError> {
         let node = self.node()?;
         let root = if schema.flag(Flag::Error) {
-            error_root(node.first())
+            error_root(node.first(), self.errors)
         } else {
             node.first()
         };
@@ -226,12 +251,13 @@ impl ShapeDeserializer for XmlDeserializer<'_> {
                 continue;
             }
             if let Some(child) = lookup(&mapping, xml_name(member)) {
-                each(member, &mut XmlDeserializer::new(child.clone()))?;
+                each(member, &mut self.at(child.clone()))?;
             } else if member.flag(Flag::XmlAttribute)
                 && let Some(text) = attribute(root, member.location_name().unwrap_or_default())
             {
                 let mut at = XmlDeserializer {
                     at: At::Attribute(text),
+                    errors: self.errors,
                 };
                 each(member, &mut at)?;
             }
@@ -248,7 +274,7 @@ impl ShapeDeserializer for XmlDeserializer<'_> {
     ) -> Result<Read, SerdeError> {
         let items = self.node()?.entries(schema.flag(Flag::XmlFlattened));
         for item in items {
-            each(&mut XmlDeserializer::new(Node::One(item)))?;
+            each(&mut self.at(Node::One(item)))?;
         }
         Ok(Read::Present)
     }
@@ -301,7 +327,7 @@ impl ShapeDeserializer for XmlDeserializer<'_> {
                 (_, failure) => {
                     // The entry fails, after the values before the failure parse.
                     for pair in values {
-                        each(Key::from(""), &mut XmlDeserializer::new(Node::One(pair)))?;
+                        each(Key::from(""), &mut self.at(Node::One(pair)))?;
                     }
                     return Err(failure.unwrap_or_else(|| {
                         SerdeError::new("cannot access local variable 'key_name'")
@@ -312,7 +338,7 @@ impl ShapeDeserializer for XmlDeserializer<'_> {
                 values.extend(value);
             }
             for pair in values {
-                each(name.clone(), &mut XmlDeserializer::new(Node::One(pair)))?;
+                each(name.clone(), &mut self.at(Node::One(pair)))?;
             }
         }
         Ok(Read::Present)
@@ -434,17 +460,21 @@ fn attribute<'a>(element: &'a Element, location: &str) -> Option<&'a str> {
     })
 }
 
-/// `_get_error_root`: an `ErrorResponse`'s `Error` child.
-fn error_root(root: &Element) -> &Element {
-    if root.local_name() == "ErrorResponse"
-        && let Some(error) = root
-            .children
-            .iter()
-            .find(|child| child.local_name() == "Error")
-    {
-        return error;
-    }
-    root
+/// `_get_error_root`: an `ErrorResponse`'s `Error` child, or for
+/// [`ErrorRoot::Errors`] the first `Error` of an `Errors` child; else the
+/// root.
+fn error_root(root: &Element, errors: ErrorRoot) -> &Element {
+    let named = |element: &Element, name: &str| element.local_name() == name;
+    let found = match errors {
+        ErrorRoot::ErrorResponse if named(root, "ErrorResponse") => {
+            root.children.iter().find(|child| named(child, "Error"))
+        }
+        ErrorRoot::ErrorResponse => None,
+        ErrorRoot::Errors => (root.children.iter())
+            .filter(|child| named(child, "Errors"))
+            .find_map(|errors| errors.children.iter().find(|child| named(child, "Error"))),
+    };
+    found.unwrap_or(root)
 }
 
 /// The serializer an [`XmlCodec`] gives: rest-xml is not implemented, so
