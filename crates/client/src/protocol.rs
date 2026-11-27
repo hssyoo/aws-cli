@@ -143,8 +143,10 @@ pub trait Protocol: Sync + std::fmt::Debug {
     ) -> Result<ServiceError, ParseError>;
 }
 
-pub(crate) mod common;
+mod common;
 pub mod json;
+/// The serializers' shared conversions, for the codecs.
+pub(crate) use common::{base64_in, special_float, timestamp_out};
 pub mod query;
 pub mod rest_json;
 

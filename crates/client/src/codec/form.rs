@@ -9,7 +9,7 @@
 //! query protocol reads XML.
 use super::value::{ValueStruct, write_value};
 use crate::error::SerializeError;
-use crate::protocol::common::{base64_in, special_float, timestamp_out};
+use crate::protocol::{base64_in, special_float, timestamp_out};
 use model::pyrepr::{py_short_type_name, py_str, py_str_text};
 use model::schema::{Flag, Schema};
 use model::serde::{
