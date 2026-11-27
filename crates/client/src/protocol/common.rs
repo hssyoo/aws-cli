@@ -6,7 +6,8 @@ use super::ParseOptions;
 use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse};
 use model::pyrepr::{float_from_text, py_str};
-use model::shapes::{Flag, Model, Operation, ShapeId};
+use model::schema::{Flag, OperationSchema, Schema, ShapeType, traits};
+use model::shapes::{Model, Operation};
 use model::value::{Key, Map, Value};
 use timestamp::Timestamp;
 
@@ -15,16 +16,14 @@ use timestamp::Timestamp;
 pub(super) trait Family {
     fn do_parse(
         &self,
-        model: &Model,
-        shape: Option<ShapeId>,
+        shape: Option<Schema<'_>>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError>;
     fn do_error_parse(&self, response: &HttpResponse) -> Result<Map, ParseError>;
     fn do_modeled_error_parse(
         &self,
-        model: &Model,
-        shape: ShapeId,
+        shape: Schema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Map, ParseError>;
@@ -34,19 +33,18 @@ pub(super) trait Family {
 /// shape's members alone, and `ResponseMetadata` added to the rest.
 pub(super) fn parse(
     family: &dyn Family,
-    model: &Model,
-    shape: Option<ShapeId>,
+    shape: Option<Schema<'_>>,
     response: &HttpResponse,
     options: &ParseOptions<'_>,
 ) -> Result<Value, ParseError> {
-    let exception = shape.filter(|shape| model.shape(*shape).traits.is(Flag::Exception));
+    let exception = shape.filter(|shape| shape.flag(Flag::Error));
     let parsed = if response.status < 301 {
-        family.do_parse(model, shape, response, options)?
+        family.do_parse(shape, response, options)?
     } else if is_generic_error(response) {
         Value::Map(generic_error(response.status))
     } else if let Some(shape) = exception {
         return family
-            .do_modeled_error_parse(model, shape, response, options)
+            .do_modeled_error_parse(shape, response, options)
             .map(Value::Map);
     } else {
         Value::Map(family.do_error_parse(response)?)
@@ -55,7 +53,7 @@ pub(super) fn parse(
     let Value::Map(mut parsed) = parsed else {
         return Ok(parsed);
     };
-    if shape.is_some_and(|shape| model.shape(shape).traits.is(Flag::EventStream)) {
+    if shape.is_some_and(|shape| shape.flag(Flag::EventStream)) {
         return Ok(Value::Map(parsed));
     }
     // `parsed.get('ResponseMetadata', {})`, updated and set back: a
@@ -87,7 +85,8 @@ pub(super) fn parse_error(
     response: &HttpResponse,
     options: &ParseOptions<'_>,
 ) -> Result<ServiceError, ParseError> {
-    let Value::Map(mut parsed) = parse(family, model, operation.output, response, options)? else {
+    let operation = operation_schema(model, operation).map_err(ParseError::new)?;
+    let Value::Map(mut parsed) = parse(family, operation.output(), response, options)? else {
         return Err(ParseError::new("'NoneType' object has no attribute 'get'"));
     };
     let code = match parsed.get("Error") {
@@ -96,16 +95,16 @@ pub(super) fn parse_error(
     };
     if let Some(shape) = code
         .as_deref()
-        .and_then(|code| model.shape_for_error_code(code))
+        .and_then(|code| model.schema().registry().entry_for_error_code(code))
     {
-        let Value::Map(modelled) = parse(family, model, Some(shape), response, options)? else {
+        let Value::Map(modelled) = parse(family, Some(shape), response, options)? else {
             return Err(ParseError::new("'NoneType' object is not iterable"));
         };
         for (key, value) in modelled {
             parsed.insert_key(key, value);
         }
     }
-    Ok(service_error(&operation.name, response, parsed))
+    Ok(service_error(operation.name(), response, parsed))
 }
 
 /// The parsed error response as `ClientError` holds it.
@@ -192,11 +191,10 @@ fn lowercase_headers(headers: &Headers) -> Map {
 /// of a member the model does not know, or `Err` when the response sets
 /// other than exactly one member. `present` names the set members.
 pub(super) fn unknown_union_member(
-    model: &Model,
-    shape: ShapeId,
+    shape: Schema<'_>,
     present: &[&Key],
 ) -> Result<Option<Key>, ParseError> {
-    if !model.shape(shape).traits.is(Flag::Union) {
+    if !is_union(shape) {
         return Ok(None);
     }
     let present: Vec<&Key> = present
@@ -207,18 +205,10 @@ pub(super) fn unknown_union_member(
     let [tag] = present[..] else {
         return Err(ParseError::new(format!(
             "Invalid service response: {} must have one and only one member set.",
-            model.shape(shape).name
+            name(shape)
         )));
     };
-    let known = model.members(shape).iter().any(|member| {
-        let name = model
-            .shape(member.shape)
-            .traits
-            .name
-            .as_deref()
-            .unwrap_or(&member.name);
-        *tag == *name
-    });
+    let known = shape.members().any(|member| *tag == *wire_name(member));
     Ok((!known).then(|| tag.clone()))
 }
 
@@ -332,27 +322,27 @@ pub(super) use model::pyrepr::py_short_type_name as short_type;
 /// `Serializer._expand_host_prefix`: `endpoint.hostPrefix` with each
 /// `hostLabel` member's value put in its `{name}`.
 pub(super) fn host_prefix(
-    model: &Model,
-    operation: &Operation,
+    operation: OperationSchema<'_>,
     input: &Value,
 ) -> Result<Option<String>, SerializeError> {
-    let Some(template) = operation.host_prefix.as_deref() else {
+    let Some(template) = operation.host_prefix() else {
         return Ok(None);
     };
-    let Some(shape) = operation.input else {
+    let Some(shape) = operation.input() else {
         return Ok(Some(template.to_owned()));
     };
     let mut prefix = template.to_owned();
-    for member in model.members(shape) {
-        if !model.shape(member.shape).traits.is(Flag::HostLabel) {
+    for member in shape.members() {
+        if !member.flag(Flag::HostLabel) {
             continue;
         }
+        let name = member_name(member);
         let value = match input {
-            Value::Map(map) => map.get(&member.name),
+            Value::Map(map) => map.get(name),
             _ => None,
         };
-        let value = value.ok_or_else(|| SerializeError::new(format!("'{}'", member.name)))?;
-        prefix = prefix.replace(&format!("{{{}}}", member.name), &py_str(value));
+        let value = value.ok_or_else(|| SerializeError::new(format!("'{name}'")))?;
+        prefix = prefix.replace(&format!("{{{name}}}"), &py_str(value));
     }
     Ok(Some(prefix))
 }
@@ -361,13 +351,76 @@ pub(super) fn host_prefix(
 /// `shape.members[key]`: the member's shape, else the `KeyError`'s text. An
 /// input's keys are the CLI's, so a key with a lone surrogate is only ever
 /// such a `KeyError`, as it is in Python.
-pub(super) fn member(model: &Model, shape: ShapeId, key: &Key) -> Result<ShapeId, SerializeError> {
-    model
-        .members(shape)
-        .iter()
-        .find(|member| *key == *member.name)
-        .map(|member| member.shape)
+pub(super) fn member<'s>(shape: Schema<'s>, key: &Key) -> Result<Schema<'s>, SerializeError> {
+    key.as_str()
+        .and_then(|name| shape.member(name))
         .ok_or_else(|| SerializeError::new(format!("'{}'", key.text())))
+}
+
+/// The schema of `operation`, which the model's front-end built from the
+/// same description; `Err` only if the two readings disagree.
+pub(super) fn operation_schema<'m>(
+    model: &'m Model,
+    operation: &Operation,
+) -> Result<OperationSchema<'m>, String> {
+    model
+        .schema()
+        .service()
+        .operation(&operation.name)
+        .ok_or_else(|| format!("the model has no schema for {}", operation.name))
+}
+
+/// The model name of a shape a reference resolves to (`Shape.name`): a
+/// member's is its target's.
+pub(super) fn name(shape: Schema<'_>) -> &str {
+    shape.target().id().name()
+}
+
+/// A member's name in its structure.
+pub(super) fn member_name(member: Schema<'_>) -> &str {
+    member.member_name().unwrap_or_default()
+}
+
+/// A member's `locationName`, else its name: the key the JSON and XML
+/// bodies hold it under.
+pub(super) fn wire_name(member: Schema<'_>) -> &str {
+    member
+        .location_name()
+        .unwrap_or_else(|| member_name(member))
+}
+
+/// A list's member, which every list the front-end builds has.
+pub(super) fn list_member(shape: Schema<'_>) -> Result<Schema<'_>, String> {
+    shape
+        .list_member()
+        .ok_or_else(|| format!("the list {} has no member", name(shape)))
+}
+
+/// A map's key and value, which every map the front-end builds has.
+pub(super) fn map_entry(shape: Schema<'_>) -> Result<(Schema<'_>, Schema<'_>), String> {
+    shape
+        .map_key()
+        .zip(shape.map_value())
+        .ok_or_else(|| format!("the map {} has no key or value", name(shape)))
+}
+
+/// botocore's `structure` type, a document or union included.
+pub(super) fn is_structure(shape: Schema<'_>) -> bool {
+    matches!(
+        shape.shape_type(),
+        ShapeType::Structure | ShapeType::Document | ShapeType::Union
+    )
+}
+
+/// A truthy `document`: the type says it, unless a cold `c2j#document`
+/// says the reference's truthiness differs from the type's.
+pub(super) fn is_document(shape: Schema<'_>) -> bool {
+    (shape.shape_type() == ShapeType::Document) != shape.has_trait(traits::DOCUMENT)
+}
+
+/// A truthy `union`, as [`is_document`] reads `document`.
+pub(super) fn is_union(shape: Schema<'_>) -> bool {
+    (shape.shape_type() == ShapeType::Union) != shape.has_trait(traits::UNION)
 }
 
 /// The headers as botocore's `HeadersDict` iterates them: each name once,
