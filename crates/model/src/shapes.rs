@@ -12,7 +12,6 @@ use crate::source::{Kind, LoadError, Source, load_service_model};
 use crate::value::Value;
 
 mod build;
-mod keys;
 mod traits;
 
 pub use crate::schema::{Site, Uninterpreted};
