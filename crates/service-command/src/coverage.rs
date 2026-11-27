@@ -295,12 +295,12 @@ pub static CLI: &[Row] = &[
         // Its only handler on this event is `context.update`, recording the
         // parsed globals for one of that service's arguments
         // (cloudfront/__init__.py:63); the service's operations, which its
-        // other handlers act on, speak rest-xml. Once native speaks it,
-        // they reach the initializer through their own patterns, which no
-        // row covers, and this row's refusal becomes UnportedCustomization.
+        // other handlers act on, speak rest-xml, so they reach the
+        // initializer through their own patterns, which no row covers, and
+        // are refused as an unported customization.
         basis: Basis::Inert {
             acts_when: "the operation is one of that service's",
-            refused_as: Refusal::Router(PythonReason::UnsupportedProtocol),
+            refused_as: Refusal::Router(PythonReason::UnportedCustomization),
         },
     },
     Row {

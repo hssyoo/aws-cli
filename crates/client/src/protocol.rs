@@ -248,13 +248,15 @@ pub static IMPLEMENTED: ProtocolRegistry = ProtocolRegistry::new(&[
     ("json", &AWS_JSON_1_1),
     ("json", &AWS_JSON_1_0),
     ("rest-json", &REST_JSON_1),
+    ("rest-xml", &REST_XML),
+    ("ec2", &EC2_QUERY),
 ]);
 
 /// The protocols built but switched off: admission and clients read
 /// [`IMPLEMENTED`] alone, so these are reachable only from tests, through
-/// the test facade, until a later change moves each into it.
-pub static SWITCHED_OFF: ProtocolRegistry =
-    ProtocolRegistry::new(&[("ec2", &EC2_QUERY), ("rest-xml", &REST_XML)]);
+/// the test facade, until a later change moves each into it. None is
+/// staged now.
+pub static SWITCHED_OFF: ProtocolRegistry = ProtocolRegistry::new(&[]);
 
 /// Whether `model`'s service sends a timestamp member with no
 /// `timestampFormat` as an epoch number; `None` when its protocol is not

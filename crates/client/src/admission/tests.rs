@@ -94,11 +94,16 @@ fn static_refusals_need_only_the_model_and_the_rule_set() -> Result<(), Box<dyn 
         refusal("Plain")?,
         Some(Unsupported::Builtin("AWS::Other::Thing".into()))
     );
-    let xml = Model::from_json(SERVICE.replace(r#""json""#, r#""rest-xml""#).as_bytes())?;
-    let plain = xml.schema().service().operation("Plain").ok_or("Plain")?;
+    let cbor = r#""smithy-rpc-v2-cbor""#;
+    let cbor_model = Model::from_json(SERVICE.replace(r#""json""#, cbor).as_bytes())?;
+    let plain = cbor_model
+        .schema()
+        .service()
+        .operation("Plain")
+        .ok_or("Plain")?;
     assert_eq!(
-        static_refusal(&xml, plain, &data, "zjson", &[], None),
-        Some(Unsupported::Protocol("rest-xml".into()))
+        static_refusal(&cbor_model, plain, &data, "zjson", &[], None),
+        Some(Unsupported::Protocol("smithy-rpc-v2-cbor".into()))
     );
     Ok(())
 }

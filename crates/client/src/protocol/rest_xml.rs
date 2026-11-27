@@ -8,9 +8,8 @@
 //! the XML body both ways ([`crate::codec::xml`]), the XML scalar handlers
 //! a header's text is read with, and the error envelope ([`parse`]).
 //!
-//! Built but not admitted: [`REST_XML`] is in [`super::SWITCHED_OFF`],
-//! which only tests read, and not in [`super::IMPLEMENTED`], so admission
-//! still refuses a rest-xml service.
+//!
+//! Admitted: [`REST_XML`] is in [`super::IMPLEMENTED`].
 use super::rest_json::{
     Payload, encode_payload, joined_query, no_items, partition, render_uri_template, split_uri,
 };

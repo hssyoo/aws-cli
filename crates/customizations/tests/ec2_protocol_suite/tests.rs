@@ -3,7 +3,7 @@
 //! `EC2Serializer` and `EC2QueryParser`: the same per-case model, the same
 //! comparisons, and the same ignore list, read from
 //! `protocol-tests-ignore-list.json` when the test runs. The protocol comes
-//! from the façade's switched-off registry, as admission refuses `ec2`.
+//! from the façade's registry of built protocols, which holds the admitted ones.
 use client::error::ParseError;
 use client::http::{Headers, HttpResponse};
 use client::testing::facade::{
@@ -398,11 +398,11 @@ fn botocore_s_ec2_output_suite_passes() -> Result<()> {
     assert_suite("output", 25, 2)
 }
 
-/// Switched off: the façade's admitted registry has no `ec2`, so neither
-/// admission nor a client reaches it.
+/// Admitted: the façade's admitted registry holds `ec2`, the protocol
+/// admission and clients reach.
 #[test]
-fn ec2_is_reachable_only_through_the_switched_off_registry() {
-    assert!(protocol_named(FILE).is_none());
+fn ec2_is_reachable_through_the_admitted_registry() {
+    assert!(protocol_named(FILE).is_some());
     assert!(built_protocol_named(FILE).is_some());
     assert!(built_protocol_named("query").is_some());
 }

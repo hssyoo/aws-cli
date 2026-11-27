@@ -658,10 +658,10 @@ fn a_body_that_is_not_xml_compares_as_bytes() {
     assert!(!same_body(b"", b"<A/>"));
 }
 
-/// The suite must reach rest-xml through the switched-off handle, and only
-/// there: admission's protocols still leave it out.
+/// The suite reaches rest-xml through the built handle, and admission's
+/// protocols hold it too.
 #[test]
-fn rest_xml_is_built_and_not_admitted() {
+fn rest_xml_is_built_and_admitted() {
     assert!(built_protocol_named("rest-xml").is_some());
-    assert!(client::testing::facade::protocol_named("rest-xml").is_none());
+    assert!(client::testing::facade::protocol_named("rest-xml").is_some());
 }
