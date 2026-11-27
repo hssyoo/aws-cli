@@ -69,7 +69,7 @@ pub(super) fn request(
 }
 
 /// The `AttributeError` of `.items()` on what is not a dict.
-fn no_items(value: &Value) -> SerializeError {
+pub(in crate::protocol) fn no_items(value: &Value) -> SerializeError {
     SerializeError::new(format!(
         "'{}' object has no attribute 'items'",
         common::short_type(value)
@@ -86,22 +86,25 @@ fn not_iterable(value: &Value) -> SerializeError {
 
 /// `_partition_parameters`' four dicts.
 #[derive(Default)]
-struct Partitioned {
+pub(in crate::protocol) struct Partitioned {
     /// `uri_path_kwargs`: each label's value, converted.
-    uri: Map,
+    pub(in crate::protocol) uri: Map,
     /// `query_string_kwargs`: each name's value, converted, a list's items
     /// each their own pair. A map member's entries are merged in as given.
-    query: Map,
-    headers: Headers,
+    pub(in crate::protocol) query: Map,
+    pub(in crate::protocol) headers: Headers,
     /// `body_kwargs`: the members with no known location, by member name.
-    body: Map,
+    pub(in crate::protocol) body: Map,
 }
 
 /// `BaseRestSerializer._partition_parameters` of every parameter that is
 /// not `None`, in the caller's order: each member by its `location`
 /// (`uri`, `querystring`, `header`, `headers`) under its `locationName`,
 /// the rest into the body.
-fn partition(shape: Schema<'_>, params: &Map) -> Result<Partitioned, SerializeError> {
+pub(in crate::protocol) fn partition(
+    shape: Schema<'_>,
+    params: &Map,
+) -> Result<Partitioned, SerializeError> {
     let mut parts = Partitioned::default();
     for (name, value) in params.iter() {
         if *value == Value::Null {
@@ -287,7 +290,10 @@ fn escape_header_list_string(text: &str) -> String {
 ///
 /// # Errors
 /// A label with no value (`KeyError`).
-fn render_uri_template(template: &str, labels: &Map) -> Result<String, SerializeError> {
+pub(in crate::protocol) fn render_uri_template(
+    template: &str,
+    labels: &Map,
+) -> Result<String, SerializeError> {
     let mut rendered = String::with_capacity(template.len());
     let mut rest = template;
     while let Some(start) = rest.find('{')
@@ -311,7 +317,7 @@ fn render_uri_template(template: &str, labels: &Map) -> Result<String, Serialize
 
 /// The rendered `url_path` as the request's URL splits it: the path, and
 /// the query after the first `?`, if any.
-fn split_uri(url_path: &str) -> (&str, Option<&str>) {
+pub(in crate::protocol) fn split_uri(url_path: &str) -> (&str, Option<&str>) {
     match url_path.split_once('?') {
         Some((path, query)) => (path, Some(query)),
         None => (url_path, None),
@@ -325,7 +331,10 @@ fn split_uri(url_path: &str) -> (&str, Option<&str>) {
 ///
 /// # Errors
 /// [`percent_encode`]'s.
-fn joined_query(uri_query: Option<&str>, query: &Map) -> Result<String, SerializeError> {
+pub(in crate::protocol) fn joined_query(
+    uri_query: Option<&str>,
+    query: &Map,
+) -> Result<String, SerializeError> {
     Ok(match (uri_query, query.is_empty()) {
         (Some(own), true) => own.to_owned(),
         (Some(own), false) => format!("{own}&{}", percent_encode_sequence(query)?),
@@ -390,15 +399,15 @@ fn encode_bytes(bytes: &[u8], safe: &[u8]) -> String {
 
 /// The input's `payload` member, if it names one.
 #[derive(Clone, Copy)]
-struct Payload<'a> {
-    name: &'a str,
-    shape: Schema<'a>,
+pub(in crate::protocol) struct Payload<'a> {
+    pub(in crate::protocol) name: &'a str,
+    pub(in crate::protocol) shape: Schema<'a>,
     /// `_has_streaming_payload`: a blob or a string, sent as it is.
-    raw: bool,
+    pub(in crate::protocol) raw: bool,
 }
 
 impl<'a> Payload<'a> {
-    fn of(shape: Schema<'a>) -> Result<Option<Self>, SerializeError> {
+    pub(in crate::protocol) fn of(shape: Schema<'a>) -> Result<Option<Self>, SerializeError> {
         let Some(name) = shape.payload() else {
             return Ok(None);
         };
@@ -448,7 +457,7 @@ fn body(
 /// `_encode_payload`: text as UTF-8, bytes as they are. Anything else,
 /// which botocore leaves in the body for the HTTP layer to fail on, is
 /// refused; validation lets none through.
-fn encode_payload(value: &Value) -> Result<Vec<u8>, SerializeError> {
+pub(in crate::protocol) fn encode_payload(value: &Value) -> Result<Vec<u8>, SerializeError> {
     match value {
         Value::Blob(bytes) => Ok(bytes.clone()),
         Value::String(text) => Ok(text.as_bytes().to_vec()),

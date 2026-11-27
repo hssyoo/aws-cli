@@ -15,26 +15,34 @@
 //! Python route):
 //! 1. `admit`: the static refusals and the endpoint configuration check;
 //! 2. `modify_before_serialization` hooks;
-//! 3. the idempotency tokens, after every input hook;
+//! 3. the idempotency tokens, after every input hook, then the checksum
+//!    validation mode's default;
 //! 4. `resolve_endpoint`: the built-ins after the
 //!    `modify_endpoint_builtins` hooks, then the rule set, with the
 //!    account id deferred;
-//! 5. `serialize`: validation, then the protocol's serializer;
+//! 5. `serialize`: validation, then the protocol's serializer, then the
+//!    call's checksums and their feature ids (`resolve_checksum_context`);
 //! 6. `apply_endpoint`: the join with the endpoint and the `User-Agent`;
-//! 7. `modify_before_retry_loop` hooks;
+//! 7. `modify_before_retry_loop` hooks, then the request checksum
+//!    (`apply_request_checksum`);
 //! 8. `resolve_auth_scheme`: auth selection, a component.
+//!
+//! The checksum steps ([`crate::checksum`]) run only for a client whose
+//! `http_checksum` switch is on, which no production client's is yet.
 //!
 //! [`send`]:
 //! 1. `refresh_for_identity`: the deferred account id, which reruns
-//!    phases 4, 6, 7 and 8 when it changes the endpoint;
+//!    phases 4, 6, 7 (with the request checksum) and 8 when it changes the
+//!    endpoint;
 //! 2. the invocation id; then per attempt:
 //!    `modify_before_signing` hooks, identity and signature,
 //!    `modify_before_transmit` (the core's unsigned headers, then the
 //!    hooks), `transmit` (a `short_circuit_transmit` hook's answer, else
-//!    the transport), `deserialize` (`modify_before_deserialization`
-//!    hooks, then the parsers), `classify` (the customizations' retry
-//!    classifiers, else standard mode), the retry decision (with the
-//!    long-poll wait), and on success `modify_before_completion` hooks.
+//!    the transport), `deserialize` (the response checksum, the
+//!    `modify_before_deserialization` hooks, then the parsers), `classify`
+//!    (the customizations' retry classifiers, else standard mode), the
+//!    retry decision (with the long-poll wait), and on success
+//!    `modify_before_completion` hooks.
 //!
 //! Not yet run, each until its first user: the
 //! [`crate::interceptors::Intercept::observe`] points (the first is CLI

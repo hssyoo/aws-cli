@@ -46,7 +46,8 @@ fn a_covered_operation_is_admitted_with_its_request() -> Result<()> {
 
 /// Each stage refuses with its own reason: an uncovered customization, a
 /// paginator whose expression the native paginator does not run (zquery's
-/// ListJobs reads its token as `Jobs[-1].JobId`), an unimplemented protocol.
+/// ListJobs reads its token as `Jobs[-1].JobId`), an unimplemented protocol
+/// (zcbor's smithy-rpc-v2-cbor).
 #[test]
 fn each_stage_names_its_refusal() -> Result<()> {
     with_models(|models| {
@@ -64,7 +65,7 @@ fn each_stage_names_its_refusal() -> Result<()> {
             Some(PythonReason::Paginator)
         );
         assert_eq!(
-            refused(&[], &["s3api", "list-buckets"]),
+            refused(&[], &["zcbor", "get-record", "--id", "a"]),
             Some(PythonReason::UnsupportedProtocol)
         );
     })

@@ -12,7 +12,7 @@
 use crate::admission::{Unsupported, static_refusal};
 use crate::credentials::{CredentialError, CredentialSource, SigningCredentials};
 use crate::endpoint::{EndpointConfig, EndpointInputs};
-use crate::protocol::{ClientProtocol, IMPLEMENTED};
+use crate::protocol::{ClientProtocol, IMPLEMENTED, SWITCHED_OFF};
 use crate::useragent::{SessionExtras, UserAgentContext};
 use model::paginators::{Paginators, Refused};
 use model::source::{Kind, LoadError, Source};
@@ -173,9 +173,17 @@ pub fn validate_case(model: &Model, operation: &str, input: &Value) -> Result<Va
 #[derive(Clone, Copy, Debug)]
 pub struct ProtocolHandle(&'static dyn ClientProtocol);
 
-/// The protocol named `query`, `json` or `rest-json`.
+/// The protocol named `query`, `json`, `rest-json`, `rest-xml` or `ec2`.
 pub fn protocol_named(name: &str) -> Option<ProtocolHandle> {
     IMPLEMENTED.named(name).map(ProtocolHandle)
+}
+
+/// The protocol named `name` among those implemented or built but switched
+/// off (none is staged now): admission refuses the latter, so tests reach them only here.
+pub fn built_protocol_named(name: &str) -> Option<ProtocolHandle> {
+    (IMPLEMENTED.named(name))
+        .or_else(|| SWITCHED_OFF.named(name))
+        .map(ProtocolHandle)
 }
 
 /// The protocol a client of `model` speaks, when one is implemented.

@@ -20,6 +20,7 @@
 pub mod admission;
 pub mod auth;
 pub mod call;
+pub mod checksum;
 pub mod codec;
 pub mod config_bag;
 pub mod credentials;

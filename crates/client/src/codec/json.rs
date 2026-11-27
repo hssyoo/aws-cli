@@ -486,7 +486,7 @@ impl ShapeDeserializer for JsonCursor<'_> {
 /// `BaseRestParser._handle_string` for a `jsonvalue` header
 /// (`is_json_value_header`): the text base64-decoded and read as JSON.
 /// `None` for any other string, which stays as it is.
-fn json_value(shape: Schema<'_>, value: &Value) -> Option<Result<Value, SerdeError>> {
+pub(crate) fn json_value(shape: Schema<'_>, value: &Value) -> Option<Result<Value, SerdeError>> {
     let header = shape.location() == Some("header");
     (header && shape.flag(Flag::JsonValue)).then(|| json_value_of(value))
 }

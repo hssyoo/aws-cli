@@ -5,7 +5,7 @@ use super::common;
 use super::{BotocoreCompat, ClientProtocol, ParseOptions, Serialized};
 use crate::codec::form::{FORM, FormSerializer};
 use crate::codec::value::{build_value, write_value};
-use crate::codec::xml::{self, Node, XmlDeserializer, by_name, lookup, replaced};
+use crate::codec::xml::{self, ErrorRoot, Node, XmlDeserializer, by_name, lookup, replaced};
 use crate::error::{ParseError, SerializeError};
 use crate::http::{Headers, HttpResponse, Method};
 use crate::xml::Element;
@@ -79,7 +79,7 @@ impl ClientProtocol for AwsQueryProtocol {
     ) -> Result<Value, ParseError> {
         let root = xml::parse(&response.body)?;
         let mut parsed = match shape {
-            Some(shape) => body_shape(shape, &root, options)?,
+            Some(shape) => body_shape(shape, &root, ErrorRoot::ErrorResponse, options)?,
             None => Map::new(),
         };
         if let Some(metadata) = lookup(&by_name(&root), "ResponseMetadata") {
@@ -126,7 +126,8 @@ impl ClientProtocol for AwsQueryProtocol {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Map, ParseError> {
-        body_shape(shape, &xml::parse(&response.body)?, options)
+        let root = xml::parse(&response.body)?;
+        body_shape(shape, &root, ErrorRoot::ErrorResponse, options)
     }
 }
 
@@ -136,10 +137,12 @@ pub(super) fn method(operation: OperationSchema<'_>) -> Result<Method, Serialize
     Method::parse(name).ok_or_else(|| SerializeError::new(format!("unsupported method {name}")))
 }
 
-/// The shape parsed from the root, or from the `resultWrapper` element.
-fn body_shape(
+/// The shape parsed from the root, or from the `resultWrapper` element,
+/// an error shape's members from `errors`'s root.
+pub(super) fn body_shape(
     shape: Schema<'_>,
     root: &Element,
+    errors: ErrorRoot,
     options: &ParseOptions<'_>,
 ) -> Result<Map, ParseError> {
     let start = match shape.result_wrapper() {
@@ -148,7 +151,8 @@ fn body_shape(
             .ok_or_else(|| ParseError::new(format!("'{wrapper}'")))?,
         None => Node::One(root),
     };
-    match build_value(shape, &mut XmlDeserializer::new(start), options)? {
+    let mut deserializer = XmlDeserializer::with_error_root(start, errors);
+    match build_value(shape, &mut deserializer, options)? {
         Value::Map(map) => Ok(map),
         other => Err(ParseError::new(format!(
             "expected a structure, parsed {}",

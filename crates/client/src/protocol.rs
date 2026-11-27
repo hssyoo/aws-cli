@@ -3,7 +3,8 @@
 //! the interface, [`compat`] botocore's drivers over it, and [`registry`]
 //! botocore's choice of one. The implementations: [`query`] (awsQuery),
 //! [`json`] (awsJson 1.0 and 1.1, with the query-compatible mode) and
-//! [`rest_json`] (restJson1).
+//! [`rest_json`] (restJson1), and, built but not yet admitted, [`ec2`]
+//! (ec2Query) and [`rest_xml`] (restXml).
 use crate::admission::Unsupported;
 use crate::error::{CallError, ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method, Url};
@@ -208,16 +209,20 @@ pub trait ClientProtocol: Sync + std::fmt::Debug {
 
 mod common;
 pub mod compat;
+pub mod ec2;
 pub mod json;
 pub mod query;
 pub mod registry;
 pub mod rest_json;
+pub mod rest_xml;
 
 pub use compat::BotocoreCompat;
+pub use ec2::{EC2_QUERY, Ec2QueryProtocol};
 pub use json::{AWS_JSON_1_0, AWS_JSON_1_1, HttpRpcProtocol};
 pub use query::{AWS_QUERY, AwsQueryProtocol};
 pub use registry::{ProtocolRegistry, Unresolved, resolved_protocol};
 pub use rest_json::{HttpBindingProtocol, REST_JSON_1};
+pub use rest_xml::REST_XML;
 
 /// What the codecs share with the protocols: botocore's serializer
 /// conversions, wire names and body decoding.
@@ -243,7 +248,15 @@ pub static IMPLEMENTED: ProtocolRegistry = ProtocolRegistry::new(&[
     ("json", &AWS_JSON_1_1),
     ("json", &AWS_JSON_1_0),
     ("rest-json", &REST_JSON_1),
+    ("rest-xml", &REST_XML),
+    ("ec2", &EC2_QUERY),
 ]);
+
+/// The protocols built but switched off: admission and clients read
+/// [`IMPLEMENTED`] alone, so these are reachable only from tests, through
+/// the test facade, until a later change moves each into it. None is
+/// staged now.
+pub static SWITCHED_OFF: ProtocolRegistry = ProtocolRegistry::new(&[]);
 
 /// Whether `model`'s service sends a timestamp member with no
 /// `timestampFormat` as an epoch number; `None` when its protocol is not

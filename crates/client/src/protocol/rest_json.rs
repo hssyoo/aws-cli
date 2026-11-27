@@ -14,14 +14,21 @@ use model::value::{Map, Value};
 mod parse;
 mod serialize;
 
+/// `BaseRestParser` and `BaseRestSerializer`'s halves, which every REST
+/// protocol shares.
+pub(super) use parse::rest;
+pub(super) use serialize::{
+    Payload, encode_payload, joined_query, no_items, partition, render_uri_template, split_uri,
+};
+
 /// A protocol whose members bind to the HTTP message (Smithy's restJson1,
 /// later restXml): the URI, query, headers and status, with the rest in a
 /// body of the codec's format.
 #[derive(Debug)]
 pub struct HttpBindingProtocol<C: Codec + 'static> {
-    id: TraitId,
-    codec: &'static C,
-    compat: BotocoreCompat,
+    pub(super) id: TraitId,
+    pub(super) codec: &'static C,
+    pub(super) compat: BotocoreCompat,
 }
 
 /// restJson1, botocore's `rest-json`.
