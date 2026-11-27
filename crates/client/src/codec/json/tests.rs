@@ -103,7 +103,8 @@ fn scalars_take_json_serializer_s_forms() -> Result<()> {
     let mut serializer = JsonSerializer::default();
     write_value(root(&model)?, &input, &mut serializer)?;
     let expected = json!({"Blob": "aGk=", "When": 1_577_934_245,
-        "Iso": "1970-01-01T00:00:01.500000Z", "Int": "7", "Bool": "x", "Doc": [1, {"b": null}], "N": {"When": 1.25},
+        "Iso": "1970-01-01T00:00:01.500000Z", "Int": "7", "Bool": "x",
+        "Doc": [1, {"b": null}], "N": {"When": 1.25},
         "Dbl": "NaN", "Flt": "-Infinity"});
     let mut expected = value(&expected);
     // A long is no float: botocore writes it as it is, which `dumps` spells.
