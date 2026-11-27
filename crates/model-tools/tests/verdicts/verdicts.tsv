@@ -13676,23 +13676,23 @@ partnercentral-benefits	submit-benefit-application	-	-	scalar_arguments	-	2018-0
 partnercentral-benefits	tag-resource	-	-	required_not_scalar	-	2018-05-10
 partnercentral-benefits	untag-resource	-	-	required_not_scalar	-	2018-05-10
 partnercentral-benefits	update-benefit-application	-	-	scalar_arguments	-	2018-05-10
-partnercentral-channel	accept-channel-handshake	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	cancel-channel-handshake	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	create-channel-handshake	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	create-program-management-account	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	create-relationship	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	delete-program-management-account	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	delete-relationship	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	get-relationship	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	list-channel-handshakes	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2024-03-18
-partnercentral-channel	list-program-management-accounts	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2024-03-18
-partnercentral-channel	list-relationships	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2024-03-18
-partnercentral-channel	list-tags-for-resource	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	reject-channel-handshake	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	tag-resource	-	-	required_not_scalar	-	2024-03-18
-partnercentral-channel	untag-resource	-	-	required_not_scalar	-	2024-03-18
-partnercentral-channel	update-program-management-account	-	-	scalar_arguments	-	2024-03-18
-partnercentral-channel	update-relationship	-	-	scalar_arguments	-	2024-03-18
+partnercentral-channel	accept-channel-handshake	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	cancel-channel-handshake	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	create-channel-handshake	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	create-program-management-account	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	create-relationship	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	delete-program-management-account	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	delete-relationship	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	get-relationship	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	list-channel-handshakes	unsupported_auth	v4a	refused:unsupported_auth	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2024-03-18
+partnercentral-channel	list-program-management-accounts	unsupported_auth	v4a	refused:unsupported_auth	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2024-03-18
+partnercentral-channel	list-relationships	unsupported_auth	v4a	refused:unsupported_auth	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2024-03-18
+partnercentral-channel	list-tags-for-resource	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	reject-channel-handshake	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	tag-resource	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	untag-resource	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	update-program-management-account	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
+partnercentral-channel	update-relationship	unsupported_auth	v4a	refused:unsupported_auth	-	2024-03-18
 partnercentral-revenue-measurement	create-marketplace-revenue-share	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
 partnercentral-revenue-measurement	create-marketplace-revenue-share-allocation	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
 partnercentral-revenue-measurement	create-revenue-attribution	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
@@ -15998,97 +15998,97 @@ rum	tag-resource	-	-	required_not_scalar	-	2018-05-10
 rum	untag-resource	-	-	required_not_scalar	-	2018-05-10
 rum	update-app-monitor	-	-	scalar_arguments	-	2018-05-10
 rum	update-rum-metric-definition	-	-	required_not_scalar	-	2018-05-10
-s3api	abort-multipart-upload	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	complete-multipart-upload	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	copy-object	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	create-bucket	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	abort-multipart-upload	-	-	refused:unported_customization	-	2006-03-01
+s3api	complete-multipart-upload	-	-	refused:unported_customization	-	2006-03-01
+s3api	copy-object	-	-	refused:unported_customization	-	2006-03-01
+s3api	create-bucket	-	-	refused:unported_customization	-	2006-03-01
 s3api	create-bucket-metadata-configuration	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	create-bucket-metadata-table-configuration	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
-s3api	create-multipart-upload	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	create-session	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-analytics-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-cors	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-encryption	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-intelligent-tiering-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-inventory-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-lifecycle	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-metadata-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-metadata-table-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-metrics-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-ownership-controls	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-policy	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-replication	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-tagging	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-bucket-website	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-object	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-object-annotation	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	delete-object-tagging	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	create-multipart-upload	-	-	refused:unported_customization	-	2006-03-01
+s3api	create-session	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-analytics-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-cors	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-encryption	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-intelligent-tiering-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-inventory-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-lifecycle	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-metadata-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-metadata-table-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-metrics-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-ownership-controls	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-policy	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-replication	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-tagging	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-bucket-website	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-object	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-object-annotation	-	-	refused:unported_customization	-	2006-03-01
+s3api	delete-object-tagging	-	-	refused:unported_customization	-	2006-03-01
 s3api	delete-objects	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
-s3api	delete-public-access-block	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-abac	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-accelerate-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-acl	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-analytics-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-cors	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-encryption	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-intelligent-tiering-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-inventory-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-lifecycle	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-lifecycle-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-location	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-logging	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-metadata-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-metadata-table-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-metrics-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-notification	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-notification-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-ownership-controls	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-policy	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-policy-status	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-replication	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-request-payment	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-tagging	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-versioning	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-bucket-website	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	delete-public-access-block	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-abac	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-accelerate-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-acl	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-analytics-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-cors	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-encryption	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-intelligent-tiering-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-inventory-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-lifecycle	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-lifecycle-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-location	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-logging	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-metadata-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-metadata-table-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-metrics-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-notification	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-notification-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-ownership-controls	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-policy	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-policy-status	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-replication	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-request-payment	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-tagging	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-versioning	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-bucket-website	-	-	refused:unported_customization	-	2006-03-01
 s3api	get-object	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
-s3api	get-object-acl	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	get-object-acl	-	-	refused:unported_customization	-	2006-03-01
 s3api	get-object-annotation	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
-s3api	get-object-attributes	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-object-legal-hold	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-object-lock-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-object-retention	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	get-object-tagging	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	get-object-attributes	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-object-legal-hold	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-object-lock-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-object-retention	-	-	refused:unported_customization	-	2006-03-01
+s3api	get-object-tagging	-	-	refused:unported_customization	-	2006-03-01
 s3api	get-object-torrent	unsupported_trait	streaming	refused:unsupported_trait	-	2006-03-01
-s3api	get-public-access-block	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	head-bucket	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	head-object	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	list-bucket-analytics-configurations	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	list-bucket-intelligent-tiering-configurations	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	list-bucket-inventory-configurations	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	list-bucket-metrics-configurations	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	list-buckets	unsupported_auth	s3	refused:unsupported_auth	native in=ContinuationToken out=ContinuationToken more=- result=Buckets keep=Owner,Prefix limit=MaxBuckets	2006-03-01
-s3api	list-directory-buckets	unsupported_auth	s3	refused:unsupported_auth	native in=ContinuationToken out=ContinuationToken more=- result=Buckets keep=- limit=MaxDirectoryBuckets	2006-03-01
-s3api	list-multipart-uploads	unsupported_auth	s3	refused:unsupported_auth	native in=KeyMarker,UploadIdMarker out=NextKeyMarker,NextUploadIdMarker more=IsTruncated result=Uploads,CommonPrefixes keep=RequestCharged,Prefix limit=MaxUploads	2006-03-01
-s3api	list-object-annotations	unsupported_auth	s3	refused:unsupported_auth	native in=ContinuationToken out=NextContinuationToken more=- result=Annotations keep=AnnotationCount,AnnotationPrefix,Bucket,Key,ObjectVersionId,RequestCharged limit=MaxAnnotationResults	2006-03-01
-s3api	list-object-versions	unsupported_auth	s3	refused:unsupported_auth	native in=KeyMarker,VersionIdMarker out=NextKeyMarker,NextVersionIdMarker more=IsTruncated result=Versions,DeleteMarkers,CommonPrefixes keep=RequestCharged,Prefix limit=MaxKeys	2006-03-01
-s3api	list-objects	unsupported_auth	s3	refused:unsupported_auth	native in=Marker out=NextMarker || Contents[-1].Key more=IsTruncated result=Contents,CommonPrefixes keep=RequestCharged,Prefix limit=MaxKeys	2006-03-01
-s3api	list-objects-v2	unsupported_auth	s3	refused:unsupported_auth	native in=ContinuationToken out=NextContinuationToken more=IsTruncated result=Contents,CommonPrefixes keep=RequestCharged,Prefix limit=MaxKeys	2006-03-01
-s3api	list-parts	unsupported_auth	s3	refused:unsupported_auth	native in=PartNumberMarker out=NextPartNumberMarker more=IsTruncated result=Parts keep=ChecksumAlgorithm,Initiator,Owner,StorageClass,ChecksumType limit=MaxParts	2006-03-01
+s3api	get-public-access-block	-	-	refused:unported_customization	-	2006-03-01
+s3api	head-bucket	-	-	refused:unported_customization	-	2006-03-01
+s3api	head-object	-	-	refused:unported_customization	-	2006-03-01
+s3api	list-bucket-analytics-configurations	-	-	refused:unported_customization	-	2006-03-01
+s3api	list-bucket-intelligent-tiering-configurations	-	-	refused:unported_customization	-	2006-03-01
+s3api	list-bucket-inventory-configurations	-	-	refused:unported_customization	-	2006-03-01
+s3api	list-bucket-metrics-configurations	-	-	refused:unported_customization	-	2006-03-01
+s3api	list-buckets	-	-	refused:unported_customization	native in=ContinuationToken out=ContinuationToken more=- result=Buckets keep=Owner,Prefix limit=MaxBuckets	2006-03-01
+s3api	list-directory-buckets	-	-	refused:unported_customization	native in=ContinuationToken out=ContinuationToken more=- result=Buckets keep=- limit=MaxDirectoryBuckets	2006-03-01
+s3api	list-multipart-uploads	-	-	refused:unported_customization	native in=KeyMarker,UploadIdMarker out=NextKeyMarker,NextUploadIdMarker more=IsTruncated result=Uploads,CommonPrefixes keep=RequestCharged,Prefix limit=MaxUploads	2006-03-01
+s3api	list-object-annotations	-	-	refused:unported_customization	native in=ContinuationToken out=NextContinuationToken more=- result=Annotations keep=AnnotationCount,AnnotationPrefix,Bucket,Key,ObjectVersionId,RequestCharged limit=MaxAnnotationResults	2006-03-01
+s3api	list-object-versions	-	-	refused:unported_customization	native in=KeyMarker,VersionIdMarker out=NextKeyMarker,NextVersionIdMarker more=IsTruncated result=Versions,DeleteMarkers,CommonPrefixes keep=RequestCharged,Prefix limit=MaxKeys	2006-03-01
+s3api	list-objects	-	-	refused:unported_customization	native in=Marker out=NextMarker || Contents[-1].Key more=IsTruncated result=Contents,CommonPrefixes keep=RequestCharged,Prefix limit=MaxKeys	2006-03-01
+s3api	list-objects-v2	-	-	refused:unported_customization	native in=ContinuationToken out=NextContinuationToken more=IsTruncated result=Contents,CommonPrefixes keep=RequestCharged,Prefix limit=MaxKeys	2006-03-01
+s3api	list-parts	-	-	refused:unported_customization	native in=PartNumberMarker out=NextPartNumberMarker more=IsTruncated result=Parts keep=ChecksumAlgorithm,Initiator,Owner,StorageClass,ChecksumType limit=MaxParts	2006-03-01
 s3api	put-bucket-abac	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	put-bucket-accelerate-configuration	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	put-bucket-acl	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
-s3api	put-bucket-analytics-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	put-bucket-analytics-configuration	-	-	refused:unported_customization	-	2006-03-01
 s3api	put-bucket-cors	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	put-bucket-encryption	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
-s3api	put-bucket-intelligent-tiering-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
-s3api	put-bucket-inventory-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	put-bucket-intelligent-tiering-configuration	-	-	refused:unported_customization	-	2006-03-01
+s3api	put-bucket-inventory-configuration	-	-	refused:unported_customization	-	2006-03-01
 s3api	put-bucket-lifecycle	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	put-bucket-lifecycle-configuration	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	put-bucket-logging	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
-s3api	put-bucket-metrics-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	put-bucket-metrics-configuration	-	-	refused:unported_customization	-	2006-03-01
 s3api	put-bucket-notification	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
-s3api	put-bucket-notification-configuration	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	put-bucket-notification-configuration	-	-	refused:unported_customization	-	2006-03-01
 s3api	put-bucket-ownership-controls	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	put-bucket-policy	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	put-bucket-replication	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
@@ -16104,7 +16104,7 @@ s3api	put-object-lock-configuration	unsupported_trait	httpChecksum	refused:unsup
 s3api	put-object-retention	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	put-object-tagging	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	put-public-access-block	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
-s3api	rename-object	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	rename-object	-	-	refused:unported_customization	-	2006-03-01
 s3api	restore-object	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	select-object-content	unsupported_trait	eventstream	refused:unsupported_trait	-	2006-03-01
 s3api	update-bucket-metadata-annotation-table-configuration	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
@@ -16112,39 +16112,39 @@ s3api	update-bucket-metadata-inventory-table-configuration	unsupported_trait	htt
 s3api	update-bucket-metadata-journal-table-configuration	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	update-object-encryption	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	upload-part	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
-s3api	upload-part-copy	unsupported_auth	s3	refused:unsupported_auth	-	2006-03-01
+s3api	upload-part-copy	-	-	refused:unported_customization	-	2006-03-01
 s3api	write-get-object-response	unsupported_trait	streaming	refused:unsupported_trait	-	2006-03-01
 s3control	associate-access-grants-identity-center	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	create-access-grant	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	create-access-grants-instance	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	create-access-grants-location	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	create-access-point	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	create-access-point-for-object-lambda	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	create-access-point	-	-	refused:unported_customization	-	2018-08-20
+s3control	create-access-point-for-object-lambda	-	-	refused:unported_customization	-	2018-08-20
 s3control	create-bucket	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	create-job	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	create-job	-	-	refused:unported_customization	-	2018-08-20
 s3control	create-multi-region-access-point	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	create-storage-lens-group	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	create-storage-lens-group	-	-	refused:unported_customization	-	2018-08-20
 s3control	delete-access-grant	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	delete-access-grants-instance	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	delete-access-grants-instance-resource-policy	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	delete-access-grants-location	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	delete-access-point	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-access-point-for-object-lambda	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-access-point-policy	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-access-point-policy-for-object-lambda	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-access-point-scope	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-bucket	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-bucket-lifecycle-configuration	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-bucket-policy	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-bucket-replication	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-bucket-tagging	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-job-tagging	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	delete-access-point	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-access-point-for-object-lambda	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-access-point-policy	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-access-point-policy-for-object-lambda	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-access-point-scope	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-bucket	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-bucket-lifecycle-configuration	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-bucket-policy	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-bucket-replication	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-bucket-tagging	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-job-tagging	-	-	refused:unported_customization	-	2018-08-20
 s3control	delete-multi-region-access-point	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	delete-public-access-block	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-storage-lens-configuration	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-storage-lens-configuration-tagging	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	delete-storage-lens-group	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	describe-job	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	delete-public-access-block	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-storage-lens-configuration	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-storage-lens-configuration-tagging	-	-	refused:unported_customization	-	2018-08-20
+s3control	delete-storage-lens-group	-	-	refused:unported_customization	-	2018-08-20
+s3control	describe-job	-	-	refused:unported_customization	-	2018-08-20
 s3control	describe-multi-region-access-point-operation	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	dissociate-access-grants-identity-center	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	get-access-grant	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
@@ -16152,65 +16152,65 @@ s3control	get-access-grants-instance	unsupported_trait	httpChecksumRequired	refu
 s3control	get-access-grants-instance-for-prefix	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	get-access-grants-instance-resource-policy	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	get-access-grants-location	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	get-access-point	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-access-point-configuration-for-object-lambda	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-access-point-for-object-lambda	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-access-point-policy	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-access-point-policy-for-object-lambda	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-access-point-policy-status	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-access-point-policy-status-for-object-lambda	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-access-point-scope	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-bucket	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-bucket-lifecycle-configuration	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-bucket-policy	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-bucket-replication	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-bucket-tagging	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-bucket-versioning	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	get-access-point	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-access-point-configuration-for-object-lambda	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-access-point-for-object-lambda	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-access-point-policy	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-access-point-policy-for-object-lambda	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-access-point-policy-status	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-access-point-policy-status-for-object-lambda	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-access-point-scope	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-bucket	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-bucket-lifecycle-configuration	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-bucket-policy	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-bucket-replication	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-bucket-tagging	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-bucket-versioning	-	-	refused:unported_customization	-	2018-08-20
 s3control	get-data-access	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	get-job-tagging	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	get-job-tagging	-	-	refused:unported_customization	-	2018-08-20
 s3control	get-multi-region-access-point	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	get-multi-region-access-point-policy	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	get-multi-region-access-point-policy-status	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	get-multi-region-access-point-routes	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	get-public-access-block	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-storage-lens-configuration	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-storage-lens-configuration-tagging	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	get-storage-lens-group	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	get-public-access-block	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-storage-lens-configuration	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-storage-lens-configuration-tagging	-	-	refused:unported_customization	-	2018-08-20
+s3control	get-storage-lens-group	-	-	refused:unported_customization	-	2018-08-20
 s3control	list-access-grants	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	list-access-grants-instances	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	list-access-grants-locations	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	list-access-points	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	list-access-points-for-directory-buckets	unsupported_auth	s3v4	refused:unsupported_auth	native in=NextToken out=NextToken more=- result=AccessPointList keep=- limit=MaxResults	2018-08-20
-s3control	list-access-points-for-object-lambda	unsupported_auth	s3v4	refused:unsupported_auth	native in=NextToken out=NextToken more=- result=ObjectLambdaAccessPointList keep=- limit=MaxResults	2018-08-20
+s3control	list-access-points	-	-	refused:unported_customization	-	2018-08-20
+s3control	list-access-points-for-directory-buckets	-	-	refused:unported_customization	native in=NextToken out=NextToken more=- result=AccessPointList keep=- limit=MaxResults	2018-08-20
+s3control	list-access-points-for-object-lambda	-	-	refused:unported_customization	native in=NextToken out=NextToken more=- result=ObjectLambdaAccessPointList keep=- limit=MaxResults	2018-08-20
 s3control	list-caller-access-grants	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	native in=NextToken out=NextToken more=- result=CallerAccessGrantsList keep=- limit=MaxResults	2018-08-20
-s3control	list-jobs	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	list-jobs	-	-	refused:unported_customization	-	2018-08-20
 s3control	list-multi-region-access-points	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	list-regional-buckets	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	list-storage-lens-configurations	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	list-storage-lens-groups	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	list-tags-for-resource	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	list-regional-buckets	-	-	refused:unported_customization	-	2018-08-20
+s3control	list-storage-lens-configurations	-	-	refused:unported_customization	-	2018-08-20
+s3control	list-storage-lens-groups	-	-	refused:unported_customization	-	2018-08-20
+s3control	list-tags-for-resource	-	-	refused:unported_customization	-	2018-08-20
 s3control	put-access-grants-instance-resource-policy	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	put-access-point-configuration-for-object-lambda	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	put-access-point-policy	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	put-access-point-policy-for-object-lambda	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	put-access-point-scope	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	put-access-point-configuration-for-object-lambda	-	-	refused:unported_customization	-	2018-08-20
+s3control	put-access-point-policy	-	-	refused:unported_customization	-	2018-08-20
+s3control	put-access-point-policy-for-object-lambda	-	-	refused:unported_customization	-	2018-08-20
+s3control	put-access-point-scope	-	-	refused:unported_customization	-	2018-08-20
 s3control	put-bucket-lifecycle-configuration	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	put-bucket-policy	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	put-bucket-replication	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	put-bucket-tagging	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	put-bucket-versioning	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	put-job-tagging	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	put-job-tagging	-	-	refused:unported_customization	-	2018-08-20
 s3control	put-multi-region-access-point-policy	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	put-public-access-block	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	put-storage-lens-configuration	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	put-storage-lens-configuration-tagging	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	put-public-access-block	-	-	refused:unported_customization	-	2018-08-20
+s3control	put-storage-lens-configuration	-	-	refused:unported_customization	-	2018-08-20
+s3control	put-storage-lens-configuration-tagging	-	-	refused:unported_customization	-	2018-08-20
 s3control	submit-multi-region-access-point-routes	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	tag-resource	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	untag-resource	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	tag-resource	-	-	refused:unported_customization	-	2018-08-20
+s3control	untag-resource	-	-	refused:unported_customization	-	2018-08-20
 s3control	update-access-grants-location	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
-s3control	update-job-priority	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	update-job-status	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
-s3control	update-storage-lens-group	unsupported_auth	s3v4	refused:unsupported_auth	-	2018-08-20
+s3control	update-job-priority	-	-	refused:unported_customization	-	2018-08-20
+s3control	update-job-status	-	-	refused:unported_customization	-	2018-08-20
+s3control	update-storage-lens-group	-	-	refused:unported_customization	-	2018-08-20
 s3files	create-access-point	-	-	scalar_arguments	-	2025-05-05
 s3files	create-file-system	-	-	scalar_arguments	-	2025-05-05
 s3files	create-mount-target	-	-	scalar_arguments	-	2025-05-05
@@ -18294,10 +18294,10 @@ supportauthz	list-tags-for-resource	-	-	scalar_arguments	-	2026-06-30
 supportauthz	reject-support-permit-request	-	-	scalar_arguments	-	2026-06-30
 supportauthz	tag-resource	-	-	required_not_scalar	-	2026-06-30
 supportauthz	untag-resource	-	-	required_not_scalar	-	2026-06-30
-sustainability	get-estimated-carbon-emissions	-	-	required_not_scalar	native in=NextToken out=NextToken more=- result=Results keep=- limit=MaxResults	2018-05-10
-sustainability	get-estimated-carbon-emissions-dimension-values	-	-	required_not_scalar	native in=NextToken out=NextToken more=- result=Results keep=- limit=MaxResults	2018-05-10
-sustainability	get-estimated-water-allocation	-	-	required_not_scalar	native in=NextToken out=NextToken more=- result=Results keep=- limit=MaxResults	2018-05-10
-sustainability	get-estimated-water-allocation-dimension-values	-	-	required_not_scalar	native in=NextToken out=NextToken more=- result=Results keep=- limit=MaxResults	2018-05-10
+sustainability	get-estimated-carbon-emissions	unsupported_auth	v4a	refused:unsupported_auth	native in=NextToken out=NextToken more=- result=Results keep=- limit=MaxResults	2018-05-10
+sustainability	get-estimated-carbon-emissions-dimension-values	unsupported_auth	v4a	refused:unsupported_auth	native in=NextToken out=NextToken more=- result=Results keep=- limit=MaxResults	2018-05-10
+sustainability	get-estimated-water-allocation	unsupported_auth	v4a	refused:unsupported_auth	native in=NextToken out=NextToken more=- result=Results keep=- limit=MaxResults	2018-05-10
+sustainability	get-estimated-water-allocation-dimension-values	unsupported_auth	v4a	refused:unsupported_auth	native in=NextToken out=NextToken more=- result=Results keep=- limit=MaxResults	2018-05-10
 swf	count-closed-workflow-executions	-	-	scalar_arguments	-	2012-01-25
 swf	count-open-workflow-executions	-	-	required_not_scalar	-	2012-01-25
 swf	count-pending-activity-tasks	-	-	required_not_scalar	-	2012-01-25

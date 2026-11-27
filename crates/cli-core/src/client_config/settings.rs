@@ -38,6 +38,9 @@ pub struct ClientSettings {
     pub use_fips_endpoint: Option<Resolved<bool>>,
     /// `use_dualstack_endpoint`, when configured, cleared in the same way.
     pub use_dualstack_endpoint: Option<Resolved<bool>>,
+    /// The `s3` block's `payload_signing_enabled`, when configured
+    /// ([`Field::PayloadSigning`]).
+    pub payload_signing: Option<Resolved<bool>>,
     /// The values the user agent reports as given, kept as bytes: one from
     /// the environment need not be Unicode.
     pub app_id: Option<Resolved<Vec<u8>>>,
@@ -64,6 +67,7 @@ impl ClientSettings {
             read_timeout_ms: Resolved::new(TIMEOUT_MS_DEFAULT, Source::Default),
             use_fips_endpoint: None,
             use_dualstack_endpoint: None,
+            payload_signing: None,
             app_id: None,
             execution_env: None,
             endpoint_override: false,
@@ -236,6 +240,9 @@ pub(super) fn resolve_client_arguments<E: EnvMap>(
     };
     settings.use_fips_endpoint = variant(Variant::Fips);
     settings.use_dualstack_endpoint = variant(Variant::DualStack);
+    settings.payload_signing = inputs
+        .nested(PAYLOAD_SIGNING_KEY)
+        .map(|value| Resolved::new(coerce::boolean(value), Source::S3(PAYLOAD_SIGNING_KEY)));
     Ok(())
 }
 /// The `s3` block's `addressing_style`, which every client's `Config`
