@@ -21,12 +21,13 @@ pub enum Storage {
     Slot,
     /// The cold map: kept, read by nothing.
     Cold,
-    /// Accepted and read by nothing; a front-end may drop it or keep it cold.
+    /// Accepted and stored nowhere: read by nothing, or translated into
+    /// other slots; a front-end may drop it or keep it cold.
     Ignored,
 }
 
 /// One list generates [`KNOWN`] and the [`traits`] constants, so adding a
-/// trait cannot shift a hand-written index.
+/// trait cannot shift a hand-written index. Entries are only appended.
 macro_rules! known_traits {
     ($($name:ident = $id:literal => $storage:ident,)*) => {
         /// Every known trait id with its storage, in [`TraitId`] order.
@@ -111,6 +112,22 @@ known_traits! {
     READONLY = "smithy.api#readonly" => Ignored,
     SPARSE = "smithy.api#sparse" => Ignored,
     TAGS = "smithy.api#tags" => Ignored,
+    // Structure markers and defaults botocore never reads: it applies no
+    // default (a non-goal here too).
+    INPUT = "smithy.api#input" => Ignored,
+    OUTPUT = "smithy.api#output" => Ignored,
+    DEFAULT = "smithy.api#default" => Ignored,
+    // The HTTP bindings: a Smithy front-end translates each into the raw
+    // `c2j#location` and `c2j#locationName` slots and stores the id itself
+    // nowhere, so no model refuses on them and `has_trait` answers false
+    // for them (translated, not queryable: `Schema::http_binding` is the
+    // read).
+    HTTP_HEADER = "smithy.api#httpHeader" => Ignored,
+    HTTP_LABEL = "smithy.api#httpLabel" => Ignored,
+    HTTP_QUERY = "smithy.api#httpQuery" => Ignored,
+    HTTP_QUERY_PARAMS = "smithy.api#httpQueryParams" => Ignored,
+    HTTP_PREFIX_HEADERS = "smithy.api#httpPrefixHeaders" => Ignored,
+    HTTP_RESPONSE_CODE = "smithy.api#httpResponseCode" => Ignored,
 }
 
 impl TraitId {

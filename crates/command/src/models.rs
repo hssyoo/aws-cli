@@ -35,7 +35,8 @@ type Json = serde_json::Value;
 pub struct Service {
     pub command: String,
     pub name: String,
-    pub model: Model,
+    /// Shared: each invocation's client holds it without a copy.
+    pub model: std::sync::Arc<Model>,
     /// The CLI names of the model operations the command table holds, in
     /// model order: those its table editors neither delete nor set.
     pub operations: Vec<String>,
@@ -253,7 +254,7 @@ impl<'a> ModelSource<'a> {
             packed,
             command: command.to_owned(),
             name: service.to_owned(),
-            model,
+            model: std::sync::Arc::new(model),
             operations,
             choices,
             pages,

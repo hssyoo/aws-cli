@@ -1,3 +1,4 @@
 //! Model front-ends: each builds a [`crate::schema::SchemaSet`] from its own
-//! source (C2J now; a test-only Smithy AST fixture and, later, the Smithy
-//! JSON AST). An empty root until the C2J front-end moves in.
+//! source. [`c2j`] reads botocore's `service-2.json`; a test-only Smithy AST
+//! fixture and, later, the Smithy JSON AST join it.
+pub mod c2j;
