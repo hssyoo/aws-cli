@@ -2,13 +2,14 @@
 //! the `json` protocol's reader with `RestJSONParser`'s handlers, and the
 //! rest-json error code.
 use super::RestJson;
+use crate::codec::json::{self, REST_JSON};
+use crate::codec::value::build_value;
 use crate::error::ParseError;
 use crate::http::{Headers, HttpResponse};
 use crate::protocol::ParseOptions;
-use crate::protocol::common::{self, Family, short_type};
-use crate::protocol::json::{Json, Reader, body_json, error_code};
-use model::pyrepr::{float_from_py_text, int_from_py_text, int_from_text, py_repr, py_str_text};
-use model::schema::{Schema, ShapeType};
+use crate::protocol::common::Family;
+use crate::protocol::json::{Json, error_code};
+use model::schema::Schema;
 use model::value::{Map, Value};
 
 mod rest;
@@ -52,12 +53,14 @@ impl Family for RestJson {
     }
 }
 
-/// The `json` protocol's reader with [`handler`].
+/// The body as `RestJSONParser` reads it: through the codec with its
+/// handlers, which a header's text and the status code are read with too.
 fn reader<'o>(options: &'o ParseOptions<'o>) -> Reader<'o> {
-    Reader {
-        options,
-        handler: Some(handler),
-    }
+    Reader { options }
+}
+
+struct Reader<'o> {
+    options: &'o ParseOptions<'o>,
 }
 
 impl rest::Body for Reader<'_> {
@@ -68,100 +71,18 @@ impl rest::Body for Reader<'_> {
     }
 
     fn parse(&self, shape: Schema<'_>, parsed: &Value) -> Result<Value, ParseError> {
-        self.shape(shape, parsed)
+        build_value(shape, &mut REST_JSON.cursor(parsed), self.options)
     }
 
     fn value(&self, shape: Schema<'_>, value: &Value) -> Result<Value, ParseError> {
-        self.shape(shape, value)
+        build_value(shape, &mut REST_JSON.cursor(value), self.options)
     }
 }
 
 /// `RestJSONParser._initial_body_parse`: `_parse_body_as_json`, as the json
 /// protocol reads a body.
 fn initial_body_parse(body: &[u8]) -> Result<Value, ParseError> {
-    body_json(body)
-}
-
-/// The handlers `RestJSONParser` and `BaseRestParser` override, which apply
-/// to headers and body alike: `_handle_string` (a `jsonvalue` header),
-/// `_handle_list` (a header's text split), and `_handle_boolean`,
-/// `_handle_integer` and `_handle_float` with their `long` and `double`
-/// aliases. `None` leaves the shape to `BaseJSONParser`.
-fn handler(
-    reader: &Reader<'_>,
-    shape: Schema<'_>,
-    value: &Value,
-) -> Option<Result<Value, ParseError>> {
-    match shape.shape_type() {
-        ShapeType::String => rest::json_value(shape, value),
-        ShapeType::List => rest::header_items(shape, value).map(|items| {
-            let items = items?;
-            reader.list(common::list_member(shape).map_err(ParseError::new)?, &items)
-        }),
-        ShapeType::Boolean => Some(Ok(Value::Bool(ensure_boolean(value)))),
-        ShapeType::Integer | ShapeType::Long => Some(int(value)),
-        ShapeType::Float | ShapeType::Double => Some(float(value)),
-        _ => None,
-    }
-}
-
-/// `ensure_boolean`: a bool as it is, a string by whether it is `true` in
-/// any case, anything else false.
-fn ensure_boolean(value: &Value) -> bool {
-    match value {
-        Value::Bool(flag) => *flag,
-        Value::String(text) => text.to_lowercase() == "true",
-        // `'\ud800'.lower()` keeps the surrogate, so it is never `'true'`.
-        Value::PyString(_) => false,
-        _ => false,
-    }
-}
-
-/// `int(value)`: a float truncated, a bool as 0 or 1, text as a base-10
-/// literal.
-fn int(value: &Value) -> Result<Value, ParseError> {
-    match value {
-        Value::Integer(_) | Value::BigInteger(_) => Ok(value.clone()),
-        Value::Bool(flag) => Ok(Value::Integer(i64::from(*flag))),
-        Value::Float(number) => {
-            crate::python::int_of_float(*number).map_err(|error| ParseError::new(error.to_string()))
-        }
-        Value::String(text) => int_from_text(text).map_err(ParseError::new),
-        Value::PyString(text) => int_from_py_text(text.as_bytes()).map_err(ParseError::new),
-        other => Err(ParseError::new(format!(
-            "int() argument must be a string, a bytes-like object or a real number, not '{}'",
-            short_type(other)
-        ))),
-    }
-}
-
-/// `float(value)`: an int as the nearest float, a bool as 0.0 or 1.0, text
-/// as a literal (`NaN` and `Infinity` among them).
-fn float(value: &Value) -> Result<Value, ParseError> {
-    let number = match value {
-        Value::Float(number) => *number,
-        Value::Integer(number) => *number as f64,
-        Value::Bool(flag) => f64::from(u8::from(*flag)),
-        Value::BigInteger(digits) => digits
-            .parse::<f64>()
-            .ok()
-            .filter(|number| number.is_finite())
-            .ok_or_else(|| ParseError::new("int too large to convert to float"))?,
-        Value::String(_) | Value::PyString(_) => float_from_py_text(&py_str_text(value))
-            .ok_or_else(|| {
-                ParseError::new(format!(
-                    "could not convert string to float: {}",
-                    py_repr(value)
-                ))
-            })?,
-        other => {
-            return Err(ParseError::new(format!(
-                "float() argument must be a string or a real number, not '{}'",
-                short_type(other)
-            )));
-        }
-    };
-    Ok(Value::Float(number))
+    json::load(body)
 }
 
 /// `RestJSONParser._inject_error_code`'s code: `x-amzn-errortype`, else the
