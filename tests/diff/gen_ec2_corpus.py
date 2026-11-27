@@ -27,7 +27,10 @@ parameters (with any idempotency token filled, as botocore fills it) or
 the row raises before the call.
 
 `--out FILE` writes the corpus; `--check FILE` fails unless FILE is what
-the generator writes. Run it in the differential harness's venv, which
+the generator writes. Either first attacks the check with drifts it must
+refuse (a row dropped, added or swapped, an argument added, a request
+declaration dropped, a reply changed, the last newline dropped) and
+checks the rows' shape (`self_test`). Run it in the differential harness's venv, which
 `cargo xtask diff` provisions, so it reads the in-tree botocore:
 
     target/diff/venv/bin/python -B tests/diff/gen_ec2_corpus.py \\
@@ -269,6 +272,53 @@ def corpus(source: Path, verdicts: Path) -> str:
     return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
 
 
+def matches(expected: str, found: str) -> bool:
+    """`--check`'s test: the file is the generator's output, byte for byte."""
+    return found == expected
+
+
+def evasions(written: str) -> list[tuple[str, str]]:
+    """Files `--check` must refuse: each a plausible drift of `written`."""
+    rows = written.splitlines(keepends=True)
+    first = json.loads(rows[0])
+    altered = dict(first, argv=[*first["argv"], "--dry-run"])
+    undeclared = {key: value for key, value in json.loads(
+        next(row for row in rows if '"requests": 0' in row)
+    ).items() if key != "requests"}
+    return [
+        ("a row dropped", "".join(rows[1:])),
+        ("a row added", written + rows[-1]),
+        ("two rows swapped", "".join([rows[1], rows[0], *rows[2:]])),
+        ("an argument added", json.dumps(altered, ensure_ascii=False) + "\n" + "".join(rows[1:])),
+        ("a request declaration dropped", written.replace(
+            next(row for row in rows if '"requests": 0' in row),
+            json.dumps(undeclared, ensure_ascii=False) + "\n", 1)),
+        ("a reply changed", written.replace("Response xmlns", "Result xmlns", 1)),
+        ("the last newline dropped", written[:-1]),
+    ]
+
+
+def self_test(written: str, wanted: set[str]) -> None:
+    """Attack `--check` with each evasion, then check the rows' shape:
+    one base row per admitted operation, four per pulled-up pair, and a
+    request declared absent on every `-both` row."""
+    for name, evasion in evasions(written):
+        if matches(written, evasion):
+            raise SystemExit(f"--check accepts {name}")
+    rows = [json.loads(line) for line in written.splitlines()]
+    base = {row["argv"][1] for row in rows if row["id"] == f"ec2-{row['argv'][1]}"}
+    if base != wanted:
+        raise SystemExit(f"base rows differ from the admitted set: {sorted(base ^ wanted)}")
+    for row in rows:
+        if row["id"].endswith("-both") and row.get("requests") != 0:
+            raise SystemExit(f"{row['id']} must declare no request")
+    for suffix in ("-both", "-valued"):
+        pairs = sum(row["id"].endswith(suffix) for row in rows)
+        if pairs == 0:
+            raise SystemExit(f"no {suffix} rows")
+    print(f"self-test: {len(evasions(written))} evasions refused, {len(rows)} rows well-formed")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--aws-cli-source", type=Path, required=True)
@@ -278,10 +328,11 @@ def main() -> None:
     group.add_argument("--check", type=Path)
     args = parser.parse_args()
     written = corpus(args.aws_cli_source.resolve(), args.verdicts)
+    self_test(written, admitted(args.verdicts))
     if args.out is not None:
         args.out.write_text(written, encoding="utf-8")
         return
-    if args.check.read_text(encoding="utf-8") != written:
+    if not matches(written, args.check.read_text(encoding="utf-8")):
         raise SystemExit(f"{args.check} is not what gen_ec2_corpus.py writes")
     print(f"{args.check}: {written.count(chr(10))} rows, as generated")
 
