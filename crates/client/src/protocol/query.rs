@@ -1,14 +1,19 @@
 //! The `query` protocol: botocore's `QuerySerializer` (a form-encoded POST
-//! body) and `QueryParser` (an XML response).
+//! body, [`crate::codec::form`]) and `QueryParser` (an XML response,
+//! [`crate::codec::xml`]).
 use super::common::{self, Family};
 use super::{ParseOptions, Protocol, Serialized};
+use crate::codec::form::{FORM, FormSerializer};
+use crate::codec::value::{build_value, write_value};
+use crate::codec::xml::{self, Node, XmlDeserializer, by_name, lookup, replaced};
 use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse, Method};
-use crate::xml::{self, Element};
-use model::pyrepr::{float_from_text, int_from_text, py_repr, py_str, py_str_text};
-use model::schema::{Flag, OperationSchema, Schema, ShapeType};
+use crate::xml::Element;
+use model::pyrepr::py_str;
+use model::schema::{OperationSchema, Schema};
+use model::serde::{Codec, FinishSerializer};
 use model::shapes::Model;
-use model::value::{Key, Map, Value};
+use model::value::{Map, Value};
 
 /// The `query` protocol.
 #[derive(Debug)]
@@ -34,23 +39,20 @@ impl Protocol for Query {
             .service()
             .version()
             .ok_or_else(|| SerializeError::new("'apiVersion'"))?;
-        let mut form = Form::default();
+        let mut form = FormSerializer::default();
         form.set("Action", operation.name().as_bytes().to_vec());
         form.set("Version", version.as_bytes().to_vec());
         if let Some(shape) = operation.input() {
-            form.value(input, shape, "")?;
+            write_value(shape, input, &mut form)?;
         }
         let mut headers = Headers::new();
-        headers.set(
-            "Content-Type",
-            "application/x-www-form-urlencoded; charset=utf-8",
-        );
+        headers.set("Content-Type", FORM.media_type());
         Ok(Serialized {
             method: method(operation)?,
             path: "/".into(),
             query: String::new(),
             headers,
-            body: form.encoded()?.into_bytes(),
+            body: Box::new(form).finish()?,
             host_prefix: common::host_prefix(operation, input)?,
         })
     }
@@ -82,450 +84,6 @@ pub(super) fn method(operation: OperationSchema<'_>) -> Result<Method, Serialize
     Method::parse(name).ok_or_else(|| SerializeError::new(format!("unsupported method {name}")))
 }
 
-/// The form's fields in insertion order; setting a field again replaces
-/// its value in place, as the serializer's dict does. A value is a `str` in
-/// `pytext::wtf8`'s encoding, which may hold a lone surrogate until
-/// [`Form::encoded`] fails on it.
-#[derive(Default)]
-struct Form(Vec<(String, Vec<u8>)>);
-
-impl Form {
-    fn set(&mut self, name: &str, value: Vec<u8>) {
-        match self.0.iter_mut().find(|(other, _)| other == name) {
-            Some((_, old)) => *old = value,
-            None => self.0.push((name.to_owned(), value)),
-        }
-    }
-
-    /// The body on the wire: `AWSRequestPreparer._prepare_body`'s
-    /// `urlencode(params, doseq=True)` of the serializer's dict.
-    ///
-    /// # Errors
-    /// `quote_plus`'s `UnicodeEncodeError` for a value with a lone
-    /// surrogate, its position within that value.
-    fn encoded(&self) -> Result<String, SerializeError> {
-        let mut pairs = Vec::with_capacity(self.0.len());
-        for (name, value) in &self.0 {
-            let value = pytext::codec::encode_utf8(value, pytext::codec::Errors::Strict)
-                .map_err(|error| SerializeError::new(error.to_string()))?;
-            pairs.push(format!(
-                "{}={}",
-                quote_plus(name.as_bytes()),
-                quote_plus(&value)
-            ));
-        }
-        Ok(pairs.join("&"))
-    }
-
-    /// `QuerySerializer._serialize` of `value` at `prefix`.
-    fn value(
-        &mut self,
-        value: &Value,
-        shape: Schema<'_>,
-        prefix: &str,
-    ) -> Result<(), SerializeError> {
-        match shape.shape_type() {
-            _ if common::is_structure(shape) => self.structure(value, shape, prefix),
-            ShapeType::List => {
-                let member = common::list_member(shape).map_err(SerializeError::new)?;
-                self.list(value, shape, member, prefix)
-            }
-            ShapeType::Map => {
-                let entry = common::map_entry(shape).map_err(SerializeError::new)?;
-                self.map(value, shape, entry, prefix)
-            }
-            ShapeType::Blob => {
-                self.set(prefix, common::base64_in(value)?.into_bytes());
-                Ok(())
-            }
-            ShapeType::Timestamp => {
-                let format = shape.timestamp_format_text().unwrap_or("iso8601");
-                self.set(
-                    prefix,
-                    py_str(&common::timestamp_out(value, format)?).into_bytes(),
-                );
-                Ok(())
-            }
-            ShapeType::Boolean => {
-                let text = if crate::python::truthy(value) {
-                    "true"
-                } else {
-                    "false"
-                };
-                self.set(prefix, text.as_bytes().to_vec());
-                Ok(())
-            }
-            ShapeType::Float | ShapeType::Double => {
-                self.set(prefix, py_str(&common::special_float(value)).into_bytes());
-                Ok(())
-            }
-            _ => {
-                // `str(value)`, a lone surrogate kept for `urlencode`.
-                self.set(prefix, py_str_text(value).into_owned());
-                Ok(())
-            }
-        }
-    }
-
-    fn structure(
-        &mut self,
-        value: &Value,
-        shape: Schema<'_>,
-        prefix: &str,
-    ) -> Result<(), SerializeError> {
-        let Value::Map(map) = value else {
-            return Err(SerializeError::new(format!(
-                "'{}' object has no attribute 'items'",
-                common::short_type(value)
-            )));
-        };
-        for (key, item) in map.iter() {
-            let member = common::member(shape, key)?;
-            // `member` found it, so the key is a member's name.
-            let key = key.text();
-            let name = member.location_name().unwrap_or(&key);
-            let member_prefix = if prefix.is_empty() {
-                name.to_owned()
-            } else {
-                format!("{prefix}.{name}")
-            };
-            self.value(item, member, &member_prefix)?;
-        }
-        Ok(())
-    }
-
-    /// `_serialize_type_list`: `Name=` when empty; flattened lists take the
-    /// member's name in place of the last part of the prefix.
-    fn list(
-        &mut self,
-        value: &Value,
-        shape: Schema<'_>,
-        member: Schema<'_>,
-        prefix: &str,
-    ) -> Result<(), SerializeError> {
-        let items = match value {
-            Value::List(items) => items.as_slice(),
-            _ => return Err(SerializeError::new("a list is required")),
-        };
-        if items.is_empty() {
-            self.set(prefix, Vec::new());
-            return Ok(());
-        }
-        let member_name = member.location_name();
-        let list_prefix = if shape.flag(Flag::XmlFlattened) {
-            match member_name {
-                Some(name) => match prefix.rsplit_once('.') {
-                    Some((head, _)) => format!("{head}.{name}"),
-                    None => name.to_owned(),
-                },
-                None => prefix.to_owned(),
-            }
-        } else {
-            format!("{prefix}.{}", member_name.unwrap_or("member"))
-        };
-        for (index, item) in items.iter().enumerate() {
-            self.value(item, member, &format!("{list_prefix}.{}", index + 1))?;
-        }
-        Ok(())
-    }
-
-    /// `_serialize_type_map`: `entry.N.key` and `entry.N.value`, or without
-    /// `entry` when flattened, with the key and value shapes' names.
-    fn map(
-        &mut self,
-        value: &Value,
-        shape: Schema<'_>,
-        (key_shape, value_shape): (Schema<'_>, Schema<'_>),
-        prefix: &str,
-    ) -> Result<(), SerializeError> {
-        let Value::Map(map) = value else {
-            return Err(SerializeError::new("a dict is required"));
-        };
-        let full = if shape.flag(Flag::XmlFlattened) {
-            prefix.to_owned()
-        } else {
-            format!("{prefix}.entry")
-        };
-        let key_name = key_shape.location_name().unwrap_or("key");
-        let value_name = value_shape.location_name().unwrap_or("value");
-        for (index, (key, item)) in map.iter().enumerate() {
-            let number = index + 1;
-            let key_value = key.to_value();
-            self.value(
-                &key_value,
-                key_shape,
-                &format!("{full}.{number}.{key_name}"),
-            )?;
-            self.value(item, value_shape, &format!("{full}.{number}.{value_name}"))?;
-        }
-        Ok(())
-    }
-}
-
-/// `urllib.parse.quote_plus` with no extra safe characters, of text
-/// already encoded as UTF-8: a space as `+`, and every byte but letters,
-/// digits and `-_.~` as `%XX`.
-fn quote_plus(text: &[u8]) -> String {
-    let mut encoded = String::with_capacity(text.len());
-    for &byte in text {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            encoded.push(char::from(byte));
-        } else if byte == b' ' {
-            encoded.push('+');
-        } else {
-            encoded.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    encoded
-}
-
-/// `_build_name_to_xml_node`'s value: one element, or every element with a
-/// repeated name.
-#[derive(Clone, Debug)]
-enum Node<'a> {
-    One(&'a Element),
-    Many(Vec<&'a Element>),
-}
-
-impl<'a> Node<'a> {
-    /// The element whose children a mapping is built from: the first of a
-    /// repeated name.
-    fn first(&self) -> &'a Element {
-        match self {
-            Self::One(element) => element,
-            Self::Many(elements) => elements[0],
-        }
-    }
-}
-
-/// `_build_name_to_xml_node`: children by local name in document order, a
-/// repeated name collecting its elements.
-fn by_name<'a>(node: &Node<'a>) -> Vec<(String, Node<'a>)> {
-    let mut mapping: Vec<(String, Node<'_>)> = Vec::new();
-    for child in &node.first().children {
-        let name = child.local_name().to_owned();
-        match mapping.iter_mut().find(|(other, _)| *other == name) {
-            Some((_, Node::Many(elements))) => elements.push(child),
-            Some((_, slot)) => *slot = Node::Many(vec![slot.first(), child]),
-            None => mapping.push((name, Node::One(child))),
-        }
-    }
-    mapping
-}
-
-fn lookup<'m, 'a>(mapping: &'m [(String, Node<'a>)], name: &str) -> Option<&'m Node<'a>> {
-    mapping
-        .iter()
-        .find(|(other, _)| other == name)
-        .map(|(_, node)| node)
-}
-
-/// A body as XML, or `ResponseParserError`'s text for one that is not.
-fn document(body: &[u8]) -> Result<Element, ParseError> {
-    xml::parse(body).map_err(|error| {
-        let shown = py_repr(&Value::Blob(body.to_vec()));
-        ParseError::new(format!(
-            "Unable to parse response ({error}), invalid XML received. Further retries may \
-             succeed:\n{shown}"
-        ))
-    })
-}
-
-struct Reader<'o> {
-    options: &'o ParseOptions<'o>,
-}
-
-impl Reader<'_> {
-    /// `_parse_shape`.
-    fn shape(&self, shape: Schema<'_>, node: &Node<'_>) -> Result<Value, ParseError> {
-        match shape.shape_type() {
-            _ if common::is_structure(shape) => self.structure(shape, node).map(Value::Map),
-            ShapeType::List => {
-                let member = common::list_member(shape).map_err(ParseError::new)?;
-                self.list(shape, member, node)
-            }
-            ShapeType::Map => {
-                let entry = common::map_entry(shape).map_err(ParseError::new)?;
-                self.map(shape, entry, node)
-            }
-            shape_type => self.scalar(shape_type, node),
-        }
-    }
-
-    /// `_handle_structure`: members by their XML names, attributes for
-    /// `xmlAttribute` members, header members skipped.
-    fn structure(&self, shape: Schema<'_>, node: &Node<'_>) -> Result<Map, ParseError> {
-        let node = if shape.flag(Flag::Error) {
-            error_root(node)
-        } else {
-            node.clone()
-        };
-        let mapping = by_name(&node);
-        // XML names are Rust text: an XML document holds no lone surrogate.
-        let names: Vec<Key> = mapping
-            .iter()
-            .map(|(name, _)| Key::from(name.as_str()))
-            .collect();
-        let present: Vec<&Key> = names.iter().collect();
-        if let Some(tag) = common::unknown_union_member(shape, &present)? {
-            return Ok(common::unknown_member_value(tag));
-        }
-        let mut parsed = Map::new();
-        for member in shape.members() {
-            if member.location().is_some() || member.flag(Flag::EventHeader) {
-                continue;
-            }
-            let member_name = common::member_name(member);
-            if let Some(child) = lookup(&mapping, xml_name(member)) {
-                parsed.insert(member_name.to_owned(), self.shape(member, child)?);
-            } else if member.flag(Flag::XmlAttribute)
-                && let Some(value) =
-                    attribute(node.first(), member.location_name().unwrap_or_default())
-            {
-                parsed.insert(member_name.to_owned(), Value::String(value));
-            }
-        }
-        Ok(parsed)
-    }
-
-    /// `_handle_list`: a flattened list's repeated elements, else the
-    /// element's children.
-    fn list(
-        &self,
-        shape: Schema<'_>,
-        member: Schema<'_>,
-        node: &Node<'_>,
-    ) -> Result<Value, ParseError> {
-        let flattened = shape.flag(Flag::XmlFlattened);
-        let items: Vec<&Element> = match node {
-            Node::Many(elements) => elements.clone(),
-            Node::One(element) if flattened => vec![*element],
-            Node::One(element) => element.children.iter().collect(),
-        };
-        let parsed = items
-            .into_iter()
-            .map(|item| self.shape(member, &Node::One(item)))
-            .collect::<Result<_, _>>()?;
-        Ok(Value::List(parsed))
-    }
-
-    /// `_handle_map`: each entry's key and value elements by their names; a
-    /// pair missing one keeps the previous pair's, as the loop's variables
-    /// do.
-    fn map(
-        &self,
-        shape: Schema<'_>,
-        (key_shape, value_shape): (Schema<'_>, Schema<'_>),
-        node: &Node<'_>,
-    ) -> Result<Value, ParseError> {
-        let key_name = key_shape.location_name().unwrap_or("key");
-        let value_name = value_shape.location_name().unwrap_or("value");
-        let entries: Vec<&Element> = match node {
-            Node::Many(elements) => elements.clone(),
-            Node::One(element) if shape.flag(Flag::XmlFlattened) => vec![*element],
-            Node::One(element) => element.children.iter().collect(),
-        };
-        let mut parsed = Map::new();
-        let (mut key, mut value) = (None, None);
-        for entry in entries {
-            for pair in &entry.children {
-                let tag = pair.local_name();
-                if tag == key_name {
-                    key = Some(self.shape(key_shape, &Node::One(pair))?);
-                } else if tag == value_name {
-                    value = Some(self.shape(value_shape, &Node::One(pair))?);
-                } else {
-                    return Err(ParseError::new(format!("Unknown tag: {tag}")));
-                }
-            }
-            let (Some(Value::String(name)), Some(item)) = (&key, &value) else {
-                return Err(ParseError::new("cannot access local variable 'key_name'"));
-            };
-            parsed.insert(name.clone(), item.clone());
-        }
-        Ok(Value::Map(parsed))
-    }
-
-    /// The scalar handlers, each reading the element's text (`''` when it
-    /// has none).
-    fn scalar(&self, shape_type: ShapeType, node: &Node<'_>) -> Result<Value, ParseError> {
-        let Node::One(element) = node else {
-            return Err(ParseError::new(
-                "expected one element, found a repeated one",
-            ));
-        };
-        let text = element.text.as_deref().unwrap_or("");
-        let invalid = |what: &str| {
-            ParseError::new(format!("{what}: {}", py_repr(&Value::String(text.into()))))
-        };
-        match shape_type {
-            ShapeType::Boolean => Ok(Value::Bool(text == "true")),
-            ShapeType::Float | ShapeType::Double => float_from_text(text)
-                .map(Value::Float)
-                .ok_or_else(|| invalid("could not convert string to float")),
-            ShapeType::Integer | ShapeType::Long => int_from_text(text).map_err(ParseError::new),
-            ShapeType::Timestamp => (self.options.timestamp)(&Value::String(text.into())),
-            ShapeType::Blob => (self.options.blob)(&Value::String(text.into())),
-            _ => Ok(Value::String(text.into())),
-        }
-    }
-}
-
-/// `_member_key_name`: a flattened list's member name, else the member's
-/// `locationName`, else its name.
-fn xml_name(member: Schema<'_>) -> &str {
-    if member.shape_type() == ShapeType::List
-        && member.flag(Flag::XmlFlattened)
-        && let Some(name) = member.list_member().and_then(Schema::location_name)
-    {
-        return name;
-    }
-    common::wire_name(member)
-}
-
-/// An `xmlAttribute` member's value: the attribute whose name, with its
-/// namespace replaced by the location name's prefix, is the location name.
-fn attribute(element: &Element, location: &str) -> Option<String> {
-    let prefix = location.split(':').next().unwrap_or_default();
-    element.attributes.iter().find_map(|(name, value)| {
-        let renamed = match (name.find('{'), name.rfind('}')) {
-            (Some(start), Some(end)) => format!("{}{prefix}:{}", &name[..start], &name[end + 1..]),
-            _ => name.clone(),
-        };
-        (renamed == location).then(|| value.clone())
-    })
-}
-
-/// `_get_error_root`: an `ErrorResponse`'s `Error` child.
-fn error_root<'a>(node: &Node<'a>) -> Node<'a> {
-    let root = node.first();
-    if root.local_name() == "ErrorResponse"
-        && let Some(error) = root
-            .children
-            .iter()
-            .find(|child| child.local_name() == "Error")
-    {
-        return Node::One(error);
-    }
-    node.clone()
-}
-
-/// `_replace_nodes`: an element with children as a dict of them, any other
-/// as its text.
-fn replaced(mapping: Vec<(String, Node<'_>)>) -> Map {
-    let mut parsed = Map::new();
-    for (name, node) in mapping {
-        let value = match &node {
-            Node::One(element) if element.children.is_empty() => {
-                element.text.clone().map_or(Value::Null, Value::String)
-            }
-            _ => Value::Map(replaced(by_name(&node))),
-        };
-        parsed.insert(name, value);
-    }
-    parsed
-}
-
 impl Family for Query {
     /// `_parse_body_as_xml` with the metadata injected.
     fn do_parse(
@@ -534,13 +92,13 @@ impl Family for Query {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
-        let root = document(&response.body)?;
+        let root = xml::parse(&response.body)?;
         let mut parsed = match shape {
             Some(shape) => body_shape(shape, &root, options)?,
             None => Map::new(),
         };
-        if let Some(metadata) = lookup(&by_name(&Node::One(&root)), "ResponseMetadata") {
-            let fields = by_name(metadata)
+        if let Some(metadata) = lookup(&by_name(&root), "ResponseMetadata") {
+            let fields = by_name(metadata.first())
                 .into_iter()
                 .map(|(name, node)| {
                     (
@@ -556,8 +114,8 @@ impl Family for Query {
 
     /// `QueryParser._do_error_parse`.
     fn do_error_parse(&self, response: &HttpResponse) -> Result<Map, ParseError> {
-        let root = document(&response.body)?;
-        let mut parsed = replaced(by_name(&Node::One(&root)));
+        let root = xml::parse(&response.body)?;
+        let mut parsed = replaced(by_name(&root));
         if let Some(errors) = parsed.remove("Errors") {
             let Value::Map(errors) = errors else {
                 return Err(ParseError::new(
@@ -583,7 +141,7 @@ impl Family for Query {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Map, ParseError> {
-        body_shape(shape, &document(&response.body)?, options)
+        body_shape(shape, &xml::parse(&response.body)?, options)
     }
 }
 
@@ -593,14 +151,13 @@ fn body_shape(
     root: &Element,
     options: &ParseOptions<'_>,
 ) -> Result<Map, ParseError> {
-    let reader = Reader { options };
     let start = match shape.result_wrapper() {
-        Some(wrapper) => lookup(&by_name(&Node::One(root)), wrapper)
+        Some(wrapper) => lookup(&by_name(root), wrapper)
             .cloned()
             .ok_or_else(|| ParseError::new(format!("'{wrapper}'")))?,
         None => Node::One(root),
     };
-    match reader.shape(shape, &start)? {
+    match build_value(shape, &mut XmlDeserializer::new(start), options)? {
         Value::Map(map) => Ok(map),
         other => Err(ParseError::new(format!(
             "expected a structure, parsed {}",

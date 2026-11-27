@@ -6,10 +6,12 @@
 //! query string and the header values. It knows nothing of JSON. The second
 //! half is `RestJSONSerializer`'s: the payload or body as JSON, when an
 //! empty body is `{}`, and `Content-Type`.
+use crate::codec::json::{self, JsonSerializer};
+use crate::codec::value::write_value;
 use crate::error::SerializeError;
 use crate::http::Headers;
 use crate::protocol::query::method;
-use crate::protocol::{Serialized, common, json};
+use crate::protocol::{Serialized, common};
 use model::pyjson::{Options, dumps};
 use model::pyrepr::py_str;
 use model::schema::{Flag, OperationSchema, Schema, ShapeType};
@@ -468,7 +470,9 @@ fn encode_payload(value: &Value) -> Result<Vec<u8>, SerializeError> {
 /// anything else (a document, say) is set under the key `None`, which
 /// `json.dumps` writes as `"null"`.
 fn serialize_body_params(value: &Value, shape: Schema<'_>) -> Result<Vec<u8>, SerializeError> {
-    let serialized = json::serialized(value, shape)?;
+    let mut serializer = JsonSerializer::default();
+    write_value(shape, value, &mut serializer)?;
+    let serialized = serializer.into_value()?;
     let body = if common::is_structure(shape) && !common::is_document(shape) {
         serialized
     } else {
@@ -476,9 +480,7 @@ fn serialize_body_params(value: &Value, shape: Schema<'_>) -> Result<Vec<u8>, Se
         wrapper.insert("null".into(), serialized);
         Value::Map(wrapper)
     };
-    dumps(&body, &Options::default(), None)
-        .map(String::into_bytes)
-        .map_err(|error| SerializeError::new(error.to_string()))
+    Ok(json::dumps(&body)?)
 }
 
 /// `RestJSONSerializer._serialize_content_type`: `application/json` for a
