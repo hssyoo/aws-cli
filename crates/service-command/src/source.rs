@@ -92,7 +92,7 @@ impl Binder for ServiceSource<'_> {
         };
         let invocation = crate::invoke::ServiceInvocation::new(
             admitted,
-            std::sync::Arc::new(service.model.clone()),
+            std::sync::Arc::clone(&service.model),
             self.customizations,
             needs.service.clone().into_owned(),
             self.embedded_trust,
