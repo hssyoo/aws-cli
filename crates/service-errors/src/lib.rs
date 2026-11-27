@@ -136,11 +136,17 @@ fn stderr_text<'e>(error: &'e ServiceError, key: &str) -> Cow<'e, str> {
 /// case.
 fn error_info(error: &ServiceError, model: &Model) -> Map {
     let mut modeled: Vec<String> = vec!["code".into(), "message".into()];
+    let registry = model.schema().registry();
     if let Some(shape) = error
         .code()
-        .and_then(|code| model.shape_for_error_code(code))
+        .and_then(|code| registry.entry_for_error_code(code))
     {
-        modeled.extend(model.members(shape).iter().map(|m| m.name.to_lowercase()));
+        modeled.extend(
+            shape
+                .members()
+                .filter_map(|member| member.member_name())
+                .map(str::to_lowercase),
+        );
     }
     let is_modeled = |key: &str| modeled.iter().any(|name| *name == key.to_lowercase());
     let mut info = Map::new();
