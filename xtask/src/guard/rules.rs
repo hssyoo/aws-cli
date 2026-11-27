@@ -179,6 +179,8 @@ pub fn justified(source: &Source<'_>, found: &attrs::Found) -> bool {
 fn test_counts(inputs: &Inputs) -> Vec<String> {
     let mut base: BTreeMap<String, usize> = BTreeMap::new();
     let mut head: BTreeMap<String, usize> = BTreeMap::new();
+    // The tests that files named by a `Retires:` trailer lost.
+    let mut retired: BTreeMap<String, usize> = BTreeMap::new();
     let count = |sources: &BTreeMap<String, String>, path: &Option<String>| {
         let path = path.as_deref().filter(|path| path.ends_with(".rs"))?;
         Some(attrs::test_count(&Source::rust(sources.get(path)?)))
@@ -191,38 +193,77 @@ fn test_counts(inputs: &Inputs) -> Vec<String> {
             (None, Some(old)) => crate_of(&inputs.base_crates, old),
             (None, None) => continue,
         };
-        if let Some(count) = count(&inputs.base_sources, &change.old) {
-            *base.entry(owner.clone()).or_default() += count;
+        let before = count(&inputs.base_sources, &change.old);
+        let after = count(&inputs.head_sources, &change.new);
+        let approved = change
+            .old
+            .as_deref()
+            .is_some_and(|old| trailer(&inputs.commits, "Retires", old));
+        if approved {
+            let lost = before.unwrap_or(0).saturating_sub(after.unwrap_or(0));
+            *retired.entry(owner.clone()).or_default() += lost;
         }
-        if let Some(count) = count(&inputs.head_sources, &change.new) {
-            *head.entry(owner).or_default() += count;
-        }
+        *base.entry(owner.clone()).or_default() += before.unwrap_or(0);
+        *head.entry(owner).or_default() += after.unwrap_or(0);
     }
     base.iter()
         .filter_map(|(name, &before)| {
             let after = head.get(name).copied().unwrap_or(0);
-            (after < before).then(|| {
+            let allowed = retired.get(name).copied().unwrap_or(0);
+            (after + allowed < before).then(|| {
                 format!(
                     "guard: test-count: {name}: test functions in the changed files fell from \
                      {before} to {after}; restore the tests (a test in a comment or a string is \
-                     not counted), or replace what a retired test covered so the count holds"
+                     not counted), replace what a retired test covered so the count holds, or \
+                     name the retired files in a `Retires:` trailer of the commit that drops them \
+                     ({allowed} test(s) are covered by one)"
                 )
             })
         })
         .collect()
 }
 
+/// The module a Rust file belongs to: the path without `.rs` and without a
+/// trailing `/mod`, so `x.rs` and `x/mod.rs` name the same module.
+fn module_root(path: &str) -> Option<&str> {
+    let stem = path.strip_suffix(".rs")?;
+    let root = stem.strip_suffix("/mod").unwrap_or(stem);
+    (!root.is_empty() && root != "mod").then_some(root)
+}
+
+/// Whether a `Retires:` value names `path`: exactly, or, for a Rust module
+/// file, the module's other file form and everything below its directory
+/// (`x.rs`, `x/mod.rs` and `x/**` are one module).
+fn names(value: &str, path: &str) -> bool {
+    if value == path {
+        return true;
+    }
+    let (Some(root), Some(inner)) = (module_root(value), module_root(path)) else {
+        return false;
+    };
+    inner == root
+        || inner
+            .strip_prefix(root)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
 /// Whether a commit of the range that touches `path` has a trailer `key`
-/// naming exactly `path`.
+/// naming it; a `Retires:` value names a module's whole family of files.
 fn trailer(commits: &[Commit], key: &str, path: &str) -> bool {
+    let retires = key == "Retires";
     commits.iter().any(|commit| {
-        let values = if key == "Retires" {
+        let values = if retires {
             &commit.retires
         } else {
             &commit.asserts_changed
         };
-        commit.paths.iter().any(|touched| touched == path)
-            && values.iter().any(|value| value == path)
+        values.iter().any(|value| {
+            if retires {
+                names(value, path) && commit.paths.iter().any(|touched| names(value, touched))
+            } else {
+                value == path && commit.paths.iter().any(|touched| touched == path)
+            }
+        })
     })
 }
 

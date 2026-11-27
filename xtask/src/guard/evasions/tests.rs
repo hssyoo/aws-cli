@@ -366,3 +366,135 @@ fn a_test_attribute_made_conditional_is_a_drop_in_the_count() {
     repo.commit("tidy");
     assert_eq!(repo.violations(), ["test-count ."]);
 }
+
+const ENDPOINT_TESTS: &str =
+    "#[test]\nfn one() {\n    assert!(true);\n}\n\n#[test]\nfn two() {\n    assert!(true);\n}\n";
+
+/// A crate whose `endpoints` module is a directory with its own tests.
+fn with_endpoints(name: &str) -> Repo {
+    let mut repo = Repo::new(name);
+    repo.rebase(&[
+        ("src/lib.rs", &format!("pub mod endpoints;\n{}", super::LIB)),
+        (
+            "src/endpoints/mod.rs",
+            "#[cfg(test)]\nmod tests;\npub mod native;\n",
+        ),
+        ("src/endpoints/native.rs", "pub fn n() {}\n"),
+        ("src/endpoints/tests.rs", ENDPOINT_TESTS),
+    ]);
+    repo
+}
+
+/// Removes the module the way a retirement does, with `message`.
+fn retire_endpoints(repo: &Repo, message: &str) {
+    repo.edit("src/lib.rs", "pub mod endpoints;\n", "");
+    let _ = fs::remove_dir_all(repo.root.join("src/endpoints"));
+    repo.commit(message);
+}
+
+#[test]
+fn a_retires_trailer_on_a_module_file_covers_its_directory_and_the_count() {
+    let spellings = [
+        "src/endpoints.rs",
+        "src/endpoints/mod.rs",
+        "src/endpoints/tests.rs src/endpoints.rs",
+    ];
+    for value in spellings {
+        let repo = with_endpoints("retire-family");
+        retire_endpoints(&repo, &format!("endpoints are gone\n\nRetires: {value}"));
+        assert_eq!(repo.violations(), Vec::<String>::new(), "{value}");
+    }
+    let bare = with_endpoints("retire-bare");
+    retire_endpoints(&bare, "endpoints are gone");
+    assert_eq!(
+        bare.violations(),
+        [
+            "deleted-test src/endpoints/tests.rs",
+            "test-count .",
+            "test-module src/endpoints/mod.rs",
+            "test-module src/lib.rs"
+        ]
+    );
+}
+
+#[test]
+fn a_retires_trailer_that_does_not_name_the_module_retires_nothing() {
+    let values = [
+        "src/endpoint.rs",
+        "src/endpoints_extra.rs",
+        "src/endpoints/native.rs",
+        "src/other/endpoints.rs",
+        "src/endpoints",
+        "src/endpoints/",
+        "src/*.rs",
+        "src/**",
+        "src",
+        "mod.rs",
+        ".rs",
+    ];
+    for value in values {
+        let repo = with_endpoints("retire-wrong");
+        retire_endpoints(&repo, &format!("endpoints are gone\n\nRetires: {value}"));
+        let found = repo.violations();
+        assert!(
+            found.contains(&"test-count .".to_owned()),
+            "{value}: {found:?}"
+        );
+        assert!(
+            found.contains(&"test-module src/lib.rs".to_owned()),
+            "{value}: {found:?}"
+        );
+    }
+}
+
+#[test]
+fn a_retires_trailer_covers_only_the_commit_that_touches_the_module() {
+    let repo = with_endpoints("retire-elsewhere");
+    repo.write("README", "x\n");
+    repo.commit("notes\n\nRetires: src/endpoints.rs");
+    retire_endpoints(&repo, "endpoints are gone");
+    let found = repo.violations();
+    assert!(found.contains(&"test-count .".to_owned()), "{found:?}");
+    let touching = with_endpoints("retire-touching");
+    touching.write("src/endpoints/native.rs", "pub fn n() { let _ = 1; }\n");
+    touching.commit("tidy\n\nRetires: src/endpoints.rs");
+    retire_endpoints(&touching, "endpoints are gone");
+    assert_eq!(touching.violations(), Vec::<String>::new());
+}
+
+#[test]
+fn a_retirement_does_not_excuse_tests_dropped_elsewhere_in_the_crate() {
+    let repo = with_endpoints("retire-and-drop");
+    repo.edit(
+        "src/tests.rs",
+        "#[test]\nfn subtracts_again() {\n    assert!(2 - 1 == 1);\n}\n",
+        "",
+    );
+    retire_endpoints(&repo, "endpoints are gone\n\nRetires: src/endpoints.rs");
+    assert_eq!(repo.violations(), ["assert src/tests.rs", "test-count ."]);
+    let moved = with_endpoints("retire-and-move");
+    moved.write("src/more.rs", ENDPOINT_TESTS);
+    moved.edit("src/lib.rs", "pub mod endpoints;\n", "mod more;\n");
+    let _ = fs::remove_dir_all(moved.root.join("src/endpoints"));
+    moved.commit("endpoints are gone\n\nRetires: src/endpoints.rs");
+    assert_eq!(moved.violations(), Vec::<String>::new());
+}
+
+#[test]
+fn a_retired_file_that_is_edited_not_deleted_may_lose_only_its_own_tests() {
+    let repo = with_endpoints("retire-edit");
+    repo.write(
+        "src/endpoints/tests.rs",
+        &ENDPOINT_TESTS.replacen("#[test]\nfn two() {\n    assert!(true);\n}\n", "", 1),
+    );
+    repo.commit("trim\n\nRetires: src/endpoints/tests.rs");
+    assert_eq!(repo.violations(), Vec::<String>::new());
+    let other = with_endpoints("retire-edit-other");
+    other.edit(
+        "src/tests.rs",
+        "#[test]\nfn subtracts_again() {\n    assert!(2 - 1 == 1);\n}\n",
+        "",
+    );
+    other.commit("trim\n\nRetires: src/endpoints/tests.rs");
+    assert_eq!(other.violations(), ["assert src/tests.rs", "test-count ."]);
+}
