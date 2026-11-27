@@ -1,0 +1,291 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zchecksum",
+    "protocol": "rest-json",
+    "protocols": [
+      "rest-json"
+    ],
+    "serviceFullName": "Fake zchecksum",
+    "serviceId": "Zchecksum",
+    "signatureVersion": "v4",
+    "uid": "zchecksum-2020-01-01"
+  },
+  "operations": {
+    "PutRequired": {
+      "name": "PutRequired",
+      "http": {
+        "method": "PUT",
+        "requestUri": "/required/{Id}"
+      },
+      "input": {
+        "shape": "UploadRequest"
+      },
+      "output": {
+        "shape": "UploadResult"
+      },
+      "httpChecksum": {
+        "requestAlgorithmMember": "ChecksumAlgorithm",
+        "requestChecksumRequired": true
+      }
+    },
+    "PutOptional": {
+      "name": "PutOptional",
+      "http": {
+        "method": "PUT",
+        "requestUri": "/optional/{Id}"
+      },
+      "input": {
+        "shape": "UploadRequest"
+      },
+      "output": {
+        "shape": "UploadResult"
+      },
+      "httpChecksum": {
+        "requestAlgorithmMember": "ChecksumAlgorithm",
+        "requestChecksumRequired": false
+      }
+    },
+    "PutLegacy": {
+      "name": "PutLegacy",
+      "http": {
+        "method": "PUT",
+        "requestUri": "/legacy/{Id}"
+      },
+      "input": {
+        "shape": "LegacyRequest"
+      },
+      "output": {
+        "shape": "UploadResult"
+      },
+      "httpChecksumRequired": true
+    },
+    "PutBodyAlgorithm": {
+      "name": "PutBodyAlgorithm",
+      "http": {
+        "method": "POST",
+        "requestUri": "/body-algorithm"
+      },
+      "input": {
+        "shape": "BodyAlgorithmRequest"
+      },
+      "output": {
+        "shape": "UploadResult"
+      },
+      "httpChecksum": {
+        "requestAlgorithmMember": "Algorithm",
+        "requestChecksumRequired": true
+      }
+    },
+    "GetValidated": {
+      "name": "GetValidated",
+      "http": {
+        "method": "GET",
+        "requestUri": "/validated/{Id}"
+      },
+      "input": {
+        "shape": "ValidatedRequest"
+      },
+      "output": {
+        "shape": "ValidatedResult"
+      },
+      "httpChecksum": {
+        "requestValidationModeMember": "ChecksumMode",
+        "responseAlgorithms": [
+          "CRC64NVME",
+          "CRC32",
+          "CRC32C",
+          "SHA256",
+          "SHA1",
+          "MD5"
+        ]
+      }
+    },
+    "GetWide": {
+      "name": "GetWide",
+      "http": {
+        "method": "GET",
+        "requestUri": "/wide/{Id}"
+      },
+      "input": {
+        "shape": "ValidatedRequest"
+      },
+      "output": {
+        "shape": "ValidatedResult"
+      },
+      "httpChecksum": {
+        "requestValidationModeMember": "ChecksumMode",
+        "responseAlgorithms": [
+          "CRC32",
+          "SHA512",
+          "XXHASH128"
+        ]
+      }
+    }
+  },
+  "shapes": {
+    "String": {
+      "type": "string"
+    },
+    "ChecksumAlgorithm": {
+      "type": "string",
+      "enum": [
+        "CRC32",
+        "CRC32C",
+        "SHA1",
+        "SHA256",
+        "CRC64NVME"
+      ]
+    },
+    "ChecksumMode": {
+      "type": "string",
+      "enum": [
+        "ENABLED"
+      ]
+    },
+    "UploadRequest": {
+      "type": "structure",
+      "required": [
+        "Id"
+      ],
+      "members": {
+        "Id": {
+          "shape": "String",
+          "location": "uri",
+          "locationName": "Id"
+        },
+        "ChecksumAlgorithm": {
+          "shape": "ChecksumAlgorithm",
+          "location": "header",
+          "locationName": "x-amz-sdk-checksum-algorithm"
+        },
+        "Data": {
+          "shape": "String"
+        },
+        "ChecksumCRC32": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-crc32"
+        },
+        "ChecksumCRC32C": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-crc32c"
+        },
+        "ChecksumCRC64NVME": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-crc64nvme"
+        },
+        "ChecksumSHA1": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-sha1"
+        },
+        "ChecksumSHA256": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-sha256"
+        }
+      }
+    },
+    "LegacyRequest": {
+      "type": "structure",
+      "required": [
+        "Id"
+      ],
+      "members": {
+        "Id": {
+          "shape": "String",
+          "location": "uri",
+          "locationName": "Id"
+        },
+        "Data": {
+          "shape": "String"
+        },
+        "ChecksumCRC32": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-crc32"
+        }
+      }
+    },
+    "BodyAlgorithmRequest": {
+      "type": "structure",
+      "members": {
+        "Algorithm": {
+          "shape": "ChecksumAlgorithm",
+          "locationName": "algo"
+        },
+        "Data": {
+          "shape": "String"
+        }
+      }
+    },
+    "UploadResult": {
+      "type": "structure",
+      "members": {
+        "ETag": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "ETag"
+        },
+        "Status": {
+          "shape": "String"
+        }
+      }
+    },
+    "ValidatedRequest": {
+      "type": "structure",
+      "required": [
+        "Id"
+      ],
+      "members": {
+        "Id": {
+          "shape": "String",
+          "location": "uri",
+          "locationName": "Id"
+        },
+        "ChecksumMode": {
+          "shape": "ChecksumMode",
+          "location": "header",
+          "locationName": "x-amz-checksum-mode"
+        }
+      }
+    },
+    "ValidatedResult": {
+      "type": "structure",
+      "members": {
+        "Data": {
+          "shape": "String"
+        },
+        "ChecksumCRC32": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-crc32"
+        },
+        "ChecksumCRC32C": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-crc32c"
+        },
+        "ChecksumCRC64NVME": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-crc64nvme"
+        },
+        "ChecksumSHA1": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-sha1"
+        },
+        "ChecksumSHA256": {
+          "shape": "String",
+          "location": "header",
+          "locationName": "x-amz-checksum-sha256"
+        }
+      }
+    }
+  }
+}

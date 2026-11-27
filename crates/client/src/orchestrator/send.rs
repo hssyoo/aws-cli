@@ -1,11 +1,13 @@
 //! The send phases: the deferred account id, then the attempts, retried
 //! as standard mode does (`Endpoint._send_request`).
 use super::prepare::{
-    apply_endpoint, modify_before_retry_loop, resolve_auth_scheme, resolve_endpoint,
+    ChecksumFeatures, apply_checksums, apply_endpoint, modify_before_retry_loop,
+    resolve_auth_scheme, resolve_endpoint,
 };
 use super::{after_prepare, find};
 use crate::auth::{self, AuthScheme};
 use crate::call::{Client, Output, Prepared};
+use crate::checksum::CallChecksums;
 use crate::credentials::SigningCredentials;
 use crate::endpoint;
 use crate::error::{CallError, ParseError, ServiceError};
@@ -119,12 +121,16 @@ fn refresh_for_identity(
     // The refusals it could meet were made on the same rule set in prepare
     // (`account_id_endpoints_refuse_nothing_more` pins it), so one here is
     // a defect, not a reason to leave the call to Python.
-    let (endpoint, features) =
+    let (endpoint, mut features) =
         resolve_endpoint(client, cx, &prepared.input, Some(&account_id)).map_err(after_prepare)?;
+    if client.http_checksum {
+        features.extend(cx.slot::<ChecksumFeatures>().0.iter());
+    }
     if endpoint.url != prepared.endpoint_url || features != prepared.features {
         let mut request = apply_endpoint(client, &prepared.serialized, &endpoint.url, features)
             .map_err(after_prepare)?;
         modify_before_retry_loop(client, cx, &mut request).map_err(after_prepare)?;
+        apply_checksums(client, cx, &mut request);
         prepared.request = request;
         prepared.scheme = resolve_auth_scheme(client, cx, &endpoint).map_err(after_prepare)?;
     }
@@ -362,6 +368,11 @@ fn deserialize(
         Err(TransportError::Interrupted) => return Err(CallError::Interrupted),
         Err(error) => return Ok(Received::Failed(error)),
     };
+    // `handle_checksum_body`, whose error ends the call without a retry.
+    if client.http_checksum {
+        (cx.slot::<CallChecksums>().validate(&response))
+            .map_err(|error| CallError::Hook(error.after_prepare()))?;
+    }
     for hook in client.hooks.interceptors(cx.operation.name()) {
         hook.after_receive(cx, &mut response)
             .map_err(|error| CallError::Hook(error.after_prepare()))?;

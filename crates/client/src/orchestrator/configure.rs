@@ -61,6 +61,7 @@ pub(crate) fn configure(
         hooks,
         region,
         timeouts,
+        http_checksum: false,
     })
 }
 
