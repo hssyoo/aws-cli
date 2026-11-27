@@ -51,6 +51,28 @@ pub enum Origin {
     Outfile {
         response_key: Box<str>,
     },
+    /// `toplevelbool`'s pair for a `structure(Value: boolean)` member:
+    /// `PositiveBooleanArgument` (`value` true), which binds
+    /// `{"Value": true}` when given without a value, and
+    /// `NegativeBooleanParameter` (`value` false), which binds
+    /// `{"Value": false}`.
+    BoolValue {
+        member: Box<str>,
+        shape: SchemaId,
+        value: bool,
+    },
+}
+
+/// The `default` an argument gives argparse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArgDefault {
+    /// None given: argparse's own.
+    Unset,
+    /// `default=None` given explicitly (`BooleanArgument`).
+    Null,
+    /// `toplevelbool`'s `_NOT_SPECIFIED` sentinel, which tells an argument
+    /// left out from one given without a value.
+    NotSpecified,
 }
 
 /// One argument of a derived table: what the argparse table needs, and
@@ -66,8 +88,7 @@ pub struct DerivedArgument {
     pub nargs: Option<Nargs>,
     pub constant: Option<&'static str>,
     pub choices: &'static [&'static str],
-    /// `default=None` given explicitly (`BooleanArgument`).
-    pub default_null: bool,
+    pub default: ArgDefault,
     pub required: bool,
     pub value_type: Option<ValueType>,
     /// `_UNDOCUMENTED`: kept out of help and of the unknown-option
@@ -92,6 +113,9 @@ pub struct Table {
     /// What the paging customization registered for the parse, when it
     /// built the table without raising.
     pub paging: Option<Paging>,
+    /// `toplevelbool`'s pairs, positive then negative name, in the order
+    /// `validate_boolean_mutex_groups` checks them.
+    pub bool_pairs: Vec<(Box<str>, Box<str>)>,
 }
 
 /// What `unify_paging_params` hands the handlers it registers,
@@ -128,7 +152,7 @@ impl Table {
     }
     /// Insert as an `OrderedDict` assignment does: a new key at the end, an
     /// existing key replaced where it stands.
-    fn insert(&mut self, argument: DerivedArgument) {
+    pub(super) fn insert(&mut self, argument: DerivedArgument) {
         match self
             .arguments
             .iter_mut()
@@ -154,7 +178,7 @@ fn plain(name: &str, cli_type_name: &str, origin: Origin) -> DerivedArgument {
         nargs: None,
         constant: None,
         choices: &[],
-        default_null: false,
+        default: ArgDefault::Unset,
         required: false,
         value_type: None,
         hidden: false,
@@ -183,7 +207,7 @@ fn member_arguments(
     match schema.shape_type() {
         ShapeType::Boolean => {
             argument.action = Action::StoreTrue;
-            argument.default_null = true;
+            argument.default = ArgDefault::Null;
             let mut negative = argument.clone();
             negative.name = format!("no-{name}").into();
             negative.action = Action::StoreFalse;
@@ -220,6 +244,7 @@ fn members_table(operation: OperationSchema<'_>, special: &SpecialCases) -> Tabl
         overrides: Vec::new(),
         customized: false,
         paging: None,
+        bool_pairs: Vec::new(),
     };
     let Some(input) = operation.input() else {
         return table;
@@ -248,21 +273,25 @@ fn streaming_output(operation: OperationSchema<'_>) -> Option<Box<str>> {
     (member.shape_type() == ShapeType::Blob).then(|| payload.into())
 }
 
-/// `streamingoutputarg`, then `cliinput`, `paginate` and
-/// `generatecliskeleton`, in the order the emitter calls their handlers:
-/// the `building-argument-table.*` node's before the unscoped node's, and
-/// these in the order their initializers registered them.
+/// `streamingoutputarg`, the `building-argument-table.*` node's handler,
+/// which the emitter calls before any command's own.
+fn streaming(table: &mut Table, operation: OperationSchema<'_>) {
+    if let Some(response_key) = streaming_output(operation) {
+        let mut outfile = plain("outfile", "string", Origin::Outfile { response_key });
+        outfile.positional = true;
+        table.insert(outfile);
+    }
+}
+
+/// `cliinput`, `paginate` and `generatecliskeleton`, the unscoped node's,
+/// which the emitter calls last, in the order their initializers
+/// registered them.
 fn cross_cutting(
     table: &mut Table,
     operation: OperationSchema<'_>,
     entry: Option<&Entry>,
     special: &SpecialCases,
 ) {
-    if let Some(response_key) = streaming_output(operation) {
-        let mut outfile = plain("outfile", "string", Origin::Outfile { response_key });
-        outfile.positional = true;
-        table.insert(outfile);
-    }
     if !table.has("outfile") {
         for (name, origin) in [
             ("cli-input-json", Origin::CliInputJson),
@@ -389,12 +418,27 @@ fn limit_type<'s>(operation: OperationSchema<'s>, key: &str) -> Option<&'s str> 
 }
 
 /// The operation's table: its members, then the cross-cutting handlers'.
+#[cfg(test)]
 pub fn derive(
     operation: OperationSchema<'_>,
     entry: Option<&Entry>,
     special: &SpecialCases,
 ) -> Table {
+    derive_edited(operation, entry, special, |_| {})
+}
+
+/// [`derive`], with `edit` run where a command's own
+/// `building-argument-table` handlers run: after `streamingoutputarg`'s,
+/// before the unscoped event's.
+pub fn derive_edited(
+    operation: OperationSchema<'_>,
+    entry: Option<&Entry>,
+    special: &SpecialCases,
+    edit: impl FnOnce(&mut Table),
+) -> Table {
     let mut table = members_table(operation, special);
+    streaming(&mut table, operation);
+    edit(&mut table);
     cross_cutting(&mut table, operation, entry, special);
     table
 }
