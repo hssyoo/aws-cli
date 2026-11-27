@@ -15,13 +15,19 @@
 //! Python route):
 //! 1. `admit`: the static refusals and the endpoint configuration check;
 //! 2. `modify_before_serialization`: the `modify_input` stage;
-//! 3. the idempotency tokens, after every input hook;
+//! 3. the idempotency tokens, after every input hook, then the checksum
+//!    validation mode's default;
 //! 4. `resolve_endpoint`: the built-ins after the `endpoint_builtins`
 //!    stage, then the rule set, with the account id deferred;
-//! 5. `serialize`: validation, then the protocol's serializer;
+//! 5. `serialize`: validation, then the protocol's serializer, then the
+//!    call's checksums and their feature ids (`resolve_checksum_context`);
 //! 6. `apply_endpoint`: the join with the endpoint and the `User-Agent`;
-//! 7. `modify_before_retry_loop`: the `after_serialize` stage;
+//! 7. `modify_before_retry_loop`: the `after_serialize` stage, then the
+//!    request checksum (`apply_request_checksum`);
 //! 8. `resolve_auth_scheme`: auth selection and the `select_auth` stage.
+//!
+//! The checksum steps ([`crate::checksum`]) run only for a client whose
+//! `http_checksum` switch is on, which no production client's is yet.
 //!
 //! [`send`]:
 //! 1. `refresh_for_identity`: the deferred account id, which reruns
@@ -30,10 +36,11 @@
 //!    `modify_before_signing` (the `before_sign` stage), identity and
 //!    signature, `modify_before_transmit` (the core's unsigned headers),
 //!    `transmit` (the `before_transmit` stage's answer, else the
-//!    transport), `deserialize` (the `after_receive` stage, then the
-//!    parsers), `classify` (the `classify_retry` stage, else standard
-//!    mode), the retry decision (with the long-poll wait), and on success
-//!    `modify_before_completion` (the `modify_output` stage).
+//!    transport), `deserialize` (the response checksum, the
+//!    `after_receive` stage, then the parsers), `classify` (the
+//!    `classify_retry` stage, else standard mode), the retry decision
+//!    (with the long-poll wait), and on success `modify_before_completion`
+//!    (the `modify_output` stage).
 use crate::admission::Unsupported;
 use crate::error::CallError;
 use crate::hooks::HookError;
