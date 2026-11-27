@@ -94,6 +94,8 @@ fn coverage_is_per_pattern_and_per_scope() -> Result<()> {
             setting_defaults: &[],
             builtins: &[],
             interceptors: &[],
+            retry_classifiers: &[],
+            long_polling: false,
             replaces: everything[0].replaces,
         };
         assert_eq!(
