@@ -259,6 +259,7 @@ dependencies = [
  "cli-core",
  "credentials",
  "crt",
+ "endpoint-rules",
  "libc",
  "model",
  "numa",
