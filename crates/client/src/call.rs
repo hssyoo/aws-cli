@@ -21,7 +21,7 @@
 // when the prepare phases were defined here.
 #[cfg(test)]
 use crate::admission::Unsupported;
-use crate::auth::AuthScheme;
+use crate::auth::SelectedAuth;
 use crate::config_bag::Slots;
 use crate::credentials::CredentialSource;
 use crate::endpoint::{EndpointConfig, EndpointData};
@@ -101,7 +101,8 @@ pub struct Prepared {
     pub(crate) operation: String,
     pub(crate) slots: Slots,
     pub(crate) request: HttpRequest,
-    pub(crate) scheme: AuthScheme,
+    /// The auth option and the scheme that signs each attempt.
+    pub(crate) auth: SelectedAuth,
     /// The serialized request and the call's feature ids, to join again
     /// when the deferred account id changes the endpoint.
     pub(crate) serialized: Serialized,
