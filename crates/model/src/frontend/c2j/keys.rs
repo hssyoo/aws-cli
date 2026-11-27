@@ -198,13 +198,21 @@ pub(crate) fn record_traits(
 
 /// One pass over a shape reference's keys: records those that are neither
 /// `shape`, a trait nor ignored (and a trait object's unread subkeys), and
-/// says whether any trait key is present, which `ShapeResolver.
-/// resolve_shape_ref` lays over the target's.
-pub(crate) fn scan_reference(object: &Object, at: At<'_>, out: &mut Vec<Uninterpreted>) -> bool {
-    let mut traits = false;
+/// gives the `shape` value and whether any trait key is present, which
+/// `ShapeResolver.resolve_shape_ref` lays over the target's.
+pub(crate) fn scan_reference<'a>(
+    object: &'a Object,
+    at: At<'_>,
+    out: &mut Vec<Uninterpreted>,
+) -> (Option<&'a Json>, bool) {
+    let (mut shape, mut traits) = (None, false);
     for (key, value) in object {
         let key = key.as_str();
-        if key == "shape" || REFERENCE_IGNORED.contains(&key) {
+        if key == "shape" {
+            shape = Some(value);
+            continue;
+        }
+        if REFERENCE_IGNORED.contains(&key) {
             continue;
         }
         if !is_trait_key(key) {
@@ -220,23 +228,24 @@ pub(crate) fn scan_reference(object: &Object, at: At<'_>, out: &mut Vec<Uninterp
             record(nested, known, &[], &nested_at, out);
         }
     }
-    traits
+    (shape, traits)
 }
 
 /// Records an operation's keys and its nested objects' that no reader
 /// interprets; its references record theirs as they resolve.
 pub(crate) fn record_operation(name: &str, object: &Object, out: &mut Vec<Uninterpreted>) {
-    let at = |prefix: String| move || (Site::Operation(name.into()), prefix.clone());
+    // Each path is formatted only when a key is recorded.
+    let site = || Site::Operation(name.into());
     record(
         object,
         OPERATION,
         OPERATION_IGNORED,
-        &at(String::new()),
+        &|| (site(), String::new()),
         out,
     );
     for (key, known, ignored) in OPERATION_NESTED {
         if let Some(nested) = object.get(*key).and_then(Json::as_object) {
-            record(nested, known, ignored, &at(format!("{key}.")), out);
+            record(nested, known, ignored, &|| (site(), format!("{key}.")), out);
         }
     }
     let params = [
@@ -251,7 +260,8 @@ pub(crate) fn record_operation(name: &str, object: &Object, out: &mut Vec<Uninte
             .flatten();
         for (param, props) in entries {
             if let Some(props) = props.as_object() {
-                record(props, &[known], &[], &at(format!("{key}.{param}.")), out);
+                let at = || (site(), format!("{key}.{param}."));
+                record(props, &[known], &[], &at, out);
             }
         }
     }

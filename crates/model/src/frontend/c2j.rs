@@ -39,7 +39,7 @@ struct Named<'a> {
     id: DraftId,
     type_name: &'a str,
     shape_type: ShapeType,
-    traits: C2jTraits,
+    traits: C2jTraits<'a>,
 }
 
 struct Walk<'a> {
@@ -48,6 +48,8 @@ struct Walk<'a> {
     index: HashMap<&'a str, usize>,
     named: Vec<Named<'a>>,
     uninterpreted: Vec<Uninterpreted>,
+    /// A structure's resolved members, held until all resolve.
+    pending: Vec<(&'a str, (DraftId, MemberTraits))>,
 }
 
 /// The schemas of `json` with its short names in `namespace`.
@@ -64,7 +66,11 @@ pub fn build(json: &Json, namespace: &str) -> Result<SchemaSet, ModelError> {
             .collect(),
         named: Vec::with_capacity(definitions.len()),
         uninterpreted: Vec::new(),
+        pending: Vec::new(),
     };
+    let operations = document.get("operations").and_then(Json::as_object);
+    walk.builder
+        .reserve(definitions.len(), operations.map_or(0, Map::len));
     let at = || (Site::Service, String::new());
     let (known, ignored) = (keys::DOCUMENT, keys::DOCUMENT_IGNORED);
     keys::record(document, known, ignored, &at, &mut walk.uninterpreted);
@@ -135,7 +141,7 @@ impl<'a> Walk<'a> {
         &mut self,
         parent: DraftId,
         name: &str,
-        object: &Object,
+        object: &'a Object,
     ) -> Result<(), ModelError> {
         let definitions = match object.get("members") {
             None => &*EMPTY,
@@ -143,14 +149,17 @@ impl<'a> Walk<'a> {
                 .as_object()
                 .ok_or_else(|| ModelError::InvalidShape(name.into()))?,
         };
-        let mut resolved = Vec::with_capacity(definitions.len());
+        let mut resolved = std::mem::take(&mut self.pending);
+        resolved.clear();
         for (member, reference) in definitions {
             let at = || (Site::Shape(name.into()), format!("members.{member}."));
             resolved.push((member, self.reference(name, reference, &at)?));
         }
-        for (member, (target, traits)) in resolved {
+        self.builder.reserve_members(parent, resolved.len());
+        for (member, (target, traits)) in resolved.drain(..) {
             self.builder.add_member(parent, member, target, traits)?;
         }
+        self.pending = resolved;
         Ok(())
     }
 
@@ -180,15 +189,15 @@ impl<'a> Walk<'a> {
     ) -> Result<(DraftId, MemberTraits), ModelError> {
         let invalid = || ModelError::InvalidShapeReference(owner.into());
         let object = reference.as_object().ok_or_else(invalid)?;
-        let target_name = object.get("shape").and_then(Json::as_str);
-        let target_name = target_name.ok_or_else(invalid)?;
+        let (shape, has_traits) = keys::scan_reference(object, at, &mut self.uninterpreted);
+        let target_name = shape.and_then(Json::as_str).ok_or_else(invalid)?;
         let index = *self
             .index
             .get(target_name)
             .ok_or_else(|| ModelError::NoShapeFound(target_name.into()))?;
         let target = &self.named[index];
         let id = target.id;
-        if !keys::scan_reference(object, at, &mut self.uninterpreted) {
+        if !has_traits {
             return Ok((id, MemberTraits::Inherit));
         }
         let mut traits = target.traits.clone();
