@@ -1,0 +1,244 @@
+{
+  "version": "1.0",
+  "parameters": {
+    "Region": {
+      "required": false,
+      "type": "String",
+      "builtIn": "AWS::Region",
+      "documentation": "x"
+    },
+    "Endpoint": {
+      "required": false,
+      "type": "String",
+      "builtIn": "SDK::Endpoint",
+      "documentation": "x"
+    },
+    "Bucket": {
+      "required": false,
+      "type": "String",
+      "documentation": "x"
+    },
+    "Names": {
+      "required": false,
+      "type": "stringArray",
+      "documentation": "x"
+    },
+    "AccountId": {
+      "required": false,
+      "type": "String",
+      "builtIn": "AWS::Auth::AccountId",
+      "documentation": "x"
+    },
+    "AccountIdEndpointMode": {
+      "required": false,
+      "type": "String",
+      "builtIn": "AWS::Auth::AccountIdEndpointMode",
+      "documentation": "x"
+    },
+    "Accelerate": {
+      "required": false,
+      "type": "Boolean",
+      "builtIn": "AWS::S3::Accelerate",
+      "documentation": "x"
+    },
+    "DisableMultiRegionAccessPoints": {
+      "required": false,
+      "type": "Boolean",
+      "builtIn": "AWS::S3::DisableMultiRegionAccessPoints",
+      "documentation": "x"
+    },
+    "ForcePathStyle": {
+      "required": false,
+      "type": "Boolean",
+      "builtIn": "AWS::S3::ForcePathStyle",
+      "documentation": "x"
+    },
+    "UseArnRegion": {
+      "required": false,
+      "type": "Boolean",
+      "builtIn": "AWS::S3::UseArnRegion",
+      "documentation": "x"
+    },
+    "UseGlobalEndpoint": {
+      "required": false,
+      "type": "Boolean",
+      "builtIn": "AWS::S3::UseGlobalEndpoint",
+      "documentation": "x"
+    },
+    "UseArnRegionS3Control": {
+      "required": false,
+      "type": "Boolean",
+      "builtIn": "AWS::S3Control::UseArnRegion",
+      "documentation": "x"
+    },
+    "UseGlobalEndpointSTS": {
+      "required": false,
+      "type": "Boolean",
+      "builtIn": "AWS::STS::UseGlobalEndpoint",
+      "documentation": "x"
+    }
+  },
+  "rules": [
+    {
+      "type": "endpoint",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Endpoint"
+            }
+          ]
+        }
+      ],
+      "endpoint": {
+        "url": {
+          "ref": "Endpoint"
+        },
+        "properties": {},
+        "headers": {}
+      }
+    },
+    {
+      "type": "tree",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ]
+        },
+        {
+          "fn": "not",
+          "argv": [
+            {
+              "fn": "isSet",
+              "argv": [
+                {
+                  "ref": "Endpoint"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "fn": "isValidHostLabel",
+          "argv": [
+            {
+              "ref": "Region"
+            },
+            false
+          ]
+        },
+        {
+          "fn": "parseURL",
+          "argv": [
+            "https://example.com/base"
+          ],
+          "assign": "url"
+        },
+        {
+          "fn": "substring",
+          "argv": [
+            "abcdefgh",
+            0,
+            3,
+            false
+          ],
+          "assign": "prefix"
+        },
+        {
+          "fn": "uriEncode",
+          "argv": [
+            "a b/c"
+          ],
+          "assign": "encoded"
+        },
+        {
+          "fn": "aws.parseArn",
+          "argv": [
+            "arn:aws:zrules:us-west-2:123456789012:gadget/g1"
+          ],
+          "assign": "arn"
+        },
+        {
+          "fn": "getAttr",
+          "argv": [
+            {
+              "ref": "arn"
+            },
+            "resourceId[1]"
+          ],
+          "assign": "gadget"
+        },
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Bucket"
+            }
+          ]
+        },
+        {
+          "fn": "aws.isVirtualHostableS3Bucket",
+          "argv": [
+            {
+              "ref": "Bucket"
+            },
+            false
+          ]
+        }
+      ],
+      "rules": [
+        {
+          "type": "endpoint",
+          "conditions": [],
+          "endpoint": {
+            "url": "https://{gadget}.{prefix}.zrules.{Region}.amazonaws.com",
+            "headers": {},
+            "properties": {
+              "metricValues": [
+                "zrules"
+              ],
+              "authSchemes": [
+                {
+                  "name": "sigv4a",
+                  "signingName": "zrules",
+                  "signingRegionSet": [
+                    "*"
+                  ],
+                  "disableDoubleEncoding": true
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "endpoint",
+      "conditions": [
+        {
+          "fn": "isSet",
+          "argv": [
+            {
+              "ref": "Region"
+            }
+          ]
+        }
+      ],
+      "endpoint": {
+        "url": "https://zrules.{Region}.amazonaws.com",
+        "properties": {},
+        "headers": {}
+      }
+    },
+    {
+      "type": "error",
+      "conditions": [],
+      "error": "Region is required"
+    }
+  ]
+}

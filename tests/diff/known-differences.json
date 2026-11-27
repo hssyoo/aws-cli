@@ -1,7 +1,42 @@
 [
-  {"fingerprint": "request[*].header:user-agent:lang", "cases": "*", "mode": "oracle", "reason": "route identity: native sends lang/rust, the Python route lang/python"},
-  {"fingerprint": "request[*].header:user-agent:md/pyimpl", "cases": "*", "mode": "oracle", "reason": "route identity: only the Python route names its implementation"},
-  {"fingerprint": "request[*].header:user-agent:md/fallback", "cases": "*", "mode": "oracle", "reason": "route identity: the fallback names its reason (env_override under AWS_CLI_NATIVE_ROUTER=python)"},
-  {"fingerprint": "request[*].header:user-agent:sid", "cases": "*", "mode": "oracle", "reason": "the Python route's telemetry session id; native has no session database"},
-  {"fingerprint": "request[*].header:user-agent:md/awscrt", "cases": "*", "mode": "oracle", "reason": "temporary: the embedded Python route's awscrt reports a dev version; remove when that is fixed"}
+  {
+    "fingerprint": "request[*].header:user-agent:lang",
+    "cases": "*",
+    "mode": "oracle",
+    "reason": "route identity: native sends lang/rust, the Python route lang/python"
+  },
+  {
+    "fingerprint": "request[*].header:user-agent:md/pyimpl",
+    "cases": "*",
+    "mode": "oracle",
+    "reason": "route identity: only the Python route names its implementation"
+  },
+  {
+    "fingerprint": "request[*].header:user-agent:md/fallback",
+    "cases": "*",
+    "mode": "oracle",
+    "reason": "route identity: the fallback names its reason (env_override under AWS_CLI_NATIVE_ROUTER=python)"
+  },
+  {
+    "fingerprint": "request[*].header:user-agent:sid",
+    "cases": "*",
+    "mode": "oracle",
+    "reason": "the Python route's telemetry session id; native has no session database"
+  },
+  {
+    "fingerprint": "request[*].header:user-agent:md/awscrt",
+    "cases": "*",
+    "mode": "oracle",
+    "reason": "temporary: the embedded Python route's awscrt reports a dev version; remove when that is fixed"
+  },
+  {
+    "fingerprint": "request[*].header:user-agent:m",
+    "cases": [
+      "fakes-zjson2-ping",
+      "fakes-zjson2-pong",
+      "fakes-zquery2-idle"
+    ],
+    "mode": "oracle",
+    "reason": "temporary: for unsigned operations botocore records the environment-credentials feature id g, which native omits; user-agent work is deferred"
+  }
 ]

@@ -1,0 +1,124 @@
+{
+  "version": 2,
+  "waiters": {
+    "JobReady": {
+      "description": "path and status forms",
+      "operation": "GetJobs",
+      "delay": 1,
+      "maxAttempts": 3,
+      "acceptors": [
+        {
+          "matcher": "path",
+          "state": "success",
+          "expected": true,
+          "argument": "Ready"
+        },
+        {
+          "matcher": "path",
+          "state": "failure",
+          "expected": "failed",
+          "argument": "State"
+        },
+        {
+          "matcher": "path",
+          "state": "retry",
+          "expected": "pending",
+          "argument": "State"
+        },
+        {
+          "matcher": "status",
+          "state": "retry",
+          "expected": 503
+        },
+        {
+          "matcher": "status",
+          "state": "success",
+          "expected": 200
+        }
+      ]
+    },
+    "JobsDone": {
+      "operation": "GetJobs",
+      "delay": 1,
+      "maxAttempts": 3,
+      "acceptors": [
+        {
+          "matcher": "pathAll",
+          "state": "success",
+          "expected": "done",
+          "argument": "Jobs[].State"
+        },
+        {
+          "matcher": "pathAny",
+          "state": "failure",
+          "expected": "failed",
+          "argument": "Jobs[].State"
+        },
+        {
+          "matcher": "pathAll",
+          "state": "retry",
+          "expected": "pending",
+          "argument": "Jobs[*].State"
+        },
+        {
+          "matcher": "pathAny",
+          "state": "retry",
+          "expected": "queued",
+          "argument": "Jobs[].State"
+        },
+        {
+          "matcher": "error",
+          "state": "retry",
+          "expected": "Throttling"
+        }
+      ]
+    },
+    "JobsCounted": {
+      "operation": "GetJobs",
+      "delay": 1,
+      "maxAttempts": 3,
+      "acceptors": [
+        {
+          "matcher": "path",
+          "state": "success",
+          "expected": true,
+          "argument": "length(Jobs[?State == 'done' || State == 'skipped']) > `0` && !(Count == `0`)"
+        },
+        {
+          "matcher": "pathAny",
+          "state": "success",
+          "expected": "ok",
+          "argument": "Jobs[].State"
+        },
+        {
+          "matcher": "error",
+          "state": "failure",
+          "expected": "JobGone"
+        },
+        {
+          "matcher": "error",
+          "state": "success",
+          "expected": true
+        }
+      ]
+    },
+    "JobGone": {
+      "operation": "GetJobs",
+      "delay": 1,
+      "maxAttempts": 2,
+      "acceptors": [
+        {
+          "matcher": "error",
+          "state": "success",
+          "expected": "JobGone"
+        },
+        {
+          "matcher": "path",
+          "state": "retry",
+          "expected": "running",
+          "argument": "State"
+        }
+      ]
+    }
+  }
+}

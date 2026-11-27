@@ -1,0 +1,810 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "endpointPrefix": "zjson2",
+    "protocol": "json",
+    "protocols": [
+      "json"
+    ],
+    "serviceFullName": "Fake zjson2",
+    "serviceId": "Zjson2",
+    "signatureVersion": "v4",
+    "uid": "zjson2-2020-01-01",
+    "jsonVersion": "1.1",
+    "targetPrefix": "Zjson2",
+    "signingName": "zjson2signer",
+    "auth": [
+      "aws.auth#sigv4"
+    ]
+  },
+  "clientContextParams": {
+    "Accelerate": {
+      "type": "boolean",
+      "documentation": "x"
+    },
+    "Label": {
+      "type": "string",
+      "documentation": "x"
+    }
+  },
+  "operations": {
+    "PutItem": {
+      "name": "PutItem",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "PutItemInput"
+      },
+      "output": {
+        "shape": "PutItemOutput"
+      },
+      "requestcompression": {
+        "encodings": [
+          "gzip"
+        ]
+      }
+    },
+    "GetItem": {
+      "name": "GetItem",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "GetItemInput"
+      },
+      "output": {
+        "shape": "GetItemOutput",
+        "resultWrapper": "GetItemResult"
+      },
+      "errors": [
+        {
+          "shape": "ItemMissing"
+        },
+        {
+          "shape": "Throttled"
+        }
+      ],
+      "endpoint": {
+        "hostPrefix": "data."
+      },
+      "httpChecksum": {
+        "requestValidationModeMember": "ChecksumMode",
+        "responseAlgorithms": [
+          "CRC64NVME",
+          "CRC32",
+          "CRC32C",
+          "SHA256",
+          "SHA1",
+          "SHA512",
+          "MD5",
+          "XXHASH64",
+          "XXHASH3",
+          "XXHASH128"
+        ]
+      }
+    },
+    "DescribeEndpoints": {
+      "name": "DescribeEndpoints",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "DescribeEndpointsRequest"
+      },
+      "output": {
+        "shape": "DescribeEndpointsResponse"
+      },
+      "endpointoperation": true
+    },
+    "FindItem": {
+      "name": "FindItem",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "FindItemInput"
+      },
+      "output": {
+        "shape": "FindItemOutput"
+      },
+      "endpointdiscovery": {
+        "required": true
+      }
+    },
+    "SelectItems": {
+      "name": "SelectItems",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "SelectItemsInput"
+      },
+      "output": {
+        "shape": "PlainInput"
+      },
+      "staticContextParams": {
+        "UseFast": {
+          "value": true
+        },
+        "Mode": {
+          "value": "fast"
+        }
+      },
+      "operationContextParams": {
+        "Keys": {
+          "path": "keys(RequestItems)"
+        },
+        "Tables": {
+          "path": "TransactItems[*].[Get.TableName, Put.TableName][]"
+        },
+        "Table": {
+          "path": "Spec.TableName"
+        }
+      }
+    },
+    "Ping": {
+      "name": "Ping",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "PlainInput"
+      },
+      "output": {
+        "shape": "PlainInput"
+      },
+      "authtype": "none"
+    },
+    "Pong": {
+      "name": "Pong",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "PlainInput"
+      },
+      "output": {
+        "shape": "PlainInput"
+      },
+      "auth": [
+        "smithy.api#noAuth"
+      ]
+    }
+  },
+  "shapes": {
+    "Big": {
+      "type": "long"
+    },
+    "BigList": {
+      "type": "list",
+      "member": {
+        "shape": "Big"
+      }
+    },
+    "BigMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Big"
+      }
+    },
+    "Blob4": {
+      "type": "blob",
+      "min": 1,
+      "max": 4,
+      "sensitive": true
+    },
+    "Bytes": {
+      "type": "blob"
+    },
+    "BytesList": {
+      "type": "list",
+      "member": {
+        "shape": "Bytes"
+      }
+    },
+    "BytesMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Bytes"
+      }
+    },
+    "Choice": {
+      "type": "structure",
+      "union": true,
+      "members": {
+        "Word": {
+          "shape": "Text"
+        },
+        "Number": {
+          "shape": "Int"
+        }
+      }
+    },
+    "DescribeEndpointsRequest": {
+      "type": "structure",
+      "members": {}
+    },
+    "DescribeEndpointsResponse": {
+      "type": "structure",
+      "required": [
+        "Endpoints"
+      ],
+      "members": {
+        "Endpoints": {
+          "shape": "Endpoints"
+        }
+      }
+    },
+    "Doc": {
+      "type": "string"
+    },
+    "DocList": {
+      "type": "list",
+      "member": {
+        "shape": "Doc",
+        "jsonvalue": true
+      }
+    },
+    "Endpoint": {
+      "type": "structure",
+      "required": [
+        "Address",
+        "CachePeriodInMinutes"
+      ],
+      "members": {
+        "Address": {
+          "shape": "Text"
+        },
+        "CachePeriodInMinutes": {
+          "shape": "Big"
+        }
+      }
+    },
+    "Endpoints": {
+      "type": "list",
+      "member": {
+        "shape": "Endpoint"
+      }
+    },
+    "Few": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      },
+      "max": 3,
+      "sensitive": true,
+      "deprecated": true
+    },
+    "FindItemInput": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "Text"
+        }
+      }
+    },
+    "FindItemOutput": {
+      "type": "structure",
+      "members": {
+        "Found": {
+          "shape": "Flag"
+        }
+      }
+    },
+    "Flag": {
+      "type": "boolean"
+    },
+    "FlatList": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      },
+      "flattened": true
+    },
+    "FlatMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Text"
+      },
+      "flattened": true
+    },
+    "Frac": {
+      "type": "float"
+    },
+    "FracList": {
+      "type": "list",
+      "member": {
+        "shape": "Frac"
+      }
+    },
+    "FracMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Frac"
+      }
+    },
+    "Get": {
+      "type": "structure",
+      "members": {
+        "TableName": {
+          "shape": "Text"
+        }
+      }
+    },
+    "GetItemInput": {
+      "type": "structure",
+      "required": [
+        "Id"
+      ],
+      "members": {
+        "Id": {
+          "shape": "Text"
+        },
+        "ChecksumMode": {
+          "shape": "Text"
+        }
+      }
+    },
+    "GetItemOutput": {
+      "type": "structure",
+      "members": {
+        "Blobs": {
+          "shape": "BytesList"
+        },
+        "Ratios": {
+          "shape": "RatioList"
+        },
+        "Ints": {
+          "shape": "IntList"
+        },
+        "Bigs": {
+          "shape": "BigList"
+        },
+        "Lists": {
+          "shape": "ListList"
+        },
+        "Maps": {
+          "shape": "MapList"
+        },
+        "RatioByName": {
+          "shape": "RatioMap"
+        },
+        "ListByName": {
+          "shape": "ListMap"
+        },
+        "MapByName": {
+          "shape": "MapMap"
+        },
+        "Flat": {
+          "shape": "TextList",
+          "flattened": true
+        },
+        "FlatShape": {
+          "shape": "FlatList"
+        },
+        "FlatMap": {
+          "shape": "FlatMap"
+        },
+        "Json": {
+          "shape": "Doc",
+          "jsonvalue": true
+        },
+        "FracByName": {
+          "shape": "FracMap"
+        },
+        "BigByName": {
+          "shape": "BigMap"
+        },
+        "Docs": {
+          "shape": "DocList"
+        },
+        "Oops": {
+          "shape": "Oops"
+        }
+      }
+    },
+    "Hue": {
+      "type": "string",
+      "enum": [
+        "red",
+        "blue"
+      ],
+      "max": 8,
+      "pattern": "^[a-z]+$",
+      "sensitive": true,
+      "deprecated": true
+    },
+    "Int": {
+      "type": "integer"
+    },
+    "IntList": {
+      "type": "list",
+      "member": {
+        "shape": "Int"
+      }
+    },
+    "IntMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Int"
+      }
+    },
+    "ItemMissing": {
+      "type": "structure",
+      "exception": true,
+      "members": {
+        "Message": {
+          "shape": "Text"
+        },
+        "Blob": {
+          "shape": "Bytes"
+        },
+        "Blobs": {
+          "shape": "BytesList"
+        },
+        "Ok": {
+          "shape": "Flag"
+        },
+        "Ratio": {
+          "shape": "Ratio"
+        },
+        "Big": {
+          "shape": "Big"
+        },
+        "Labels": {
+          "shape": "TextMap"
+        },
+        "Recs": {
+          "shape": "RecList"
+        },
+        "RecByName": {
+          "shape": "RecMap"
+        },
+        "Choice": {
+          "shape": "Choice"
+        }
+      }
+    },
+    "ListList": {
+      "type": "list",
+      "member": {
+        "shape": "TextList"
+      }
+    },
+    "ListMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "TextList"
+      }
+    },
+    "MapList": {
+      "type": "list",
+      "member": {
+        "shape": "TextMap"
+      }
+    },
+    "MapMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "TextMap"
+      }
+    },
+    "Moment": {
+      "type": "timestamp",
+      "sensitive": true,
+      "deprecated": true
+    },
+    "Oops": {
+      "type": "structure",
+      "exception": true,
+      "members": {
+        "Message": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Pairs": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Text"
+      },
+      "min": 1,
+      "max": 3,
+      "sensitive": true,
+      "deprecated": true
+    },
+    "Part": {
+      "type": "float",
+      "min": 0.0,
+      "max": 1.0,
+      "sensitive": true
+    },
+    "PlainInput": {
+      "type": "structure",
+      "members": {
+        "Note": {
+          "shape": "Text"
+        }
+      }
+    },
+    "PutItemInput": {
+      "type": "structure",
+      "members": {
+        "Blobs": {
+          "shape": "BytesList"
+        },
+        "Ratios": {
+          "shape": "RatioList"
+        },
+        "Ints": {
+          "shape": "IntList"
+        },
+        "Bigs": {
+          "shape": "BigList"
+        },
+        "Lists": {
+          "shape": "ListList"
+        },
+        "Maps": {
+          "shape": "MapList"
+        },
+        "RatioByName": {
+          "shape": "RatioMap"
+        },
+        "ListByName": {
+          "shape": "ListMap"
+        },
+        "MapByName": {
+          "shape": "MapMap"
+        },
+        "Flat": {
+          "shape": "TextList",
+          "flattened": true
+        },
+        "FlatShape": {
+          "shape": "FlatList"
+        },
+        "FlatMap": {
+          "shape": "FlatMap"
+        },
+        "Json": {
+          "shape": "Doc",
+          "jsonvalue": true
+        },
+        "Owner": {
+          "shape": "Text",
+          "contextParam": {
+            "name": "Owner"
+          }
+        },
+        "Hue": {
+          "shape": "Hue"
+        },
+        "Small": {
+          "shape": "Small"
+        },
+        "Span": {
+          "shape": "Span"
+        },
+        "Share": {
+          "shape": "Share"
+        },
+        "Part": {
+          "shape": "Part"
+        },
+        "Blob4": {
+          "shape": "Blob4"
+        },
+        "Toggle": {
+          "shape": "Toggle"
+        },
+        "Moment": {
+          "shape": "Moment"
+        },
+        "Few": {
+          "shape": "Few"
+        },
+        "Pairs": {
+          "shape": "Pairs"
+        },
+        "Secret": {
+          "shape": "Secret"
+        }
+      }
+    },
+    "PutItemOutput": {
+      "type": "structure",
+      "members": {
+        "Id": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Ratio": {
+      "type": "double"
+    },
+    "RatioList": {
+      "type": "list",
+      "member": {
+        "shape": "Ratio"
+      }
+    },
+    "RatioMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Ratio"
+      }
+    },
+    "Rec": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "Text"
+        },
+        "Size": {
+          "shape": "Int"
+        }
+      }
+    },
+    "RecList": {
+      "type": "list",
+      "member": {
+        "shape": "Rec"
+      }
+    },
+    "RecMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Rec"
+      }
+    },
+    "Secret": {
+      "type": "structure",
+      "members": {
+        "Value": {
+          "shape": "Text"
+        }
+      },
+      "sensitive": true,
+      "deprecated": true
+    },
+    "SelectItemsInput": {
+      "type": "structure",
+      "members": {
+        "RequestItems": {
+          "shape": "TextMap"
+        },
+        "TransactItems": {
+          "shape": "Transacts"
+        },
+        "Spec": {
+          "shape": "Spec"
+        }
+      }
+    },
+    "Share": {
+      "type": "double",
+      "max": 1.0,
+      "sensitive": true,
+      "deprecated": true
+    },
+    "Small": {
+      "type": "integer",
+      "max": 10,
+      "sensitive": true,
+      "deprecated": true
+    },
+    "Span": {
+      "type": "long",
+      "min": 1,
+      "max": 100,
+      "sensitive": true,
+      "deprecated": true
+    },
+    "Spec": {
+      "type": "structure",
+      "members": {
+        "TableName": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Text": {
+      "type": "string"
+    },
+    "TextList": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      }
+    },
+    "TextMap": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Text"
+      }
+    },
+    "Throttled": {
+      "type": "structure",
+      "exception": true,
+      "retryable": {
+        "throttling": true
+      },
+      "error": {
+        "httpStatusCode": 400
+      },
+      "members": {
+        "Message": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Toggle": {
+      "type": "boolean",
+      "sensitive": true,
+      "deprecated": true
+    },
+    "Transact": {
+      "type": "structure",
+      "members": {
+        "Get": {
+          "shape": "Get"
+        },
+        "Put": {
+          "shape": "Get"
+        }
+      }
+    },
+    "Transacts": {
+      "type": "list",
+      "member": {
+        "shape": "Transact"
+      }
+    },
+    "When": {
+      "type": "timestamp"
+    }
+  }
+}

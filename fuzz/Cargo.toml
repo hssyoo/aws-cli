@@ -16,6 +16,7 @@ client = { path = "../crates/client", features = ["testing"] }
 model = { path = "../crates/model", features = ["testing"] }
 timestamp = { path = "../crates/timestamp", features = ["testing"] }
 awscli-argparse = { path = "../crates/awscli-argparse", features = ["testing"] }
+endpoint-rules = { path = "../crates/endpoint-rules" }
 
 [[bin]]
 name = "pool_reservations"
@@ -139,6 +140,13 @@ bench = false
 [[bin]]
 name = "argparse_convert"
 path = "fuzz_targets/argparse_convert.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "endpoint_rules"
+path = "fuzz_targets/endpoint_rules.rs"
 test = false
 doc = false
 bench = false
