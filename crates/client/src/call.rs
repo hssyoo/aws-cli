@@ -26,22 +26,17 @@ use crate::credentials::CredentialSource;
 use crate::endpoint::{EndpointConfig, EndpointData};
 use crate::error::CallError;
 use crate::hooks::{CallContext, Customization, Hooks, Slots};
-use crate::http::{Headers, HttpRequest, HttpResponse, Method};
+use crate::http::{Headers, HttpRequest, HttpResponse};
 use crate::protocol::{self, ClientProtocol, ParseHooks, Serialized};
-use crate::retry::{ErrorKind, Standard};
 use crate::runtime::Runtime;
+use crate::runtime_components::RuntimeComponents;
 use crate::transport::{Timeouts, Transport};
 pub use crate::useragent::UserAgentContext;
 use cli_core::client_config::ClientSettings;
 use cli_core::client_config::user_agent::Features;
-use model::schema::{Flag, OperationSchema};
 use model::shapes::Model;
-use model::value::{Map, Value};
+use model::value::Value;
 use std::sync::Arc;
-use std::time::Duration;
-
-/// botocore's standard mode default (`DEFAULT_MAX_ATTEMPTS`).
-const DEFAULT_MAX_ATTEMPTS: u32 = 3;
 
 /// Everything a client is built from, one per service.
 #[derive(Debug)]
@@ -75,10 +70,18 @@ pub struct Output {
 /// A client of one service.
 #[derive(Debug)]
 pub struct Client {
-    pub(crate) parts: ClientParts,
-    pub(crate) protocol: &'static dyn ClientProtocol,
+    /// The model directory name, which customizations scope by.
+    pub(crate) service: String,
+    pub(crate) model: Arc<Model>,
+    pub(crate) settings: ClientSettings,
+    pub(crate) customizations: &'static [&'static Customization],
+    pub(crate) parse: ParseHooks,
+    pub(crate) user_agent: UserAgentContext,
+    /// The client configuration, built once by `Client::new`: every call
+    /// and page of the client shares its one retry strategy and quota.
+    pub(crate) components: RuntimeComponents,
+    /// The service's customizations, which op scope filters per call.
     pub(crate) hooks: Hooks,
-    pub(crate) retry: Standard,
     pub(crate) region: Option<String>,
     pub(crate) timeouts: Timeouts,
 }
@@ -121,31 +124,7 @@ impl Client {
         parts: ClientParts,
         protocol: &'static dyn ClientProtocol,
     ) -> Result<Self, CallError> {
-        let hooks = Hooks::for_service(parts.customizations, &parts.service);
-        let configured = parts
-            .settings
-            .max_attempts
-            .as_ref()
-            .map(|attempts| u32::try_from(attempts.value).unwrap_or(u32::MAX));
-        let max_attempts = hooks
-            .defaults()
-            .max_attempts(configured)
-            .unwrap_or(DEFAULT_MAX_ATTEMPTS);
-        let base = hooks.defaults().retry_base_delay();
-        let retry = Standard::new(max_attempts, base.unwrap_or(ErrorKind::Transient.base()));
-        let region = parts.endpoint.client_region(&parts.endpoints)?;
-        let timeouts = Timeouts {
-            connect: timeout(parts.settings.connect_timeout_ms.value),
-            read: timeout(parts.settings.read_timeout_ms.value),
-        };
-        Ok(Self {
-            parts,
-            protocol,
-            hooks,
-            retry,
-            region,
-            timeouts,
-        })
+        crate::orchestrator::configure(parts, protocol)
     }
     /// Runs `operation` with `input`: [`Self::prepare`], then [`Self::send`].
     ///
@@ -173,16 +152,7 @@ impl Client {
     }
     /// The service's model.
     pub(crate) fn model(&self) -> &Model {
-        &self.parts.model
-    }
-}
-
-/// A timeout in milliseconds as the transport takes it: 0, botocore's
-/// "none", is the longest the transport can wait.
-fn timeout(milliseconds: u32) -> Duration {
-    match milliseconds {
-        0 => Duration::from_millis(u64::from(u32::MAX)),
-        ms => Duration::from_millis(u64::from(ms)),
+        &self.model
     }
 }
 
@@ -218,35 +188,6 @@ impl Client {
     ) -> Result<Prepared, CallError> {
         crate::orchestrator::prepare(self, operation, input, extra)
     }
-    /// `generate_idempotent_uuid`: each input member marked
-    /// `idempotencyToken` and left out gets `str(uuid.uuid4())`.
-    pub(crate) fn fill_idempotency_tokens(
-        &self,
-        operation: OperationSchema<'_>,
-        input: &mut Value,
-    ) {
-        let Some(shape) = operation.input() else {
-            return;
-        };
-        let tokens: Vec<&str> = shape
-            .members()
-            .filter(|member| member.flag(Flag::IdempotencyToken))
-            .filter_map(|member| member.member_name())
-            .collect();
-        if tokens.is_empty() {
-            return;
-        }
-        if *input == Value::Null {
-            *input = Value::Map(Map::new());
-        }
-        if let Value::Map(map) = input {
-            for name in tokens {
-                if !map.contains_key(name) {
-                    map.insert(name.to_owned(), Value::String(self.parts.runtime.uuid4()));
-                }
-            }
-        }
-    }
 }
 
 impl Client {
@@ -258,33 +199,10 @@ impl Client {
     pub fn send(&self, prepared: Prepared) -> Result<Output, CallError> {
         crate::orchestrator::send(self, prepared)
     }
-    /// The core's part of an attempt's `modify_before_transmit`: the
-    /// unsigned headers, after the signature (`add_retry_headers`, with
-    /// `max` as `seed_max_attempts` seeds it, then `_prepare_headers`).
-    pub(crate) fn attempt_request(
-        &self,
-        request: &mut HttpRequest,
-        attempt: u32,
-        invocation: &str,
-        ttl: Option<&str>,
-    ) {
-        request.headers.set("amz-sdk-invocation-id", invocation);
-        let ttl = ttl.map(|ttl| format!("ttl={ttl}; ")).unwrap_or_default();
-        let max = self.retry.max_attempts();
-        request.headers.set(
-            "amz-sdk-request",
-            format!("{ttl}attempt={attempt}; max={max}"),
-        );
-        let framed = !matches!(request.method, Method::Get | Method::Head | Method::Options);
-        if framed && !request.headers.contains("Content-Length") {
-            request
-                .headers
-                .set("Content-Length", request.body.len().to_string());
-        }
-    }
     /// A parsed response no retry was decided for: the quota's refund
     /// (`release_retry_quota`), then `modify_before_completion`, the
-    /// `modify_output` stage.
+    /// `modify_output` stage. It stays a method here, where the source
+    /// path tests of `testing::defines` name it.
     pub(crate) fn succeeded(
         &self,
         cx: &mut CallContext<'_>,
@@ -293,7 +211,7 @@ impl Client {
         mut value: Value,
         last_cost: Option<u32>,
     ) -> Result<Output, CallError> {
-        self.retry.succeeded(last_cost);
+        self.components.retry_strategy.succeeded(last_cost);
         for hook in self.hooks.interceptors(cx.operation.name()) {
             hook.modify_output(cx, &mut value)
                 .map_err(|error| CallError::Hook(error.after_prepare()))?;

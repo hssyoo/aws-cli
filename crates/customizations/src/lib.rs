@@ -72,11 +72,11 @@ pub static CORE: Customization = Customization {
     replaces: &[
         (
             "botocore.handlers.generate_idempotent_uuid",
-            implemented("client::call::Client::fill_idempotency_tokens"),
+            implemented("client::orchestrator::prepare::fill_idempotency_tokens"),
         ),
         (
             "botocore.handlers.add_retry_headers",
-            implemented("client::call::Client::attempt_request"),
+            implemented("client::orchestrator::send::modify_before_transmit"),
         ),
         (
             "botocore.handlers.set_operation_specific_signer",
@@ -125,7 +125,7 @@ pub static CORE: Customization = Customization {
         ),
         (
             "botocore.retries.standard.MaxAttemptsSeeder.seed_max_attempts",
-            implemented("client::call::Client::attempt_request"),
+            implemented("client::orchestrator::send::modify_before_transmit"),
         ),
         (
             "botocore.retries.standard.RetryHandler.needs_retry",
