@@ -1,5 +1,6 @@
 use super::*;
 use crate::protocol::Protocol;
+use model::shapes::Model;
 use model::value::Key;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -426,7 +427,11 @@ fn header_maps_take_every_header_with_the_prefix() -> TestResult {
 #[test]
 fn the_request_id_comes_from_either_header() -> TestResult {
     let model = model()?;
-    let operation = model.operation("None").ok_or("operation")?;
+    let operation = model
+        .schema()
+        .service()
+        .operation("None")
+        .ok_or("operation")?;
     for (headers, metadata) in [
         (
             &[("x-amzn-requestid", "a"), ("x-amz-request-id", "b")][..],
@@ -443,8 +448,7 @@ fn the_request_id_comes_from_either_header() -> TestResult {
         (&[], "{}"),
     ] {
         let parsed = RestJson.do_parse(
-            &model,
-            operation.output,
+            operation.output(),
             &response(200, headers, b"not json"),
             &ParseOptions::BOTOCORE,
         )?;

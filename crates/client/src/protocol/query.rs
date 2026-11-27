@@ -6,7 +6,8 @@ use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse, Method};
 use crate::xml::{self, Element};
 use model::pyrepr::{float_from_text, int_from_text, py_repr, py_str, py_str_text};
-use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
+use model::schema::{Flag, OperationSchema, Schema, ShapeType};
+use model::shapes::{Model, Operation};
 use model::value::{Key, Map, Value};
 
 /// The `query` protocol.
@@ -28,16 +29,17 @@ impl Protocol for Query {
         operation: &Operation,
         input: &Value,
     ) -> Result<Serialized, SerializeError> {
+        let schema = common::operation_schema(model, operation).map_err(SerializeError::new)?;
         let version = model
-            .metadata()
-            .api_version
-            .as_deref()
+            .schema()
+            .service()
+            .version()
             .ok_or_else(|| SerializeError::new("'apiVersion'"))?;
         let mut form = Form::default();
-        form.set("Action", operation.name.to_string().into_bytes());
+        form.set("Action", schema.name().as_bytes().to_vec());
         form.set("Version", version.as_bytes().to_vec());
-        if let Some(shape) = operation.input {
-            form.value(model, input, shape, "")?;
+        if let Some(shape) = schema.input() {
+            form.value(input, shape, "")?;
         }
         let mut headers = Headers::new();
         headers.set(
@@ -45,12 +47,12 @@ impl Protocol for Query {
             "application/x-www-form-urlencoded; charset=utf-8",
         );
         Ok(Serialized {
-            method: method(operation)?,
+            method: method(schema)?,
             path: "/".into(),
             query: String::new(),
             headers,
             body: form.encoded()?.into_bytes(),
-            host_prefix: common::host_prefix(model, operation, input)?,
+            host_prefix: common::host_prefix(schema, input)?,
         })
     }
 
@@ -61,7 +63,10 @@ impl Protocol for Query {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
-        common::parse(self, model, operation.output, response, options)
+        let output = common::operation_schema(model, operation)
+            .map_err(ParseError::new)?
+            .output();
+        common::parse(self, output, response, options)
     }
 
     fn parse_error(
@@ -76,8 +81,8 @@ impl Protocol for Query {
 }
 
 /// `http.method`, `POST` by default.
-pub(super) fn method(operation: &Operation) -> Result<Method, SerializeError> {
-    let name = operation.http.method.as_deref().unwrap_or("POST");
+pub(super) fn method(operation: OperationSchema<'_>) -> Result<Method, SerializeError> {
+    let name = operation.http_method().unwrap_or("POST");
     Method::parse(name).ok_or_else(|| SerializeError::new(format!("unsupported method {name}")))
 }
 
@@ -119,35 +124,33 @@ impl Form {
     /// `QuerySerializer._serialize` of `value` at `prefix`.
     fn value(
         &mut self,
-        model: &Model,
         value: &Value,
-        shape: ShapeId,
+        shape: Schema<'_>,
         prefix: &str,
     ) -> Result<(), SerializeError> {
-        let resolved = model.shape(shape);
-        match &resolved.kind {
-            ShapeKind::Structure { .. } => self.structure(model, value, shape, prefix),
-            ShapeKind::List { member } => self.list(model, value, shape, *member, prefix),
-            ShapeKind::Map { key, value: item } => {
-                self.map(model, value, shape, (*key, *item), prefix)
+        match shape.shape_type() {
+            _ if common::is_structure(shape) => self.structure(value, shape, prefix),
+            ShapeType::List => {
+                let member = common::list_member(shape).map_err(SerializeError::new)?;
+                self.list(value, shape, member, prefix)
             }
-            ShapeKind::Blob => {
+            ShapeType::Map => {
+                let entry = common::map_entry(shape).map_err(SerializeError::new)?;
+                self.map(value, shape, entry, prefix)
+            }
+            ShapeType::Blob => {
                 self.set(prefix, common::base64_in(value)?.into_bytes());
                 Ok(())
             }
-            ShapeKind::Timestamp => {
-                let format = resolved
-                    .traits
-                    .timestamp_format
-                    .as_deref()
-                    .unwrap_or("iso8601");
+            ShapeType::Timestamp => {
+                let format = shape.timestamp_format_text().unwrap_or("iso8601");
                 self.set(
                     prefix,
                     py_str(&common::timestamp_out(value, format)?).into_bytes(),
                 );
                 Ok(())
             }
-            ShapeKind::Boolean => {
+            ShapeType::Boolean => {
                 let text = if crate::python::truthy(value) {
                     "true"
                 } else {
@@ -156,7 +159,7 @@ impl Form {
                 self.set(prefix, text.as_bytes().to_vec());
                 Ok(())
             }
-            ShapeKind::Float | ShapeKind::Double => {
+            ShapeType::Float | ShapeType::Double => {
                 self.set(prefix, py_str(&common::special_float(value)).into_bytes());
                 Ok(())
             }
@@ -170,9 +173,8 @@ impl Form {
 
     fn structure(
         &mut self,
-        model: &Model,
         value: &Value,
-        shape: ShapeId,
+        shape: Schema<'_>,
         prefix: &str,
     ) -> Result<(), SerializeError> {
         let Value::Map(map) = value else {
@@ -182,16 +184,16 @@ impl Form {
             )));
         };
         for (key, item) in map.iter() {
-            let member = common::member(model, shape, key)?;
+            let member = common::member(shape, key)?;
             // `member` found it, so the key is a member's name.
             let key = key.text();
-            let name = model.shape(member).traits.name.as_deref().unwrap_or(&key);
+            let name = member.location_name().unwrap_or(&key);
             let member_prefix = if prefix.is_empty() {
                 name.to_owned()
             } else {
                 format!("{prefix}.{name}")
             };
-            self.value(model, item, member, &member_prefix)?;
+            self.value(item, member, &member_prefix)?;
         }
         Ok(())
     }
@@ -200,10 +202,9 @@ impl Form {
     /// member's name in place of the last part of the prefix.
     fn list(
         &mut self,
-        model: &Model,
         value: &Value,
-        shape: ShapeId,
-        member: ShapeId,
+        shape: Schema<'_>,
+        member: Schema<'_>,
         prefix: &str,
     ) -> Result<(), SerializeError> {
         let items = match value {
@@ -214,8 +215,8 @@ impl Form {
             self.set(prefix, Vec::new());
             return Ok(());
         }
-        let member_name = model.shape(member).traits.name.as_deref();
-        let list_prefix = if model.shape(shape).traits.is(Flag::Flattened) {
+        let member_name = member.location_name();
+        let list_prefix = if shape.flag(Flag::XmlFlattened) {
             match member_name {
                 Some(name) => match prefix.rsplit_once('.') {
                     Some((head, _)) => format!("{head}.{name}"),
@@ -227,7 +228,7 @@ impl Form {
             format!("{prefix}.{}", member_name.unwrap_or("member"))
         };
         for (index, item) in items.iter().enumerate() {
-            self.value(model, item, member, &format!("{list_prefix}.{}", index + 1))?;
+            self.value(item, member, &format!("{list_prefix}.{}", index + 1))?;
         }
         Ok(())
     }
@@ -236,47 +237,30 @@ impl Form {
     /// `entry` when flattened, with the key and value shapes' names.
     fn map(
         &mut self,
-        model: &Model,
         value: &Value,
-        shape: ShapeId,
-        (key_shape, value_shape): (ShapeId, ShapeId),
+        shape: Schema<'_>,
+        (key_shape, value_shape): (Schema<'_>, Schema<'_>),
         prefix: &str,
     ) -> Result<(), SerializeError> {
         let Value::Map(map) = value else {
             return Err(SerializeError::new("a dict is required"));
         };
-        let full = if model.shape(shape).traits.is(Flag::Flattened) {
+        let full = if shape.flag(Flag::XmlFlattened) {
             prefix.to_owned()
         } else {
             format!("{prefix}.entry")
         };
-        let key_name = model
-            .shape(key_shape)
-            .traits
-            .name
-            .as_deref()
-            .unwrap_or("key");
-        let value_name = model
-            .shape(value_shape)
-            .traits
-            .name
-            .as_deref()
-            .unwrap_or("value");
+        let key_name = key_shape.location_name().unwrap_or("key");
+        let value_name = value_shape.location_name().unwrap_or("value");
         for (index, (key, item)) in map.iter().enumerate() {
             let number = index + 1;
             let key_value = key.to_value();
             self.value(
-                model,
                 &key_value,
                 key_shape,
                 &format!("{full}.{number}.{key_name}"),
             )?;
-            self.value(
-                model,
-                item,
-                value_shape,
-                &format!("{full}.{number}.{value_name}"),
-            )?;
+            self.value(item, value_shape, &format!("{full}.{number}.{value_name}"))?;
         }
         Ok(())
     }
@@ -351,27 +335,31 @@ fn document(body: &[u8]) -> Result<Element, ParseError> {
     })
 }
 
-struct Reader<'m, 'o> {
-    model: &'m Model,
+struct Reader<'o> {
     options: &'o ParseOptions<'o>,
 }
 
-impl Reader<'_, '_> {
+impl Reader<'_> {
     /// `_parse_shape`.
-    fn shape(&self, shape: ShapeId, node: &Node<'_>) -> Result<Value, ParseError> {
-        match &self.model.shape(shape).kind {
-            ShapeKind::Structure { .. } => self.structure(shape, node).map(Value::Map),
-            ShapeKind::List { member } => self.list(shape, *member, node),
-            ShapeKind::Map { key, value } => self.map(shape, (*key, *value), node),
-            kind => self.scalar(kind, node),
+    fn shape(&self, shape: Schema<'_>, node: &Node<'_>) -> Result<Value, ParseError> {
+        match shape.shape_type() {
+            _ if common::is_structure(shape) => self.structure(shape, node).map(Value::Map),
+            ShapeType::List => {
+                let member = common::list_member(shape).map_err(ParseError::new)?;
+                self.list(shape, member, node)
+            }
+            ShapeType::Map => {
+                let entry = common::map_entry(shape).map_err(ParseError::new)?;
+                self.map(shape, entry, node)
+            }
+            shape_type => self.scalar(shape_type, node),
         }
     }
 
     /// `_handle_structure`: members by their XML names, attributes for
     /// `xmlAttribute` members, header members skipped.
-    fn structure(&self, shape: ShapeId, node: &Node<'_>) -> Result<Map, ParseError> {
-        let model = self.model;
-        let node = if model.shape(shape).traits.is(Flag::Exception) {
+    fn structure(&self, shape: Schema<'_>, node: &Node<'_>) -> Result<Map, ParseError> {
+        let node = if shape.flag(Flag::Error) {
             error_root(node)
         } else {
             node.clone()
@@ -383,23 +371,22 @@ impl Reader<'_, '_> {
             .map(|(name, _)| Key::from(name.as_str()))
             .collect();
         let present: Vec<&Key> = names.iter().collect();
-        if let Some(tag) = common::unknown_union_member(model, shape, &present)? {
+        if let Some(tag) = common::unknown_union_member(shape, &present)? {
             return Ok(common::unknown_member_value(tag));
         }
         let mut parsed = Map::new();
-        for member in model.members(shape) {
-            let traits = &model.shape(member.shape).traits;
-            if traits.location.is_some() || traits.is(Flag::EventHeader) {
+        for member in shape.members() {
+            if member.location().is_some() || member.flag(Flag::EventHeader) {
                 continue;
             }
-            let name = xml_name(model, member.shape, &member.name);
-            if let Some(child) = lookup(&mapping, name) {
-                parsed.insert(member.name.to_string(), self.shape(member.shape, child)?);
-            } else if traits.is(Flag::XmlAttribute)
+            let member_name = common::member_name(member);
+            if let Some(child) = lookup(&mapping, xml_name(member)) {
+                parsed.insert(member_name.to_owned(), self.shape(member, child)?);
+            } else if member.flag(Flag::XmlAttribute)
                 && let Some(value) =
-                    attribute(node.first(), traits.name.as_deref().unwrap_or_default())
+                    attribute(node.first(), member.location_name().unwrap_or_default())
             {
-                parsed.insert(member.name.to_string(), Value::String(value));
+                parsed.insert(member_name.to_owned(), Value::String(value));
             }
         }
         Ok(parsed)
@@ -407,8 +394,13 @@ impl Reader<'_, '_> {
 
     /// `_handle_list`: a flattened list's repeated elements, else the
     /// element's children.
-    fn list(&self, shape: ShapeId, member: ShapeId, node: &Node<'_>) -> Result<Value, ParseError> {
-        let flattened = self.model.shape(shape).traits.is(Flag::Flattened);
+    fn list(
+        &self,
+        shape: Schema<'_>,
+        member: Schema<'_>,
+        node: &Node<'_>,
+    ) -> Result<Value, ParseError> {
+        let flattened = shape.flag(Flag::XmlFlattened);
         let items: Vec<&Element> = match node {
             Node::Many(elements) => elements.clone(),
             Node::One(element) if flattened => vec![*element],
@@ -426,26 +418,15 @@ impl Reader<'_, '_> {
     /// do.
     fn map(
         &self,
-        shape: ShapeId,
-        (key_shape, value_shape): (ShapeId, ShapeId),
+        shape: Schema<'_>,
+        (key_shape, value_shape): (Schema<'_>, Schema<'_>),
         node: &Node<'_>,
     ) -> Result<Value, ParseError> {
-        let model = self.model;
-        let key_name = model
-            .shape(key_shape)
-            .traits
-            .name
-            .as_deref()
-            .unwrap_or("key");
-        let value_name = model
-            .shape(value_shape)
-            .traits
-            .name
-            .as_deref()
-            .unwrap_or("value");
+        let key_name = key_shape.location_name().unwrap_or("key");
+        let value_name = value_shape.location_name().unwrap_or("value");
         let entries: Vec<&Element> = match node {
             Node::Many(elements) => elements.clone(),
-            Node::One(element) if model.shape(shape).traits.is(Flag::Flattened) => vec![*element],
+            Node::One(element) if shape.flag(Flag::XmlFlattened) => vec![*element],
             Node::One(element) => element.children.iter().collect(),
         };
         let mut parsed = Map::new();
@@ -471,7 +452,7 @@ impl Reader<'_, '_> {
 
     /// The scalar handlers, each reading the element's text (`''` when it
     /// has none).
-    fn scalar(&self, kind: &ShapeKind, node: &Node<'_>) -> Result<Value, ParseError> {
+    fn scalar(&self, shape_type: ShapeType, node: &Node<'_>) -> Result<Value, ParseError> {
         let Node::One(element) = node else {
             return Err(ParseError::new(
                 "expected one element, found a repeated one",
@@ -481,14 +462,14 @@ impl Reader<'_, '_> {
         let invalid = |what: &str| {
             ParseError::new(format!("{what}: {}", py_repr(&Value::String(text.into()))))
         };
-        match kind {
-            ShapeKind::Boolean => Ok(Value::Bool(text == "true")),
-            ShapeKind::Float | ShapeKind::Double => float_from_text(text)
+        match shape_type {
+            ShapeType::Boolean => Ok(Value::Bool(text == "true")),
+            ShapeType::Float | ShapeType::Double => float_from_text(text)
                 .map(Value::Float)
                 .ok_or_else(|| invalid("could not convert string to float")),
-            ShapeKind::Integer | ShapeKind::Long => int_from_text(text).map_err(ParseError::new),
-            ShapeKind::Timestamp => (self.options.timestamp)(&Value::String(text.into())),
-            ShapeKind::Blob => (self.options.blob)(&Value::String(text.into())),
+            ShapeType::Integer | ShapeType::Long => int_from_text(text).map_err(ParseError::new),
+            ShapeType::Timestamp => (self.options.timestamp)(&Value::String(text.into())),
+            ShapeType::Blob => (self.options.blob)(&Value::String(text.into())),
             _ => Ok(Value::String(text.into())),
         }
     }
@@ -496,15 +477,14 @@ impl Reader<'_, '_> {
 
 /// `_member_key_name`: a flattened list's member name, else the member's
 /// `locationName`, else its name.
-fn xml_name<'m>(model: &'m Model, shape: ShapeId, member: &'m str) -> &'m str {
-    let resolved = model.shape(shape);
-    if let ShapeKind::List { member: item } = resolved.kind
-        && resolved.traits.is(Flag::Flattened)
-        && let Some(name) = model.shape(item).traits.name.as_deref()
+fn xml_name(member: Schema<'_>) -> &str {
+    if member.shape_type() == ShapeType::List
+        && member.flag(Flag::XmlFlattened)
+        && let Some(name) = member.list_member().and_then(Schema::location_name)
     {
         return name;
     }
-    resolved.traits.name.as_deref().unwrap_or(member)
+    common::wire_name(member)
 }
 
 /// An `xmlAttribute` member's value: the attribute whose name, with its
@@ -554,14 +534,13 @@ impl Family for Query {
     /// `_parse_body_as_xml` with the metadata injected.
     fn do_parse(
         &self,
-        model: &Model,
-        shape: Option<ShapeId>,
+        shape: Option<Schema<'_>>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
         let root = document(&response.body)?;
         let mut parsed = match shape {
-            Some(shape) => body_shape(model, shape, &root, options)?,
+            Some(shape) => body_shape(shape, &root, options)?,
             None => Map::new(),
         };
         if let Some(metadata) = lookup(&by_name(&Node::One(&root)), "ResponseMetadata") {
@@ -604,24 +583,22 @@ impl Family for Query {
     /// `_parse_body_as_xml` without the metadata.
     fn do_modeled_error_parse(
         &self,
-        model: &Model,
-        shape: ShapeId,
+        shape: Schema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Map, ParseError> {
-        body_shape(model, shape, &document(&response.body)?, options)
+        body_shape(shape, &document(&response.body)?, options)
     }
 }
 
 /// The shape parsed from the root, or from the `resultWrapper` element.
 fn body_shape(
-    model: &Model,
-    shape: ShapeId,
+    shape: Schema<'_>,
     root: &Element,
     options: &ParseOptions<'_>,
 ) -> Result<Map, ParseError> {
-    let reader = Reader { model, options };
-    let start = match model.shape(shape).traits.result_wrapper.as_deref() {
+    let reader = Reader { options };
+    let start = match shape.result_wrapper() {
         Some(wrapper) => lookup(&by_name(&Node::One(root)), wrapper)
             .cloned()
             .ok_or_else(|| ParseError::new(format!("'{wrapper}'")))?,

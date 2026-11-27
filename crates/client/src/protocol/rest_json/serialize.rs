@@ -12,7 +12,8 @@ use crate::protocol::query::method;
 use crate::protocol::{Serialized, common, json};
 use model::pyjson::{Options, dumps};
 use model::pyrepr::py_str;
-use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
+use model::schema::{Flag, OperationSchema, Schema, ShapeType};
+use model::shapes::{Model, Operation};
 use model::value::{Key, Map, Value};
 
 /// `BaseRestSerializer.serialize_to_request` with `RestJSONSerializer`'s
@@ -27,17 +28,24 @@ pub(super) fn request(
     operation: &Operation,
     input: &Value,
 ) -> Result<Serialized, SerializeError> {
+    let operation = common::operation_schema(model, operation).map_err(SerializeError::new)?;
+    operation_request(operation, input)
+}
+
+/// [`request`] of the operation's schema.
+fn operation_request(
+    operation: OperationSchema<'_>,
+    input: &Value,
+) -> Result<Serialized, SerializeError> {
     let method = method(operation)?;
-    let host_prefix = common::host_prefix(model, operation, input)?;
+    let host_prefix = common::host_prefix(operation, input)?;
     let template = || {
         operation
-            .http
-            .request_uri
-            .as_deref()
+            .http_request_uri()
             .ok_or_else(|| SerializeError::new("'requestUri'"))
     };
     // `if shape is None`: the template as it is, labels and all.
-    let Some(shape) = operation.input else {
+    let Some(shape) = operation.input() else {
         let (path, query) = split_uri(template()?);
         return Ok(Serialized {
             method,
@@ -51,13 +59,13 @@ pub(super) fn request(
     let Value::Map(params) = input else {
         return Err(no_items(input));
     };
-    let partitioned = partition(model, shape, params)?;
+    let partitioned = partition(shape, params)?;
     let url_path = render_uri_template(template()?, &partitioned.uri)?;
     let (path, uri_query) = split_uri(&url_path);
     let query = joined_query(uri_query, &partitioned.query)?;
     let mut headers = partitioned.headers;
-    let payload = Payload::of(model, shape)?;
-    let body = body(model, shape, payload, params, &partitioned.body)?;
+    let payload = Payload::of(shape)?;
+    let body = body(shape, payload, params, &partitioned.body)?;
     serialize_content_type(payload, &body, &mut headers);
     Ok(Serialized {
         method,
@@ -102,29 +110,28 @@ struct Partitioned {
 /// not `None`, in the caller's order: each member by its `location`
 /// (`uri`, `querystring`, `header`, `headers`) under its `locationName`,
 /// the rest into the body.
-fn partition(model: &Model, shape: ShapeId, params: &Map) -> Result<Partitioned, SerializeError> {
+fn partition(shape: Schema<'_>, params: &Map) -> Result<Partitioned, SerializeError> {
     let mut parts = Partitioned::default();
     for (name, value) in params.iter() {
         if *value == Value::Null {
             continue;
         }
-        let member = common::member(model, shape, name)?;
-        let resolved = model.shape(member);
+        let member = common::member(shape, name)?;
         // `member` found it, so the key is a member's name.
         let name_text = name.text();
-        let key = resolved.traits.name.as_deref().unwrap_or(&name_text);
-        match resolved.traits.location.as_deref() {
+        let key = member.location_name().unwrap_or(&name_text);
+        match member.location() {
             Some("uri") => {
                 parts
                     .uri
-                    .insert(key.to_owned(), uri_and_query_value(model, member, value)?);
+                    .insert(key.to_owned(), uri_and_query_value(member, value)?);
             }
-            Some("querystring") => query_param(model, member, key, value, &mut parts.query)?,
+            Some("querystring") => query_param(member, key, value, &mut parts.query)?,
             Some("header") => {
                 // `if not param_value and shape.type_name == 'list'`.
                 let empty = matches!(value, Value::List(items) if items.is_empty());
-                if !(empty && matches!(resolved.kind, ShapeKind::List { .. })) {
-                    let converted = convert_header_value(model, member, value)?;
+                if !(empty && member.shape_type() == ShapeType::List) {
+                    let converted = convert_header_value(member, value)?;
                     parts.headers.set(key, converted);
                 }
             }
@@ -142,30 +149,30 @@ fn partition(model: &Model, shape: ShapeId, params: &Map) -> Result<Partitioned,
 /// converted, anything else converted. A list member's value that is not a
 /// list is refused, even text, which Python would iterate.
 fn query_param(
-    model: &Model,
-    member: ShapeId,
+    member: Schema<'_>,
     key: &str,
     value: &Value,
     query: &mut Map,
 ) -> Result<(), SerializeError> {
-    match (value, &model.shape(member).kind) {
+    match (value, member.shape_type()) {
         (Value::Map(map), _) => {
             for (name, item) in map.iter() {
                 query.insert_key(name.clone(), item.clone());
             }
         }
-        (_, ShapeKind::List { member: item }) => {
+        (_, ShapeType::List) => {
+            let item = common::list_member(member).map_err(SerializeError::new)?;
             let Value::List(items) = value else {
                 return Err(not_iterable(value));
             };
             let converted = items
                 .iter()
-                .map(|value| uri_and_query_value(model, *item, value))
+                .map(|value| uri_and_query_value(item, value))
                 .collect::<Result<_, _>>()?;
             query.insert(key.to_owned(), Value::List(converted));
         }
         _ => {
-            query.insert(key.to_owned(), uri_and_query_value(model, member, value)?);
+            query.insert(key.to_owned(), uri_and_query_value(member, value)?);
         }
     }
     Ok(())
@@ -175,19 +182,14 @@ fn query_param(
 /// timestamp in its `timestampFormat` (`iso8601` by default), a float as
 /// its `str()` with the special values spelled out, anything else as it
 /// is.
-fn uri_and_query_value(
-    model: &Model,
-    shape: ShapeId,
-    value: &Value,
-) -> Result<Value, SerializeError> {
-    let resolved = model.shape(shape);
-    Ok(match resolved.kind {
-        ShapeKind::Boolean => Value::String(py_str(value).to_lowercase()),
-        ShapeKind::Timestamp => {
-            let format = resolved.traits.timestamp_format.as_deref();
+fn uri_and_query_value(shape: Schema<'_>, value: &Value) -> Result<Value, SerializeError> {
+    Ok(match shape.shape_type() {
+        ShapeType::Boolean => Value::String(py_str(value).to_lowercase()),
+        ShapeType::Timestamp => {
+            let format = shape.timestamp_format_text();
             common::timestamp_out(value, format.unwrap_or("iso8601"))?
         }
-        ShapeKind::Float | ShapeKind::Double => {
+        ShapeType::Float | ShapeType::Double => {
             Value::String(py_str(&common::special_float(value)))
         }
         _ => value.clone(),
@@ -221,28 +223,24 @@ fn serialize_header_map(
 /// `false`; anything else as its `str()`. A list value that is not a list
 /// is refused, even text or a dict, which Python would iterate; validation
 /// lets none through.
-fn convert_header_value(
-    model: &Model,
-    shape: ShapeId,
-    value: &Value,
-) -> Result<String, SerializeError> {
-    let resolved = model.shape(shape);
-    match &resolved.kind {
-        ShapeKind::Timestamp => {
+fn convert_header_value(shape: Schema<'_>, value: &Value) -> Result<String, SerializeError> {
+    match shape.shape_type() {
+        ShapeType::Timestamp => {
             // `calendar.timegm(datetime_obj.utctimetuple())`.
             let seconds = common::instant(value)
                 .map(|at| Value::Integer(at.unix_seconds()))
                 .ok_or_else(|| {
                     SerializeError::new(format!("Invalid timestamp \"{}\"", py_str(value)))
                 })?;
-            let format = resolved.traits.timestamp_format.as_deref();
+            let format = shape.timestamp_format_text();
             common::timestamp_out(&seconds, format.unwrap_or("rfc822")).map(|out| py_str(&out))
         }
-        ShapeKind::List { member } => {
+        ShapeType::List => {
+            let member = common::list_member(shape).map_err(SerializeError::new)?;
             let Value::List(items) = value else {
                 return Err(not_iterable(value));
             };
-            let strings = matches!(model.shape(*member).kind, ShapeKind::String);
+            let strings = member.shape_type() == ShapeType::String;
             let converted = items
                 .iter()
                 .filter(|item| **item != Value::Null)
@@ -253,21 +251,18 @@ fn convert_header_value(
                         "argument of type '{}' is not iterable",
                         common::short_type(other)
                     ))),
-                    other => convert_header_value(model, *member, other),
+                    other => convert_header_value(member, other),
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(converted.join(","))
         }
-        ShapeKind::String
-            if resolved.traits.is(Flag::JsonValue)
-                && resolved.traits.location.as_deref() == Some("header") =>
-        {
+        ShapeType::String if shape.flag(Flag::JsonValue) && shape.location() == Some("header") => {
             let text = dumps(value, &Options::compact(), None)
                 .map_err(|error| SerializeError::new(error.to_string()))?;
             Ok(pytext::base64::encode(text.as_bytes()))
         }
-        ShapeKind::Boolean => Ok(py_str(value).to_lowercase()),
-        ShapeKind::Float | ShapeKind::Double => Ok(py_str(&common::special_float(value))),
+        ShapeType::Boolean => Ok(py_str(value).to_lowercase()),
+        ShapeType::Float | ShapeType::Double => Ok(py_str(&common::special_float(value))),
         // Python sends the `str` on to `http.client`, whose latin-1 encode
         // fails inside the HTTP layer; no paginator puts a token in a
         // header, so only a starting token's key naming a header member
@@ -406,21 +401,18 @@ fn encode_bytes(bytes: &[u8], safe: &[u8]) -> String {
 #[derive(Clone, Copy)]
 struct Payload<'a> {
     name: &'a str,
-    shape: ShapeId,
+    shape: Schema<'a>,
     /// `_has_streaming_payload`: a blob or a string, sent as it is.
     raw: bool,
 }
 
 impl<'a> Payload<'a> {
-    fn of(model: &'a Model, shape: ShapeId) -> Result<Option<Self>, SerializeError> {
-        let Some(name) = model.shape(shape).traits.payload.as_deref() else {
+    fn of(shape: Schema<'a>) -> Result<Option<Self>, SerializeError> {
+        let Some(name) = shape.payload() else {
             return Ok(None);
         };
-        let member = common::member(model, shape, &Key::from(name))?;
-        let raw = matches!(
-            model.shape(member).kind,
-            ShapeKind::Blob | ShapeKind::String
-        );
+        let member = common::member(shape, &Key::from(name))?;
+        let raw = matches!(member.shape_type(), ShapeType::Blob | ShapeType::String);
         Ok(Some(Self {
             name,
             shape: member,
@@ -435,8 +427,7 @@ impl<'a> Payload<'a> {
 /// `{}` when none is set but the input has a member with no location
 /// (`_requires_empty_body`), else nothing.
 fn body(
-    model: &Model,
-    shape: ShapeId,
+    shape: Schema<'_>,
     payload: Option<Payload<'_>>,
     params: &Map,
     body_members: &Map,
@@ -449,16 +440,13 @@ fn body(
             (None, true) => Ok(Vec::new()),
             (Some(value), true) => encode_payload(value),
             (None, false) => Ok(b"{}".to_vec()),
-            (Some(value), false) => serialize_body_params(model, value, payload.shape),
+            (Some(value), false) => serialize_body_params(value, payload.shape),
         };
     }
     if !body_members.is_empty() {
-        return serialize_body_params(model, &Value::Map(body_members.clone()), shape);
+        return serialize_body_params(&Value::Map(body_members.clone()), shape);
     }
-    let requires_empty_body = model
-        .members(shape)
-        .iter()
-        .any(|member| model.shape(member.shape).traits.location.is_none());
+    let requires_empty_body = shape.members().any(|member| member.location().is_none());
     Ok(if requires_empty_body {
         b"{}".to_vec()
     } else {
@@ -490,16 +478,9 @@ fn encode_payload(value: &Value) -> Result<Vec<u8>, SerializeError> {
 /// the value is serialized into. A structure's members are the dict's;
 /// anything else (a document, say) is set under the key `None`, which
 /// `json.dumps` writes as `"null"`.
-fn serialize_body_params(
-    model: &Model,
-    value: &Value,
-    shape: ShapeId,
-) -> Result<Vec<u8>, SerializeError> {
-    let resolved = model.shape(shape);
-    let serialized = json::serialized(model, value, shape)?;
-    let body = if matches!(resolved.kind, ShapeKind::Structure { .. })
-        && !resolved.traits.is(Flag::Document)
-    {
+fn serialize_body_params(value: &Value, shape: Schema<'_>) -> Result<Vec<u8>, SerializeError> {
+    let serialized = json::serialized(value, shape)?;
+    let body = if common::is_structure(shape) && !common::is_document(shape) {
         serialized
     } else {
         let mut wrapper = Map::new();

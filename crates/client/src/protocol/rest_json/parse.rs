@@ -5,10 +5,10 @@ use super::RestJson;
 use crate::error::ParseError;
 use crate::http::{Headers, HttpResponse};
 use crate::protocol::ParseOptions;
-use crate::protocol::common::{Family, short_type};
+use crate::protocol::common::{self, Family, short_type};
 use crate::protocol::json::{Json, Reader, body_json, error_code};
 use model::pyrepr::{float_from_py_text, int_from_py_text, int_from_text, py_repr, py_str_text};
-use model::shapes::{Model, ShapeId, ShapeKind};
+use model::schema::{Schema, ShapeType};
 use model::value::{Map, Value};
 
 mod rest;
@@ -17,12 +17,11 @@ impl Family for RestJson {
     /// `BaseRestParser._do_parse`.
     fn do_parse(
         &self,
-        model: &Model,
-        shape: Option<ShapeId>,
+        shape: Option<Schema<'_>>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
-        rest::do_parse(&reader(model, options), model, shape, response).map(Value::Map)
+        rest::do_parse(&reader(options), shape, response).map(Value::Map)
     }
 
     /// `RestJSONParser._do_error_parse`: `BaseJSONParser`'s message, code
@@ -45,36 +44,34 @@ impl Family for RestJson {
     /// `BaseRestParser._do_modeled_error_parse`.
     fn do_modeled_error_parse(
         &self,
-        model: &Model,
-        shape: ShapeId,
+        shape: Schema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Map, ParseError> {
-        rest::do_modeled_error_parse(&reader(model, options), model, shape, response)
+        rest::do_modeled_error_parse(&reader(options), shape, response)
     }
 }
 
 /// The `json` protocol's reader with [`handler`].
-fn reader<'m, 'o>(model: &'m Model, options: &'o ParseOptions<'o>) -> Reader<'m, 'o> {
+fn reader<'o>(options: &'o ParseOptions<'o>) -> Reader<'o> {
     Reader {
-        model,
         options,
         handler: Some(handler),
     }
 }
 
-impl rest::Body for Reader<'_, '_> {
+impl rest::Body for Reader<'_> {
     type Parsed = Value;
 
     fn initial(&self, body: &[u8]) -> Result<Value, ParseError> {
         initial_body_parse(body)
     }
 
-    fn parse(&self, shape: ShapeId, parsed: &Value) -> Result<Value, ParseError> {
+    fn parse(&self, shape: Schema<'_>, parsed: &Value) -> Result<Value, ParseError> {
         self.shape(shape, parsed)
     }
 
-    fn value(&self, shape: ShapeId, value: &Value) -> Result<Value, ParseError> {
+    fn value(&self, shape: Schema<'_>, value: &Value) -> Result<Value, ParseError> {
         self.shape(shape, value)
     }
 }
@@ -91,18 +88,19 @@ fn initial_body_parse(body: &[u8]) -> Result<Value, ParseError> {
 /// `_handle_integer` and `_handle_float` with their `long` and `double`
 /// aliases. `None` leaves the shape to `BaseJSONParser`.
 fn handler(
-    reader: &Reader<'_, '_>,
-    shape: ShapeId,
+    reader: &Reader<'_>,
+    shape: Schema<'_>,
     value: &Value,
 ) -> Option<Result<Value, ParseError>> {
-    let resolved = reader.model.shape(shape);
-    match &resolved.kind {
-        ShapeKind::String => rest::json_value(resolved, value),
-        ShapeKind::List { member } => rest::header_items(resolved, value)
-            .map(|items| items.and_then(|items| reader.list(*member, &items))),
-        ShapeKind::Boolean => Some(Ok(Value::Bool(ensure_boolean(value)))),
-        ShapeKind::Integer | ShapeKind::Long => Some(int(value)),
-        ShapeKind::Float | ShapeKind::Double => Some(float(value)),
+    match shape.shape_type() {
+        ShapeType::String => rest::json_value(shape, value),
+        ShapeType::List => rest::header_items(shape, value).map(|items| {
+            let items = items?;
+            reader.list(common::list_member(shape).map_err(ParseError::new)?, &items)
+        }),
+        ShapeType::Boolean => Some(Ok(Value::Bool(ensure_boolean(value)))),
+        ShapeType::Integer | ShapeType::Long => Some(int(value)),
+        ShapeType::Float | ShapeType::Double => Some(float(value)),
         _ => None,
     }
 }

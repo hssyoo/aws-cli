@@ -8,7 +8,8 @@ use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse};
 use model::pyjson::{LoadError, Options, dumps};
 use model::pyrepr::py_str;
-use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
+use model::schema::{Flag, Schema, ShapeType};
+use model::shapes::{Model, Operation};
 use model::value::{Key, Map, Value};
 
 /// The `json` protocol.
@@ -30,6 +31,7 @@ impl Protocol for Json {
         operation: &Operation,
         input: &Value,
     ) -> Result<Serialized, SerializeError> {
+        let schema = common::operation_schema(model, operation).map_err(SerializeError::new)?;
         let metadata = model.metadata();
         let missing = |key: &str| SerializeError::new(format!("'{key}'"));
         let target = metadata
@@ -41,24 +43,24 @@ impl Protocol for Json {
             .as_deref()
             .ok_or_else(|| missing("jsonVersion"))?;
         let mut headers = Headers::new();
-        headers.set("X-Amz-Target", format!("{target}.{}", operation.name));
+        headers.set("X-Amz-Target", format!("{target}.{}", schema.name()));
         headers.set("Content-Type", format!("application/x-amz-json-{version}"));
-        if metadata.aws_query_compatible {
+        if model.schema().service().query_compatible() {
             headers.set("x-amzn-query-mode", "true");
         }
-        let body = match operation.input {
-            Some(shape) => serialized(model, input, shape)?,
+        let body = match schema.input() {
+            Some(shape) => serialized(input, shape)?,
             None => Value::Map(Map::new()),
         };
         let body = dumps(&body, &Options::default(), None)
             .map_err(|error| SerializeError::new(error.to_string()))?;
         Ok(Serialized {
-            method: method(operation)?,
+            method: method(schema)?,
             path: "/".into(),
             query: String::new(),
             headers,
             body: body.into_bytes(),
-            host_prefix: common::host_prefix(model, operation, input)?,
+            host_prefix: common::host_prefix(schema, input)?,
         })
     }
 
@@ -69,7 +71,10 @@ impl Protocol for Json {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
-        common::parse(self, model, operation.output, response, options)
+        let output = common::operation_schema(model, operation)
+            .map_err(ParseError::new)?
+            .output();
+        common::parse(self, output, response, options)
     }
 
     fn parse_error(
@@ -84,16 +89,12 @@ impl Protocol for Json {
 }
 
 /// `JSONSerializer._serialize`: the value as the body holds it.
-pub(super) fn serialized(
-    model: &Model,
-    value: &Value,
-    shape: ShapeId,
-) -> Result<Value, SerializeError> {
-    let resolved = model.shape(shape);
-    match &resolved.kind {
-        ShapeKind::Structure { .. } if resolved.traits.is(Flag::Document) => Ok(value.clone()),
-        ShapeKind::Structure { .. } => structure(model, value, shape),
-        ShapeKind::Map { value: item, .. } => {
+pub(super) fn serialized(value: &Value, shape: Schema<'_>) -> Result<Value, SerializeError> {
+    match shape.shape_type() {
+        _ if common::is_structure(shape) && common::is_document(shape) => Ok(value.clone()),
+        _ if common::is_structure(shape) => structure(value, shape),
+        ShapeType::Map => {
+            let (_, item) = common::map_entry(shape).map_err(SerializeError::new)?;
             let Value::Map(map) = value else {
                 return Err(SerializeError::new("a dict is required"));
             };
@@ -102,13 +103,14 @@ pub(super) fn serialized(
                 let entry = if *entry == Value::Null {
                     Value::Null
                 } else {
-                    serialized(model, entry, *item)?
+                    serialized(entry, item)?
                 };
                 out.insert_key(key.clone(), entry);
             }
             Ok(Value::Map(out))
         }
-        ShapeKind::List { member } => {
+        ShapeType::List => {
+            let member = common::list_member(shape).map_err(SerializeError::new)?;
             let Value::List(items) = value else {
                 return Err(SerializeError::new("a list is required"));
             };
@@ -118,29 +120,25 @@ pub(super) fn serialized(
                     if *item == Value::Null {
                         Ok(Value::Null)
                     } else {
-                        serialized(model, item, *member)
+                        serialized(item, member)
                     }
                 })
                 .collect::<Result<_, _>>()?;
             Ok(Value::List(out))
         }
-        ShapeKind::Timestamp => {
-            let format = resolved
-                .traits
-                .timestamp_format
-                .as_deref()
-                .unwrap_or("unixtimestamp");
+        ShapeType::Timestamp => {
+            let format = shape.timestamp_format_text().unwrap_or("unixtimestamp");
             common::timestamp_out(value, format)
         }
-        ShapeKind::Blob => common::base64_in(value).map(Value::String),
-        ShapeKind::Float | ShapeKind::Double => Ok(common::special_float(value)),
+        ShapeType::Blob => common::base64_in(value).map(Value::String),
+        ShapeType::Float | ShapeType::Double => Ok(common::special_float(value)),
         _ => Ok(value.clone()),
     }
 }
 
 /// `_serialize_type_structure`: members in the caller's order, under their
 /// `locationName`.
-fn structure(model: &Model, value: &Value, shape: ShapeId) -> Result<Value, SerializeError> {
+fn structure(value: &Value, shape: Schema<'_>) -> Result<Value, SerializeError> {
     let Value::Map(map) = value else {
         return Err(SerializeError::new(format!(
             "'{}' object has no attribute 'items'",
@@ -149,11 +147,11 @@ fn structure(model: &Model, value: &Value, shape: ShapeId) -> Result<Value, Seri
     };
     let mut out = Map::with_capacity(map.len());
     for (key, item) in map.iter() {
-        let member = common::member(model, shape, key)?;
+        let member = common::member(shape, key)?;
         // A member's key is its name, which `member` found.
-        let name = model.shape(member).traits.name.as_deref();
+        let name = member.location_name();
         let name = name.map_or_else(|| key.clone(), Key::from);
-        out.insert_key(name, serialized(model, item, member)?);
+        out.insert_key(name, serialized(item, member)?);
     }
     Ok(Value::Map(out))
 }
@@ -183,42 +181,42 @@ pub(super) fn body_json(body: &[u8]) -> Result<Value, ParseError> {
 /// A subclass's own `_handle_<type>` for `shape`, ahead of
 /// `BaseJSONParser`'s: the parsed value, or `None` to leave the shape to
 /// the base.
-pub(super) type Handler = fn(&Reader<'_, '_>, ShapeId, &Value) -> Option<Result<Value, ParseError>>;
+pub(super) type Handler = fn(&Reader<'_>, Schema<'_>, &Value) -> Option<Result<Value, ParseError>>;
 
-pub(super) struct Reader<'m, 'o> {
-    pub(super) model: &'m Model,
+pub(super) struct Reader<'o> {
     pub(super) options: &'o ParseOptions<'o>,
     /// `None` for `JSONParser`, which overrides no handler.
     pub(super) handler: Option<Handler>,
 }
 
-impl Reader<'_, '_> {
+impl Reader<'_> {
     /// `_parse_shape`.
-    pub(super) fn shape(&self, shape: ShapeId, value: &Value) -> Result<Value, ParseError> {
+    pub(super) fn shape(&self, shape: Schema<'_>, value: &Value) -> Result<Value, ParseError> {
         if let Some(parsed) = self.handler.and_then(|handler| handler(self, shape, value)) {
             return parsed;
         }
-        let resolved = self.model.shape(shape);
-        match &resolved.kind {
-            ShapeKind::Structure { .. } if resolved.traits.is(Flag::Document) => Ok(value.clone()),
-            ShapeKind::Structure { .. } => self.structure(shape, value),
-            ShapeKind::Map { key, value: item } => self.map((*key, *item), value),
-            ShapeKind::List { member } => self.list(*member, value),
-            ShapeKind::Blob => match value {
+        match shape.shape_type() {
+            _ if common::is_structure(shape) && common::is_document(shape) => Ok(value.clone()),
+            _ if common::is_structure(shape) => self.structure(shape, value),
+            ShapeType::Map => self.map(common::map_entry(shape).map_err(ParseError::new)?, value),
+            ShapeType::List => {
+                self.list(common::list_member(shape).map_err(ParseError::new)?, value)
+            }
+            ShapeType::Blob => match value {
                 Value::String(_) | Value::PyString(_) => (self.options.blob)(value),
                 other => Err(ParseError::new(format!(
                     "argument should be a bytes-like object or ASCII string, not '{}'",
                     common::short_type(other)
                 ))),
             },
-            ShapeKind::Timestamp => (self.options.timestamp)(value),
+            ShapeType::Timestamp => (self.options.timestamp)(value),
             _ => Ok(value.clone()),
         }
     }
 
     /// `_handle_structure`: `null` stays `None`; members by their JSON
     /// names, `null` members left out.
-    fn structure(&self, shape: ShapeId, value: &Value) -> Result<Value, ParseError> {
+    fn structure(&self, shape: Schema<'_>, value: &Value) -> Result<Value, ParseError> {
         let map = match value {
             Value::Null => return Ok(Value::Null),
             Value::Map(map) => map,
@@ -234,22 +232,16 @@ impl Reader<'_, '_> {
             .filter(|(_, v)| **v != Value::Null)
             .map(|(k, _)| k)
             .collect();
-        if let Some(tag) = common::unknown_union_member(self.model, shape, &present)? {
+        if let Some(tag) = common::unknown_union_member(shape, &present)? {
             return Ok(Value::Map(common::unknown_member_value(tag)));
         }
         let mut parsed = Map::new();
-        for member in self.model.members(shape) {
-            let name = self
-                .model
-                .shape(member.shape)
-                .traits
-                .name
-                .as_deref()
-                .unwrap_or(&member.name);
-            match map.get(name) {
+        for member in shape.members() {
+            match map.get(common::wire_name(member)) {
                 None | Some(Value::Null) => {}
                 Some(raw) => {
-                    parsed.insert(member.name.to_string(), self.shape(member.shape, raw)?);
+                    let name = common::member_name(member);
+                    parsed.insert(name.to_owned(), self.shape(member, raw)?);
                 }
             }
         }
@@ -259,7 +251,7 @@ impl Reader<'_, '_> {
     /// `_handle_map`: keys through the key shape, `null` values kept.
     fn map(
         &self,
-        (key_shape, value_shape): (ShapeId, ShapeId),
+        (key_shape, value_shape): (Schema<'_>, Schema<'_>),
         value: &Value,
     ) -> Result<Value, ParseError> {
         let Value::Map(map) = value else {
@@ -286,7 +278,7 @@ impl Reader<'_, '_> {
     }
 
     /// `ResponseParser._handle_list`: `null` items kept.
-    pub(super) fn list(&self, member: ShapeId, value: &Value) -> Result<Value, ParseError> {
+    pub(super) fn list(&self, member: Schema<'_>, value: &Value) -> Result<Value, ParseError> {
         let Value::List(items) = value else {
             return Err(ParseError::new(format!(
                 "'{}' object is not iterable",
@@ -307,7 +299,7 @@ impl Reader<'_, '_> {
     }
 
     /// `_handle_json_body`: a structure, or `None` for a `null` body.
-    fn body(&self, shape: ShapeId, body: &[u8]) -> Result<Value, ParseError> {
+    fn body(&self, shape: Schema<'_>, body: &[u8]) -> Result<Value, ParseError> {
         match self.shape(shape, &body_json(body)?)? {
             parsed @ (Value::Map(_) | Value::Null) => Ok(parsed),
             other => Err(ParseError::new(format!(
@@ -334,20 +326,15 @@ impl Family for Json {
     /// `JSONParser._do_parse`.
     fn do_parse(
         &self,
-        model: &Model,
-        shape: Option<ShapeId>,
+        shape: Option<Schema<'_>>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
         let parsed = match shape {
-            Some(shape)
-                if model.shape(shape).traits.is(Flag::EventStream)
-                    || has_event_stream(model, shape) =>
-            {
+            Some(shape) if shape.flag(Flag::EventStream) || has_event_stream(shape) => {
                 return Err(ParseError::new("event stream responses are not supported"));
             }
             Some(shape) => Reader {
-                model,
                 options,
                 handler: None,
             }
@@ -410,13 +397,11 @@ impl Family for Json {
     /// `JSONParser._do_modeled_error_parse`.
     fn do_modeled_error_parse(
         &self,
-        model: &Model,
-        shape: ShapeId,
+        shape: Schema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Map, ParseError> {
         let reader = Reader {
-            model,
             options,
             handler: None,
         };
@@ -440,11 +425,8 @@ pub(super) fn error_code(code: &[u8]) -> Value {
 }
 
 /// `shape.event_stream_name`: a member marked `eventstream`.
-fn has_event_stream(model: &Model, shape: ShapeId) -> bool {
-    model
-        .members(shape)
-        .iter()
-        .any(|member| model.shape(member.shape).traits.is(Flag::EventStream))
+fn has_event_stream(shape: Schema<'_>) -> bool {
+    shape.members().any(|member| member.flag(Flag::EventStream))
 }
 
 #[cfg(test)]
