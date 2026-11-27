@@ -1,8 +1,8 @@
-//! rest-xml is built but switched off: staged for tests, refused by
+//! rest-xml is built but switched off: reachable from tests, refused by
 //! admission; and the request quirks the protocol suite leaves open.
 use super::*;
 use crate::admission::Unsupported;
-use crate::protocol::{IMPLEMENTED, STAGED, select};
+use crate::protocol::{IMPLEMENTED, SWITCHED_OFF, select};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -21,16 +21,18 @@ const MODEL: &str = r#"{
 }"#;
 
 #[test]
-fn rest_xml_is_staged_but_not_admitted() -> Result<()> {
+fn rest_xml_is_built_but_not_admitted() -> Result<()> {
     let model = Model::from_json(MODEL.as_bytes())?;
     assert_eq!(
         select(&model).err(),
         Some(Unsupported::Protocol("rest-xml".into()))
     );
     assert!(IMPLEMENTED.named("rest-xml").is_none());
-    let staged = STAGED.named("rest-xml").ok_or("staged")?;
-    assert_eq!(staged.protocol_id(), traits::REST_XML);
-    assert!(STAGED.get(traits::REST_XML).is_some());
+    let built = SWITCHED_OFF
+        .resolve(model.metadata())
+        .map_err(|unsupported| format!("{unsupported:?}"))?;
+    assert_eq!(built.protocol_id(), traits::REST_XML);
+    assert!(IMPLEMENTED.get(traits::REST_XML).is_none());
     Ok(())
 }
 

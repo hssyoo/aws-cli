@@ -1,6 +1,7 @@
 //! botocore's protocol suite for the rest-xml protocol, replayed as
 //! `aws-cli/tests/unit/botocore/test_protocols.py` replays it, through the
-//! staged protocol handle (rest-xml is built but not admitted): the same
+//! façade's handle to the protocols built but switched off (rest-xml is
+//! not admitted): the same
 //! per-case model, the same comparisons, and the same ignore list, read
 //! from `protocol-tests-ignore-list.json` when the test runs.
 //!

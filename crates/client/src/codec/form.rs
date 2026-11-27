@@ -7,6 +7,11 @@
 //! truthiness `true` or `false`, a float's special values by name, a blob
 //! in base64 and a timestamp in its format. There is no deserializer: the
 //! query protocol reads XML.
+//!
+//! [`EC2_FORM`] writes botocore's `EC2Serializer` body instead: a name is
+//! the `queryName`, else the `locationName` capitalized, else the member's
+//! own name, and a list's items are `Name.N` whatever its traits, an empty
+//! list writing nothing.
 use super::value::{ValueStruct, write_value};
 use crate::error::SerializeError;
 use crate::protocol::{base64_in, special_float, timestamp_out};
@@ -17,13 +22,33 @@ use model::serde::{
     ShapeDeserializer, ShapeSerializer,
 };
 use model::value::{Key, Value};
+use std::borrow::Cow;
 
-/// The form codec. It writes only.
+/// The form codec of one [`Dialect`]. It writes only.
 #[derive(Debug)]
-pub struct FormCodec;
+pub struct FormCodec {
+    dialect: Dialect,
+}
 
-/// The one [`FormCodec`].
-pub static FORM: FormCodec = FormCodec;
+/// The awsQuery [`FormCodec`].
+pub static FORM: FormCodec = FormCodec {
+    dialect: Dialect::Query,
+};
+
+/// The ec2Query [`FormCodec`].
+pub static EC2_FORM: FormCodec = FormCodec {
+    dialect: Dialect::Ec2,
+};
+
+/// Which botocore serializer's names and lists a form follows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Dialect {
+    /// `QuerySerializer`.
+    #[default]
+    Query,
+    /// `EC2Serializer`.
+    Ec2,
+}
 
 impl Codec for FormCodec {
     fn media_type(&self) -> &'static str {
@@ -31,7 +56,7 @@ impl Codec for FormCodec {
     }
 
     fn serializer(&self) -> Box<dyn FinishSerializer + '_> {
-        Box::new(FormSerializer::default())
+        Box::new(FormSerializer::new(self.dialect))
     }
 
     fn deserializer<'a>(
@@ -39,6 +64,32 @@ impl Codec for FormCodec {
         _body: &'a [u8],
     ) -> Result<Box<dyn ShapeDeserializer + 'a>, SerdeError> {
         Err(SerdeError::new("the form codec does not deserialize"))
+    }
+}
+
+impl Dialect {
+    /// `_get_serialized_name`: the name `schema` takes on the wire, or
+    /// `default` when its traits give none. `EC2Serializer` capitalizes a
+    /// `locationName` (`name[0].upper() + name[1:]`) but not `default`.
+    fn serialized_name<'s>(self, schema: Schema<'s>, default: &'s str) -> Cow<'s, str> {
+        match self {
+            Self::Query => Cow::Borrowed(schema.location_name().unwrap_or(default)),
+            Self::Ec2 => match (schema.ec2_query_name(), schema.location_name()) {
+                (Some(name), _) => Cow::Borrowed(name),
+                (None, Some(name)) => Cow::Owned(capitalized(name)),
+                (None, None) => Cow::Borrowed(default),
+            },
+        }
+    }
+}
+
+/// `name[0].upper() + name[1:]`: the first character in Python's full
+/// uppercase (`'ß'` becomes `'SS'`).
+fn capitalized(name: &str) -> String {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => String::new(),
     }
 }
 
@@ -63,9 +114,18 @@ enum Frame {
 pub struct FormSerializer {
     fields: Vec<(String, Vec<u8>)>,
     frames: Vec<Frame>,
+    dialect: Dialect,
 }
 
 impl FormSerializer {
+    /// An empty form that names its fields as `dialect` does.
+    pub fn new(dialect: Dialect) -> Self {
+        Self {
+            dialect,
+            ..Self::default()
+        }
+    }
+
     /// Sets the field `name`, as `serialized[name] = value` does.
     pub fn set(&mut self, name: &str, value: Vec<u8>) {
         match self.fields.iter_mut().find(|(other, _)| other == name) {
@@ -76,16 +136,15 @@ impl FormSerializer {
 
     /// The name of the value `schema` is about to be written as.
     fn name(&mut self, schema: Schema<'_>) -> String {
+        let dialect = self.dialect;
         match self.frames.last_mut() {
             None => String::new(),
             Some(Frame::Slot(name)) => name.take().unwrap_or_default(),
             Some(Frame::Members(prefix)) => {
-                let name = schema
-                    .location_name()
-                    .or_else(|| schema.member_name())
-                    .unwrap_or_default();
+                let default = schema.member_name().unwrap_or_default();
+                let name = dialect.serialized_name(schema, default);
                 if prefix.is_empty() {
-                    name.to_owned()
+                    name.into_owned()
                 } else {
                     format!("{prefix}.{name}")
                 }
@@ -156,6 +215,10 @@ impl ShapeSerializer for FormSerializer {
         items: &mut dyn FnMut(&mut dyn ShapeSerializer) -> SerdeResult,
     ) -> SerdeResult {
         let prefix = self.name(schema);
+        if self.dialect == Dialect::Ec2 {
+            // `EC2Serializer._serialize_type_list`: `Name.N`, nothing when empty.
+            return self.within(Frame::Items { prefix, written: 0 }, |form| items(form));
+        }
         if len == 0 {
             self.set(&prefix, Vec::new());
             return Ok(());
@@ -196,12 +259,13 @@ impl ShapeSerializer for FormSerializer {
         } else {
             format!("{prefix}.entry")
         };
+        let dialect = self.dialect;
         entries(&mut Entries {
             form: self,
             prefix,
             key,
-            key_name: key.location_name().unwrap_or("key"),
-            value_name: value.location_name().unwrap_or("value"),
+            key_name: dialect.serialized_name(key, "key"),
+            value_name: dialect.serialized_name(value, "value"),
             written: 0,
         })
     }
@@ -295,8 +359,8 @@ struct Entries<'f, 's> {
     form: &'f mut FormSerializer,
     prefix: String,
     key: Schema<'s>,
-    key_name: &'s str,
-    value_name: &'s str,
+    key_name: Cow<'s, str>,
+    value_name: Cow<'s, str>,
     written: usize,
 }
 

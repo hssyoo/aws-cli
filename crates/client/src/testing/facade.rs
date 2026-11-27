@@ -12,7 +12,7 @@
 use crate::admission::{Unsupported, static_refusal};
 use crate::credentials::{CredentialError, CredentialSource, SigningCredentials};
 use crate::endpoint::{EndpointConfig, EndpointInputs};
-use crate::protocol::{ClientProtocol, IMPLEMENTED, STAGED};
+use crate::protocol::{ClientProtocol, IMPLEMENTED, SWITCHED_OFF};
 use crate::useragent::{SessionExtras, UserAgentContext};
 use model::paginators::{Paginators, Refused};
 use model::source::{Kind, LoadError, Source};
@@ -178,11 +178,12 @@ pub fn protocol_named(name: &str) -> Option<ProtocolHandle> {
     IMPLEMENTED.named(name).map(ProtocolHandle)
 }
 
-/// The protocol named `query`, `json`, `rest-json` or `rest-xml`, those
-/// built but not yet admitted included: the handle by which tests reach a
-/// protocol no client speaks yet.
-pub fn staged_protocol_named(name: &str) -> Option<ProtocolHandle> {
-    STAGED.named(name).map(ProtocolHandle)
+/// The protocol named `name` among those implemented or built but switched
+/// off (`ec2`, `rest-xml`): admission refuses the latter, so tests reach them only here.
+pub fn built_protocol_named(name: &str) -> Option<ProtocolHandle> {
+    (IMPLEMENTED.named(name))
+        .or_else(|| SWITCHED_OFF.named(name))
+        .map(ProtocolHandle)
 }
 
 /// The protocol a client of `model` speaks, when one is implemented.

@@ -3,8 +3,8 @@
 use client::error::ParseError;
 use client::http::{Headers, HttpResponse};
 use client::testing::facade::{
-    Model, ProtocolHandle, botocore_blob, botocore_timestamp, input_members, model_from_json,
-    parse_case, parse_error_case, parse_options, serialize_case, staged_protocol_named,
+    Model, ProtocolHandle, botocore_blob, botocore_timestamp, built_protocol_named, input_members,
+    model_from_json, parse_case, parse_error_case, parse_options, serialize_case,
 };
 use client::xml::Element;
 use model::value::{Key, Map, Value};
@@ -25,7 +25,7 @@ fn read(path: PathBuf) -> Result<JsonDoc> {
 }
 
 fn protocol() -> Result<ProtocolHandle> {
-    Ok(staged_protocol_named(FILE).ok_or("rest-xml is not staged")?)
+    Ok(built_protocol_named(FILE).ok_or("rest-xml is not built")?)
 }
 
 /// `_should_ignore_test`.
@@ -658,10 +658,10 @@ fn a_body_that_is_not_xml_compares_as_bytes() {
     assert!(!same_body(b"", b"<A/>"));
 }
 
-/// The suite must reach rest-xml through the staged handle, and only
+/// The suite must reach rest-xml through the switched-off handle, and only
 /// there: admission's protocols still leave it out.
 #[test]
-fn rest_xml_is_staged_and_not_admitted() {
-    assert!(staged_protocol_named("rest-xml").is_some());
+fn rest_xml_is_built_and_not_admitted() {
+    assert!(built_protocol_named("rest-xml").is_some());
     assert!(client::testing::facade::protocol_named("rest-xml").is_none());
 }
