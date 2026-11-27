@@ -2,7 +2,8 @@
 //! and the cross-cutting `building-argument-table` handlers build it.
 use super::*;
 use awscli_argparse::{Action, Nargs};
-use model::shapes::{Flag, Member, Operation, ShapeId, ShapeKind};
+use model::schema::{Flag, OperationSchema, Schema, ShapeType};
+use model::shapes::{Member, Operation, ShapeId, ShapeKind};
 
 /// How argparse converts an option's value (`add_argument(type=...)`):
 /// `CLIArgument.TYPE_MAP` gives `long` members `int` and `float`/`double`
@@ -168,22 +169,20 @@ fn plain(name: &str, cli_type_name: &str, origin: Origin) -> DerivedArgument {
 /// `ListArgument` for a list, `BooleanArgument` (and its `--no-` twin) for a
 /// boolean, and `CLIArgument` for the rest.
 fn member_arguments(
-    model: &Model,
     member: &Member,
+    schema: Schema<'_>,
     required: bool,
     special: &SpecialCases,
 ) -> Vec<DerivedArgument> {
-    let shape = model.shape(member.shape);
     let name = xform_name(&member.name, "-", special);
-    let type_name = kind_name(&shape.kind);
     let origin = Origin::Member {
         member: member.name.clone(),
         shape: member.shape,
     };
-    let mut argument = plain(&name, type_name, origin);
-    argument.unpack = unpack(shape);
-    match shape.kind {
-        ShapeKind::Boolean => {
+    let mut argument = plain(&name, schema.type_name(), origin);
+    argument.unpack = unpack(schema);
+    match schema.shape_type() {
+        ShapeType::Boolean => {
             argument.action = Action::StoreTrue;
             argument.default_null = true;
             let mut negative = argument.clone();
@@ -192,9 +191,9 @@ fn member_arguments(
             negative.dest = Some(name.replace('-', "_").into());
             return vec![argument, negative];
         }
-        ShapeKind::List { .. } => argument.nargs = Some(Nargs::ZeroOrMore),
-        ShapeKind::Long => argument.value_type = Some(ValueType::Int),
-        ShapeKind::Float | ShapeKind::Double => argument.value_type = Some(ValueType::Float),
+        ShapeType::List => argument.nargs = Some(Nargs::ZeroOrMore),
+        ShapeType::Long => argument.value_type = Some(ValueType::Int),
+        ShapeType::Float | ShapeType::Double => argument.value_type = Some(ValueType::Float),
         _ => {}
     }
     argument.required = required;
@@ -204,13 +203,12 @@ fn member_arguments(
 /// How `_unpack_cli_arg` treats a member of `shape`: a JSON-value header
 /// (`is_json_value_header`) goes through `json.loads`, the scalars through
 /// `unpack_scalar_cli_arg`.
-fn unpack(shape: &model::shapes::Shape) -> Unpack {
-    let json_header =
-        shape.traits.is(Flag::JsonValue) && shape.traits.location.as_deref() == Some("header");
-    match shape.kind {
-        ShapeKind::String if !json_header => Unpack::AsIs,
-        ShapeKind::Long | ShapeKind::Boolean => Unpack::AsIs,
-        ShapeKind::Integer => Unpack::Integer,
+fn unpack(shape: Schema<'_>) -> Unpack {
+    let json_header = shape.flag(Flag::JsonValue) && shape.location() == Some("header");
+    match shape.shape_type() {
+        ShapeType::String if !json_header => Unpack::AsIs,
+        ShapeType::Long | ShapeType::Boolean => Unpack::AsIs,
+        ShapeType::Integer => Unpack::Integer,
         _ => Unpack::Deferred,
     }
 }
@@ -242,30 +240,39 @@ fn members_table(model: &Model, operation: &Operation, special: &SpecialCases) -
         customized: false,
         paging: None,
     };
-    let Some(input) = operation.input else {
+    let (Some(input), Some(schema)) = (operation.input, operation_schema(model, operation)) else {
         return table;
     };
-    let required = &model.shape(input).traits.required;
-    for member in model.members(input) {
-        let token = model.shape(member.shape).traits.is(Flag::IdempotencyToken);
-        let is_required = required.contains(&member.name) && !token;
-        for argument in member_arguments(model, member, is_required, special) {
+    let Some(input_schema) = schema.input() else {
+        return table;
+    };
+    // The arena's members name each argument's shape (`Origin::Member`);
+    // both readings list them in model order.
+    for (member, schema) in model.members(input).iter().zip(input_schema.members()) {
+        let token = schema.flag(Flag::IdempotencyToken);
+        let listed = input_schema.required().any(|name| name == &*member.name);
+        let is_required = listed && !token;
+        for argument in member_arguments(member, schema, is_required, special) {
             table.insert(argument);
         }
     }
     table
 }
 
+/// The operation's schema in the model's [`model::schema::SchemaSet`].
+fn operation_schema<'m>(model: &'m Model, operation: &Operation) -> Option<OperationSchema<'m>> {
+    model.schema().service().operation(&operation.name)
+}
+
 /// `OperationModel.has_streaming_output`: the output's payload member is a
 /// blob (`_get_streaming_body`).
 fn streaming_output(model: &Model, operation: &Operation) -> Option<Box<str>> {
-    let output = operation.output?;
-    let payload = model.shape(output).traits.payload.as_deref()?;
-    let member = model
-        .members(output)
-        .iter()
-        .find(|member| &*member.name == payload)?;
-    matches!(model.shape(member.shape).kind, ShapeKind::Blob).then(|| payload.into())
+    let output = operation_schema(model, operation)?.output()?;
+    let payload = output.payload()?;
+    let member = output
+        .members()
+        .find(|member| member.member_name() == Some(payload))?;
+    (member.shape_type() == ShapeType::Blob).then(|| payload.into())
 }
 
 /// `streamingoutputarg`, then `cliinput`, `paginate` and
@@ -402,12 +409,11 @@ fn shadow(table: &mut Table, paging: &mut Paging, option: DerivedArgument) {
 
 /// The limit key member's type, when `PageArgument.type_map` has it.
 fn limit_type<'m>(model: &'m Model, operation: &Operation, key: &str) -> Option<&'m str> {
-    let input = operation.input?;
-    let member = model
-        .members(input)
-        .iter()
-        .find(|member| &*member.name == key)?;
-    let name = kind_name(&model.shape(member.shape).kind);
+    let input = operation_schema(model, operation)?.input()?;
+    let member = input
+        .members()
+        .find(|member| member.member_name() == Some(key))?;
+    let name = member.type_name();
     matches!(name, "string" | "integer" | "long").then_some(name)
 }
 
