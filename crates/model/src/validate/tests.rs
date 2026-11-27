@@ -361,7 +361,8 @@ fn every_arena_shape_finds_a_schema_that_reads_the_same() -> Result<()> {
 fn a_reference_that_changes_document_or_union_validates_as_botocore_reads_it() -> Result<()> {
     let description = serde_json::json!({
         "metadata": {"protocol": "json"},
-        "operations": {"Op": {"name": "Op", "input": {"shape": "In"}, "output": {"shape": "Plain"}}},
+        "operations": {"Op": {"name": "Op", "input": {"shape": "In"},
+                              "output": {"shape": "Plain"}}},
         "shapes": {
             "In": {"type": "structure", "required": ["Absent2", "Absent1"], "members": {
                 "Absent1": {"shape": "Free"},
