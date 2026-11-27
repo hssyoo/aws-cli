@@ -77,6 +77,7 @@ const CLIENT: &[&str] = &[
     "cli-core",
     "credentials",
     "crt",
+    "endpoint-rules",
     "model",
     "pytext",
     "sigv4",
