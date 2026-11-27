@@ -110,9 +110,10 @@ fn a_paginated_operation_is_admitted_with_its_paginator() -> Result<()> {
 }
 
 /// The paginator entries the native paginator runs: plain member names
-/// (zjson's ListThings) and dotted paths (elasticache's
-/// DescribeEngineDefaultParameters); real JMESPath (kinesis's
-/// DescribeStream) is refused, and an operation without one has none.
+/// (zjson's ListThings), dotted paths (elasticache's
+/// DescribeEngineDefaultParameters) and JMESPath it evaluates (kinesis's
+/// DescribeStream); a comparator (zpages's ListCompared) is refused, and
+/// an operation without one has none.
 #[test]
 fn paginators_of_names_and_dotted_paths_are_run() -> Result<()> {
     with_models(|models| {
@@ -136,7 +137,20 @@ fn paginators_of_names_and_dotted_paths_are_run() -> Result<()> {
             result_keys,
             Some(vec!["EngineDefaults.Parameters".to_owned()])
         );
-        assert!(matches!(entry("kinesis", "describe-stream"), Some(Err(_))));
+        let shards = entry("kinesis", "describe-stream")
+            .and_then(std::result::Result::ok)
+            .map(|config| {
+                config
+                    .output_token
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect()
+            });
+        assert_eq!(
+            shards,
+            Some(vec!["StreamDescription.Shards[-1].ShardId".to_owned()])
+        );
+        assert!(matches!(entry("zpages", "list-compared"), Some(Err(_))));
         assert_eq!(entry("zjson", "measure"), None);
     })
 }
