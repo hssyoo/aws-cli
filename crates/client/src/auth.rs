@@ -4,13 +4,12 @@
 //! SigV4 signing over the `sigv4` crate. SigV4 and none are implemented;
 //! every other auth type is an admission refusal.
 use crate::admission::Unsupported;
-use crate::admission::operation_schema;
 use crate::credentials::SigningCredentials;
 use crate::endpoint::ResolvedEndpoint;
 use crate::error::CallError;
 use crate::http::{Headers, HttpRequest};
 use model::schema::OperationSchema;
-use model::shapes::{Model, Operation};
+use model::shapes::Model;
 use timestamp::Timestamp;
 
 /// A request's auth scheme, with what signing needs from the endpoint.
@@ -40,12 +39,7 @@ const AUTH_TRAITS: [(&str, &str); 4] = [
 ///
 /// # Errors
 /// An `auth` entry botocore does not know (`UnknownSignatureVersionError`).
-fn operation_auth_type(
-    operation: Option<OperationSchema<'_>>,
-) -> Result<Option<String>, Unsupported> {
-    let Some(operation) = operation else {
-        return Ok(None);
-    };
+fn operation_auth_type(operation: OperationSchema<'_>) -> Result<Option<String>, Unsupported> {
     match operation.auth().and_then(|mut traits| traits.next()) {
         Some(first) => resolve_auth_type(first).map(Some),
         None => Ok(operation.auth_type().map(str::to_owned)),
@@ -89,9 +83,8 @@ fn client_signature_version(model: &Model, signing: bool) -> Result<Option<Strin
 /// SigV4 nor none, or an unsigned payload under SigV4. An endpoint's
 /// `authSchemes` can still override the operation's type at resolution
 /// ([`select`]); refusing on the model's is the conservative reading.
-pub fn static_refusal(model: &Model, operation: &Operation) -> Option<Unsupported> {
-    let schema = operation_schema(model, operation);
-    let version = match operation_auth_type(schema) {
+pub fn static_refusal(model: &Model, operation: OperationSchema<'_>) -> Option<Unsupported> {
+    let version = match operation_auth_type(operation) {
         Err(unsupported) => return Some(unsupported),
         Ok(Some(version)) => version,
         Ok(None) => match client_signature_version(model, true) {
@@ -101,7 +94,7 @@ pub fn static_refusal(model: &Model, operation: &Operation) -> Option<Unsupporte
     };
     match version.as_str() {
         "none" => None,
-        "v4" if unsigned_payload(schema) => Some(Unsupported::UnsignedPayload),
+        "v4" if operation.unsigned_payload() => Some(Unsupported::UnsignedPayload),
         "v4" => None,
         other => Some(Unsupported::Auth(other.to_owned())),
     }
@@ -122,13 +115,12 @@ pub fn static_refusal(model: &Model, operation: &Operation) -> Option<Unsupporte
 pub fn select(
     model: &Model,
     service: &str,
-    operation: &Operation,
+    operation: OperationSchema<'_>,
     endpoint: &ResolvedEndpoint,
     signing: bool,
     client_region: Option<&str>,
 ) -> Result<AuthScheme, CallError> {
-    let schema = operation_schema(model, operation);
-    let mut auth_type = operation_auth_type(schema).map_err(CallError::Unsupported)?;
+    let mut auth_type = operation_auth_type(operation).map_err(CallError::Unsupported)?;
     let mut context = None;
     if !endpoint.auth_schemes.is_empty() {
         if signing {
@@ -144,7 +136,7 @@ pub fn select(
     };
     match version.as_deref() {
         None | Some("none") => return Ok(AuthScheme::None),
-        Some("v4") if unsigned_payload(schema) => {
+        Some("v4") if operation.unsigned_payload() => {
             return Err(CallError::Unsupported(Unsupported::UnsignedPayload));
         }
         Some("v4") => {}
@@ -166,11 +158,6 @@ pub fn select(
         }),
         _ => Err(CallError::NoRegion),
     }
-}
-
-/// `OperationModel.unsigned_payload`: the operation's `unsignedPayload`.
-fn unsigned_payload(operation: Option<OperationSchema<'_>>) -> bool {
-    operation.is_some_and(OperationSchema::unsigned_payload)
 }
 
 /// Signs `request` as `SigV4Auth.add_auth` does: over the Host the

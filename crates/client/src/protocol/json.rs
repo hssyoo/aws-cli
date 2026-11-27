@@ -8,8 +8,8 @@ use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse};
 use model::pyjson::{LoadError, Options, dumps};
 use model::pyrepr::py_str;
-use model::schema::{Flag, Schema, ShapeType};
-use model::shapes::{Model, Operation};
+use model::schema::{Flag, OperationSchema, Schema, ShapeType};
+use model::shapes::Model;
 use model::value::{Key, Map, Value};
 
 /// The `json` protocol.
@@ -28,10 +28,9 @@ impl Protocol for Json {
     fn serialize(
         &self,
         model: &Model,
-        operation: &Operation,
+        operation: OperationSchema<'_>,
         input: &Value,
     ) -> Result<Serialized, SerializeError> {
-        let schema = common::operation_schema(model, operation).map_err(SerializeError::new)?;
         let metadata = model.metadata();
         let missing = |key: &str| SerializeError::new(format!("'{key}'"));
         let target = metadata
@@ -43,44 +42,41 @@ impl Protocol for Json {
             .as_deref()
             .ok_or_else(|| missing("jsonVersion"))?;
         let mut headers = Headers::new();
-        headers.set("X-Amz-Target", format!("{target}.{}", schema.name()));
+        headers.set("X-Amz-Target", format!("{target}.{}", operation.name()));
         headers.set("Content-Type", format!("application/x-amz-json-{version}"));
         if model.schema().service().query_compatible() {
             headers.set("x-amzn-query-mode", "true");
         }
-        let body = match schema.input() {
+        let body = match operation.input() {
             Some(shape) => serialized(input, shape)?,
             None => Value::Map(Map::new()),
         };
         let body = dumps(&body, &Options::default(), None)
             .map_err(|error| SerializeError::new(error.to_string()))?;
         Ok(Serialized {
-            method: method(schema)?,
+            method: method(operation)?,
             path: "/".into(),
             query: String::new(),
             headers,
             body: body.into_bytes(),
-            host_prefix: common::host_prefix(schema, input)?,
+            host_prefix: common::host_prefix(operation, input)?,
         })
     }
 
     fn parse(
         &self,
-        model: &Model,
-        operation: &Operation,
+        _model: &Model,
+        operation: OperationSchema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
-        let output = common::operation_schema(model, operation)
-            .map_err(ParseError::new)?
-            .output();
-        common::parse(self, output, response, options)
+        common::parse(self, operation.output(), response, options)
     }
 
     fn parse_error(
         &self,
         model: &Model,
-        operation: &Operation,
+        operation: OperationSchema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<ServiceError, ParseError> {

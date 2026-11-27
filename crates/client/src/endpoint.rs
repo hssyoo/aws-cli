@@ -6,10 +6,10 @@
 //! The client sends no endpoint headers, so a resolution that returns any
 //! is refused ([`Unsupported::EndpointHeaders`]): of the rule sets this
 //! botocore ships, only s3control's returns them.
-use crate::admission::{Unsupported, operation_schema};
+use crate::admission::Unsupported;
 use crate::error::CallError;
-use model::schema::OperationSchema;
-use model::shapes::{Metadata, Model, Operation};
+use model::schema::{OperationSchema, ServiceSchema};
+use model::shapes::Model;
 use model::source::{Kind, LoadError, Source, load_data_bytes, load_service_bytes};
 use model::value::Value;
 use std::sync::{Arc, OnceLock};
@@ -139,12 +139,12 @@ impl EndpointData {
     pub fn load(
         source: &impl Source,
         service: &str,
-        metadata: &Metadata,
+        schema: ServiceSchema<'_>,
     ) -> Result<Self, DataError> {
         let (_, rules) = load_service_bytes(source, service, Kind::EndpointRuleSet)?;
         let partitions = load_data_bytes(source, "partitions")?;
         let endpoints = load_data_bytes(source, "endpoints")?;
-        let prefix = metadata.endpoint_prefix.as_deref().unwrap_or(service);
+        let prefix = schema.endpoint_prefix().unwrap_or(service);
         Self::from_documents(rules, partitions, Some((&endpoints, prefix)))
     }
     /// From the documents themselves: the rule set, the partitions, and
@@ -476,17 +476,15 @@ pub fn missing_builtin(
 /// credentials are known.
 pub fn provider_params(
     data: &EndpointData,
-    model: &Model,
-    operation: &Operation,
+    operation: OperationSchema<'_>,
     input: &Value,
     builtins: &Builtins,
     account_id: Option<&str>,
 ) -> EndpointParams {
     let mut params = EndpointParams::default();
-    let schema = operation_schema(model, operation);
     for def in &data.parameters {
-        let value = static_param(schema, &def.name)
-            .or_else(|| context_param(schema, input, &def.name))
+        let value = static_param(operation, &def.name)
+            .or_else(|| context_param(operation, input, &def.name))
             .or_else(|| match def.builtin.as_deref()? {
                 "AWS::Auth::AccountId" => account_id.map(|id| ParamValue::String(id.to_owned())),
                 builtin => builtins.get(builtin).cloned(),
@@ -510,11 +508,11 @@ pub fn provider_params(
 pub fn missing_client_context(
     data: &EndpointData,
     model: &Model,
-    operation: &Operation,
+    operation: OperationSchema<'_>,
 ) -> Option<String> {
-    let schema = operation_schema(model, operation);
-    let bound =
-        |name: &str| static_param(schema, name).is_some() || context_member(schema, name).is_some();
+    let bound = |name: &str| {
+        static_param(operation, name).is_some() || context_member(operation, name).is_some()
+    };
     let declared = model.schema().service().client_context_params();
     data.parameters
         .iter()
@@ -524,16 +522,16 @@ pub fn missing_client_context(
         .map(|def| def.name.clone())
 }
 
-fn static_param(operation: Option<OperationSchema<'_>>, name: &str) -> Option<ParamValue> {
-    let (_, value) = operation?
+fn static_param(operation: OperationSchema<'_>, name: &str) -> Option<ParamValue> {
+    let (_, value) = operation
         .static_context_params()
         .find(|(param, _)| *param == name)?;
     param_value(value)
 }
 
 /// The first input member whose `contextParam` names `name`.
-fn context_member<'s>(operation: Option<OperationSchema<'s>>, name: &str) -> Option<&'s str> {
-    operation?
+fn context_member<'s>(operation: OperationSchema<'s>, name: &str) -> Option<&'s str> {
+    operation
         .input()?
         .members()
         .find(|member| member.context_param() == Some(name))?
@@ -542,11 +540,7 @@ fn context_member<'s>(operation: Option<OperationSchema<'s>>, name: &str) -> Opt
 
 /// `OperationModel.context_parameters`: the input member whose
 /// `contextParam` names `name`, and its value in `input`.
-fn context_param(
-    operation: Option<OperationSchema<'_>>,
-    input: &Value,
-    name: &str,
-) -> Option<ParamValue> {
+fn context_param(operation: OperationSchema<'_>, input: &Value, name: &str) -> Option<ParamValue> {
     let member = context_member(operation, name)?;
     let Value::Map(input) = input else {
         return None;

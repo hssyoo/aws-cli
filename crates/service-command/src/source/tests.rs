@@ -7,9 +7,9 @@ fn a_rule_set_with_s3_built_ins_reads_the_s3_settings() -> crate::testing::Resul
     crate::testing::with_models(|models| {
         for (command, reads) in [("s3api", true), ("s3control", true), ("sts", false)] {
             let service = models.service(command).ok_or(command)?;
-            let endpoints =
-                EndpointData::load(models.search(), &service.name, service.model.metadata())
-                    .map_err(|error| format!("{command}: {error:?}"))?;
+            let schema = service.model.schema().service();
+            let endpoints = EndpointData::load(models.search(), &service.name, schema)
+                .map_err(|error| format!("{command}: {error:?}"))?;
             assert_eq!(reads_s3_settings(&endpoints), reads, "{command}");
         }
         Ok::<_, Box<dyn std::error::Error>>(())

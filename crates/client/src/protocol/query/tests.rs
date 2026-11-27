@@ -30,8 +30,11 @@ fn model() -> Result<Model, ParseError> {
     Model::from_json(MODEL.as_bytes()).map_err(|error| ParseError::new(error.to_string()))
 }
 
-fn go(model: &Model) -> &Operation {
-    &model.operations()[0]
+fn go(model: &Model) -> Result<OperationSchema<'_>, ParseError> {
+    let mut operations = model.schema().service().operations();
+    operations
+        .next()
+        .ok_or_else(|| ParseError::new("operation"))
 }
 
 fn input(json: &str) -> Value {
@@ -47,7 +50,7 @@ fn the_form_is_botocore_s() -> Result<(), Box<dyn std::error::Error>> {
     let model = model()?;
     let request = Query.serialize(
         &model,
-        go(&model),
+        go(&model)?,
         &input(r#"{"Text":"a b&c=é/~+*'!()","Tags":[],"On":1,"Name":"n"}"#),
     )?;
     let body = String::from_utf8_lossy(&request.body).into_owned();
@@ -84,7 +87,7 @@ fn attributes_and_metadata_are_read() -> Result<(), ParseError> {
     );
     let parsed = Query.parse(
         &model,
-        go(&model),
+        go(&model)?,
         &response(200, body),
         &ParseOptions::BOTOCORE,
     )?;
@@ -113,7 +116,7 @@ fn a_query_error_keeps_botocore_s_error_dict() -> Result<(), ParseError> {
         <Detail>d</Detail></Error><RequestId>id-2</RequestId></ErrorResponse>";
     let error = Query.parse_error(
         &model,
-        go(&model),
+        go(&model)?,
         &response(400, body),
         &ParseOptions::BOTOCORE,
     )?;
@@ -140,7 +143,7 @@ fn malformed_xml_is_a_response_parser_error() -> Result<(), ParseError> {
     let error = Query
         .parse(
             &model,
-            go(&model),
+            go(&model)?,
             &response(200, "<a>"),
             &ParseOptions::BOTOCORE,
         )
@@ -164,7 +167,7 @@ fn a_lone_surrogate_fails_the_form_as_urlencode_does() -> Result<(), Box<dyn std
         ])),
     );
     let failed = Query
-        .serialize(&model, go(&model), &Value::Map(fields))
+        .serialize(&model, go(&model)?, &Value::Map(fields))
         .err();
     assert_eq!(
         failed.map(|error| error.message),

@@ -2,6 +2,7 @@
 //! botocore's `RestJSONSerializer` and `prepare_request_dict` give for the
 //! same model and input.
 use super::*;
+use model::shapes::Model;
 use timestamp::Timestamp;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -85,15 +86,23 @@ const MODEL: &str = r#"{
 /// The request botocore would build for `operation` with `input`.
 fn serialize(operation: &str, input: Value) -> Result<Serialized, Box<dyn std::error::Error>> {
     let model = Model::from_json(MODEL.as_bytes())?;
-    let operation = model.operation(operation).ok_or("operation")?;
-    Ok(request(&model, operation, &input)?)
+    let operation = model
+        .schema()
+        .service()
+        .operation(operation)
+        .ok_or("operation")?;
+    Ok(request(operation, &input)?)
 }
 
 /// The error serializing `input` gives.
 fn refused(operation: &str, input: Value) -> Result<String, Box<dyn std::error::Error>> {
     let model = Model::from_json(MODEL.as_bytes())?;
-    let operation = model.operation(operation).ok_or("operation")?;
-    match request(&model, operation, &input) {
+    let operation = model
+        .schema()
+        .service()
+        .operation(operation)
+        .ok_or("operation")?;
+    match request(operation, &input) {
         Ok(_) => Err("serialized".into()),
         Err(error) => Ok(error.message),
     }

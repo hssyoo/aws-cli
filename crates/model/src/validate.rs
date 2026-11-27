@@ -3,12 +3,12 @@
 //! Python's `str()`.
 use crate::pyjson::{Options, dumps};
 use crate::pyrepr::{py_str, py_type};
-use crate::schema::{Bound, Flag, Schema, ShapeType, TraitId, traits};
-use crate::shapes::{Model, Operation, ShapeId};
+use crate::schema::{Bound, Flag, OperationSchema, Schema, ShapeType, TraitId, traits};
 use crate::value::Value;
 
 mod datetime;
 mod number;
+#[cfg(test)]
 mod root;
 
 /// The outcome of validating parameters.
@@ -61,27 +61,15 @@ impl std::fmt::Display for Report {
 
 /// `ParamValidationDecorator.serialize_to_request`'s check: an operation
 /// without an input shape takes any parameters.
-pub fn validate_input(model: &Model, operation: &Operation, params: &Value) -> Validation {
-    let Some(input) = operation.input else {
-        return Validation::Valid;
-    };
-    let schema = model.schema().service().operation(&operation.name);
-    match schema.and_then(|schema| schema.input()) {
-        Some(schema) => validate_schema(schema, params),
-        None => validate(model, input, params),
+pub fn validate_input(operation: OperationSchema<'_>, params: &Value) -> Validation {
+    match operation.input() {
+        Some(input) => validate(input, params),
+        None => Validation::Valid,
     }
 }
 
 /// `ParamValidator().validate(params, shape)`.
-pub fn validate(model: &Model, shape: ShapeId, params: &Value) -> Validation {
-    match root::schema_for(model, shape) {
-        Some(schema) => validate_schema(schema, params),
-        // Not a shape of this model's description: Python decides.
-        None => Validation::Undecided(Undecided::UnknownType(model.shape(shape).name.clone())),
-    }
-}
-
-fn validate_schema(shape: Schema<'_>, params: &Value) -> Validation {
+pub fn validate(shape: Schema<'_>, params: &Value) -> Validation {
     let mut validator = Validator {
         report: Report::default(),
     };

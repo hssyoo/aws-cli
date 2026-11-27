@@ -84,6 +84,8 @@ fn response(status: u16, headers: &[(&str, &str)], body: &[u8]) -> HttpResponse 
 fn output(operation: &str, headers: &[(&str, &str)], body: &[u8]) -> Result<Map, ParseError> {
     let model = Model::from_json(MODEL.as_bytes()).map_err(|e| ParseError::new(e.to_string()))?;
     let operation = model
+        .schema()
+        .service()
         .operation(operation)
         .ok_or_else(|| ParseError::new("operation"))?;
     match RestJson.parse(
@@ -104,6 +106,8 @@ fn output(operation: &str, headers: &[(&str, &str)], body: &[u8]) -> Result<Map,
 fn error(status: u16, headers: &[(&str, &str)], body: &str) -> Result<ServiceError, ParseError> {
     let model = Model::from_json(MODEL.as_bytes()).map_err(|e| ParseError::new(e.to_string()))?;
     let operation = model
+        .schema()
+        .service()
         .operation("Go")
         .ok_or_else(|| ParseError::new("operation"))?;
     RestJson.parse_error(
@@ -211,7 +215,11 @@ fn error_bodies_parse_as_base_json_parser_s() -> TestResult {
         );
     }
     let model = model()?;
-    let operation = model.operation("Go").ok_or("operation")?;
+    let operation = model
+        .schema()
+        .service()
+        .operation("Go")
+        .ok_or("operation")?;
     let latin = response(400, &[], b"{\"message\":\"\xe9\"}");
     assert_eq!(
         RestJson.parse_error(&model, operation, &latin, &ParseOptions::BOTOCORE),
@@ -552,7 +560,7 @@ fn a_gzip_body_fails_as_its_decode_does() {
 #[test]
 fn response_metadata_comes_before_the_output_s_members() -> TestResult {
     let model = model()?;
-    let operation = model.operation("Go").ok_or("Go")?;
+    let operation = model.schema().service().operation("Go").ok_or("Go")?;
     let parsed = RestJson.parse(
         &model,
         operation,

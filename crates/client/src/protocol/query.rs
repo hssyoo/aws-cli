@@ -7,7 +7,7 @@ use crate::http::{Headers, HttpResponse, Method};
 use crate::xml::{self, Element};
 use model::pyrepr::{float_from_text, int_from_text, py_repr, py_str, py_str_text};
 use model::schema::{Flag, OperationSchema, Schema, ShapeType};
-use model::shapes::{Model, Operation};
+use model::shapes::Model;
 use model::value::{Key, Map, Value};
 
 /// The `query` protocol.
@@ -26,19 +26,18 @@ impl Protocol for Query {
     fn serialize(
         &self,
         model: &Model,
-        operation: &Operation,
+        operation: OperationSchema<'_>,
         input: &Value,
     ) -> Result<Serialized, SerializeError> {
-        let schema = common::operation_schema(model, operation).map_err(SerializeError::new)?;
         let version = model
             .schema()
             .service()
             .version()
             .ok_or_else(|| SerializeError::new("'apiVersion'"))?;
         let mut form = Form::default();
-        form.set("Action", schema.name().as_bytes().to_vec());
+        form.set("Action", operation.name().as_bytes().to_vec());
         form.set("Version", version.as_bytes().to_vec());
-        if let Some(shape) = schema.input() {
+        if let Some(shape) = operation.input() {
             form.value(input, shape, "")?;
         }
         let mut headers = Headers::new();
@@ -47,32 +46,29 @@ impl Protocol for Query {
             "application/x-www-form-urlencoded; charset=utf-8",
         );
         Ok(Serialized {
-            method: method(schema)?,
+            method: method(operation)?,
             path: "/".into(),
             query: String::new(),
             headers,
             body: form.encoded()?.into_bytes(),
-            host_prefix: common::host_prefix(schema, input)?,
+            host_prefix: common::host_prefix(operation, input)?,
         })
     }
 
     fn parse(
         &self,
-        model: &Model,
-        operation: &Operation,
+        _model: &Model,
+        operation: OperationSchema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
-        let output = common::operation_schema(model, operation)
-            .map_err(ParseError::new)?
-            .output();
-        common::parse(self, output, response, options)
+        common::parse(self, operation.output(), response, options)
     }
 
     fn parse_error(
         &self,
         model: &Model,
-        operation: &Operation,
+        operation: OperationSchema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<ServiceError, ParseError> {

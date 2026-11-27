@@ -15,7 +15,7 @@ use client::paginate::PaginationConfig;
 use command::models::ModelSource;
 use model::paginators::Config;
 use model::schema::{Schema, ShapeType};
-use model::shapes::{Model, ShapeId, ShapeKind};
+use model::shapes::Model;
 use model::validate::{Validation, validate_input};
 use model::value::Value;
 
@@ -96,7 +96,7 @@ pub fn admit(
             });
         }
     };
-    let validation = validate_input(&service.model, operation, &call.input);
+    let validation = validate_input(operation, &call.input);
     if matches!(validation, Validation::Undecided(_)) {
         return Err(PythonReason::UnsupportedValue);
     }
@@ -107,7 +107,7 @@ pub fn admit(
     Ok(Outcome::Call(Box::new(Admitted {
         command: command.to_owned(),
         service: service.name.clone(),
-        operation: operation.name.to_string(),
+        operation: operation.name().to_owned(),
         input: call.input,
         validation,
         endpoints: decided.endpoints,
@@ -138,9 +138,9 @@ pub fn operation(
         return Err(PythonReason::UnsupportedSubcommand);
     };
     let model = &service.model;
-    let endpoints = EndpointData::load(source.search(), &service.name, model.metadata())
+    let endpoints = EndpointData::load(source.search(), &service.name, model.schema().service())
         .map_err(|_| PythonReason::EndpointData)?;
-    let entry = service.paginator(&operation.name);
+    let entry = service.paginator(operation.name());
     let refused = client::admission::static_refusal(
         model,
         operation,
@@ -168,7 +168,7 @@ pub fn operation(
     if entry.is_some() && !paged() {
         return Err(PythonReason::Paginator);
     }
-    if coverage::uncovered(&matches, customizations, &service.name, &operation.name).is_some() {
+    if coverage::uncovered(&matches, customizations, &service.name, operation.name()).is_some() {
         return Err(PythonReason::UnportedCustomization);
     }
     Ok(Decided {
@@ -213,68 +213,15 @@ pub fn reason(unsupported: &Unsupported) -> PythonReason {
 /// or one with none under a protocol whose default it is
 /// (`client::protocol::epoch_timestamps`). ISO 8601 and RFC 822 text
 /// carries its own offset.
-pub fn reaches_epoch_timestamp(model: &Model, shape: ShapeId) -> bool {
+pub fn reaches_epoch_timestamp(model: &Model, shape: Schema<'_>) -> bool {
     let json = client::protocol::epoch_timestamps(model).unwrap_or(false);
-    let Some(schema) = schema_of(model, shape) else {
-        return false;
-    };
-    reaches(schema, &mut Vec::new(), &|found| {
+    reaches(shape, &mut Vec::new(), &|found| {
         found.shape_type() == ShapeType::Timestamp
             && match found.timestamp_format_text() {
                 Some(format) => format == "unixTimestamp",
                 None => json,
             }
     })
-}
-
-/// The schema the C2J front-end built for the arena's `shape`: a named
-/// shape, an operation's input, output or error reference, or a member,
-/// list member, map key or value reference of a named shape. Every arena
-/// shape is one of these, since a reference's own shape keeps its target's
-/// children. Both readings keep the same order of each.
-fn schema_of(model: &Model, shape: ShapeId) -> Option<Schema<'_>> {
-    let schema = model.schema();
-    for (operation, view) in model.operations().iter().zip(schema.service().operations()) {
-        let refs = [
-            (operation.input, view.input()),
-            (operation.output, view.output()),
-        ];
-        let errors = operation
-            .errors
-            .iter()
-            .map(|id| Some(*id))
-            .zip(view.errors().map(Some));
-        if let Some((_, found)) = refs
-            .into_iter()
-            .chain(errors)
-            .find(|(id, _)| *id == Some(shape))
-        {
-            return found;
-        }
-    }
-    for (named, view) in model.named_shapes().zip(schema.named()) {
-        if named == shape {
-            return Some(view);
-        }
-        let found = match model.shape(named).kind {
-            ShapeKind::Structure { .. } => model
-                .members(named)
-                .iter()
-                .zip(view.members())
-                .find(|(member, _)| member.shape == shape)
-                .map(|(_, member)| member),
-            ShapeKind::List { member } => view.list_member().filter(|_| member == shape),
-            ShapeKind::Map { key, value } => [(key, view.map_key()), (value, view.map_value())]
-                .into_iter()
-                .find(|(id, _)| *id == shape)
-                .and_then(|(_, found)| found),
-            _ => None,
-        };
-        if found.is_some() {
-            return found;
-        }
-    }
-    None
 }
 
 /// Whether `wanted` holds for `shape` or a schema it reaches through

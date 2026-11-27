@@ -209,7 +209,7 @@ fn every_basis_holds() -> TestResult {
                 } => {
                     let carried = operation_with(key).ok_or(*key)?;
                     let model = Model::from_json(model_with(carried).as_bytes())?;
-                    let operation = model.operation("Op").ok_or("Op")?;
+                    let operation = model.schema().service().operation("Op").ok_or("Op")?;
                     let refused = client::admission::static_refusal(
                         &model,
                         operation,

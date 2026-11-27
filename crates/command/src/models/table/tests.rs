@@ -41,10 +41,12 @@ fn table(operation: &str, pages: Option<&Json>) -> Table {
     let model = Model::from_json(MODEL.as_bytes()).unwrap_or_else(|error| panic!("{error}"));
     let special = SpecialCases::default();
     let operation = model
+        .schema()
+        .service()
         .operation(operation)
         .unwrap_or_else(|| panic!("no {operation}"));
     let entry = pages.map(|json| Entry::from_value(&model::value::Value::from_serde(json)));
-    derive(&model, operation, entry.as_ref(), &special)
+    derive(operation, entry.as_ref(), &special)
 }
 
 fn find<'t>(table: &'t Table, name: &str) -> &'t DerivedArgument {

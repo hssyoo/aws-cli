@@ -258,7 +258,7 @@ fn removed_operations_leave_the_derived_tables() -> Result<()> {
         let invoke = lambda
             .operation("invoke")
             .unwrap_or_else(|| panic!("invoke"));
-        assert_eq!(&*invoke.name, "Invoke");
+        assert_eq!(invoke.name(), "Invoke");
         let table = source
             .table("lambda", "list-functions")
             .unwrap_or_else(|| panic!("list-functions"));
