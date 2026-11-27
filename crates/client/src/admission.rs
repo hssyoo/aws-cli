@@ -7,7 +7,8 @@
 use crate::endpoint::EndpointData;
 use crate::hooks::Customization;
 use model::paginators::{Config, Refused};
-use model::shapes::{Flag, Model, Operation, ShapeId, ShapeKind};
+use model::schema::{Flag, OperationSchema, Schema, ShapeType};
+use model::shapes::{Model, Operation};
 use model::validate::Undecided;
 
 /// Why a call is left to the Python route; each variant is one reason the
@@ -100,14 +101,20 @@ pub fn static_refusal(
     }
     // A key the model loader does not interpret may change what botocore
     // does with the call; the first one the operation reaches refuses it.
-    if let Some(uninterpreted) = model.uninterpreted_reached(operation).first() {
+    let schema = operation_schema(model, operation);
+    if let Some(uninterpreted) = schema.and_then(|schema| {
+        model
+            .schema()
+            .uninterpreted_reached(schema)
+            .first()
+            .copied()
+    }) {
         return Some(Unsupported::Trait(uninterpreted.key.to_string()));
     }
-    if let Some(unsupported) = unimplemented_trait(operation).or_else(|| streams(model, operation))
-    {
+    if let Some(unsupported) = unimplemented_trait(operation).or_else(|| schema.and_then(streams)) {
         return Some(unsupported);
     }
-    if !operation.operation_context_params.is_empty() {
+    if schema.is_some_and(|schema| schema.operation_context_params().next().is_some()) {
         return Some(Unsupported::OperationContextParams);
     }
     if let Some(unsupported) = crate::auth::static_refusal(model, operation) {
@@ -126,25 +133,29 @@ pub fn static_refusal(
         .map(Unsupported::Paginator)
 }
 
+/// The schema of `operation`, found by name in `model`'s schemas, for an
+/// operation of `model` (as every caller's is: [`Model::operation`]). The
+/// C2J front-end builds both from one description, in the same order.
+pub(crate) fn operation_schema<'m>(
+    model: &'m Model,
+    operation: &Operation,
+) -> Option<OperationSchema<'m>> {
+    model.schema().service().operation(&operation.name)
+}
+
 /// An event stream, a streaming member or a blob payload at either end of
 /// the operation, which botocore reads from the top-level members and the
 /// payload (`OperationModel.has_event_stream_input`, `has_streaming_output`
 /// and their kin).
-fn streams(model: &Model, operation: &Operation) -> Option<Unsupported> {
-    let reaches = |shape: Option<ShapeId>, flag: Flag| {
-        shape.is_some_and(|shape| {
-            model.shape(shape).traits.is(flag)
-                || model
-                    .members(shape)
-                    .iter()
-                    .any(|member| model.shape(member.shape).traits.is(flag))
-        })
+fn streams(operation: OperationSchema<'_>) -> Option<Unsupported> {
+    let reaches = |end: Option<Schema<'_>>, flag: Flag| {
+        end.is_some_and(|end| end.flag(flag) || end.members().any(|member| member.flag(flag)))
     };
-    let ends = [operation.input, operation.output];
+    let ends = [operation.input(), operation.output()];
     if ends.iter().any(|end| reaches(*end, Flag::EventStream)) {
         return Some(Unsupported::Trait("eventstream".to_owned()));
     }
-    let blob = |end: &Option<ShapeId>| end.is_some_and(|shape| blob_payload(model, shape));
+    let blob = |end: &Option<Schema<'_>>| end.is_some_and(blob_payload);
     if ends
         .iter()
         .any(|end| reaches(*end, Flag::Streaming) || blob(end))
@@ -157,15 +168,10 @@ fn streams(model: &Model, operation: &Operation) -> Option<Unsupported> {
 /// `OperationModel._get_streaming_body`: a `payload` member that is a blob
 /// streams whether or not it is marked `streaming`, so botocore returns it
 /// as a `StreamingBody` and the CLI writes it to `outfile`.
-fn blob_payload(model: &Model, shape: ShapeId) -> bool {
-    let Some(payload) = model.shape(shape).traits.payload.as_deref() else {
-        return false;
-    };
-    model
-        .members(shape)
-        .iter()
-        .find(|member| &*member.name == payload)
-        .is_some_and(|member| matches!(model.shape(member.shape).kind, ShapeKind::Blob))
+fn blob_payload(end: Schema<'_>) -> bool {
+    end.payload()
+        .and_then(|payload| end.member(payload))
+        .is_some_and(|member| member.shape_type() == ShapeType::Blob)
 }
 
 /// The first operation trait the client does not implement: request

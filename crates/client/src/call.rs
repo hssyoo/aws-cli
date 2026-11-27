@@ -29,7 +29,8 @@ use crate::transport::{Timeouts, Transport, TransportError};
 pub use crate::useragent::UserAgentContext;
 use cli_core::client_config::ClientSettings;
 use cli_core::client_config::user_agent::Features;
-use model::shapes::{Flag, Model, Operation};
+use model::schema::Flag;
+use model::shapes::{Model, Operation};
 use model::validate::{Validation, validate_input};
 use model::value::{Map, Value};
 use std::sync::Arc;
@@ -286,15 +287,14 @@ impl Client {
     /// `generate_idempotent_uuid`: each input member marked
     /// `idempotencyToken` and left out gets `str(uuid.uuid4())`.
     fn fill_idempotency_tokens(&self, operation: &Operation, input: &mut Value) {
-        let model = &self.parts.model;
-        let Some(shape) = operation.input else {
+        let schema = crate::admission::operation_schema(&self.parts.model, operation);
+        let Some(shape) = schema.and_then(|schema| schema.input()) else {
             return;
         };
-        let tokens: Vec<&str> = model
-            .members(shape)
-            .iter()
-            .filter(|member| model.shape(member.shape).traits.is(Flag::IdempotencyToken))
-            .map(|member| &*member.name)
+        let tokens: Vec<&str> = shape
+            .members()
+            .filter(|member| member.flag(Flag::IdempotencyToken))
+            .filter_map(|member| member.member_name())
             .collect();
         if tokens.is_empty() {
             return;

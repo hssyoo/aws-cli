@@ -19,7 +19,7 @@ use crate::error::{CallError, PaginationError};
 use cli_core::client_config::user_agent::{Feature, Features};
 use model::paginators::{Config, Expression};
 use model::pyrepr::{py_repr, py_str};
-use model::shapes::ShapeKind;
+use model::schema::ShapeType;
 use model::value::{Key, Map, Value};
 use std::borrow::Borrow;
 
@@ -279,19 +279,16 @@ fn page_size(
         )
         .into());
     };
-    let model = client.model();
-    let found = model
+    let found = (client.model().schema().service())
         .operation(operation)
         .ok_or_else(|| CallError::UnknownOperation(operation.to_owned()))?;
     let input = found
-        .input
+        .input()
         .ok_or_else(|| other("'NoneType' object has no attribute 'members'".into()))?;
-    let member = model
-        .members(input)
-        .iter()
-        .find(|member| *member.name == **limit_key)
+    let member = input
+        .member(limit_key)
         .ok_or_else(|| other("'NoneType' object has no attribute 'type_name'".into()))?;
-    if model.shape(member.shape).kind != ShapeKind::String {
+    if member.shape_type() != ShapeType::String {
         return Ok(Some(py::int(size)?));
     }
     Ok(Some(match size {
