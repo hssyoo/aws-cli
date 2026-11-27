@@ -189,7 +189,7 @@ pub static CLI: &[Row] = &[
         // operation's own, whose command object has no service_model
         // (waiters.py:28-45); the derived table adds the same `wait`.
         basis: Basis::Implemented {
-            at: "command::models::ModelSource::has_waiters",
+            at: "model::overlay::BotocoreOverlay::has_waiters",
         },
     },
     Row {
