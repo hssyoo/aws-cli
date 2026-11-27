@@ -1,0 +1,1323 @@
+{
+ "requests": [
+  {
+   "id": "fakes-zrestxml-create-gadget",
+   "operation": "CreateGadget",
+   "params": {
+    "Name": "n a&b",
+    "Plain": "p",
+    "Enabled": true,
+    "Active": false,
+    "Count": 3,
+    "Total": 12345678901,
+    "Ratio": 1.5,
+    "Frac": 0.25,
+    "Data": {
+     "$blob": "AAFi"
+    },
+    "Created": "2015-08-30T12:36:00Z",
+    "CreatedIso": "2015-08-30T12:36:00Z",
+    "Items": [
+     "a",
+     "b"
+    ],
+    "Numbers": [
+     1,
+     2
+    ],
+    "Flat": [
+     "f1",
+     "f2"
+    ],
+    "FlatShape": [
+     "g1"
+    ],
+    "Parts": [
+     {
+      "Name": "p",
+      "Size": 1
+     }
+    ],
+    "Labels": {
+     "k": "v"
+    },
+    "AccessControlPolicy": {
+     "Grants": [
+      {
+       "Grantee": {
+        "Type": "CanonicalUser",
+        "ID": "abc",
+        "DisplayName": "d"
+       },
+       "Permission": "READ"
+      },
+      {
+       "Grantee": {
+        "Type": "Group",
+        "URI": "http://acs.example.com/groups/all"
+       },
+       "Permission": "WRITE"
+      }
+     ],
+     "Owner": {
+      "ID": "abc"
+     }
+    },
+    "Nested": {
+     "Note": "n"
+    },
+    "Choice": {
+     "Word": "w"
+    },
+    "Attr": "x",
+    "CreatedRfc": "2015-08-30T12:36:00Z",
+    "Token": "tok-1",
+    "Owner": "o"
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/gadgets",
+    "query": "",
+    "headers": [],
+    "body_base64": "PENyZWF0ZUdhZGdldFJlcXVlc3QgeG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIiBhdHRyPSJ4Ij48bmFtZT5uIGEmYW1wO2I8L25hbWU+PFBsYWluPnA8L1BsYWluPjxlbmFibGVkPnRydWU8L2VuYWJsZWQ+PEFjdGl2ZT5mYWxzZTwvQWN0aXZlPjxjb3VudD4zPC9jb3VudD48VG90YWw+MTIzNDU2Nzg5MDE8L1RvdGFsPjxSYXRpbz4xLjU8L1JhdGlvPjxGcmFjPjAuMjU8L0ZyYWM+PERhdGE+QUFGaTwvRGF0YT48Q3JlYXRlZD4yMDE1LTA4LTMwVDEyOjM2OjAwWjwvQ3JlYXRlZD48Y3JlYXRlZElzbz4yMDE1LTA4LTMwVDEyOjM2OjAwWjwvY3JlYXRlZElzbz48aXRlbXM+PEl0ZW0+YTwvSXRlbT48SXRlbT5iPC9JdGVtPjwvaXRlbXM+PE51bWJlcnM+PE4+MTwvTj48Tj4yPC9OPjwvTnVtYmVycz48RmxhdD5mMTwvRmxhdD48RmxhdD5mMjwvRmxhdD48RmxhdFNoYXBlPmcxPC9GbGF0U2hhcGU+PFBhcnRzPjxQYXJ0PjxOYW1lPnA8L05hbWU+PFNpemU+MTwvU2l6ZT48L1BhcnQ+PC9QYXJ0cz48TGFiZWxzPjxlbnRyeT48Sz5rPC9LPjxWPnY8L1Y+PC9lbnRyeT48L0xhYmVscz48QWNjZXNzQ29udHJvbFBvbGljeT48QWNjZXNzQ29udHJvbExpc3Q+PEdyYW50PjxHcmFudGVlIHhtbG5zOnhzaT0iaHR0cDovL3d3dy53My5vcmcvMjAwMS9YTUxTY2hlbWEtaW5zdGFuY2UiIHhzaTp0eXBlPSJDYW5vbmljYWxVc2VyIj48SUQ+YWJjPC9JRD48RGlzcGxheU5hbWU+ZDwvRGlzcGxheU5hbWU+PC9HcmFudGVlPjxQZXJtaXNzaW9uPlJFQUQ8L1Blcm1pc3Npb24+PC9HcmFudD48R3JhbnQ+PEdyYW50ZWUgeG1sbnM6eHNpPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxL1hNTFNjaGVtYS1pbnN0YW5jZSIgeHNpOnR5cGU9Ikdyb3VwIj48VVJJPmh0dHA6Ly9hY3MuZXhhbXBsZS5jb20vZ3JvdXBzL2FsbDwvVVJJPjwvR3JhbnRlZT48UGVybWlzc2lvbj5XUklURTwvUGVybWlzc2lvbj48L0dyYW50PjwvQWNjZXNzQ29udHJvbExpc3Q+PE93bmVyPjxJRD5hYmM8L0lEPjwvT3duZXI+PC9BY2Nlc3NDb250cm9sUG9saWN5PjxuZXN0ZWQ+PE5vdGU+bjwvTm90ZT48L25lc3RlZD48Q2hvaWNlPjxXb3JkPnc8L1dvcmQ+PC9DaG9pY2U+PENyZWF0ZWRSZmM+U3VuLCAzMCBBdWcgMjAxNSAxMjozNjowMCBHTVQ8L0NyZWF0ZWRSZmM+PFRva2VuPnRvay0xPC9Ub2tlbj48T3duZXI+bzwvT3duZXI+PC9DcmVhdGVHYWRnZXRSZXF1ZXN0Pg=="
+   }
+  },
+  {
+   "id": "fakes-zrestxml-put-widget",
+   "operation": "PutWidget",
+   "params": {
+    "WidgetName": "w1",
+    "Revision": 2,
+    "ChecksumAlgorithm": "CRC32",
+    "ClientToken": "t-1",
+    "Owner": "o",
+    "Enabled": true,
+    "Count": 1,
+    "Size": 9007199254740993,
+    "Since": "2015-08-30T12:36:00Z",
+    "Tags": [
+     "a",
+     "b c"
+    ],
+    "Metadata": {
+     "k1": "v1",
+     "k2": "v2"
+    },
+    "Marker": "m/1",
+    "Limit": 5,
+    "Force": true,
+    "After": "2015-08-30T12:36:00Z",
+    "Ids": [
+     "i1",
+     "i2"
+    ],
+    "Config": {
+     "Label": "l",
+     "Weight": 3
+    }
+   },
+   "serialized": {
+    "method": "PUT",
+    "url_path": "/widgets/w1/2?config",
+    "query": "marker=m%2F1&limit=5&force=true&after=2015-08-30T12%3A36%3A00Z&id=i1&id=i2",
+    "headers": [
+     [
+      "x-amz-sdk-checksum-algorithm",
+      "CRC32"
+     ],
+     [
+      "x-amz-client-token",
+      "t-1"
+     ],
+     [
+      "x-amz-owner",
+      "o"
+     ],
+     [
+      "x-amz-enabled",
+      "true"
+     ],
+     [
+      "x-amz-count",
+      "1"
+     ],
+     [
+      "x-amz-size",
+      "9007199254740993"
+     ],
+     [
+      "x-amz-since",
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+     ],
+     [
+      "x-amz-tags",
+      "a,b c"
+     ],
+     [
+      "x-amz-meta-k1",
+      "v1"
+     ],
+     [
+      "x-amz-meta-k2",
+      "v2"
+     ]
+    ],
+    "body_base64": "PFdpZGdldENvbmZpZ3VyYXRpb24geG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIj48TGFiZWw+bDwvTGFiZWw+PFdlaWdodD4zPC9XZWlnaHQ+PC9XaWRnZXRDb25maWd1cmF0aW9uPg=="
+   }
+  },
+  {
+   "id": "fakes-zrestxml-get-widget",
+   "operation": "GetWidget",
+   "params": {
+    "WidgetName": "a/b c"
+   },
+   "serialized": {
+    "method": "GET",
+    "url_path": "/widgets/a/b%20c",
+    "query": "",
+    "headers": [],
+    "body_base64": ""
+   }
+  },
+  {
+   "id": "fakes-zrestxml-get-widget-not-found",
+   "operation": "GetWidget",
+   "params": {
+    "WidgetName": "missing"
+   },
+   "serialized": {
+    "method": "GET",
+    "url_path": "/widgets/missing",
+    "query": "",
+    "headers": [],
+    "body_base64": ""
+   }
+  },
+  {
+   "id": "fakes-zrestxml-put-widget-marker",
+   "operation": "PutWidget",
+   "params": {
+    "WidgetName": "w1",
+    "Revision": 3,
+    "Marker": "m/1"
+   },
+   "serialized": {
+    "method": "PUT",
+    "url_path": "/widgets/w1/3?config",
+    "query": "marker=m%2F1",
+    "headers": [],
+    "body_base64": ""
+   }
+  },
+  {
+   "id": "fakes-zrestxml-head-widget",
+   "operation": "HeadWidget",
+   "params": {
+    "WidgetName": "w1"
+   },
+   "serialized": {
+    "method": "HEAD",
+    "url_path": "/widgets/w1",
+    "query": "",
+    "headers": [],
+    "body_base64": ""
+   }
+  },
+  {
+   "id": "fakes-zrestxml-delete-widget",
+   "operation": "DeleteWidget",
+   "params": {
+    "AccountId": "123456789012",
+    "WidgetName": "w1"
+   },
+   "serialized": {
+    "method": "DELETE",
+    "url_path": "/v1/widgets/w1",
+    "query": "",
+    "headers": [
+     [
+      "x-amz-account-id",
+      "123456789012"
+     ]
+    ],
+    "body_base64": ""
+   }
+  },
+  {
+   "id": "fakes-zrestxml-patch-widget",
+   "operation": "PatchWidget",
+   "params": {
+    "WidgetName": "w1",
+    "Config": {
+     "Label": "l2"
+    }
+   },
+   "serialized": {
+    "method": "PATCH",
+    "url_path": "/widgets/w1",
+    "query": "",
+    "headers": [],
+    "body_base64": "PFdpZGdldENvbmZpZ3VyYXRpb24geG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIj48TGFiZWw+bDI8L0xhYmVsPjwvV2lkZ2V0Q29uZmlndXJhdGlvbj4="
+   }
+  },
+  {
+   "id": "fakes-zrestxml-upload-widget-data",
+   "operation": "UploadWidgetData",
+   "params": {
+    "WidgetName": "w1",
+    "Body": "{\"a\": 1}\n"
+   },
+   "serialized": {
+    "method": "PUT",
+    "url_path": "/widgets/w1/data",
+    "query": "",
+    "headers": [],
+    "body_base64": "eyJhIjogMX0K"
+   }
+  },
+  {
+   "id": "fakes-zrestxml-get-widget-data",
+   "operation": "GetWidgetData",
+   "params": {
+    "WidgetName": "w1"
+   },
+   "serialized": {
+    "method": "GET",
+    "url_path": "/widgets/w1/data",
+    "query": "",
+    "headers": [],
+    "body_base64": ""
+   }
+  },
+  {
+   "id": "edge-escapes",
+   "operation": "CreateGadget",
+   "params": {
+    "Name": "<&>\"'\t\r\n x",
+    "Plain": "",
+    "Enabled": true,
+    "Active": false,
+    "Count": 3,
+    "Total": 12345678901,
+    "Ratio": 1.5,
+    "Frac": 0.25,
+    "Data": {
+     "$blob": "AAFi"
+    },
+    "Created": "2015-08-30T12:36:00Z",
+    "CreatedIso": "2015-08-30T12:36:00Z",
+    "Items": [
+     "\u00e9",
+     "\u65e5\u672c"
+    ],
+    "Numbers": [
+     1,
+     2
+    ],
+    "Flat": [
+     "f1",
+     "f2"
+    ],
+    "FlatShape": [
+     "g1"
+    ],
+    "Parts": [
+     {
+      "Name": "p",
+      "Size": 1
+     }
+    ],
+    "Labels": {
+     "<k&>": "<v&>"
+    },
+    "AccessControlPolicy": {
+     "Grants": [
+      {
+       "Grantee": {
+        "Type": "CanonicalUser",
+        "ID": "abc",
+        "DisplayName": "d"
+       },
+       "Permission": "READ"
+      },
+      {
+       "Grantee": {
+        "Type": "Group",
+        "URI": "http://acs.example.com/groups/all"
+       },
+       "Permission": "WRITE"
+      }
+     ],
+     "Owner": {
+      "ID": "abc"
+     }
+    },
+    "Nested": {
+     "Note": "]]>"
+    },
+    "Choice": {
+     "Word": "w"
+    },
+    "Attr": "a<&>\"'\t\r\nb",
+    "CreatedRfc": "2015-08-30T12:36:00Z",
+    "Token": "tok-1",
+    "Owner": "o"
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/gadgets",
+    "query": "",
+    "headers": [],
+    "body_base64": "PENyZWF0ZUdhZGdldFJlcXVlc3QgeG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIiBhdHRyPSJhJmx0OyZhbXA7Jmd0OyZxdW90OycmIzA5OyYjMTM7JiMxMDtiIj48bmFtZT4mbHQ7JmFtcDsmZ3Q7IicJDQogeDwvbmFtZT48UGxhaW4gLz48ZW5hYmxlZD50cnVlPC9lbmFibGVkPjxBY3RpdmU+ZmFsc2U8L0FjdGl2ZT48Y291bnQ+MzwvY291bnQ+PFRvdGFsPjEyMzQ1Njc4OTAxPC9Ub3RhbD48UmF0aW8+MS41PC9SYXRpbz48RnJhYz4wLjI1PC9GcmFjPjxEYXRhPkFBRmk8L0RhdGE+PENyZWF0ZWQ+MjAxNS0wOC0zMFQxMjozNjowMFo8L0NyZWF0ZWQ+PGNyZWF0ZWRJc28+MjAxNS0wOC0zMFQxMjozNjowMFo8L2NyZWF0ZWRJc28+PGl0ZW1zPjxJdGVtPsOpPC9JdGVtPjxJdGVtPuaXpeacrDwvSXRlbT48L2l0ZW1zPjxOdW1iZXJzPjxOPjE8L04+PE4+MjwvTj48L051bWJlcnM+PEZsYXQ+ZjE8L0ZsYXQ+PEZsYXQ+ZjI8L0ZsYXQ+PEZsYXRTaGFwZT5nMTwvRmxhdFNoYXBlPjxQYXJ0cz48UGFydD48TmFtZT5wPC9OYW1lPjxTaXplPjE8L1NpemU+PC9QYXJ0PjwvUGFydHM+PExhYmVscz48ZW50cnk+PEs+Jmx0O2smYW1wOyZndDs8L0s+PFY+Jmx0O3YmYW1wOyZndDs8L1Y+PC9lbnRyeT48L0xhYmVscz48QWNjZXNzQ29udHJvbFBvbGljeT48QWNjZXNzQ29udHJvbExpc3Q+PEdyYW50PjxHcmFudGVlIHhtbG5zOnhzaT0iaHR0cDovL3d3dy53My5vcmcvMjAwMS9YTUxTY2hlbWEtaW5zdGFuY2UiIHhzaTp0eXBlPSJDYW5vbmljYWxVc2VyIj48SUQ+YWJjPC9JRD48RGlzcGxheU5hbWU+ZDwvRGlzcGxheU5hbWU+PC9HcmFudGVlPjxQZXJtaXNzaW9uPlJFQUQ8L1Blcm1pc3Npb24+PC9HcmFudD48R3JhbnQ+PEdyYW50ZWUgeG1sbnM6eHNpPSJodHRwOi8vd3d3LnczLm9yZy8yMDAxL1hNTFNjaGVtYS1pbnN0YW5jZSIgeHNpOnR5cGU9Ikdyb3VwIj48VVJJPmh0dHA6Ly9hY3MuZXhhbXBsZS5jb20vZ3JvdXBzL2FsbDwvVVJJPjwvR3JhbnRlZT48UGVybWlzc2lvbj5XUklURTwvUGVybWlzc2lvbj48L0dyYW50PjwvQWNjZXNzQ29udHJvbExpc3Q+PE93bmVyPjxJRD5hYmM8L0lEPjwvT3duZXI+PC9BY2Nlc3NDb250cm9sUG9saWN5PjxuZXN0ZWQ+PE5vdGU+XV0mZ3Q7PC9Ob3RlPjwvbmVzdGVkPjxDaG9pY2U+PFdvcmQ+dzwvV29yZD48L0Nob2ljZT48Q3JlYXRlZFJmYz5TdW4sIDMwIEF1ZyAyMDE1IDEyOjM2OjAwIEdNVDwvQ3JlYXRlZFJmYz48VG9rZW4+dG9rLTE8L1Rva2VuPjxPd25lcj5vPC9Pd25lcj48L0NyZWF0ZUdhZGdldFJlcXVlc3Q+"
+   }
+  },
+  {
+   "id": "edge-empty-aggregates",
+   "operation": "CreateGadget",
+   "params": {
+    "Name": "n",
+    "Items": [],
+    "Numbers": [],
+    "Flat": [],
+    "Labels": {},
+    "Parts": [
+     {}
+    ],
+    "Nested": {},
+    "AccessControlPolicy": {
+     "Grants": []
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/gadgets",
+    "query": "",
+    "headers": [],
+    "body_base64": "PENyZWF0ZUdhZGdldFJlcXVlc3QgeG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIj48bmFtZT5uPC9uYW1lPjxpdGVtcyAvPjxOdW1iZXJzIC8+PExhYmVscyAvPjxQYXJ0cz48UGFydCAvPjwvUGFydHM+PG5lc3RlZCAvPjxBY2Nlc3NDb250cm9sUG9saWN5PjxBY2Nlc3NDb250cm9sTGlzdCAvPjwvQWNjZXNzQ29udHJvbFBvbGljeT48L0NyZWF0ZUdhZGdldFJlcXVlc3Q+"
+   }
+  },
+  {
+   "id": "edge-floats",
+   "operation": "CreateGadget",
+   "params": {
+    "Ratio": {
+     "$float": "nan"
+    },
+    "Frac": {
+     "$float": "inf"
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/gadgets",
+    "query": "",
+    "headers": [],
+    "body_base64": "PENyZWF0ZUdhZGdldFJlcXVlc3QgeG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIj48UmF0aW8+TmFOPC9SYXRpbz48RnJhYz5JbmZpbml0eTwvRnJhYz48L0NyZWF0ZUdhZGdldFJlcXVlc3Q+"
+   }
+  },
+  {
+   "id": "edge-negative-floats",
+   "operation": "CreateGadget",
+   "params": {
+    "Ratio": {
+     "$float": "-inf"
+    },
+    "Frac": 1e-07,
+    "Count": -1,
+    "Total": 0
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/gadgets",
+    "query": "",
+    "headers": [],
+    "body_base64": "PENyZWF0ZUdhZGdldFJlcXVlc3QgeG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIj48UmF0aW8+LUluZmluaXR5PC9SYXRpbz48RnJhYz4xZS0wNzwvRnJhYz48Y291bnQ+LTE8L2NvdW50PjxUb3RhbD4wPC9Ub3RhbD48L0NyZWF0ZUdhZGdldFJlcXVlc3Q+"
+   }
+  },
+  {
+   "id": "edge-false-and-micros",
+   "operation": "CreateGadget",
+   "params": {
+    "Enabled": false,
+    "Active": true,
+    "Created": "2015-08-30T12:36:00.123456Z",
+    "CreatedIso": "2015-08-30T12:36:00.5Z",
+    "CreatedRfc": "2015-08-30T12:36:00.9Z"
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/gadgets",
+    "query": "",
+    "headers": [],
+    "body_base64": "PENyZWF0ZUdhZGdldFJlcXVlc3QgeG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIj48ZW5hYmxlZD5mYWxzZTwvZW5hYmxlZD48QWN0aXZlPnRydWU8L0FjdGl2ZT48Q3JlYXRlZD4yMDE1LTA4LTMwVDEyOjM2OjAwLjEyMzQ1Nlo8L0NyZWF0ZWQ+PGNyZWF0ZWRJc28+MjAxNS0wOC0zMFQxMjozNjowMC41MDAwMDBaPC9jcmVhdGVkSXNvPjxDcmVhdGVkUmZjPlN1biwgMzAgQXVnIDIwMTUgMTI6MzY6MDAgR01UPC9DcmVhdGVkUmZjPjwvQ3JlYXRlR2FkZ2V0UmVxdWVzdD4="
+   }
+  },
+  {
+   "id": "edge-epoch-timestamps",
+   "operation": "CreateGadget",
+   "params": {
+    "Created": 1440938160,
+    "CreatedRfc": 0
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/gadgets",
+    "query": "",
+    "headers": [],
+    "body_base64": "PENyZWF0ZUdhZGdldFJlcXVlc3QgeG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIj48Q3JlYXRlZD4yMDE1LTA4LTMwVDEyOjM2OjAwWjwvQ3JlYXRlZD48Q3JlYXRlZFJmYz5UaHUsIDAxIEphbiAxOTcwIDAwOjAwOjAwIEdNVDwvQ3JlYXRlZFJmYz48L0NyZWF0ZUdhZGdldFJlcXVlc3Q+"
+   }
+  },
+  {
+   "id": "edge-attribute-first",
+   "operation": "CreateGadget",
+   "params": {
+    "Attr": "first",
+    "Name": "n"
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/gadgets",
+    "query": "",
+    "headers": [],
+    "body_base64": "PENyZWF0ZUdhZGdldFJlcXVlc3QgeG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIiBhdHRyPSJmaXJzdCI+PG5hbWU+bjwvbmFtZT48L0NyZWF0ZUdhZGdldFJlcXVlc3Q+"
+   }
+  },
+  {
+   "id": "edge-choice-number",
+   "operation": "CreateGadget",
+   "params": {
+    "Choice": {
+     "Number": 7
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/gadgets",
+    "query": "",
+    "headers": [],
+    "body_base64": "PENyZWF0ZUdhZGdldFJlcXVlc3QgeG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIj48Q2hvaWNlPjxOdW1iZXI+NzwvTnVtYmVyPjwvQ2hvaWNlPjwvQ3JlYXRlR2FkZ2V0UmVxdWVzdD4="
+   }
+  },
+  {
+   "id": "edge-group-grantee",
+   "operation": "CreateGadget",
+   "params": {
+    "AccessControlPolicy": {
+     "Grants": [
+      {
+       "Grantee": {
+        "URI": "u",
+        "Type": "Group"
+       }
+      }
+     ]
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/gadgets",
+    "query": "",
+    "headers": [],
+    "body_base64": "PENyZWF0ZUdhZGdldFJlcXVlc3QgeG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIj48QWNjZXNzQ29udHJvbFBvbGljeT48QWNjZXNzQ29udHJvbExpc3Q+PEdyYW50PjxHcmFudGVlIHhtbG5zOnhzaT0iaHR0cDovL3d3dy53My5vcmcvMjAwMS9YTUxTY2hlbWEtaW5zdGFuY2UiIHhzaTp0eXBlPSJHcm91cCI+PFVSST51PC9VUkk+PC9HcmFudGVlPjwvR3JhbnQ+PC9BY2Nlc3NDb250cm9sTGlzdD48L0FjY2Vzc0NvbnRyb2xQb2xpY3k+PC9DcmVhdGVHYWRnZXRSZXF1ZXN0Pg=="
+   }
+  },
+  {
+   "id": "edge-put-widget-headers",
+   "operation": "PutWidget",
+   "params": {
+    "WidgetName": "a b/c",
+    "Revision": 0,
+    "Enabled": false,
+    "Tags": [
+     "x,y",
+     "q\"r",
+     "s"
+    ],
+    "Since": "2015-08-30T12:36:00.123Z",
+    "Metadata": {},
+    "Ids": [],
+    "Force": false,
+    "After": "2015-08-30T12:36:00.5Z",
+    "Marker": "&=?/ ~"
+   },
+   "serialized": {
+    "method": "PUT",
+    "url_path": "/widgets/a%20b%2Fc/0?config",
+    "query": "force=false&after=2015-08-30T12%3A36%3A00.500000Z&marker=%26%3D%3F%2F%20~",
+    "headers": [
+     [
+      "x-amz-enabled",
+      "false"
+     ],
+     [
+      "x-amz-tags",
+      "\"x,y\",\"q\\\"r\",s"
+     ],
+     [
+      "x-amz-since",
+      "Sun, 30 Aug 2015 12:36:00 GMT"
+     ]
+    ],
+    "body_base64": ""
+   }
+  },
+  {
+   "id": "edge-put-widget-config-empty",
+   "operation": "PutWidget",
+   "params": {
+    "WidgetName": "w",
+    "Revision": 1,
+    "Config": {}
+   },
+   "serialized": {
+    "method": "PUT",
+    "url_path": "/widgets/w/1?config",
+    "query": "",
+    "headers": [],
+    "body_base64": "PFdpZGdldENvbmZpZ3VyYXRpb24geG1sbnM9Imh0dHBzOi8venJlc3R4bWwuZXhhbXBsZS5jb20vZG9jLzIwMjAtMDEtMDEvIiAvPg=="
+   }
+  },
+  {
+   "id": "edge-get-widget-greedy",
+   "operation": "GetWidget",
+   "params": {
+    "WidgetName": "a/b/~c%d e"
+   },
+   "serialized": {
+    "method": "GET",
+    "url_path": "/widgets/a/b/~c%25d%20e",
+    "query": "",
+    "headers": [],
+    "body_base64": ""
+   }
+  },
+  {
+   "id": "edge-upload-bytes",
+   "operation": "UploadWidgetData",
+   "params": {
+    "WidgetName": "w",
+    "Body": {
+     "$blob": "AP8="
+    }
+   },
+   "serialized": {
+    "method": "PUT",
+    "url_path": "/widgets/w/data",
+    "query": "",
+    "headers": [],
+    "body_base64": "AP8="
+   }
+  },
+  {
+   "id": "edge-upload-none",
+   "operation": "UploadWidgetData",
+   "params": {
+    "WidgetName": "w"
+   },
+   "serialized": {
+    "method": "PUT",
+    "url_path": "/widgets/w/data",
+    "query": "",
+    "headers": [],
+    "body_base64": ""
+   }
+  },
+  {
+   "id": "edge-patch-no-config",
+   "operation": "PatchWidget",
+   "params": {
+    "WidgetName": "w"
+   },
+   "serialized": {
+    "method": "PATCH",
+    "url_path": "/widgets/w",
+    "query": "",
+    "headers": [],
+    "body_base64": ""
+   }
+  }
+ ],
+ "responses": [
+  {
+   "id": "fakes-zrestxml-create-gadget",
+   "operation": "CreateGadget",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/xml"
+    ],
+    [
+     "x-amz-request-id",
+     "fake-1"
+    ],
+    [
+     "x-amz-gadget-id",
+     "g-1"
+    ]
+   ],
+   "body": "",
+   "parsed": {
+    "ResponseMetadata": {
+     "RequestId": "fake-1",
+     "HostId": "",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/xml",
+      "x-amz-request-id": "fake-1",
+      "x-amz-gadget-id": "g-1"
+     }
+    },
+    "GadgetId": "g-1"
+   },
+   "error_shape": null
+  },
+  {
+   "id": "fakes-zrestxml-put-widget",
+   "operation": "PutWidget",
+   "status": 200,
+   "headers": [
+    [
+     "x-amz-request-id",
+     "fake-1"
+    ],
+    [
+     "ETag",
+     "\"e-1\""
+    ]
+   ],
+   "body": "",
+   "parsed": {
+    "ResponseMetadata": {
+     "RequestId": "fake-1",
+     "HostId": "",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "x-amz-request-id": "fake-1",
+      "etag": "\"e-1\""
+     }
+    },
+    "ETag": "\"e-1\""
+   },
+   "error_shape": null
+  },
+  {
+   "id": "fakes-zrestxml-get-widget",
+   "operation": "GetWidget",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/xml"
+    ],
+    [
+     "x-amz-request-id",
+     "fake-1"
+    ],
+    [
+     "x-amz-exists",
+     "true"
+    ],
+    [
+     "x-amz-count",
+     "4"
+    ],
+    [
+     "x-amz-size",
+     "12345678901"
+    ],
+    [
+     "x-amz-owner",
+     "o"
+    ],
+    [
+     "Last-Modified",
+     "Sun, 30 Aug 2015 12:36:00 GMT"
+    ],
+    [
+     "x-amz-meta-k1",
+     "v1"
+    ],
+    [
+     "x-amz-meta-K2",
+     "v2"
+    ]
+   ],
+   "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Gadget xmlns=\"https://zrestxml.example.com/doc/2020-01-01/\" attr=\"x\"><name>n</name><Plain>p</Plain><enabled>true</enabled><Active>false</Active><count>3</count><Total>12345678901</Total><Ratio>1.5</Ratio><Frac>0.25</Frac><Data>AAFi</Data><Created>2015-08-30T12:36:00Z</Created><createdIso>2015-08-30T12:36:00.123Z</createdIso><items><Item>a</Item><Item>b</Item></items><Numbers><N>1</N><N>2</N></Numbers><Flat>f1</Flat><Flat>f2</Flat><FlatShape>g1</FlatShape><Parts><Part><Name>p</Name><Size>1</Size></Part></Parts><Labels><entry><K>k</K><V>v</V></entry></Labels><AccessControlPolicy><AccessControlList><Grant><Grantee xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"CanonicalUser\"><ID>abc</ID></Grantee><Permission>READ</Permission></Grant></AccessControlList><Owner><ID>abc</ID></Owner></AccessControlPolicy><nested><Note>n</Note></nested><Choice><Word>w</Word></Choice></Gadget>",
+   "parsed": {
+    "ResponseMetadata": {
+     "RequestId": "fake-1",
+     "HostId": "",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/xml",
+      "x-amz-request-id": "fake-1",
+      "x-amz-exists": "true",
+      "x-amz-count": "4",
+      "x-amz-size": "12345678901",
+      "x-amz-owner": "o",
+      "last-modified": "Sun, 30 Aug 2015 12:36:00 GMT",
+      "x-amz-meta-k1": "v1",
+      "x-amz-meta-k2": "v2"
+     }
+    },
+    "Exists": true,
+    "Count": 4,
+    "Size": 12345678901,
+    "Owner": "o",
+    "Modified": "Sun, 30 Aug 2015 12:36:00 GMT",
+    "Metadata": {
+     "k1": "v1",
+     "K2": "v2"
+    },
+    "Gadget": {
+     "Name": "n",
+     "Plain": "p",
+     "Enabled": true,
+     "Active": false,
+     "Count": 3,
+     "Total": 12345678901,
+     "Ratio": 1.5,
+     "Frac": 0.25,
+     "Data": "AAFi",
+     "Created": "2015-08-30T12:36:00Z",
+     "CreatedIso": "2015-08-30T12:36:00.123Z",
+     "Items": [
+      "a",
+      "b"
+     ],
+     "Numbers": [
+      1,
+      2
+     ],
+     "Flat": [
+      "f1",
+      "f2"
+     ],
+     "FlatShape": [
+      "g1"
+     ],
+     "Parts": [
+      {
+       "Name": "p",
+       "Size": 1
+      }
+     ],
+     "Labels": {
+      "k": "v"
+     },
+     "AccessControlPolicy": {
+      "Grants": [
+       {
+        "Grantee": {
+         "ID": "abc",
+         "Type": "CanonicalUser"
+        },
+        "Permission": "READ"
+       }
+      ],
+      "Owner": {
+       "ID": "abc"
+      }
+     },
+     "Nested": {
+      "Note": "n"
+     },
+     "Choice": {
+      "Word": "w"
+     },
+     "Attr": "x"
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "fakes-zrestxml-get-widget-not-found",
+   "operation": "GetWidget",
+   "status": 404,
+   "headers": [
+    [
+     "Content-Type",
+     "application/xml"
+    ],
+    [
+     "x-amz-request-id",
+     "fake-1"
+    ]
+   ],
+   "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<ErrorResponse xmlns=\"https://zrestxml.example.com/doc/2020-01-01/\"><Error><Type>Sender</Type><Code>WidgetNotFound</Code><Message>no such widget</Message><Reasons><Item>gone</Item><Item>never</Item></Reasons></Error><RequestId>fake-1</RequestId></ErrorResponse>",
+   "parsed": {
+    "Error": {
+     "Message": "no such widget",
+     "Code": "WidgetNotFound",
+     "Type": "Sender",
+     "Reasons": {
+      "Item": {}
+     }
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-1",
+     "HTTPStatusCode": 404,
+     "HTTPHeaders": {
+      "content-type": "application/xml",
+      "x-amz-request-id": "fake-1"
+     }
+    },
+    "Message": "no such widget",
+    "Reasons": [
+     "gone",
+     "never"
+    ]
+   },
+   "error_shape": "WidgetNotFound"
+  },
+  {
+   "id": "fakes-zrestxml-put-widget-conflict",
+   "operation": "PutWidget",
+   "status": 409,
+   "headers": [
+    [
+     "Content-Type",
+     "application/xml"
+    ],
+    [
+     "x-amz-request-id",
+     "fake-1"
+    ]
+   ],
+   "body": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Error><Code>WidgetConflict</Code><Message>busy</Message><RequestId>fake-2</RequestId></Error>",
+   "parsed": {
+    "Error": {
+     "Code": "WidgetConflict",
+     "Message": "busy"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-1",
+     "HostId": "",
+     "HTTPStatusCode": 409,
+     "HTTPHeaders": {
+      "content-type": "application/xml",
+      "x-amz-request-id": "fake-1"
+     }
+    },
+    "Message": "busy"
+   },
+   "error_shape": "WidgetConflict"
+  },
+  {
+   "id": "fakes-zrestxml-head-widget",
+   "operation": "HeadWidget",
+   "status": 200,
+   "headers": [
+    [
+     "x-amz-exists",
+     "false"
+    ],
+    [
+     "x-amz-owner",
+     "o"
+    ]
+   ],
+   "body": "",
+   "parsed": {
+    "ResponseMetadata": {
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "x-amz-exists": "false",
+      "x-amz-owner": "o"
+     }
+    },
+    "Exists": false,
+    "Owner": "o"
+   },
+   "error_shape": null
+  },
+  {
+   "id": "fakes-zrestxml-delete-widget",
+   "operation": "DeleteWidget",
+   "status": 204,
+   "headers": [],
+   "body": "",
+   "parsed": {
+    "ResponseMetadata": {
+     "HTTPStatusCode": 204,
+     "HTTPHeaders": {}
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-get-widget-empty",
+   "operation": "GetWidget",
+   "status": 200,
+   "headers": [
+    [
+     "x-amz-exists",
+     "TRUE"
+    ],
+    [
+     "x-amz-count",
+     " 5 "
+    ],
+    [
+     "x-amzn-requestid",
+     "r"
+    ]
+   ],
+   "body": "",
+   "parsed": {
+    "ResponseMetadata": {
+     "RequestId": "r",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "x-amz-exists": "TRUE",
+      "x-amz-count": " 5 ",
+      "x-amzn-requestid": "r"
+     }
+    },
+    "Exists": false,
+    "Count": 5,
+    "Metadata": {},
+    "Gadget": {}
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-get-widget-sparse",
+   "operation": "GetWidget",
+   "status": 200,
+   "headers": [
+    [
+     "x-amz-request-id",
+     "r"
+    ]
+   ],
+   "body": "<Gadget><name></name><Flat>only</Flat><items/><Labels><entry><K>a</K><V/></entry></Labels><Choice><Other>z</Other></Choice><Nested/></Gadget>",
+   "parsed": {
+    "ResponseMetadata": {
+     "RequestId": "r",
+     "HostId": "",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "x-amz-request-id": "r"
+     }
+    },
+    "Metadata": {},
+    "Gadget": {
+     "Name": "",
+     "Items": [],
+     "Flat": [
+      "only"
+     ],
+     "Labels": {
+      "a": ""
+     },
+     "Choice": {
+      "SDK_UNKNOWN_MEMBER": {
+       "name": "Other"
+      }
+     }
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-not-found-s3-style",
+   "operation": "GetWidget",
+   "status": 404,
+   "headers": [
+    [
+     "x-amz-request-id",
+     "rid"
+    ],
+    [
+     "x-amz-id-2",
+     "hid"
+    ]
+   ],
+   "body": "<Error><Code>WidgetNotFound</Code><Message>m</Message><Reasons><Item>x</Item></Reasons><RequestId>body-rid</RequestId><HostId>body-hid</HostId></Error>",
+   "parsed": {
+    "Error": {
+     "Code": "WidgetNotFound",
+     "Message": "m",
+     "Reasons": {
+      "Item": "x"
+     }
+    },
+    "ResponseMetadata": {
+     "RequestId": "rid",
+     "HostId": "hid",
+     "HTTPStatusCode": 404,
+     "HTTPHeaders": {
+      "x-amz-request-id": "rid",
+      "x-amz-id-2": "hid"
+     }
+    },
+    "Message": "m",
+    "Reasons": [
+     "x"
+    ]
+   },
+   "error_shape": "WidgetNotFound"
+  },
+  {
+   "id": "edge-error-namespaced-root",
+   "operation": "GetWidget",
+   "status": 400,
+   "headers": [
+    [
+     "x-amz-request-id",
+     "rid"
+    ]
+   ],
+   "body": "<Error xmlns=\"https://zrestxml.example.com/doc/2020-01-01/\"><Code>Odd</Code><Message>m</Message><RequestId>q</RequestId></Error>",
+   "parsed": {
+    "Error": {
+     "Message": "",
+     "Code": ""
+    },
+    "Code": "Odd",
+    "Message": "m",
+    "ResponseMetadata": {
+     "RequestId": "q",
+     "HTTPStatusCode": 400,
+     "HTTPHeaders": {
+      "x-amz-request-id": "rid"
+     }
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-error-unmodelled",
+   "operation": "GetWidget",
+   "status": 403,
+   "headers": [],
+   "body": "<ErrorResponse><Error><Code>AccessDenied</Code><Detail><A>1</A></Detail></Error><Other>o</Other></ErrorResponse>",
+   "parsed": {
+    "Error": {
+     "Message": "",
+     "Code": "AccessDenied",
+     "Detail": {
+      "A": "1"
+     }
+    },
+    "Other": "o",
+    "ResponseMetadata": {
+     "HTTPStatusCode": 403,
+     "HTTPHeaders": {}
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-error-not-xml",
+   "operation": "GetWidget",
+   "status": 403,
+   "headers": [
+    [
+     "x-amz-request-id",
+     "rid"
+    ],
+    [
+     "x-amz-id-2",
+     "hid"
+    ]
+   ],
+   "body": "denied <",
+   "parsed": {
+    "Error": {
+     "Code": "403",
+     "Message": "Forbidden"
+    },
+    "ResponseMetadata": {
+     "RequestId": "rid",
+     "HostId": "hid",
+     "HTTPStatusCode": 403,
+     "HTTPHeaders": {
+      "x-amz-request-id": "rid",
+      "x-amz-id-2": "hid"
+     }
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-error-empty",
+   "operation": "GetWidget",
+   "status": 404,
+   "headers": [
+    [
+     "x-amz-request-id",
+     "rid"
+    ]
+   ],
+   "body": "",
+   "parsed": {
+    "Error": {
+     "Code": "404",
+     "Message": "Not Found"
+    },
+    "ResponseMetadata": {
+     "RequestId": "rid",
+     "HostId": "",
+     "HTTPStatusCode": 404,
+     "HTTPHeaders": {
+      "x-amz-request-id": "rid"
+     }
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-error-teapot",
+   "operation": "GetWidget",
+   "status": 418,
+   "headers": [],
+   "body": "",
+   "parsed": {
+    "Error": {
+     "Code": "418",
+     "Message": "I'm a Teapot"
+    },
+    "ResponseMetadata": {
+     "RequestId": "",
+     "HostId": "",
+     "HTTPStatusCode": 418,
+     "HTTPHeaders": {}
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-error-unknown-status",
+   "operation": "GetWidget",
+   "status": 499,
+   "headers": [],
+   "body": "",
+   "parsed": {
+    "Error": {
+     "Code": "499",
+     "Message": ""
+    },
+    "ResponseMetadata": {
+     "RequestId": "",
+     "HostId": "",
+     "HTTPStatusCode": 499,
+     "HTTPHeaders": {}
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-error-html-5xx",
+   "operation": "GetWidget",
+   "status": 503,
+   "headers": [],
+   "body": "  <html><body>busy</body></html>",
+   "parsed": {
+    "Error": {
+     "Code": "503",
+     "Message": "Service Unavailable"
+    },
+    "ResponseMetadata": {
+     "HTTPStatusCode": 503,
+     "HTTPHeaders": {}
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-error-empty-5xx",
+   "operation": "GetWidget",
+   "status": 500,
+   "headers": [
+    [
+     "x-amz-request-id",
+     "rid"
+    ]
+   ],
+   "body": "",
+   "parsed": {
+    "Error": {
+     "Code": "500",
+     "Message": "Internal Server Error"
+    },
+    "ResponseMetadata": {
+     "HTTPStatusCode": 500,
+     "HTTPHeaders": {
+      "x-amz-request-id": "rid"
+     }
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-error-xml-5xx",
+   "operation": "GetWidget",
+   "status": 500,
+   "headers": [],
+   "body": "<Error><Code>InternalError</Code><Message>m</Message></Error>",
+   "parsed": {
+    "Error": {
+     "Code": "InternalError",
+     "Message": "m"
+    },
+    "ResponseMetadata": {
+     "HTTPStatusCode": 500,
+     "HTTPHeaders": {}
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-redirect",
+   "operation": "GetWidget",
+   "status": 301,
+   "headers": [
+    [
+     "x-amz-request-id",
+     "rid"
+    ]
+   ],
+   "body": "<Error><Code>PermanentRedirect</Code><Endpoint>e</Endpoint></Error>",
+   "parsed": {
+    "Error": {
+     "Code": "PermanentRedirect",
+     "Endpoint": "e"
+    },
+    "ResponseMetadata": {
+     "RequestId": "rid",
+     "HostId": "",
+     "HTTPStatusCode": 301,
+     "HTTPHeaders": {
+      "x-amz-request-id": "rid"
+     }
+    }
+   },
+   "error_shape": null
+  },
+  {
+   "id": "edge-ok-300",
+   "operation": "HeadWidget",
+   "status": 300,
+   "headers": [
+    [
+     "x-amz-exists",
+     "true"
+    ]
+   ],
+   "body": "",
+   "parsed": {
+    "ResponseMetadata": {
+     "HTTPStatusCode": 300,
+     "HTTPHeaders": {
+      "x-amz-exists": "true"
+     }
+    },
+    "Exists": true
+   },
+   "error_shape": null
+  }
+ ]
+}
