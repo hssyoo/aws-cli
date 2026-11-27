@@ -12,7 +12,7 @@
 use crate::admission::{Unsupported, static_refusal};
 use crate::credentials::{CredentialError, CredentialSource, SigningCredentials};
 use crate::endpoint::{EndpointConfig, EndpointInputs};
-use crate::protocol::{Protocol, json::Json, query::Query, rest_json::RestJson};
+use crate::protocol::{ClientProtocol, IMPLEMENTED};
 use crate::useragent::{SessionExtras, UserAgentContext};
 use model::paginators::{Paginators, Refused};
 use model::source::{Kind, LoadError, Source};
@@ -171,17 +171,11 @@ pub fn validate_case(model: &Model, operation: &str, input: &Value) -> Result<Va
 
 /// A wire protocol.
 #[derive(Clone, Copy, Debug)]
-pub struct ProtocolHandle(&'static dyn Protocol);
+pub struct ProtocolHandle(&'static dyn ClientProtocol);
 
 /// The protocol named `query`, `json` or `rest-json`.
 pub fn protocol_named(name: &str) -> Option<ProtocolHandle> {
-    let protocol: &'static dyn Protocol = match name {
-        "query" => &Query,
-        "json" => &Json,
-        "rest-json" => &RestJson,
-        _ => return None,
-    };
-    Some(ProtocolHandle(protocol))
+    IMPLEMENTED.named(name).map(ProtocolHandle)
 }
 
 /// The protocol a client of `model` speaks, when one is implemented.
@@ -206,7 +200,7 @@ pub fn serialize_case(
     let found = (model.schema().service())
         .operation(operation)
         .ok_or_else(|| SerializeError::new(no_operation(operation)))?;
-    protocol.0.serialize(model, found, input)
+    protocol.0.serialize_request(found, input, model)
 }
 
 /// Parser options from a timestamp and a blob handler. Harnesses build
@@ -253,7 +247,7 @@ pub fn parse_case(
     let found = (model.schema().service())
         .operation(operation)
         .ok_or_else(|| ParseError::new(no_operation(operation)))?;
-    protocol.0.parse(model, found, response, options)
+    protocol.0.parse(found, response, options)
 }
 
 /// The service error `protocol` parses from an error `response`.
@@ -270,7 +264,8 @@ pub fn parse_error_case(
     let found = (model.schema().service())
         .operation(operation)
         .ok_or_else(|| ParseError::new(no_operation(operation)))?;
-    protocol.0.parse_error(model, found, response, options)
+    let registry = model.schema().registry();
+    protocol.0.parse_error(found, response, options, registry)
 }
 
 // ---------------------------------------------------------------- endpoints

@@ -95,9 +95,8 @@ pub fn static_refusal(
     customizations: &[&'static Customization],
     paginator: Option<&Result<Config, Refused>>,
 ) -> Option<Unsupported> {
-    if crate::protocol::for_model(model).is_none() {
-        let name = crate::protocol::resolved_protocol(model.metadata()).unwrap_or_default();
-        return Some(Unsupported::Protocol(name.to_owned()));
+    if let Err(unsupported) = crate::protocol::select(model) {
+        return Some(unsupported);
     }
     // A key the model loader does not interpret may change what botocore
     // does with the call; the first one the operation reaches refuses it.
