@@ -45,13 +45,13 @@ fn a_covered_operation_is_admitted_with_its_request() -> Result<()> {
 }
 
 /// Each stage refuses with its own reason: an uncovered customization, a
-/// paginator whose expression the native paginator does not run (zquery's
-/// ListJobs reads its token as `Jobs[-1].JobId`), an unimplemented protocol
-/// (zcbor's smithy-rpc-v2-cbor).
+/// paginator whose expression the native paginator does not run (zpages's
+/// ListCompared reads `more_results` with a comparator), an unimplemented
+/// protocol (zcbor's smithy-rpc-v2-cbor).
 #[test]
 fn each_stage_names_its_refusal() -> Result<()> {
     with_models(|models| {
-        let everything = replacing_all(&models, "zquery", "list-jobs");
+        let everything = replacing_all(&models, "zpages", "list-compared");
         let source = crate::testing::source(models, everything);
         let refused = |customizations: &[&'static Customization], argv: &[&str]| {
             admitted(&source, customizations, argv).err()
@@ -61,7 +61,7 @@ fn each_stage_names_its_refusal() -> Result<()> {
             Some(PythonReason::UnportedCustomization)
         );
         assert_eq!(
-            refused(everything, &["zquery", "list-jobs"]),
+            refused(everything, &["zpages", "list-compared"]),
             Some(PythonReason::Paginator)
         );
         assert_eq!(
@@ -188,7 +188,7 @@ fn each_client_refusal_names_its_own_reason() {
         Unsupported::Hook("declined".into()),
         Unsupported::StartingToken("a float"),
         Unsupported::Paginator(model::paginators::Refused::Expression(
-            "Jobs[-1].JobId".into(),
+            "Meta.Count > `0`".into(),
         )),
     ];
     let reasons: Vec<&str> = refusals.iter().map(|one| reason(one).name()).collect();

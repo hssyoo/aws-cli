@@ -44,6 +44,19 @@
         "shape": "ListPagesOutput"
       }
     },
+    "ListCompared": {
+      "name": "ListCompared",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "ListPagesInput"
+      },
+      "output": {
+        "shape": "ListPagesOutput"
+      }
+    },
     "GetJobs": {
       "name": "GetJobs",
       "http": {

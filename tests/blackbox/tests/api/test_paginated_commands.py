@@ -15,7 +15,7 @@ Each paginator follows a real service's:
 - zquery DescribeDefaults (rds DescribeEngineDefaultParameters): a dotted
   output token and result key;
 - zquery ListJobs (importexport ListJobs): an expression output token
-  (`Jobs[-1].JobId`), which the native route leaves to Python;
+  (`Jobs[-1].JobId`), which JMESPath evaluates;
 - zrestjson ListFunctions (lambda ListFunctions): token and limit in the
   query string, the limit being the operation's own MaxItems, which
   `--max-items` shadows;
@@ -24,9 +24,7 @@ Each paginator follows a real service's:
 
 A run forcing the Python route checks every expectation against Python.
 The default run sends these commands down the native route once it
-paginates, all but ListJobs: `test_each_paginated_command_s_route` names
-each one's route, and checks the refusal of ListJobs on a run forcing the
-native route, which the other tests of ListJobs skip.
+paginates: `test_each_paginated_command_s_route` names each one's route.
 """
 
 import base64
@@ -47,10 +45,6 @@ from apihelpers import (
 from harness_plugin import FORCED_NATIVE, MAIN_USAGE, refusal
 
 pytestmark = pytest.mark.asyncio
-
-# The case whose paginator only Python runs, which a forced-native run
-# refuses as test_each_paginated_command_s_route checks.
-PYTHON_PAGINATOR: Final = "query-expression-token"
 
 USAGE: Final = "\n" + MAIN_USAGE
 
@@ -185,8 +179,6 @@ MERGES: Final = {
 
 @pytest.mark.parametrize("case", MERGES)
 async def test_the_pages_merge_into_one_result(paged: ApiSession, case: str) -> None:
-    if FORCED_NATIVE and case == PYTHON_PAGINATOR:
-        pytest.skip("forced native refuses it (paginator), as the route test checks")
     command, pages, sent, merged = MERGES[case]
     run = await paged.run(command, replies=pages)
     assert params(run) == sent, run.describe()
@@ -947,8 +939,8 @@ async def test_every_page_names_the_paginator_feature(paged: ApiSession) -> None
 
 # Routes.
 
-# Every command above but ListJobs's, whose expression token only Python
-# reads (`Jobs[-1].JobId`).
+# Every command above, ListJobs's expression token (`Jobs[-1].JobId`)
+# included.
 ROUTES: Final = {
     "json-next-token": ("zjson list-things --max-items 1 --page-size 1", None),
     "json-more-results": ("zjson list-keys", None),
@@ -971,7 +963,7 @@ ROUTES: Final = {
         "zrestjson list-functions --no-paginate --max-items 1",
         None,
     ),
-    "query-expression-token": ("zquery list-jobs", "paginator"),
+    "query-expression-token": ("zquery list-jobs", None),
 }
 
 
