@@ -364,17 +364,9 @@ impl ShapeDeserializer for XmlDeserializer<'_> {
 
 /// Parse hooks that keep a timestamp's or blob's text.
 const AS_WRITTEN: ParseOptions<'static> = ParseOptions {
-    timestamp: &as_written,
-    blob: &as_written,
+    timestamp: &|value| Ok(value.clone()),
+    blob: &|value| Ok(value.clone()),
 };
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the parse hooks' signature is fallible"
-)]
-fn as_written(value: &Value) -> Result<Value, crate::error::ParseError> {
-    Ok(value.clone())
-}
 
 /// The scalar handler of `shape_type` over `element`'s text.
 fn scalar(shape_type: ShapeType, element: &Element) -> Result<Value, SerdeError> {
@@ -459,24 +451,21 @@ fn error_root(root: &Element) -> &Element {
 /// every write fails.
 struct Unwritable;
 
-impl Unwritable {
-    #[expect(clippy::unused_self, reason = "every write refuses the same way")]
-    fn refuse(&self) -> SerdeResult {
-        Err(SerdeError::new("the XML codec does not serialize"))
-    }
+fn refuse() -> SerdeResult {
+    Err(SerdeError::new("the XML codec does not serialize"))
 }
 
 macro_rules! refuse_scalars {
     ($($name:ident),+) => {$(
         fn $name(&mut self, _: Schema<'_>, _: &Value) -> SerdeResult {
-            self.refuse()
+            refuse()
         }
     )+};
 }
 
 impl ShapeSerializer for Unwritable {
     fn write_struct(&mut self, _: Schema<'_>, _: &dyn SerializableStruct) -> SerdeResult {
-        self.refuse()
+        refuse()
     }
 
     fn write_list(
@@ -485,7 +474,7 @@ impl ShapeSerializer for Unwritable {
         _: usize,
         _: &mut dyn FnMut(&mut dyn ShapeSerializer) -> SerdeResult,
     ) -> SerdeResult {
-        self.refuse()
+        refuse()
     }
 
     fn write_map(
@@ -494,7 +483,7 @@ impl ShapeSerializer for Unwritable {
         _: usize,
         _: &mut dyn FnMut(&mut dyn MapSerializer) -> SerdeResult,
     ) -> SerdeResult {
-        self.refuse()
+        refuse()
     }
 
     refuse_scalars!(
@@ -514,13 +503,13 @@ impl ShapeSerializer for Unwritable {
     );
 
     fn write_null(&mut self, _: Schema<'_>) -> SerdeResult {
-        self.refuse()
+        refuse()
     }
 }
 
 impl FinishSerializer for Unwritable {
     fn finish(self: Box<Self>) -> Result<Vec<u8>, SerdeError> {
-        Err(SerdeError::new("the XML codec does not serialize"))
+        refuse().map(|()| Vec::new())
     }
 }
 
