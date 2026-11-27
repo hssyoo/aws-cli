@@ -274,7 +274,7 @@ pub(super) fn decode_blob(value: &Value) -> Result<Value, ParseError> {
 
 /// `Serializer._convert_timestamp_to_str`: the value as an instant, then in
 /// `format` (`iso8601`, `unixtimestamp` or `rfc822`, any case).
-pub(super) fn timestamp_out(value: &Value, format: &str) -> Result<Value, SerializeError> {
+pub(crate) fn timestamp_out(value: &Value, format: &str) -> Result<Value, SerializeError> {
     let at = instant(value)
         .ok_or_else(|| SerializeError::new(format!("Invalid timestamp \"{}\"", py_str(value))))?;
     match format.to_ascii_lowercase().as_str() {
@@ -289,7 +289,7 @@ pub(super) fn timestamp_out(value: &Value, format: &str) -> Result<Value, Serial
 }
 
 /// `Serializer._get_base64`: text is encoded as UTF-8 first.
-pub(super) fn base64_in(value: &Value) -> Result<String, SerializeError> {
+pub(crate) fn base64_in(value: &Value) -> Result<String, SerializeError> {
     match value {
         Value::String(text) => Ok(pytext::base64::encode(text.as_bytes())),
         Value::PyString(text) => {
@@ -306,7 +306,7 @@ pub(super) fn base64_in(value: &Value) -> Result<String, SerializeError> {
 }
 
 /// `Serializer._handle_float`: the three special values as text.
-pub(super) fn special_float(value: &Value) -> Value {
+pub(crate) fn special_float(value: &Value) -> Value {
     match value {
         Value::Float(number) if number.is_nan() => Value::String("NaN".into()),
         Value::Float(number) if *number == f64::INFINITY => Value::String("Infinity".into()),
