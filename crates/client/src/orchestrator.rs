@@ -5,35 +5,42 @@
 //! verdict are botocore's.
 //!
 //! [`configure`], once per client in `Client::new`: the customizations in
-//! scope for the service, the one retry strategy (and so the one quota)
-//! all of the client's calls and pages share, the region (`NoRegionError`)
-//! and the timeouts, held as the client's [`crate::runtime_components`].
-//! Operation scope is a filter each phase applies, not a configuration
-//! of its own (decision D3).
+//! scope for the service ([`crate::runtime_plugin::ServicePlugins`]), the
+//! one retry strategy (and so the one quota) all of the client's calls and
+//! pages share, the region (`NoRegionError`) and the timeouts, held as the
+//! client's [`crate::runtime_components`]. Operation scope is a filter
+//! each phase applies, not a configuration of its own (decision D3).
 //!
 //! [`prepare`] (no identity, no transport; it may leave the call to the
 //! Python route):
 //! 1. `admit`: the static refusals and the endpoint configuration check;
-//! 2. `modify_before_serialization`: the `modify_input` stage;
+//! 2. `modify_before_serialization` hooks;
 //! 3. the idempotency tokens, after every input hook;
-//! 4. `resolve_endpoint`: the built-ins after the `endpoint_builtins`
-//!    stage, then the rule set, with the account id deferred;
+//! 4. `resolve_endpoint`: the built-ins after the
+//!    `modify_endpoint_builtins` hooks, then the rule set, with the
+//!    account id deferred;
 //! 5. `serialize`: validation, then the protocol's serializer;
 //! 6. `apply_endpoint`: the join with the endpoint and the `User-Agent`;
-//! 7. `modify_before_retry_loop`: the `after_serialize` stage;
-//! 8. `resolve_auth_scheme`: auth selection and the `select_auth` stage.
+//! 7. `modify_before_retry_loop` hooks;
+//! 8. `resolve_auth_scheme`: auth selection, a component.
 //!
 //! [`send`]:
 //! 1. `refresh_for_identity`: the deferred account id, which reruns
 //!    phases 4, 6, 7 and 8 when it changes the endpoint;
 //! 2. the invocation id; then per attempt:
-//!    `modify_before_signing` (the `before_sign` stage), identity and
-//!    signature, `modify_before_transmit` (the core's unsigned headers),
-//!    `transmit` (the `before_transmit` stage's answer, else the
-//!    transport), `deserialize` (the `after_receive` stage, then the
-//!    parsers), `classify` (the `classify_retry` stage, else standard
-//!    mode), the retry decision (with the long-poll wait), and on success
-//!    `modify_before_completion` (the `modify_output` stage).
+//!    `modify_before_signing` hooks, identity and signature,
+//!    `modify_before_transmit` (the core's unsigned headers, then the
+//!    hooks), `transmit` (a `short_circuit_transmit` hook's answer, else
+//!    the transport), `deserialize` (`modify_before_deserialization`
+//!    hooks, then the parsers), `classify` (the customizations' retry
+//!    classifiers, else standard mode), the retry decision (with the
+//!    long-poll wait), and on success `modify_before_completion` hooks.
+//!
+//! Not yet run, each until its first user: the
+//! [`crate::interceptors::Intercept::observe`] points (the first is CLI
+//! history, which today goes to Python) and
+//! `modify_before_attempt_completion`, a core position with no core
+//! finalizer yet.
 use crate::admission::Unsupported;
 use crate::error::CallError;
 use crate::hooks::HookError;

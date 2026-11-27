@@ -1,9 +1,9 @@
 //! The call loop: botocore's `BaseClient._make_api_call`,
 //! `_convert_to_request_dict` and `Endpoint._send_request`, with the
-//! interceptor stages at the points their botocore events fire.
+//! customizations' hooks at the points their botocore events fire.
 //!
 //! [`Client::prepare`] does everything that needs no network: the input
-//! stages, the endpoint, validation, serialization and auth selection, so
+//! hooks, the endpoint, validation, serialization and auth selection, so
 //! a caller can send a call it cannot run natively to the Python route
 //! before anything is sent. [`Client::send`] runs the attempts: sign, add
 //! the unsigned `amz-sdk-invocation-id`, `amz-sdk-request` and
@@ -22,11 +22,13 @@
 #[cfg(test)]
 use crate::admission::Unsupported;
 use crate::auth::AuthScheme;
+use crate::config_bag::Slots;
 use crate::credentials::CredentialSource;
 use crate::endpoint::{EndpointConfig, EndpointData};
 use crate::error::CallError;
-use crate::hooks::{CallContext, Customization, Hooks, Slots};
+use crate::hooks::Customization;
 use crate::http::{Headers, HttpRequest, HttpResponse};
+use crate::interceptors::InterceptorContext;
 use crate::protocol::{self, ClientProtocol, ParseHooks, Serialized};
 use crate::runtime::Runtime;
 use crate::runtime_components::RuntimeComponents;
@@ -77,11 +79,12 @@ pub struct Client {
     pub(crate) customizations: &'static [&'static Customization],
     pub(crate) parse: ParseHooks,
     pub(crate) user_agent: UserAgentContext,
+    /// The hyphenized `serviceId`, the hooks' second scope key.
+    pub(crate) service_id: Option<String>,
     /// The client configuration, built once by `Client::new`: every call
-    /// and page of the client shares its one retry strategy and quota.
+    /// and page of the client shares its one retry strategy and quota,
+    /// and its service's customizations, which op scope filters per call.
     pub(crate) components: RuntimeComponents,
-    /// The service's customizations, which op scope filters per call.
-    pub(crate) hooks: Hooks,
     pub(crate) region: Option<String>,
     pub(crate) timeouts: Timeouts,
 }
@@ -159,12 +162,12 @@ impl Client {
 impl Client {
     /// Everything before the first attempt, in botocore's order: the
     /// static refusals ([`crate::admission::static_refusal`]), the
-    /// `modify_input` stage (`provide-client-params`,
+    /// `modify_before_serialization` hooks (`provide-client-params`,
     /// `before-parameter-build`), idempotency tokens
     /// (`generate_idempotent_uuid`), the endpoint (`_resolve_endpoint_ruleset`),
     /// validation and serialization (`_convert_to_request_dict`), the join
     /// with the endpoint and the `User-Agent` (`prepare_request_dict`), the
-    /// `after_serialize` stage, and auth selection.
+    /// `modify_before_retry_loop` hooks (`before-call`), and auth selection.
     ///
     /// It needs no credentials, network or runtime, so every refusal comes
     /// before any credential provider runs: the endpoint resolves with
@@ -200,24 +203,27 @@ impl Client {
         crate::orchestrator::send(self, prepared)
     }
     /// A parsed response no retry was decided for: the quota's refund
-    /// (`release_retry_quota`), then `modify_before_completion`, the
-    /// `modify_output` stage. It stays a method here, where the source
-    /// path tests of `testing::defines` name it.
+    /// (`release_retry_quota`), then the `modify_before_completion` hooks
+    /// (`after-call`), which see the outcome as `Ok` and may turn it into
+    /// an error; as botocore's `after-call`, they run for a success only.
+    /// It stays a method here, where the source path tests of
+    /// `testing::defines` name it.
     pub(crate) fn succeeded(
         &self,
-        cx: &mut CallContext<'_>,
+        ctx: &mut InterceptorContext<'_>,
         attempt: u32,
         response: HttpResponse,
-        mut value: Value,
+        value: Value,
         last_cost: Option<u32>,
     ) -> Result<Output, CallError> {
         self.components.retry_strategy.succeeded(last_cost);
-        for hook in self.hooks.interceptors(cx.operation.name()) {
-            hook.modify_output(cx, &mut value)
+        let mut outcome = Ok(value);
+        for hook in self.components.plugins.interceptors(ctx.operation.name()) {
+            hook.modify_before_completion(ctx, &mut outcome)
                 .map_err(|error| CallError::Hook(error.after_prepare()))?;
         }
         Ok(Output {
-            value,
+            value: outcome?,
             status: response.status,
             headers: response.headers,
             retry_attempts: attempt - 1,

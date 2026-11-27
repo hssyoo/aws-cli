@@ -6,8 +6,8 @@ use crate::auth::{self, AuthScheme};
 use crate::call::{Client, Prepared};
 use crate::endpoint::{self, ResolvedEndpoint};
 use crate::error::CallError;
-use crate::hooks::CallContext;
 use crate::http::HttpRequest;
+use crate::interceptors::InterceptorContext;
 use crate::protocol::Serialized;
 use cli_core::client_config::user_agent::Features;
 use model::schema::{Flag, OperationSchema};
@@ -24,19 +24,19 @@ pub(crate) fn prepare(
 ) -> Result<Prepared, CallError> {
     let operation = find(&client.model, operation)?;
     admit(client, operation)?;
-    let mut cx = CallContext::new(&client.service, &client.model, operation);
+    let mut ctx = InterceptorContext::new(&client.service, client.service_id.as_deref(), operation);
     let mut input = input;
-    modify_before_serialization(client, &mut cx, &mut input)?;
+    modify_before_serialization(client, &mut ctx, &mut input)?;
     fill_idempotency_tokens(client, operation, &mut input);
-    let (endpoint, mut features) = resolve_endpoint(client, &mut cx, &input, None)?;
+    let (endpoint, mut features) = resolve_endpoint(client, &mut ctx, &input, None)?;
     features.extend(extra.iter());
     let serialized = serialize(client, operation, &input)?;
     let mut request = apply_endpoint(client, &serialized, &endpoint.url, features)?;
-    modify_before_retry_loop(client, &mut cx, &mut request)?;
-    let scheme = resolve_auth_scheme(client, &mut cx, &endpoint)?;
+    modify_before_retry_loop(client, &mut ctx, &mut request)?;
+    let scheme = resolve_auth_scheme(client, operation, &endpoint)?;
     Ok(Prepared {
         operation: operation.name().to_owned(),
-        slots: cx.into_slots(),
+        slots: ctx.into_state(),
         request,
         scheme,
         serialized,
@@ -65,15 +65,16 @@ fn admit(client: &Client, operation: OperationSchema<'_>) -> Result<(), CallErro
     Ok(())
 }
 
-/// The `modify_input` stage (`provide-client-params`,
+/// The `modify_before_serialization` hooks (`provide-client-params`,
 /// `before-parameter-build`).
 fn modify_before_serialization(
     client: &Client,
-    cx: &mut CallContext<'_>,
+    ctx: &mut InterceptorContext<'_>,
     input: &mut Value,
 ) -> Result<(), CallError> {
-    for hook in client.hooks.interceptors(cx.operation.name()) {
-        hook.modify_input(cx, input).map_err(prepare_hook_error)?;
+    for hook in client.components.plugins.interceptors(ctx.operation.name()) {
+        hook.modify_before_serialization(ctx, input)
+            .map_err(prepare_hook_error)?;
     }
     Ok(())
 }
@@ -108,18 +109,19 @@ fn fill_idempotency_tokens(client: &Client, operation: OperationSchema<'_>, inpu
 }
 
 /// The endpoint of a call with `input` (`_resolve_endpoint_ruleset`), the
-/// built-ins after the `endpoint_builtins` stage and the deferred account
-/// id `account_id`, and the feature ids resolving it registered.
+/// built-ins after the `modify_endpoint_builtins` hooks
+/// (`before-endpoint-resolution`) and the deferred account id
+/// `account_id`, and the feature ids resolving it registered.
 pub(super) fn resolve_endpoint(
     client: &Client,
-    cx: &mut CallContext<'_>,
+    ctx: &mut InterceptorContext<'_>,
     input: &Value,
     account_id: Option<&str>,
 ) -> Result<(ResolvedEndpoint, Features), CallError> {
-    let (resolver, operation) = (&client.components.endpoint_resolver, cx.operation);
+    let (resolver, operation) = (&client.components.endpoint_resolver, ctx.operation);
     let mut builtins = resolver.config.builtins(&resolver.data)?;
-    for hook in client.hooks.interceptors(operation.name()) {
-        hook.endpoint_builtins(cx, &mut builtins)
+    for hook in client.components.plugins.interceptors(ctx.operation.name()) {
+        hook.modify_endpoint_builtins(ctx, &mut builtins)
             .map_err(prepare_hook_error)?;
     }
     let params = endpoint::provider_params(&resolver.data, operation, input, &builtins, account_id);
@@ -158,39 +160,33 @@ pub(super) fn apply_endpoint(
     (client.components.protocol).update_endpoint(serialized, url, &user_agent)
 }
 
-/// The `after_serialize` stage, once per call (and again when the
-/// account id changes the endpoint).
+/// The `modify_before_retry_loop` hooks (`before-call`), once per call
+/// (and again when the account id changes the endpoint).
 pub(super) fn modify_before_retry_loop(
     client: &Client,
-    cx: &mut CallContext<'_>,
+    ctx: &mut InterceptorContext<'_>,
     request: &mut HttpRequest,
 ) -> Result<(), CallError> {
-    for hook in client.hooks.interceptors(cx.operation.name()) {
-        hook.after_serialize(cx, request)
+    for hook in client.components.plugins.interceptors(ctx.operation.name()) {
+        hook.modify_before_retry_loop(ctx, request)
             .map_err(prepare_hook_error)?;
     }
     Ok(())
 }
 
-/// The scheme botocore's selection gives, unless a `select_auth`
-/// interceptor gives another.
+/// The scheme botocore's selection gives (`choose-signer`), a component,
+/// not a hook.
 pub(super) fn resolve_auth_scheme(
     client: &Client,
-    cx: &mut CallContext<'_>,
+    operation: OperationSchema<'_>,
     endpoint: &ResolvedEndpoint,
 ) -> Result<AuthScheme, CallError> {
-    let operation = cx.operation;
-    let resolved = auth::select(
+    auth::select(
         &client.model,
         &client.service,
         operation,
         endpoint,
         client.settings.signing.value,
         client.region.as_deref(),
-    )?;
-    let chosen = client
-        .hooks
-        .interceptors(operation.name())
-        .find_map(|hook| hook.select_auth(cx, &resolved));
-    Ok(chosen.unwrap_or(resolved))
+    )
 }

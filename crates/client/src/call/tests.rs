@@ -4,12 +4,12 @@ use super::*;
 use crate::credentials::{CredentialError, CredentialSource, SigningCredentials};
 use crate::endpoint::{Builtins, EndpointConfig, EndpointData, EndpointInputs};
 use crate::error::{CallError, ParseError, SerializeError, ServiceError};
-use crate::hooks::{
-    CallContext, Customization, HookError, HookResult, Interceptor, Scope, SettingDefault,
-};
+use crate::hooks::{Customization, HookError, HookResult, Scope, SettingDefault};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method};
+use crate::interceptors::{Intercept, InterceptorContext};
 use crate::protocol::{BotocoreCompat, ClientProtocol, ParseOptions, Serialized};
 use crate::retry::{Attempt, RetryDecision};
+use crate::runtime_components::ClassifyRetry;
 use crate::testing::{FixedRuntime, InMemoryTransport};
 use crate::transport::TransportError;
 use cli_core::client_config::ClientSettings;
@@ -520,6 +520,8 @@ fn max_attempts_come_from_the_user_then_a_customization() -> TestResult {
         setting_defaults: &[SettingDefault::MaxAttempts(4)],
         builtins: &[],
         interceptors: &[],
+        retry_classifiers: &[],
+        long_polling: false,
         replaces: &[],
     };
     static TABLE: [&Customization; 1] = [&FOUR];
@@ -615,7 +617,7 @@ fn validation_is_decided_before_any_request() -> TestResult {
     Ok(())
 }
 
-/// Records each stage it sees, in a slot every stage shares.
+/// Records each hook and classification it sees, in a slot they all share.
 #[derive(Debug)]
 struct Recorder(&'static str);
 
@@ -625,9 +627,9 @@ struct Trail(Vec<String>);
 static LOG: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 impl Recorder {
-    fn note(&self, cx: &mut CallContext<'_>, stage: &str) {
-        cx.slot::<Trail>().0.push(format!("{}:{stage}", self.0));
-        let trail = cx.slot::<Trail>().0.join(" ");
+    fn note(&self, cx: &mut InterceptorContext<'_>, stage: &str) {
+        cx.state::<Trail>().0.push(format!("{}:{stage}", self.0));
+        let trail = cx.state::<Trail>().0.join(" ");
         let mut log = LOG
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -636,60 +638,93 @@ impl Recorder {
     }
 }
 
-impl Interceptor for Recorder {
-    fn modify_input(&self, cx: &mut CallContext<'_>, _: &mut Value) -> HookResult {
-        self.note(cx, "modify_input");
+impl Intercept for Recorder {
+    fn name(&self) -> &'static str {
+        self.0
+    }
+    fn modify_before_serialization(
+        &self,
+        cx: &mut InterceptorContext<'_>,
+        _: &mut Value,
+    ) -> HookResult {
+        self.note(cx, "modify_before_serialization");
         Ok(())
     }
-    fn endpoint_builtins(
+    fn modify_endpoint_builtins(
         &self,
-        cx: &mut CallContext<'_>,
+        cx: &mut InterceptorContext<'_>,
         _: &mut crate::endpoint::Builtins,
     ) -> HookResult {
-        self.note(cx, "endpoint_builtins");
+        self.note(cx, "modify_endpoint_builtins");
         Ok(())
     }
-    fn after_serialize(&self, cx: &mut CallContext<'_>, _: &mut HttpRequest) -> HookResult {
-        self.note(cx, "after_serialize");
-        Ok(())
-    }
-    fn select_auth(
+    fn modify_before_retry_loop(
         &self,
-        cx: &mut CallContext<'_>,
-        _: &crate::auth::AuthScheme,
-    ) -> Option<crate::auth::AuthScheme> {
-        self.note(cx, "select_auth");
-        None
-    }
-    fn before_sign(&self, cx: &mut CallContext<'_>, _: &mut HttpRequest) -> HookResult {
-        self.note(cx, "before_sign");
+        cx: &mut InterceptorContext<'_>,
+        _: &mut HttpRequest,
+    ) -> HookResult {
+        self.note(cx, "modify_before_retry_loop");
         Ok(())
     }
-    fn before_transmit(
+    fn modify_before_signing(
         &self,
-        cx: &mut CallContext<'_>,
+        cx: &mut InterceptorContext<'_>,
+        _: &mut HttpRequest,
+    ) -> HookResult {
+        self.note(cx, "modify_before_signing");
+        Ok(())
+    }
+    fn modify_before_transmit(
+        &self,
+        cx: &mut InterceptorContext<'_>,
+        _: &mut HttpRequest,
+    ) -> HookResult {
+        self.note(cx, "modify_before_transmit");
+        Ok(())
+    }
+    fn short_circuit_transmit(
+        &self,
+        cx: &mut InterceptorContext<'_>,
         _: &HttpRequest,
     ) -> Result<Option<HttpResponse>, crate::hooks::HookError> {
-        self.note(cx, "before_transmit");
+        self.note(cx, "short_circuit_transmit");
         Ok((self.0 == "short").then(|| ok("canned")))
     }
-    fn after_receive(&self, cx: &mut CallContext<'_>, _: &mut HttpResponse) -> HookResult {
-        self.note(cx, "after_receive");
+    fn modify_before_deserialization(
+        &self,
+        cx: &mut InterceptorContext<'_>,
+        _: &mut HttpResponse,
+    ) -> HookResult {
+        self.note(cx, "modify_before_deserialization");
         Ok(())
     }
-    fn classify_retry(&self, cx: &mut CallContext<'_>, _: &Attempt<'_>) -> Option<RetryDecision> {
-        self.note(cx, "classify_retry");
-        None
-    }
-    fn modify_output(&self, cx: &mut CallContext<'_>, _: &mut Value) -> HookResult {
-        self.note(cx, "modify_output");
+    fn modify_before_completion(
+        &self,
+        cx: &mut InterceptorContext<'_>,
+        _: &mut Result<Value, CallError>,
+    ) -> HookResult {
+        self.note(cx, "modify_before_completion");
         Ok(())
     }
 }
 
-/// All nine stages run, in the call's order, for interceptors in scope
-/// only, sharing one typed slot; `before_transmit` answering takes the
-/// place of sending.
+impl ClassifyRetry for Recorder {
+    fn name(&self) -> &'static str {
+        self.0
+    }
+    fn classify_retry(
+        &self,
+        cx: &mut InterceptorContext<'_>,
+        _: &Attempt<'_>,
+    ) -> Option<RetryDecision> {
+        self.note(cx, "classify_retry");
+        None
+    }
+}
+
+/// All eight hook positions and the retry classification run, in the
+/// call's order, for customizations in scope only, sharing one typed slot;
+/// `short_circuit_transmit` answering takes the place of sending.
 #[test]
 fn every_stage_runs_in_order_in_scope_and_can_short_circuit() -> TestResult {
     static ZFAKE: Recorder = Recorder("short");
@@ -700,6 +735,8 @@ fn every_stage_runs_in_order_in_scope_and_can_short_circuit() -> TestResult {
         setting_defaults: &[],
         builtins: &[],
         interceptors: &[&ZFAKE],
+        retry_classifiers: &[&ZFAKE],
+        long_polling: false,
         replaces: &[],
     };
     static OUT_OF_SCOPE: Customization = Customization {
@@ -708,6 +745,8 @@ fn every_stage_runs_in_order_in_scope_and_can_short_circuit() -> TestResult {
         setting_defaults: &[],
         builtins: &[],
         interceptors: &[&OTHER],
+        retry_classifiers: &[],
+        long_polling: false,
         replaces: &[],
     };
     static TABLE: [&Customization; 2] = [&IN_SCOPE, &OUT_OF_SCOPE];
@@ -725,9 +764,10 @@ fn every_stage_runs_in_order_in_scope_and_can_short_circuit() -> TestResult {
         .join("");
     assert_eq!(
         trail,
-        "short:modify_input short:endpoint_builtins short:after_serialize short:select_auth \
-         short:before_sign short:before_transmit short:after_receive short:classify_retry \
-         short:modify_output"
+        "short:modify_before_serialization short:modify_endpoint_builtins \
+         short:modify_before_retry_loop short:modify_before_signing short:modify_before_transmit \
+         short:short_circuit_transmit short:modify_before_deserialization short:classify_retry \
+         short:modify_before_completion"
     );
     Ok(())
 }
@@ -814,13 +854,20 @@ fn the_deferred_account_id_resolves_when_the_call_is_sent() -> TestResult {
     Ok(())
 }
 
-/// Refuses at `endpoint_builtins` from its second call on: prepare's
+/// Refuses at `modify_endpoint_builtins` from its second call on: prepare's
 /// resolution passes, the account-id one in `send` refuses.
 #[derive(Debug)]
 struct RefusesAgain(std::sync::atomic::AtomicUsize);
 
-impl Interceptor for RefusesAgain {
-    fn endpoint_builtins(&self, _: &mut CallContext<'_>, _: &mut Builtins) -> HookResult {
+impl Intercept for RefusesAgain {
+    fn name(&self) -> &'static str {
+        "refuses-again"
+    }
+    fn modify_endpoint_builtins(
+        &self,
+        _: &mut InterceptorContext<'_>,
+        _: &mut Builtins,
+    ) -> HookResult {
         match self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
             0 => Ok(()),
             _ => Err(HookError::Refuse("not ported".into())),
@@ -835,6 +882,8 @@ static REFUSE_AGAIN: Customization = Customization {
     setting_defaults: &[],
     builtins: &[],
     interceptors: &[&REFUSES_AGAIN],
+    retry_classifiers: &[],
+    long_polling: false,
     replaces: &[],
 };
 static AGAIN: [&Customization; 1] = [&REFUSE_AGAIN];
@@ -891,20 +940,31 @@ fn a_refusal_when_send_resolves_again_fails_the_call() -> TestResult {
     Ok(())
 }
 
-/// Refuses at the stage it names.
+/// Refuses at the hook it names.
 #[derive(Debug)]
 struct Refuser(&'static str);
 
-impl Interceptor for Refuser {
-    fn modify_input(&self, _: &mut CallContext<'_>, _: &mut Value) -> HookResult {
+impl Intercept for Refuser {
+    fn name(&self) -> &'static str {
+        self.0
+    }
+    fn modify_before_serialization(
+        &self,
+        _: &mut InterceptorContext<'_>,
+        _: &mut Value,
+    ) -> HookResult {
         match self.0 {
-            "modify_input" => Err(HookError::Refuse("not ported".into())),
+            "modify_before_serialization" => Err(HookError::Refuse("not ported".into())),
             _ => Ok(()),
         }
     }
-    fn before_sign(&self, _: &mut CallContext<'_>, _: &mut HttpRequest) -> HookResult {
+    fn modify_before_signing(
+        &self,
+        _: &mut InterceptorContext<'_>,
+        _: &mut HttpRequest,
+    ) -> HookResult {
         match self.0 {
-            "before_sign" => Err(HookError::Refuse("not ported".into())),
+            "modify_before_signing" => Err(HookError::Refuse("not ported".into())),
             _ => Ok(()),
         }
     }
@@ -915,7 +975,9 @@ static REFUSE_EARLY: Customization = Customization {
     scope: Scope::ALL,
     setting_defaults: &[],
     builtins: &[],
-    interceptors: &[&Refuser("modify_input")],
+    interceptors: &[&Refuser("modify_before_serialization")],
+    retry_classifiers: &[],
+    long_polling: false,
     replaces: &[],
 };
 static REFUSE_LATE: Customization = Customization {
@@ -923,14 +985,16 @@ static REFUSE_LATE: Customization = Customization {
     scope: Scope::ALL,
     setting_defaults: &[],
     builtins: &[],
-    interceptors: &[&Refuser("before_sign")],
+    interceptors: &[&Refuser("modify_before_signing")],
+    retry_classifiers: &[],
+    long_polling: false,
     replaces: &[],
 };
 static EARLY: [&Customization; 1] = [&REFUSE_EARLY];
 static LATE: [&Customization; 1] = [&REFUSE_LATE];
 
 /// A customization may leave a call to Python only before anything is
-/// sent: in prepare's stages the refusal is `Unsupported::Hook`; later it
+/// sent: in prepare's hooks the refusal is `Unsupported::Hook`; later it
 /// is a failure of the call, since credentials have run.
 #[test]
 fn a_hook_refuses_only_before_the_call_starts() -> TestResult {
@@ -1011,21 +1075,14 @@ fn the_answering_provider_s_features_join_the_user_agent() -> TestResult {
 }
 
 /// Marks its operation long-polling.
-#[derive(Debug)]
-struct LongPoll;
-
-impl Interceptor for LongPoll {
-    fn long_polls(&self) -> bool {
-        true
-    }
-}
-
 static LONG_POLL: Customization = Customization {
     id: "long-poll",
     scope: Scope::operation("zfake", "Op"),
     setting_defaults: &[],
     builtins: &[],
-    interceptors: &[&LongPoll],
+    interceptors: &[],
+    retry_classifiers: &[],
+    long_polling: true,
     replaces: &[],
 };
 static LONG_POLLS: [&Customization; 1] = [&LONG_POLL];
