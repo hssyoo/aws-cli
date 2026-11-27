@@ -154,6 +154,8 @@ fn a_required_built_in_needs_core_or_a_customization() -> TestResult {
         setting_defaults: &[],
         builtins: &["AWS::Other::Thing"],
         interceptors: &[],
+        retry_classifiers: &[],
+        long_polling: false,
         replaces: &[],
     };
     assert_eq!(missing_builtin(&data, "zjson", &[&SUPPLIER]), None);

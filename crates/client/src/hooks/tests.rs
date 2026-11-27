@@ -1,4 +1,11 @@
 use super::*;
+use crate::endpoint::Builtins;
+use crate::error::CallError;
+use crate::interceptors::{Intercept, InterceptorContext};
+use crate::runtime_plugin::ServicePlugins;
+use model::schema::OperationSchema;
+use model::shapes::Model;
+use model::value::Value;
 use std::time::Duration;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -21,16 +28,23 @@ fn operation<'m>(model: &'m Model, name: &str) -> TestResult<OperationSchema<'m>
         .ok_or(name.to_owned())?)
 }
 
-/// An interceptor that says who it is through `modify_input`, which
-/// appends its name to the input string.
+/// A hook that says who it is through `modify_before_serialization`,
+/// which appends its name to the input string.
 #[derive(Debug)]
 struct Named(&'static str, Order);
 
-impl Interceptor for Named {
+impl Intercept for Named {
+    fn name(&self) -> &'static str {
+        self.0
+    }
     fn order(&self) -> Order {
         self.1
     }
-    fn modify_input(&self, _cx: &mut CallContext<'_>, input: &mut Value) -> HookResult {
+    fn modify_before_serialization(
+        &self,
+        _ctx: &mut InterceptorContext<'_>,
+        input: &mut Value,
+    ) -> HookResult {
         if let Value::String(text) = input {
             text.push_str(self.0);
         }
@@ -51,10 +65,12 @@ static EVERYWHERE: Customization = Customization {
     setting_defaults: &[],
     builtins: &[],
     interceptors: &[&LAST_A, &DEFAULT_B],
+    retry_classifiers: &[],
+    long_polling: false,
     replaces: &[(
         "awscli.example.everywhere",
         Basis::Implemented {
-            at: "client::hooks::Hooks::for_service",
+            at: "client::runtime_plugin::ServicePlugins::for_service",
         },
     )],
 };
@@ -64,6 +80,8 @@ static ZQUERY: Customization = Customization {
     setting_defaults: &[SettingDefault::MaxAttempts(4)],
     builtins: &[],
     interceptors: &[&FIRST_C, &DEFAULT_D],
+    retry_classifiers: &[],
+    long_polling: false,
     replaces: &[],
 };
 static ZQUERY_ONE: Customization = Customization {
@@ -72,6 +90,8 @@ static ZQUERY_ONE: Customization = Customization {
     setting_defaults: &[],
     builtins: &[],
     interceptors: &[&ONE_OPERATION],
+    retry_classifiers: &[],
+    long_polling: false,
     replaces: &[],
 };
 static ZJSON: Customization = Customization {
@@ -83,18 +103,25 @@ static ZJSON: Customization = Customization {
     ],
     builtins: &[],
     interceptors: &[&OTHER],
+    retry_classifiers: &[],
+    long_polling: false,
     replaces: &[],
 };
 static TABLE: [&Customization; 4] = [&EVERYWHERE, &ZQUERY, &ZQUERY_ONE, &ZJSON];
 
-/// The names of the interceptors that run for `operation`, in order.
-fn run_order(hooks: &Hooks, operation: &str) -> TestResult<String> {
+/// What a client of `service` takes from the built-in `table`.
+fn plugins(table: &[&'static Customization], service: &str) -> ServicePlugins {
+    ServicePlugins::for_service(table, &[], service)
+}
+
+/// The names of the hooks that run for `operation`, in order.
+fn run_order(hooks: &ServicePlugins, operation: &str) -> TestResult<String> {
     let model = fixture()?;
     let operation = self::operation(&model, operation)?;
-    let mut cx = CallContext::new("zquery", &model, operation);
+    let mut cx = InterceptorContext::new("zquery", None, operation);
     let mut input = Value::String(String::new());
     for interceptor in hooks.interceptors(operation.name()) {
-        interceptor.modify_input(&mut cx, &mut input)?;
+        interceptor.modify_before_serialization(&mut cx, &mut input)?;
     }
     match input {
         Value::String(text) => Ok(text),
@@ -120,7 +147,7 @@ fn scopes_match_their_service_and_operation() {
 /// call runs those whose scope also names its operation.
 #[test]
 fn interceptors_are_chosen_by_scope_and_ordered_by_stage_then_table() -> TestResult {
-    let hooks = Hooks::for_service(&TABLE, "zquery");
+    let hooks = plugins(&TABLE, "zquery");
     assert_eq!(
         run_order(&hooks, "GetThing")?,
         "[first-c][default-b][default-d][one-operation][last-a]"
@@ -129,9 +156,9 @@ fn interceptors_are_chosen_by_scope_and_ordered_by_stage_then_table() -> TestRes
         run_order(&hooks, "PutThing")?,
         "[first-c][default-b][default-d][last-a]"
     );
-    let other = Hooks::for_service(&TABLE, "zjson");
+    let other = plugins(&TABLE, "zjson");
     assert_eq!(run_order(&other, "GetThing")?, "[other][default-b][last-a]");
-    let none = Hooks::for_service(&TABLE, "unrelated");
+    let none = plugins(&TABLE, "unrelated");
     assert_eq!(run_order(&none, "GetThing")?, "[default-b][last-a]");
     Ok(())
 }
@@ -140,18 +167,18 @@ fn interceptors_are_chosen_by_scope_and_ordered_by_stage_then_table() -> TestRes
 /// unset; the user's value, any value, wins.
 #[test]
 fn setting_defaults_apply_only_to_unset_settings() {
-    let zquery = Hooks::for_service(&TABLE, "zquery");
+    let zquery = plugins(&TABLE, "zquery");
     assert_eq!(zquery.defaults().max_attempts(None), Some(4));
     assert_eq!(zquery.defaults().max_attempts(Some(2)), Some(2));
     assert_eq!(zquery.defaults().max_attempts(Some(1)), Some(1));
     assert_eq!(zquery.defaults().retry_base_delay(), None);
-    let zjson = Hooks::for_service(&TABLE, "zjson");
+    let zjson = plugins(&TABLE, "zjson");
     assert_eq!(zjson.defaults().max_attempts(None), Some(5));
     assert_eq!(
         zjson.defaults().retry_base_delay(),
         Some(Duration::from_millis(25))
     );
-    let none = Hooks::for_service(&TABLE, "unrelated");
+    let none = plugins(&TABLE, "unrelated");
     assert_eq!(none.defaults().max_attempts(None), None);
 }
 
@@ -165,9 +192,11 @@ fn only_service_wide_customizations_default_settings() {
         setting_defaults: &[SettingDefault::MaxAttempts(9)],
         builtins: &[],
         interceptors: &[],
+        retry_classifiers: &[],
+        long_polling: false,
         replaces: &[],
     };
-    let hooks = Hooks::for_service(&[&ONE_OP_DEFAULT], "zquery");
+    let hooks = plugins(&[&ONE_OP_DEFAULT], "zquery");
     assert_eq!(hooks.defaults().max_attempts(None), None);
 }
 
@@ -180,9 +209,11 @@ fn the_first_default_in_the_table_wins() {
         setting_defaults: &[SettingDefault::MaxAttempts(7)],
         builtins: &[],
         interceptors: &[],
+        retry_classifiers: &[],
+        long_polling: false,
         replaces: &[],
     };
-    let hooks = Hooks::for_service(&[&ZQUERY, &LATER], "zquery");
+    let hooks = plugins(&[&ZQUERY, &LATER], "zquery");
     assert_eq!(hooks.defaults().max_attempts(None), Some(4));
 }
 
@@ -192,19 +223,19 @@ struct Counter(u32);
 #[derive(Debug, Default, PartialEq)]
 struct Label(String);
 
-/// Stages share state through slots keyed by type: each type gets its own
+/// Hooks share state through slots keyed by type: each type gets its own
 /// slot, made from its default on first use and kept for the call.
 #[test]
 fn context_slots_are_typed_and_kept_for_the_call() -> TestResult {
     let model = fixture()?;
-    let mut cx = CallContext::new("zquery", &model, operation(&model, "Any")?);
+    let mut cx = InterceptorContext::new("zquery", None, operation(&model, "Any")?);
     assert_eq!(cx.attempt, 1);
-    assert_eq!(*cx.slot::<Counter>(), Counter(0));
-    cx.slot::<Counter>().0 += 2;
-    cx.slot::<Label>().0.push_str("signed");
-    cx.slot::<Counter>().0 += 1;
-    assert_eq!(*cx.slot::<Counter>(), Counter(3));
-    assert_eq!(cx.slot::<Label>().0, "signed");
+    assert_eq!(*cx.state::<Counter>(), Counter(0));
+    cx.state::<Counter>().0 += 2;
+    cx.state::<Label>().0.push_str("signed");
+    cx.state::<Counter>().0 += 1;
+    assert_eq!(*cx.state::<Counter>(), Counter(3));
+    assert_eq!(cx.state::<Label>().0, "signed");
     assert_eq!(cx.service, "zquery");
     assert_eq!(cx.operation.name(), "Any");
     let debug = format!("{cx:?}");
@@ -212,13 +243,13 @@ fn context_slots_are_typed_and_kept_for_the_call() -> TestResult {
     Ok(())
 }
 
-/// Every stage does nothing by default: an interceptor implements only the
-/// stages it needs, and the short-circuiting ones decline.
+/// Every hook does nothing by default: a customization implements only
+/// the hooks it needs, and the short-circuiting one declines.
 #[test]
 fn every_stage_defaults_to_doing_nothing() -> TestResult {
     let model = fixture()?;
-    let mut cx = CallContext::new("zquery", &model, operation(&model, "Any")?);
-    let hook: &dyn Interceptor = &DEFAULT_B;
+    let mut cx = InterceptorContext::new("zquery", None, operation(&model, "Any")?);
+    let hook: &dyn Intercept = &DEFAULT_B;
     let mut request = crate::http::HttpRequest {
         method: crate::http::Method::Post,
         url: crate::http::Url::parse("https://zquery.example/").ok_or("url")?,
@@ -227,23 +258,18 @@ fn every_stage_defaults_to_doing_nothing() -> TestResult {
     };
     let before = request.clone();
     let mut params = Builtins::default();
-    hook.endpoint_builtins(&mut cx, &mut params)?;
-    hook.after_serialize(&mut cx, &mut request)?;
-    hook.before_sign(&mut cx, &mut request)?;
-    assert_eq!(hook.select_auth(&mut cx, &AuthScheme::None), None);
-    assert_eq!(hook.before_transmit(&mut cx, &request)?, None);
+    hook.modify_endpoint_builtins(&mut cx, &mut params)?;
+    hook.modify_before_retry_loop(&mut cx, &mut request)?;
+    hook.modify_before_signing(&mut cx, &mut request)?;
+    hook.modify_before_transmit(&mut cx, &mut request)?;
+    assert_eq!(hook.short_circuit_transmit(&mut cx, &request)?, None);
     let mut response = crate::http::HttpResponse::default();
-    hook.after_receive(&mut cx, &mut response)?;
-    let failed = crate::transport::TransportError::Connect;
-    assert_eq!(
-        hook.classify_retry(&mut cx, &Attempt::Failed(&failed)),
-        None
-    );
-    let mut output = Value::Null;
-    hook.modify_output(&mut cx, &mut output)?;
+    hook.modify_before_deserialization(&mut cx, &mut response)?;
+    let mut output: Result<Value, CallError> = Ok(Value::Null);
+    hook.modify_before_completion(&mut cx, &mut output)?;
     assert_eq!(request, before);
     assert_eq!(params, Builtins::default());
-    assert_eq!(output, Value::Null);
+    assert_eq!(output, Ok(Value::Null));
     Ok(())
 }
 

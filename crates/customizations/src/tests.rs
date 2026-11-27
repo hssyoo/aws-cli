@@ -1,8 +1,9 @@
 use super::*;
 use client::error::ServiceError;
-use client::hooks::{CallContext, Hooks};
 use client::http::{Headers, HttpResponse};
+use client::interceptors::InterceptorContext;
 use client::retry::{Attempt, RetryDecision};
+use client::runtime_plugin::ServicePlugins;
 use format as _;
 use model::shapes::Model;
 use model::value::Value;
@@ -23,7 +24,7 @@ fn data() -> std::path::PathBuf {
 #[test]
 fn dynamodb_s_retry_defaults_and_no_one_else_s() {
     for service in ["dynamodb", "dynamodbstreams"] {
-        let hooks = Hooks::for_service(&TABLE, service);
+        let hooks = ServicePlugins::for_service(&TABLE, &[], service);
         assert_eq!(hooks.defaults().max_attempts(None), Some(4), "{service}");
         assert_eq!(hooks.defaults().max_attempts(Some(2)), Some(2), "{service}");
         assert_eq!(
@@ -32,15 +33,18 @@ fn dynamodb_s_retry_defaults_and_no_one_else_s() {
             "{service}"
         );
     }
-    let sts = Hooks::for_service(&TABLE, "sts");
+    let sts = ServicePlugins::for_service(&TABLE, &[], "sts");
     assert_eq!(sts.defaults().max_attempts(None), None);
     assert_eq!(sts.defaults().retry_base_delay(), None);
 }
 
-fn context_for<'a>(service: &'a str, model: &'a Model) -> Result<CallContext<'a>, &'static str> {
+fn context_for<'a>(
+    service: &'a str,
+    model: &'a Model,
+) -> Result<InterceptorContext<'a>, &'static str> {
     let mut operations = model.schema().service().operations();
     let operation = operations.next().ok_or("no operation")?;
-    Ok(CallContext::new(service, model, operation))
+    Ok(InterceptorContext::new(service, None, operation))
 }
 
 fn stub_model() -> Result<Model, Box<dyn std::error::Error>> {
@@ -50,7 +54,7 @@ fn stub_model() -> Result<Model, Box<dyn std::error::Error>> {
     )?)
 }
 
-/// sts needs no interceptor for its global endpoint switch: core supplies
+/// sts needs no hook for its global endpoint switch: core supplies
 /// `AWS::STS::UseGlobalEndpoint` false for every client, as
 /// `compute_endpoint_resolver_builtin_defaults` does, and no customization
 /// sets a built-in.
@@ -69,9 +73,9 @@ fn decision(
     let model = stub_model()?;
     let mut cx = context_for(service, &model)?;
     let attempt = Attempt::Response { response, error };
-    Ok(Hooks::for_service(&TABLE, service)
-        .interceptors("Op")
-        .find_map(|hook| hook.classify_retry(&mut cx, &attempt)))
+    Ok(ServicePlugins::for_service(&TABLE, &[], service)
+        .retry_classifiers("Op")
+        .find_map(|classifier| classifier.classify_retry(&mut cx, &attempt)))
 }
 
 /// `special.RetryIDPCommunicationError`: sts retries that code.
@@ -272,12 +276,7 @@ fn long_polling_operations_are_botocore_s() -> TestResult {
     let standard = std::fs::read_to_string(data().join("retries/standard.py"))?;
     let mut found: Vec<(&str, &str)> = TABLE
         .iter()
-        .filter(|customization| {
-            customization
-                .interceptors
-                .iter()
-                .any(|interceptor| interceptor.long_polls())
-        })
+        .filter(|customization| customization.long_polling)
         .filter_map(|customization| {
             Some((customization.scope.service?, customization.scope.operation?))
         })

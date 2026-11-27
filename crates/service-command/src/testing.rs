@@ -94,6 +94,8 @@ pub fn replacing_all(
         setting_defaults: &[],
         builtins: &[],
         interceptors: &[],
+        retry_classifiers: &[],
+        long_polling: false,
         replaces: Box::leak(names.into_boxed_slice()),
     }));
     Box::leak(Box::new([&*customization]))
