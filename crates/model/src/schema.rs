@@ -15,6 +15,7 @@ mod cold;
 mod id;
 mod known;
 mod operation;
+pub mod projection;
 mod registry;
 mod strings;
 mod types;

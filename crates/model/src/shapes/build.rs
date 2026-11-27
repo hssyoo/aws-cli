@@ -1,9 +1,11 @@
 //! Builds a [`Model`] from a service description in three passes: named
 //! shapes and their own traits, then their children, then the kinds of the
-//! shapes references derive.
-use super::keys::{self, record, record_traits};
+//! shapes references derive; and beside it the C2J front-end's schemas.
 use super::traits::{strings, truthy};
 use super::*;
+use crate::frontend::c2j::{self, keys};
+use crate::schema::BuildError;
+use keys::{record, record_traits};
 use serde_json::{Map as JsonMap, Value as Json};
 
 type Object = JsonMap<String, Json>;
@@ -27,7 +29,29 @@ struct Builder<'a> {
     uninterpreted: Vec<Uninterpreted>,
 }
 
-pub(super) fn build(json: &Json) -> Result<Model, ModelError> {
+/// A schema builder's refusal, as the arena's error for the same fault.
+impl From<BuildError> for ModelError {
+    fn from(error: BuildError) -> Self {
+        match error {
+            BuildError::NoShapeFound(name) => Self::NoShapeFound(name),
+            BuildError::TooLarge => Self::TooLarge,
+            other => Self::InvalidShape(other.to_string().into()),
+        }
+    }
+}
+
+/// The arena's model of `json`, and the C2J front-end's schemas of it with
+/// their ids in `namespace`.
+pub(super) fn build(json: &Json, namespace: &str) -> Result<Model, ModelError> {
+    arena(json, || c2j::build(json, namespace))
+}
+
+/// The arena's model; `schema` runs only once the arena has read `json`,
+/// so a description keeps the arena's error.
+fn arena(
+    json: &Json,
+    schema: impl FnOnce() -> Result<SchemaSet, ModelError>,
+) -> Result<Model, ModelError> {
     let document = json.as_object().ok_or(ModelError::NotAnObject)?;
     let definitions = section(document, "shapes")?;
     let mut builder = Builder {
@@ -75,6 +99,7 @@ pub(super) fn build(json: &Json) -> Result<Model, ModelError> {
         named,
         by_name: by_name.into(),
         uninterpreted: builder.uninterpreted.into(),
+        schema: schema()?,
     })
 }
 
@@ -175,36 +200,6 @@ impl Builder<'_> {
         })
     }
 
-    /// Records an operation's keys and its nested objects' that no reader
-    /// interprets; its references record theirs as they resolve.
-    fn note_operation(&mut self, name: &str, object: &Object) {
-        let at = |prefix: String| move || (Site::Operation(name.into()), prefix.clone());
-        let out = &mut self.uninterpreted;
-        let (known, ignored) = (keys::OPERATION, keys::OPERATION_IGNORED);
-        record(object, known, ignored, &at(String::new()), out);
-        for (key, known, ignored) in keys::OPERATION_NESTED {
-            if let Some(nested) = object.get(*key).and_then(Json::as_object) {
-                record(nested, known, ignored, &at(format!("{key}.")), out);
-            }
-        }
-        let params = [
-            ("staticContextParams", "value"),
-            ("operationContextParams", "path"),
-        ];
-        for (key, known) in params {
-            let entries = object
-                .get(key)
-                .and_then(Json::as_object)
-                .into_iter()
-                .flatten();
-            for (param, props) in entries {
-                if let Some(props) = props.as_object() {
-                    record(props, &[known], &[], &at(format!("{key}.{param}.")), out);
-                }
-            }
-        }
-    }
-
     /// `ShapeResolver.resolve_shape_ref`, in the shape or operation `owner`,
     /// recording at `at` the reference's keys no reader interprets.
     fn reference(
@@ -232,6 +227,16 @@ impl Builder<'_> {
         traits.apply(object, &shape.name)?;
         if traits == shape.traits {
             return Ok(target);
+        }
+        if matches!(shape.kind, ShapeKind::Structure { .. }) {
+            let changed = [("document", Flag::Document), ("union", Flag::Union)];
+            for (key, flag) in changed {
+                if traits.is(flag) != shape.traits.is(flag) {
+                    let (site, prefix) = at();
+                    let key = format!("{prefix}{key}").into();
+                    self.uninterpreted.push(Uninterpreted { site, key });
+                }
+            }
         }
         let derived = id(self.shapes.len());
         if u32::try_from(self.shapes.len()).is_err() {
@@ -269,7 +274,7 @@ impl Builder<'_> {
 
     fn operation(&mut self, name: &str, operation: &Json) -> Result<Operation, ModelError> {
         let object = operation.as_object().unwrap_or(&EMPTY);
-        self.note_operation(name, object);
+        keys::record_operation(name, object, &mut self.uninterpreted);
         let read = Fields {
             object,
             owner: name,

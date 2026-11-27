@@ -1,5 +1,5 @@
-use super::super::{Model, Uninterpreted};
 use super::*;
+use crate::shapes::{Model, Uninterpreted};
 use crate::testing::{self, Result};
 use serde_json::{Map, Value as Json};
 use std::collections::BTreeMap;
@@ -86,7 +86,7 @@ fn an_operation_reaches_its_own_its_shapes_and_the_service_s() -> Result<()> {
 /// The arena's fast trait test answers exactly for the trait key lists.
 #[test]
 fn the_trait_key_match_is_the_trait_key_lists() {
-    let listed: Vec<&str> = super::super::traits::trait_keys().collect();
+    let listed: Vec<&str> = super::super::traits::TRAIT_KEYS.to_vec();
     assert_eq!(listed.len(), 32);
     assert!(listed.iter().all(|key| is_trait_key(key)));
     for key in [SHAPE, SHAPE_IGNORED, REFERENCE_IGNORED].concat() {

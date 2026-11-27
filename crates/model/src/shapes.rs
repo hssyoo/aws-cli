@@ -6,13 +6,15 @@
 //! laid over the target's, as `ShapeResolver.resolve_shape_ref` copies the
 //! target's model and updates it. A reference whose keys change no trait
 //! (only `documentation`, say) resolves to the target itself.
+use crate::schema::SchemaSet;
+use crate::schema::projection::{self, Botocore};
 use crate::source::{Kind, LoadError, Source, load_service_model};
 use crate::value::Value;
 
 mod build;
-mod keys;
 mod traits;
 
+pub use crate::schema::{Site, Uninterpreted};
 pub use traits::{Bound, ErrorTrait, Flag, Retryable, Traits, XmlNamespace};
 
 /// A shape in a [`Model`]'s arena.
@@ -140,39 +142,6 @@ pub type StaticContextParams = Box<[(Box<str>, Value)]>;
 /// `operationContextParams`: each name with its `path`.
 pub type OperationContextParams = Box<[(Box<str>, Box<str>)]>;
 
-/// Where an [`Uninterpreted`] key sits.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Site {
-    /// The document's top level, its `metadata` or `clientContextParams`.
-    Service,
-    /// An operation, by name, with its input, output and error references.
-    Operation(Box<str>),
-    /// A named shape, with its member, list member, map key and value
-    /// references.
-    Shape(Box<str>),
-}
-
-/// A key of the service description the arena does not interpret and no
-/// ignore list excuses: botocore may act on it, so a client that reaches it
-/// cannot claim botocore's behaviour.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Uninterpreted {
-    pub site: Site,
-    /// The key's path from its site, such as `http.timeout`,
-    /// `metadata.newSetting` or `members.Name.newTrait`.
-    pub key: Box<str>,
-}
-
-impl std::fmt::Display for Uninterpreted {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.site {
-            Site::Service => write!(f, "{}", self.key),
-            Site::Operation(name) => write!(f, "operation {name}: {}", self.key),
-            Site::Shape(name) => write!(f, "shape {name}: {}", self.key),
-        }
-    }
-}
-
 /// An operation, as `OperationModel` reads it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Operation {
@@ -244,6 +213,10 @@ impl std::fmt::Display for ModelError {
 
 impl std::error::Error for ModelError {}
 
+/// The service directory of a model read from bytes, which names its
+/// shape ids' namespace.
+const UNNAMED: &str = "model";
+
 /// A service model.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Model {
@@ -258,13 +231,16 @@ pub struct Model {
     by_name: Box<[ShapeId]>,
     /// The keys the arena did not interpret, in document order.
     uninterpreted: Box<[Uninterpreted]>,
+    /// The C2J front-end's reading of the same description.
+    schema: SchemaSet,
 }
 
 impl Model {
     /// The service's latest `service-2` model from a source, extras merged.
     pub fn load(source: &impl Source, service: &str) -> Result<Self, LoadError> {
         let document = load_service_model(source, service, Kind::Service)?;
-        Ok(Self::from_value(&document.json)?)
+        let namespace = crate::frontend::c2j::namespace(service);
+        Ok(build::build(&document.json, &namespace)?)
     }
 
     /// A model from `service-2.json` bytes, as the protocol suite builds one
@@ -276,7 +252,27 @@ impl Model {
 
     /// A model from a parsed service description.
     pub fn from_value(json: &serde_json::Value) -> Result<Self, ModelError> {
-        build::build(json)
+        build::build(json, &crate::frontend::c2j::namespace(UNNAMED))
+    }
+
+    /// The schemas the C2J front-end built from the same description.
+    pub const fn schema(&self) -> &SchemaSet {
+        &self.schema
+    }
+
+    /// [`projection::render`] of the schemas with this model's botocore
+    /// metadata: the text the frozen projection digests hold.
+    pub fn projection(&self) -> String {
+        let metadata = &self.metadata;
+        let botocore = Botocore {
+            protocol: metadata.protocol.as_deref(),
+            protocols: metadata.protocols.as_deref(),
+            json_version: metadata.json_version.as_deref(),
+            target_prefix: metadata.target_prefix.as_deref(),
+            signature_version: metadata.signature_version.as_deref(),
+            uid: metadata.uid.as_deref(),
+        };
+        projection::render(&self.schema, &botocore)
     }
 
     pub const fn metadata(&self) -> &Metadata {
@@ -296,6 +292,11 @@ impl Model {
         self.operations
             .iter()
             .find(|operation| &*operation.name == name)
+    }
+
+    /// The named shapes in model order.
+    pub fn named_shapes(&self) -> impl ExactSizeIterator<Item = ShapeId> + '_ {
+        (0..self.named).map(build::id)
     }
 
     pub fn shape(&self, id: ShapeId) -> &Shape {

@@ -117,16 +117,6 @@ impl From<ShapeIdError> for BuildError {
     }
 }
 
-impl From<BuildError> for crate::shapes::ModelError {
-    fn from(error: BuildError) -> Self {
-        match error {
-            BuildError::NoShapeFound(name) => Self::NoShapeFound(name),
-            BuildError::TooLarge => Self::TooLarge,
-            other => Self::InvalidShape(other.to_string().into()),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DraftRole {
     /// Referenced, not yet declared.
@@ -181,6 +171,8 @@ pub struct SchemaSetBuilder {
     overlays: Vec<DraftId>,
     operations: Vec<(OperationData, Box<str>, u16, OperationShapes)>,
     operation_names: HashSet<Box<str>>,
+    /// Each structure or union member by its container and name.
+    member_names: HashSet<(DraftId, StrId)>,
     service: ServiceData,
     uninterpreted: Vec<Uninterpreted>,
 }
@@ -211,6 +203,7 @@ impl SchemaSetBuilder {
             overlays: Vec::new(),
             operations: Vec::new(),
             operation_names: HashSet::new(),
+            member_names: HashSet::new(),
             service: ServiceData::default(),
             uninterpreted: Vec::new(),
         };
@@ -235,6 +228,17 @@ impl SchemaSetBuilder {
         type_name: Option<StrId>,
         role: DraftRole,
     ) -> Result<DraftId, BuildError> {
+        self.push_with(fqn, shape_type, type_name, role, own_traits())
+    }
+
+    fn push_with(
+        &mut self,
+        fqn: &str,
+        shape_type: ShapeType,
+        type_name: Option<StrId>,
+        role: DraftRole,
+        traits: DraftTraits,
+    ) -> Result<DraftId, BuildError> {
         let (sharp_at, dollar_at) = offsets(fqn)?;
         let draft = Draft {
             id: self.intern(fqn)?,
@@ -244,7 +248,7 @@ impl SchemaSetBuilder {
             type_name,
             role,
             children: children_for(shape_type),
-            traits: own_traits(),
+            traits,
         };
         let id = DraftId(u32::try_from(self.drafts.len()).map_err(|_| BuildError::TooLarge)?);
         self.drafts.push(draft);
@@ -397,15 +401,18 @@ impl SchemaSetBuilder {
         traits: MemberTraits,
     ) -> Result<DraftId, BuildError> {
         self.check_target(target)?;
-        let fqn = format!("{}${name}", self.fqn(container));
+        let container_fqn = self.strings.get(self.draft(container)?.id);
+        let mut fqn = String::with_capacity(container_fqn.len() + 1 + name.len());
+        fqn.push_str(container_fqn);
+        fqn.push('$');
+        fqn.push_str(name);
         let role = DraftRole::Member {
             container,
             name: self.intern(name)?,
             target,
         };
-        let id = self.push(&fqn, ShapeType::Unknown, None, role)?;
-        self.drafts[id.index()].traits = self.resolved(traits);
-        Ok(id)
+        let traits = self.resolved(traits);
+        self.push_with(&fqn, ShapeType::Unknown, None, role, traits)
     }
 
     /// The draft of a named shape (not a placeholder) to add children to.
@@ -425,19 +432,17 @@ impl SchemaSetBuilder {
         target: DraftId,
         traits: MemberTraits,
     ) -> Result<DraftId, BuildError> {
-        let DraftChildren::Members(members) = &self.parent(parent)?.children else {
+        let DraftChildren::Members(_) = &self.parent(parent)?.children else {
             return Err(BuildError::InvalidParent(self.fqn(parent)));
         };
-        let taken = members.iter().any(|member| {
-            let role = self.drafts[member.index()].role;
-            matches!(role, DraftRole::Member { name: n, .. } if self.strings.get(n) == name)
-        });
-        if taken {
+        let interned = self.intern(name)?;
+        if self.member_names.contains(&(parent, interned)) {
             return Err(BuildError::DuplicateMember(
                 format!("{}${name}", self.fqn(parent)).into(),
             ));
         }
         let member = self.new_member(parent, name, target, traits)?;
+        self.member_names.insert((parent, interned));
         if let DraftChildren::Members(members) = &mut self.drafts[parent.index()].children {
             members.push(member);
         }

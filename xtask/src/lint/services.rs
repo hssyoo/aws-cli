@@ -47,6 +47,21 @@ const EXEMPT: &[(&str, &str, &str)] = &[
         "a model trait key, not the Location service",
     ),
     (
+        "crates/model/src/frontend/c2j/traits.rs",
+        "location",
+        "a model trait key, not the Location service",
+    ),
+    (
+        "crates/model/src/schema/projection.rs",
+        "location",
+        "a model trait key, not the Location service",
+    ),
+    (
+        "crates/model/src/frontend/c2j/read.rs",
+        "ec2",
+        "a wire protocol's name, which names a protocol trait",
+    ),
+    (
         "crates/cli-core/src/client_config/mod.rs",
         "s3",
         "the s3 commands' own client configuration (`ClientConfig`, built for the S3 \
