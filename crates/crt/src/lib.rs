@@ -57,5 +57,4 @@ pub unsafe fn prepare_process(non_fips_tls_13: Option<&str>) {
     #[cfg(not(target_os = "macos"))]
     let _ = non_fips_tls_13;
 }
-pub mod endpoints;
 pub mod redirect;
