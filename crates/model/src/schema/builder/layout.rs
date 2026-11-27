@@ -1,7 +1,7 @@
 //! [`SchemaSetBuilder::finish`]: the checks, the named-first renumbering,
 //! the effective trait tables and the lookups.
 use super::{
-    BuildError, ColdEntries, Draft, DraftChildren, DraftId, DraftRole, DraftTraits,
+    BuildError, ColdEntries, Draft, DraftChildren, DraftId, DraftRole, DraftTraits, EMPTY_SET,
     SchemaSetBuilder,
 };
 use crate::schema::known::KnownTraits;
@@ -210,9 +210,8 @@ fn schema_data(
         let draft = &builder.drafts[id.index()];
         let from = source(draft, id);
         let target = &builder.drafts[from.index()];
-        // Each set but the shared empty one has one draft, laid out once, so
-        // it moves to the table. A target's set is read back from the table:
-        // it is laid out first, or it is the prelude's, which is empty.
+        // A set (but the empty one) has one draft, so it moves to the table, where
+        // its target's is read back: laid out first, or the prelude's, empty.
         let (known, cold, own_traits) = match &draft.traits {
             DraftTraits::Inherit => (sets[from.index()].0, sets[from.index()].1, false),
             DraftTraits::Own(set, cold) if from != id => {
@@ -226,6 +225,9 @@ fn schema_data(
                     let known = tables.known(set, &builder.strings)?;
                     (known, tables.cold(cold, &mut builder.strings)?, true)
                 }
+            }
+            DraftTraits::Own(EMPTY_SET, cold) if from == id => {
+                (0, tables.cold(cold, &mut builder.strings)?, false)
             }
             DraftTraits::Own(set, cold) => {
                 let set = std::mem::take(&mut builder.known_sets[*set as usize]);
