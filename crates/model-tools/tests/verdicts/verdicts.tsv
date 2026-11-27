@@ -9229,7 +9229,7 @@ importexport	cancel-job	unsupported_auth	v2	refused:unsupported_auth	-	2010-06-0
 importexport	create-job	unsupported_auth	v2	refused:unsupported_auth	-	2010-06-01
 importexport	get-shipping-label	unsupported_auth	v2	refused:unsupported_auth	-	2010-06-01
 importexport	get-status	unsupported_auth	v2	refused:unsupported_auth	-	2010-06-01
-importexport	list-jobs	unsupported_auth	v2	refused:unsupported_auth	refused:a paginator expression Jobs[-1].JobId	2010-06-01
+importexport	list-jobs	unsupported_auth	v2	refused:unsupported_auth	native in=Marker out=Jobs[-1].JobId more=IsTruncated result=Jobs keep=- limit=MaxJobs	2010-06-01
 importexport	update-job	unsupported_auth	v2	refused:unsupported_auth	-	2010-06-01
 inspector	add-attributes-to-findings	-	-	required_not_scalar	-	2016-02-16
 inspector	create-assessment-target	-	-	scalar_arguments	-	2016-02-16
@@ -10485,7 +10485,7 @@ kinesis	deregister-stream-consumer	-	-	no_arguments	-	2013-12-02
 kinesis	describe-account-settings	-	-	no_arguments	-	2013-12-02
 kinesis	describe-channel	-	-	scalar_arguments	-	2013-12-02
 kinesis	describe-limits	-	-	no_arguments	-	2013-12-02
-kinesis	describe-stream	paginator	a paginator expression StreamDescription.Shards[-1].ShardId	refused:paginator	refused:a paginator expression StreamDescription.Shards[-1].ShardId	2013-12-02
+kinesis	describe-stream	-	-	no_arguments	native in=ExclusiveStartShardId out=StreamDescription.Shards[-1].ShardId more=StreamDescription.HasMoreShards result=StreamDescription.Shards keep=StreamDescription.StreamARN,StreamDescription.StreamName,StreamDescription.StreamStatus,StreamDescription.RetentionPeriodHours,StreamDescription.EnhancedMonitoring,StreamDescription.EncryptionType,StreamDescription.KeyId,StreamDescription.StreamCreationTimestamp limit=Limit	2013-12-02
 kinesis	describe-stream-consumer	-	-	no_arguments	-	2013-12-02
 kinesis	describe-stream-summary	-	-	no_arguments	-	2013-12-02
 kinesis	disable-enhanced-monitoring	-	-	required_not_scalar	-	2013-12-02
@@ -16072,7 +16072,7 @@ s3api	list-directory-buckets	-	-	refused:unported_customization	native in=Contin
 s3api	list-multipart-uploads	-	-	refused:unported_customization	native in=KeyMarker,UploadIdMarker out=NextKeyMarker,NextUploadIdMarker more=IsTruncated result=Uploads,CommonPrefixes keep=RequestCharged,Prefix limit=MaxUploads	2006-03-01
 s3api	list-object-annotations	-	-	refused:unported_customization	native in=ContinuationToken out=NextContinuationToken more=- result=Annotations keep=AnnotationCount,AnnotationPrefix,Bucket,Key,ObjectVersionId,RequestCharged limit=MaxAnnotationResults	2006-03-01
 s3api	list-object-versions	-	-	refused:unported_customization	native in=KeyMarker,VersionIdMarker out=NextKeyMarker,NextVersionIdMarker more=IsTruncated result=Versions,DeleteMarkers,CommonPrefixes keep=RequestCharged,Prefix limit=MaxKeys	2006-03-01
-s3api	list-objects	paginator	a paginator expression NextMarker || Contents[-1].Key	refused:paginator	refused:a paginator expression NextMarker || Contents[-1].Key	2006-03-01
+s3api	list-objects	-	-	refused:unported_customization	native in=Marker out=NextMarker || Contents[-1].Key more=IsTruncated result=Contents,CommonPrefixes keep=RequestCharged,Prefix limit=MaxKeys	2006-03-01
 s3api	list-objects-v2	-	-	refused:unported_customization	native in=ContinuationToken out=NextContinuationToken more=IsTruncated result=Contents,CommonPrefixes keep=RequestCharged,Prefix limit=MaxKeys	2006-03-01
 s3api	list-parts	-	-	refused:unported_customization	native in=PartNumberMarker out=NextPartNumberMarker more=IsTruncated result=Parts keep=ChecksumAlgorithm,Initiator,Owner,StorageClass,ChecksumType limit=MaxParts	2006-03-01
 s3api	put-bucket-abac	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01

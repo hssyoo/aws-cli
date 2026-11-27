@@ -46,7 +46,7 @@ const ALLOWED: &[(&str, &[&str])] = &[
     ("cli-core", &["awscli-argparse", "awscli-config"]),
     ("credentials", &["awscli-config", "cli-core"]),
     ("crt", &["cli-core", "crt-sys", "numa", "sigv4"]),
-    ("model", &["pyload", "pytext", "timestamp"]),
+    ("model", &["jmespath", "pyload", "pytext", "timestamp"]),
     // L2: client and format.
     ("client", CLIENT),
     ("format", &["cli-core", "model", "pytext", "timestamp"]),

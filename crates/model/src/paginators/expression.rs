@@ -1,21 +1,54 @@
 //! A paginator's expression: what `jmespath.compile` gives for an output
-//! token, a result key, a non-aggregate key or `more_results`, limited to
-//! JMESPath unquoted identifiers joined by dots, which is what botocore's
-//! own paginators file uses but for a handful of entries. Read with
-//! [`Expression::search`] (`jmespath.search`) and written with
+//! token, a result key, a non-aggregate key or `more_results`. A member
+//! name or a dotted path of them, which is what botocore's own paginators
+//! file uses but for a handful of entries, is read with
+//! [`Expression::search`] name by name and written with
 //! [`Expression::set`] (`set_value_from_jmespath`), over any object model
 //! that implements [`Lookup`] and [`Assign`]: plain [`Value`]s here, and
-//! the paginator's shared objects in the client.
+//! the paginator's shared objects in the client. Any other expression is
+//! evaluated by the `jmespath` engine, within [`PAGINATORS`].
+use crate::pyjmespath::Python;
 use crate::pyrepr::py_type_name;
 use crate::value::{Map, Value};
+use jmespath::{Feature, Subset};
+use std::sync::Arc;
 
-/// A member name, or a dotted path of member names.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Expression(Box<str>);
+/// The JMESPath a paginator evaluates beyond a dotted path: every
+/// construct whose evaluation cannot raise. Comparators (`<` of a number
+/// and a string raises `TypeError`), slices (a zero step raises
+/// `ValueError`), functions and expression references are outside it.
+pub const PAGINATORS: Subset = Subset {
+    features: &[
+        Feature::Identifier,
+        Feature::Subexpression,
+        Feature::Index,
+        Feature::ListWildcard,
+        Feature::ObjectWildcard,
+        Feature::Filter,
+        Feature::Flatten,
+        Feature::Current,
+        Feature::Literal,
+        Feature::MultiSelectList,
+        Feature::MultiSelectHash,
+        Feature::Logic,
+        Feature::Pipe,
+    ],
+    functions: &[],
+};
+
+/// A compiled paginator expression.
+#[derive(Clone, Debug)]
+pub struct Expression {
+    text: Box<str>,
+    /// The compiled expression, unless it is a name or a dotted path.
+    compiled: Option<Arc<jmespath::Expression<Value>>>,
+}
 
 impl Expression {
-    /// `text`, when every dot-separated part is a JMESPath unquoted
-    /// identifier (`[A-Za-z_][A-Za-z0-9_]*`).
+    /// `jmespath.compile(text)`: a name or a dotted path of JMESPath
+    /// unquoted identifiers (`[A-Za-z_][A-Za-z0-9_]*`), or any other
+    /// expression within [`PAGINATORS`]; `None` for text that does not
+    /// compile or is outside it.
     pub fn parse(text: &str) -> Option<Self> {
         let identifier = |part: &str| {
             part.chars()
@@ -23,25 +56,60 @@ impl Expression {
                 .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
                 && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         };
-        text.split('.').all(identifier).then(|| Self(text.into()))
+        let compiled = if text.split('.').all(identifier) {
+            None
+        } else {
+            let compiled = jmespath::Expression::parse(&Python, text).ok()?;
+            compiled.check(&PAGINATORS).ok()?;
+            Some(Arc::new(compiled))
+        };
+        Some(Self {
+            text: text.into(),
+            compiled,
+        })
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.text
     }
 
-    /// The member names, outermost first.
+    /// Whether this is a name or a dotted path of them, which
+    /// `set_value_from_jmespath` writes and [`Lookup`] reads through
+    /// shared objects.
+    pub fn is_path(&self) -> bool {
+        self.compiled.is_none()
+    }
+
+    /// The parts `set_value_from_jmespath` splits the text into at dots:
+    /// a path's member names, outermost first.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.0.split('.')
+        self.text.split('.')
     }
 
-    /// `jmespath.search(expression, value)`: each name looked up in a
-    /// dict; `None` once one is missing, the object it is looked up in is
-    /// no dict, or the object found is `None`.
+    /// `jmespath.search(expression, value)`, `None` where it finds `None`.
+    /// A path looks each name up in a dict, and is `None` once one is
+    /// missing or the object it is looked up in is no dict; any other
+    /// expression is [`Lookup::evaluate`]d.
     pub fn search<T: Lookup>(&self, value: T) -> Option<T> {
-        self.names()
-            .try_fold(value, |found, name| found.lookup(name))
-            .filter(|found| !found.is_none())
+        let found = match &self.compiled {
+            None => self
+                .names()
+                .try_fold(value, |found, name| found.lookup(name)),
+            Some(_) => value.evaluate(self),
+        };
+        found.filter(|found| !found.is_none())
+    }
+
+    /// `jmespath.search(expression, value)` of a [`Value`], as a new one;
+    /// `Value::Null` for `None`. Every expression [`Self::parse`] gives
+    /// evaluates without raising, so an error never reaches here.
+    pub fn find(&self, value: &Value) -> Value {
+        match &self.compiled {
+            None => self.search(value).cloned().unwrap_or(Value::Null),
+            Some(compiled) => compiled
+                .search(&Python, value)
+                .map_or(Value::Null, std::borrow::Cow::into_owned),
+        }
     }
 
     /// `set_value_from_jmespath(source, expression, value)`: each name but
@@ -50,8 +118,16 @@ impl Expression {
     ///
     /// # Errors
     /// The `TypeError` Python's `in` or item assignment raises on the
-    /// first object of the path that is no dict, as `str()` gives it.
+    /// first object of the path that is no dict, as `str()` gives it; or
+    /// `InvalidExpressionError`'s text, for an expression with `[`, `]`
+    /// or `*`.
     pub fn set<T: Assign>(&self, source: T, value: T::Item) -> Result<(), String> {
+        if self.text.contains(['[', ']', '*']) {
+            return Err(format!(
+                "Invalid expression {}: Only dotted lookups are supported.",
+                self.text
+            ));
+        }
         let mut names = self.names().peekable();
         let mut current = source;
         while let Some(name) = names.next() {
@@ -72,24 +148,39 @@ impl Expression {
     }
 }
 
+/// Two expressions are equal when their texts are: one text compiles to
+/// one expression.
+impl PartialEq for Expression {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+    }
+}
+
+impl Eq for Expression {}
+
 impl std::fmt::Display for Expression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.text)
     }
 }
 
 impl PartialEq<&str> for Expression {
     fn eq(&self, other: &&str) -> bool {
-        *self.0 == **other
+        *self.text == **other
     }
 }
 
-/// An object `jmespath.search` looks names up in.
+/// An object `jmespath.search` reads.
 pub trait Lookup: Sized {
     /// `self[name]` of a dict; `None` for a missing name or anything else.
     fn lookup(&self, name: &str) -> Option<Self>;
     /// Whether this is Python's `None`.
     fn is_none(&self) -> bool;
+    /// `jmespath.search(expression, self)` of an expression beyond a
+    /// dotted path, which [`Expression::find`] evaluates on a copy of
+    /// what this object holds now: what it finds, as an object of this
+    /// model.
+    fn evaluate(&self, expression: &Expression) -> Option<Self>;
 }
 
 /// An object `set_value_from_jmespath` writes through.
@@ -156,6 +247,7 @@ fn contains(text: &[u8], needle: &[u8]) -> bool {
     needle.is_empty() || text.windows(needle.len()).any(|window| window == needle)
 }
 
+/// A page's own values, borrowed: what a path finds is the object itself.
 impl Lookup for &Value {
     fn lookup(&self, name: &str) -> Option<Self> {
         match self {
@@ -165,6 +257,13 @@ impl Lookup for &Value {
     }
     fn is_none(&self) -> bool {
         matches!(self, Value::Null)
+    }
+    /// A borrow holds no value the search builds, so it finds nothing:
+    /// read such an expression with [`Expression::find`]. The paginator
+    /// reads one only as an output token or `more_results`
+    /// ([`super::Config`]), through its own objects.
+    fn evaluate(&self, _: &Expression) -> Option<Self> {
+        None
     }
 }
 

@@ -1,30 +1,96 @@
 use super::*;
 
+/// `text` compiled; text that does not compile reads as a path, which
+/// [`paths_parse_as_paths_and_the_subset_compiles`] keeps from hiding.
 fn path(text: &str) -> Expression {
-    Expression::parse(text).unwrap_or_else(|| Expression(text.into()))
+    Expression::parse(text).unwrap_or_else(|| Expression {
+        text: text.into(),
+        compiled: None,
+    })
 }
 
+/// Identifiers joined by dots are paths; any other expression that
+/// compiles within [`PAGINATORS`] is compiled; the rest is refused.
 #[test]
-fn identifiers_joined_by_dots_parse_and_nothing_else() {
+fn paths_parse_as_paths_and_the_subset_compiles() {
     for text in ["Things", "Defaults.Marker", "_a.b_2", "A.B.C"] {
-        assert_eq!(
-            Expression::parse(text).map(|found| found.to_string()),
-            Some(text.into())
-        );
+        let found = Expression::parse(text).map(|found| (found.to_string(), found.is_path()));
+        assert_eq!(found, Some((text.into(), true)), "{text}");
+    }
+    for text in [
+        "Jobs[-1].JobId",
+        "NextMarker || Contents[-1].Key",
+        "StreamDescription.Shards[-1].ShardId",
+        "\"a\"",
+        "a | b",
+        "a[*].b[].c",
+        "a.*",
+        "a[?b].c",
+        "[a, b]",
+        "{a: b}",
+        "!a && @",
+        "`1`",
+    ] {
+        let found = Expression::parse(text).map(|found| (found.to_string(), found.is_path()));
+        assert_eq!(found, Some((text.into(), false)), "{text}");
     }
     for text in [
         "",
-        "Jobs[-1].JobId",
         "a..b",
         ".a",
         "a.",
         "1a",
         "a-b",
-        "\"a\"",
-        "a | b",
+        "a[",
+        "a[1:]",
+        "a[?b > `1`]",
+        "length(a)",
+        "sort_by(a, &b)",
     ] {
         assert_eq!(Expression::parse(text), None, "{text}");
     }
+}
+
+/// An expression beyond a path finds what `jmespath.search` finds: a
+/// [`Value`]'s copy with [`Expression::find`]; a borrowed one finds
+/// nothing, as [`Lookup`]'s `&Value` documents.
+#[test]
+fn an_expression_beyond_a_path_finds_what_jmespath_finds() -> Result<(), crate::value::JsonError> {
+    let page = Value::from_json(br#"{"Contents": [{"Key": "a"}, {"Key": "b"}], "M": null}"#)?;
+    let find = |text: &str| path(text).find(&page);
+    assert_eq!(find("Contents[-1].Key"), Value::String("b".into()));
+    assert_eq!(find("M || Contents[-1].Key"), Value::String("b".into()));
+    assert_eq!(find("Contents[5].Key"), Value::Null);
+    assert_eq!(find("Contents[*].Key"), Value::from_json(br#"["a", "b"]"#)?);
+    assert_eq!(find("Contents[0]"), Value::from_json(br#"{"Key": "a"}"#)?);
+    assert_eq!(find("Contents.Key"), Value::Null);
+    assert_eq!(path("Contents[-1].Key").search(&page), None);
+    // A path reads as the engine reads it.
+    for text in ["Contents", "M", "M.N", "Contents.Key", "Missing.Key"] {
+        let engine = jmespath::search(&crate::pyjmespath::Python, text, &page);
+        assert_eq!(
+            Ok(find(text)),
+            engine.map_err(|error| error.class().to_owned()),
+            "{text}"
+        );
+    }
+    Ok(())
+}
+
+/// `set_value_from_jmespath` refuses an expression with `[`, `]` or `*`
+/// before it walks anything.
+#[test]
+fn set_refuses_what_is_not_a_dotted_lookup() {
+    let mut source = Value::Map(Map::new());
+    for text in ["Jobs[-1].JobId", "a[*].b", "a.*"] {
+        assert_eq!(
+            path(text).set(&mut source, Value::Null),
+            Err(format!(
+                "Invalid expression {text}: Only dotted lookups are supported."
+            )),
+        );
+    }
+    assert_eq!(source, Value::Map(Map::new()));
 }
 
 /// `jmespath.search`: names through dicts; a missing name, a non-dict on

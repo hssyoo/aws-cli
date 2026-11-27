@@ -20,6 +20,12 @@
       "input_token": "Marker",
       "output_token": "NextToken || Marker",
       "result_key": "Items"
+    },
+    "ListCompared": {
+      "input_token": "Marker",
+      "output_token": "Marker",
+      "more_results": "Meta.Count > `0`",
+      "result_key": "Items"
     }
   }
 }
