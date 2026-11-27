@@ -300,12 +300,10 @@ pub fn endpoint_data_from_documents(
 pub use crate::endpoint::ParamValue;
 
 /// A service's endpoint data for the endpoint suite: what a client resolves
-/// with, and the documents the rules engine reads.
+/// with.
 #[derive(Clone, Debug)]
 pub struct RuleSet {
     data: EndpointData,
-    rules: Vec<u8>,
-    partitions: Vec<u8>,
 }
 
 /// The service's rule set, partitions and `endpoints.json` in `source`, as
@@ -325,17 +323,9 @@ pub fn rule_set(source: &dyn Source, service: &str, model: &Model) -> Result<Rul
         .service()
         .endpoint_prefix()
         .unwrap_or(service);
-    let data = EndpointData::from_documents(
-        rules.clone(),
-        partitions.clone(),
-        Some((&endpoints, prefix)),
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(RuleSet {
-        data,
-        rules,
-        partitions,
-    })
+    let data = EndpointData::from_documents(rules, partitions, Some((&endpoints, prefix)))
+        .map_err(|error| error.to_string())?;
+    Ok(RuleSet { data })
 }
 
 /// What one resolution gives: an endpoint, or the error text.
@@ -354,44 +344,15 @@ pub enum EndpointOutcome {
 
 /// `EndpointProvider.resolve_endpoint(**params)` over `rules`.
 pub fn resolve_case(rules: &RuleSet, params: &[(&str, ParamValue)]) -> EndpointOutcome {
-    use crt::endpoints::{Documents, ParamValue as Crt, Resolved};
-    let arrays: Vec<Vec<&str>> = params
-        .iter()
-        .map(|(_, value)| match value {
-            ParamValue::StringArray(items) => items.iter().map(String::as_str).collect(),
-            _ => Vec::new(),
-        })
-        .collect();
-    let list: Vec<(&str, Crt<'_>)> = params
-        .iter()
-        .zip(&arrays)
-        .map(|((name, value), array)| {
-            let value = match value {
-                ParamValue::String(text) => Crt::String(text),
-                ParamValue::Boolean(flag) => Crt::Boolean(*flag),
-                ParamValue::StringArray(_) => Crt::StringArray(array),
-            };
-            (*name, value)
-        })
-        .collect();
-    let documents = Documents {
-        rules_json: &rules.rules,
-        partitions_json: &rules.partitions,
-    };
-    let lossy = |bytes: &[u8]| String::from_utf8_lossy(bytes).into_owned();
-    match crt::endpoints::resolve_with_headers(documents, &list) {
-        Ok((Resolved::Endpoint { url, properties }, headers)) => EndpointOutcome::Endpoint {
-            url: lossy(&url),
-            // The engine gives no bytes for an endpoint without properties.
-            properties: if properties.is_empty() {
-                "{}".to_owned()
-            } else {
-                lossy(&properties)
-            },
-            headers,
+    let params = params.iter().map(|(name, value)| (*name, value));
+    match crate::endpoint::evaluate(&rules.data, params) {
+        Ok(endpoint_rules::Outcome::Endpoint(endpoint)) => EndpointOutcome::Endpoint {
+            url: endpoint.url,
+            properties: endpoint.properties.to_string(),
+            headers: endpoint.headers.len(),
         },
-        Ok((Resolved::RuleError(message), _)) => EndpointOutcome::Error(lossy(&message)),
-        Err(error) => EndpointOutcome::Error(error.to_string()),
+        Ok(endpoint_rules::Outcome::Error(message)) => EndpointOutcome::Error(message),
+        Err(text) => EndpointOutcome::Error(text),
     }
 }
 

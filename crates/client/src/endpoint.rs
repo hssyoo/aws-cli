@@ -694,28 +694,41 @@ pub fn resolve(
     data: &EndpointData,
     params: &EndpointParams,
 ) -> Result<ResolvedEndpoint, CallError> {
-    let (program, partitions) = data
-        .decoded()
-        .map_err(|error| CallError::Endpoint(error.to_string()))?;
+    match evaluate(data, params.iter()).map_err(CallError::Endpoint)? {
+        // The client sends no endpoint headers (only s3control's rule set
+        // returns any today), so a resolution with them is Python's.
+        Outcome::Endpoint(endpoint) if !endpoint.headers.is_empty() => {
+            Err(CallError::Unsupported(Unsupported::EndpointHeaders))
+        }
+        Outcome::Endpoint(endpoint) => Ok(ResolvedEndpoint {
+            auth_schemes: schemes_of(&endpoint.properties),
+            url: endpoint.url,
+        }),
+        Outcome::Error(message) => Err(CallError::Endpoint(rule_error_text(&message))),
+    }
+}
+
+/// `EndpointProvider.resolve_endpoint(**params)`: `data`'s rule set
+/// evaluated for `params`, each bound by name; a name the rule set does
+/// not declare is dropped, and a name given twice takes its last value.
+///
+/// # Errors
+/// The engine's text for a document it cannot decode or a rule set it
+/// cannot evaluate.
+pub(crate) fn evaluate<'a>(
+    data: &EndpointData,
+    params: impl IntoIterator<Item = (&'a str, &'a ParamValue)>,
+) -> Result<Outcome, String> {
+    let (program, partitions) = data.decoded().map_err(ToString::to_string)?;
     let mut args = Params::new(program);
-    for (name, value) in params.iter() {
+    for (name, value) in params {
         if let Some(def) = program.param(name) {
             args.set(def.slot(), eval_value(value));
         }
     }
-    match program.evaluate(&args, &Library { partitions }) {
-        // The client sends no endpoint headers (only s3control's rule set
-        // returns any today), so a resolution with them is Python's.
-        Ok(Outcome::Endpoint(endpoint)) if !endpoint.headers.is_empty() => {
-            Err(CallError::Unsupported(Unsupported::EndpointHeaders))
-        }
-        Ok(Outcome::Endpoint(endpoint)) => Ok(ResolvedEndpoint {
-            auth_schemes: schemes_of(&endpoint.properties),
-            url: endpoint.url,
-        }),
-        Ok(Outcome::Error(message)) => Err(CallError::Endpoint(rule_error_text(&message))),
-        Err(error) => Err(CallError::Endpoint(error.to_string())),
-    }
+    program
+        .evaluate(&args, &Library { partitions })
+        .map_err(|error| error.to_string())
 }
 
 fn eval_value(value: &ParamValue) -> EvalValue {
