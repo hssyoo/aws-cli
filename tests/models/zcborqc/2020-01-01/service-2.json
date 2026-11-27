@@ -1,0 +1,180 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "auth": [
+      "aws.auth#sigv4"
+    ],
+    "awsQueryCompatible": {},
+    "endpointPrefix": "zcborqc",
+    "protocol": "smithy-rpc-v2-cbor",
+    "protocols": [
+      "smithy-rpc-v2-cbor"
+    ],
+    "serviceFullName": "Fake zcborqc",
+    "serviceId": "Zcborqc",
+    "signatureVersion": "v4",
+    "targetPrefix": "ZcborqcService",
+    "uid": "zcborqc-2020-01-01"
+  },
+  "operations": {
+    "SendMetric": {
+      "name": "SendMetric",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "SendMetricInput"
+      },
+      "output": {
+        "shape": "SendMetricOutput"
+      },
+      "errors": [
+        {
+          "shape": "QueueMissing"
+        }
+      ]
+    },
+    "Ping": {
+      "name": "Ping",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      }
+    }
+  },
+  "shapes": {
+    "Big": {
+      "type": "long"
+    },
+    "Bytes": {
+      "type": "blob"
+    },
+    "Fraction": {
+      "type": "float"
+    },
+    "Flag": {
+      "type": "boolean"
+    },
+    "Int": {
+      "type": "integer"
+    },
+    "Part": {
+      "type": "structure",
+      "members": {
+        "Name": {
+          "shape": "Text"
+        },
+        "When": {
+          "shape": "When"
+        }
+      }
+    },
+    "PartIndex": {
+      "type": "map",
+      "key": {
+        "shape": "Text"
+      },
+      "value": {
+        "shape": "Part"
+      }
+    },
+    "QueueMissing": {
+      "type": "structure",
+      "exception": true,
+      "error": {
+        "code": "AWS.Zcborqc.QueueMissing",
+        "httpStatusCode": 400,
+        "senderFault": true
+      },
+      "members": {
+        "Message": {
+          "shape": "Text"
+        },
+        "Queue": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Ratio": {
+      "type": "double"
+    },
+    "RatioList": {
+      "type": "list",
+      "member": {
+        "shape": "Ratio"
+      }
+    },
+    "SendMetricInput": {
+      "type": "structure",
+      "required": [
+        "Name"
+      ],
+      "members": {
+        "Name": {
+          "shape": "Text"
+        },
+        "Value": {
+          "shape": "Fraction"
+        },
+        "Values": {
+          "shape": "RatioList"
+        },
+        "Count": {
+          "shape": "Int"
+        },
+        "Total": {
+          "shape": "Big"
+        },
+        "Stamp": {
+          "shape": "When"
+        },
+        "Payload": {
+          "shape": "Bytes"
+        },
+        "Enabled": {
+          "shape": "Flag"
+        }
+      }
+    },
+    "SendMetricOutput": {
+      "type": "structure",
+      "members": {
+        "Echo": {
+          "shape": "Fraction"
+        },
+        "Values": {
+          "shape": "RatioList"
+        },
+        "Stamps": {
+          "shape": "WhenList"
+        },
+        "Index": {
+          "shape": "PartIndex"
+        },
+        "Payload": {
+          "shape": "Bytes"
+        },
+        "Total": {
+          "shape": "Big"
+        },
+        "Enabled": {
+          "shape": "Flag"
+        }
+      }
+    },
+    "Text": {
+      "type": "string"
+    },
+    "When": {
+      "type": "timestamp"
+    },
+    "WhenList": {
+      "type": "list",
+      "member": {
+        "shape": "When"
+      }
+    }
+  }
+}
