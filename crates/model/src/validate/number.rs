@@ -1,6 +1,6 @@
 //! `value < min` with Python's exact comparison of `int` and `float`.
 use super::Undecided;
-use crate::shapes::Bound;
+use crate::schema::Bound;
 use crate::value::Value;
 
 /// Beyond this magnitude no `f64` has a fraction and every `i64` is smaller.

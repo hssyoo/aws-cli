@@ -3,11 +3,13 @@
 //! Python's `str()`.
 use crate::pyjson::{Options, dumps};
 use crate::pyrepr::{py_str, py_type};
-use crate::shapes::{Bound, Flag, Model, Operation, ShapeId, ShapeKind};
+use crate::schema::{Bound, Flag, Schema, ShapeType, TraitId, traits};
+use crate::shapes::{Model, Operation, ShapeId};
 use crate::value::Value;
 
 mod datetime;
 mod number;
+mod root;
 
 /// The outcome of validating parameters.
 #[derive(Clone, Debug, PartialEq)]
@@ -60,16 +62,27 @@ impl std::fmt::Display for Report {
 /// `ParamValidationDecorator.serialize_to_request`'s check: an operation
 /// without an input shape takes any parameters.
 pub fn validate_input(model: &Model, operation: &Operation, params: &Value) -> Validation {
-    match operation.input {
-        Some(input) => validate(model, input, params),
-        None => Validation::Valid,
+    let Some(input) = operation.input else {
+        return Validation::Valid;
+    };
+    let schema = model.schema().service().operation(&operation.name);
+    match schema.and_then(|schema| schema.input()) {
+        Some(schema) => validate_schema(schema, params),
+        None => validate(model, input, params),
     }
 }
 
 /// `ParamValidator().validate(params, shape)`.
 pub fn validate(model: &Model, shape: ShapeId, params: &Value) -> Validation {
+    match root::schema_for(model, shape) {
+        Some(schema) => validate_schema(schema, params),
+        // Not a shape of this model's description: Python decides.
+        None => Validation::Undecided(Undecided::UnknownType(model.shape(shape).name.clone())),
+    }
+}
+
+fn validate_schema(shape: Schema<'_>, params: &Value) -> Validation {
     let mut validator = Validator {
-        model,
         report: Report::default(),
     };
     match validator.check(params, shape, "") {
@@ -84,8 +97,7 @@ type Checked = Result<(), Undecided>;
 const DOCUMENT_TYPES: &str = "<class 'str'>, <class 'int'>, <class 'bool'>, <class 'float'>, \
     <class 'list'>, <class 'dict'>";
 
-struct Validator<'a> {
-    model: &'a Model,
+struct Validator {
     report: Report,
 }
 
@@ -98,35 +110,76 @@ fn display_name(name: &str) -> &str {
     }
 }
 
-impl Validator<'_> {
+/// Whether botocore reads a structure as a `document` (or `union`): the
+/// truthiness of the key on the merged reference, which the type says
+/// unless a reference changed it (then it is a cold `c2j#` trait).
+fn structure_is(shape: Schema<'_>, id: TraitId, expressed: ShapeType) -> bool {
+    match shape.cold_trait(id.as_str()) {
+        Some(value) => truthy(value),
+        None => shape.shape_type() == expressed,
+    }
+}
+
+/// Python truthiness of a JSON value.
+fn truthy(value: &serde_json::Value) -> bool {
+    use serde_json::Value as Json;
+    match value {
+        Json::Null => false,
+        Json::Bool(value) => *value,
+        Json::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
+        Json::String(text) => !text.is_empty(),
+        Json::Array(items) => !items.is_empty(),
+        Json::Object(map) => !map.is_empty(),
+    }
+}
+
+/// A shape whose children are missing, which no front-end builds: Python
+/// decides.
+fn childless(shape: Schema<'_>) -> Undecided {
+    Undecided::UnknownType(shape.type_name().into())
+}
+
+impl Validator {
     fn error(&mut self, line: String) {
         self.report.errors.push(line);
     }
 
     /// `ParamValidator._validate`: the jsonvalue-header and document checks
     /// replace the type's own.
-    fn check(&mut self, params: &Value, shape: ShapeId, name: &str) -> Checked {
-        let resolved = self.model.shape(shape);
-        let traits = &resolved.traits;
-        if traits.is(Flag::JsonValue)
-            && traits.location.as_deref() == Some("header")
-            && resolved.kind == ShapeKind::String
+    fn check(&mut self, params: &Value, shape: Schema<'_>, name: &str) -> Checked {
+        let shape_type = shape.shape_type();
+        if shape.flag(Flag::JsonValue)
+            && shape.location() == Some("header")
+            && shape_type == ShapeType::String
         {
             self.json_value(params, name);
             return Ok(());
         }
-        if traits.is(Flag::Document) && matches!(resolved.kind, ShapeKind::Structure { .. }) {
+        let structure = matches!(
+            shape_type,
+            ShapeType::Structure | ShapeType::Document | ShapeType::Union
+        );
+        if structure && structure_is(shape, traits::DOCUMENT, ShapeType::Document) {
             self.document(params, name);
             return Ok(());
         }
-        match &resolved.kind {
-            ShapeKind::Structure { .. } => self.structure(params, shape, name),
-            ShapeKind::List { member } => self.list(params, shape, *member, name),
-            ShapeKind::Map { key, value } => self.map(params, *key, *value, name),
-            ShapeKind::String => self.string(params, shape, name),
-            ShapeKind::Integer | ShapeKind::Long => self.integer(params, shape, name),
-            ShapeKind::Float | ShapeKind::Double => self.double(params, shape, name),
-            ShapeKind::Boolean => {
+        match shape_type {
+            ShapeType::Structure | ShapeType::Document | ShapeType::Union => {
+                self.structure(params, shape, name)
+            }
+            ShapeType::List => {
+                let member = shape.list_member().ok_or_else(|| childless(shape))?;
+                self.list(params, shape, member, name)
+            }
+            ShapeType::Map => {
+                let key = shape.map_key().ok_or_else(|| childless(shape))?;
+                let value = shape.map_value().ok_or_else(|| childless(shape))?;
+                self.map(params, key, value, name)
+            }
+            ShapeType::String => self.string(params, shape, name),
+            ShapeType::Integer | ShapeType::Long => self.integer(params, shape, name),
+            ShapeType::Float | ShapeType::Double => self.double(params, shape, name),
+            ShapeType::Boolean => {
                 self.type_check(
                     params,
                     name,
@@ -135,12 +188,17 @@ impl Validator<'_> {
                 );
                 Ok(())
             }
-            ShapeKind::Blob => {
+            ShapeType::Blob => {
                 self.blob(params, name);
                 Ok(())
             }
-            ShapeKind::Timestamp => self.timestamp(params, name),
-            ShapeKind::Other(type_name) => Err(Undecided::UnknownType(type_name.clone())),
+            ShapeType::Timestamp => self.timestamp(params, name),
+            // botocore has no `_validate_<type>` for these.
+            ShapeType::Byte
+            | ShapeType::Short
+            | ShapeType::BigInteger
+            | ShapeType::BigDecimal
+            | ShapeType::Unknown => Err(Undecided::UnknownType(shape.type_name().into())),
         }
     }
 
@@ -202,16 +260,19 @@ impl Validator<'_> {
     }
 
     /// `_validate_structure`.
-    fn structure(&mut self, params: &Value, shape: ShapeId, name: &str) -> Checked {
+    fn structure(&mut self, params: &Value, shape: Schema<'_>, name: &str) -> Checked {
         let Value::Map(map) = params else {
             self.invalid_type(params, name, "<class 'dict'>");
             return Ok(());
         };
-        let model = self.model;
-        let traits = &model.shape(shape).traits;
-        let members = model.members(shape);
-        let member_names = || members.iter().map(|m| &*m.name).collect::<Vec<_>>();
-        if traits.is(Flag::Union) && map.len() != 1 {
+        let members = shape.members();
+        let member_names = || {
+            let names = members
+                .clone()
+                .map(|member| member.member_name().unwrap_or(""));
+            names.collect::<Vec<_>>()
+        };
+        if structure_is(shape, traits::UNION, ShapeType::Union) && map.len() != 1 {
             let members = member_names().join(". ");
             let display = display_name(name);
             self.error(if map.is_empty() {
@@ -227,7 +288,7 @@ impl Validator<'_> {
                 )
             });
         }
-        for required in traits.required.iter() {
+        for required in shape.required() {
             if !map.contains_key(required) {
                 self.error(format!(
                     "Missing required parameter in {}: \"{required}\"",
@@ -237,8 +298,9 @@ impl Validator<'_> {
         }
         let mut known = Vec::with_capacity(map.len());
         for (key, value) in map.iter() {
-            match members.iter().find(|member| *key == *member.name) {
-                Some(member) => known.push((key, value, member.shape)),
+            let mut members = members.clone();
+            match members.find(|member| *key == *member.member_name().unwrap_or("")) {
+                Some(member) => known.push((key, value, member)),
                 None => self.error(format!(
                     "Unknown parameter in {}: \"{}\", must be one of: {}",
                     display_name(name),
@@ -254,7 +316,13 @@ impl Validator<'_> {
     }
 
     /// `_validate_list`.
-    fn list(&mut self, params: &Value, shape: ShapeId, member: ShapeId, name: &str) -> Checked {
+    fn list(
+        &mut self,
+        params: &Value,
+        shape: Schema<'_>,
+        member: Schema<'_>,
+        name: &str,
+    ) -> Checked {
         let Value::List(items) = params else {
             self.invalid_type(params, name, "<class 'list'>, <class 'tuple'>");
             return Ok(());
@@ -267,7 +335,7 @@ impl Validator<'_> {
     }
 
     /// `_validate_map`: each key against the key shape, then its value.
-    fn map(&mut self, params: &Value, key: ShapeId, value: ShapeId, name: &str) -> Checked {
+    fn map(&mut self, params: &Value, key: Schema<'_>, value: Schema<'_>, name: &str) -> Checked {
         let Value::Map(map) = params else {
             self.invalid_type(params, name, "<class 'dict'>");
             return Ok(());
@@ -282,7 +350,7 @@ impl Validator<'_> {
     }
 
     /// `_validate_string`: the length counts code points, as `len(str)` does.
-    fn string(&mut self, params: &Value, shape: ShapeId, name: &str) -> Checked {
+    fn string(&mut self, params: &Value, shape: Schema<'_>, name: &str) -> Checked {
         if let Value::String(text) = params {
             self.length(text.chars().count(), shape, name);
         } else if let Value::PyString(text) = params {
@@ -294,7 +362,7 @@ impl Validator<'_> {
     }
 
     /// `_validate_integer` and `_validate_long`: `bool` is an `int` in Python.
-    fn integer(&mut self, params: &Value, shape: ShapeId, name: &str) -> Checked {
+    fn integer(&mut self, params: &Value, shape: Schema<'_>, name: &str) -> Checked {
         let valid = matches!(
             params,
             Value::Integer(_) | Value::BigInteger(_) | Value::Bool(_)
@@ -306,7 +374,7 @@ impl Validator<'_> {
     }
 
     /// `_validate_double` and `_validate_float`.
-    fn double(&mut self, params: &Value, shape: ShapeId, name: &str) -> Checked {
+    fn double(&mut self, params: &Value, shape: Schema<'_>, name: &str) -> Checked {
         let valid = matches!(
             params,
             Value::Float(_) | Value::Integer(_) | Value::BigInteger(_) | Value::Bool(_)
@@ -339,9 +407,9 @@ impl Validator<'_> {
     }
 
     /// `range_check` over a length, reported as `invalid length`.
-    fn length(&mut self, length: usize, shape: ShapeId, name: &str) {
+    fn length(&mut self, length: usize, shape: Schema<'_>, name: &str) {
         let length = i64::try_from(length).unwrap_or(i64::MAX);
-        if let Some(min) = self.minimum(shape)
+        if let Some(min) = Self::minimum(shape)
             && number::int_below(length, min)
         {
             let name = display_name(name);
@@ -352,8 +420,8 @@ impl Validator<'_> {
     }
 
     /// `range_check` over a number, reported as `invalid range`.
-    fn range(&mut self, params: &Value, shape: ShapeId, name: &str) -> Checked {
-        let Some(min) = self.minimum(shape) else {
+    fn range(&mut self, params: &Value, shape: Schema<'_>, name: &str) -> Checked {
+        let Some(min) = Self::minimum(shape) else {
             return Ok(());
         };
         if number::value_below(params, min)? {
@@ -367,11 +435,10 @@ impl Validator<'_> {
     }
 
     /// `min`, else the implicit minimum of 1 a host label has.
-    fn minimum(&self, shape: ShapeId) -> Option<Bound> {
-        let traits = &self.model.shape(shape).traits;
-        match traits.min {
+    fn minimum(shape: Schema<'_>) -> Option<Bound> {
+        match shape.min() {
             Some(min) => Some(min),
-            None if traits.is(Flag::HostLabel) => Some(Bound::Integer(1)),
+            None if shape.flag(Flag::HostLabel) => Some(Bound::Integer(1)),
             None => None,
         }
     }
