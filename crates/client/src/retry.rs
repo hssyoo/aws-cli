@@ -2,14 +2,13 @@
 //! (`botocore/retries/standard.py`), on the parts it shares with the S3
 //! client ([`cli_core::retry`]): what the `classify_retry` stage sees of an
 //! attempt and may decide, the classification, and the handler.
-use crate::admission::operation_schema;
 use crate::error::ServiceError;
 use crate::http::HttpResponse;
 use crate::transport::TransportError;
 pub use cli_core::retry::ErrorKind;
 use cli_core::retry::{Quota, backoff_ceiling};
 use model::schema::{OperationSchema, TypeRegistry};
-use model::shapes::{Model, Operation};
+use model::shapes::Model;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -72,18 +71,20 @@ const RETRY_AFTER_ADDITIONAL_MAX: Duration = Duration::from_secs(5);
 /// botocore's `StandardRetryConditions` without its attempt count, and
 /// `ThrottlingErrorDetector` for the kind. A service's own checks
 /// (`retries/special.py`) are its customization's `classify_retry`.
-pub fn classify(model: &Model, operation: &Operation, attempt: &Attempt<'_>) -> Option<ErrorKind> {
+pub fn classify(
+    model: &Model,
+    operation: OperationSchema<'_>,
+    attempt: &Attempt<'_>,
+) -> Option<ErrorKind> {
     let (response, error) = match attempt {
         Attempt::Failed(error) => return error.is_retryable().then_some(ErrorKind::Transient),
         Attempt::Response { response, error } => (*response, *error),
     };
     let code = error.and_then(ServiceError::code);
     let registry = model.schema().registry();
-    let schema = operation_schema(model, operation);
-    let modeled = code.and_then(|code| modeled_retryable(registry, schema?, code));
+    let modeled = code.and_then(|code| modeled_retryable(registry, operation, code));
     let unmodeled_429 = response.status == THROTTLING_STATUS
-        && !code
-            .is_some_and(|code| schema.is_some_and(|schema| is_modeled(registry, schema, code)));
+        && !code.is_some_and(|code| is_modeled(registry, operation, code));
     let throttled = code.is_some_and(|code| THROTTLED_CODES.contains(&code));
     let retryable = code.is_some_and(|code| TRANSIENT_CODES.contains(&code))
         || TRANSIENT_STATUSES.contains(&response.status)

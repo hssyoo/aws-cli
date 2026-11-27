@@ -4,7 +4,8 @@
 use super::{ParseOptions, Protocol, Serialized, common};
 use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::HttpResponse;
-use model::shapes::{Model, Operation};
+use model::schema::OperationSchema;
+use model::shapes::Model;
 use model::value::Value;
 
 mod parse;
@@ -28,30 +29,27 @@ impl Protocol for RestJson {
     /// `RestJSONSerializer.serialize_to_request`.
     fn serialize(
         &self,
-        model: &Model,
-        operation: &Operation,
+        _model: &Model,
+        operation: OperationSchema<'_>,
         input: &Value,
     ) -> Result<Serialized, SerializeError> {
-        serialize::request(model, operation, input)
+        serialize::request(operation, input)
     }
 
     fn parse(
         &self,
-        model: &Model,
-        operation: &Operation,
+        _model: &Model,
+        operation: OperationSchema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
-        let output = common::operation_schema(model, operation)
-            .map_err(ParseError::new)?
-            .output();
-        common::parse(self, output, response, options)
+        common::parse(self, operation.output(), response, options)
     }
 
     fn parse_error(
         &self,
         model: &Model,
-        operation: &Operation,
+        operation: OperationSchema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<ServiceError, ParseError> {

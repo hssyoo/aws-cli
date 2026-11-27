@@ -4,7 +4,8 @@
 //! query-compatible mode) and [`rest_json`].
 use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse, Method};
-use model::shapes::{Metadata, Model, Operation};
+use model::schema::OperationSchema;
+use model::shapes::{Metadata, Model};
 use model::value::Value;
 
 /// A request before it has an endpoint: botocore's request dict, as a
@@ -112,7 +113,7 @@ pub trait Protocol: Sync + std::fmt::Debug {
     fn serialize(
         &self,
         model: &Model,
-        operation: &Operation,
+        operation: OperationSchema<'_>,
         input: &Value,
     ) -> Result<Serialized, SerializeError>;
     /// The output of a successful response.
@@ -122,7 +123,7 @@ pub trait Protocol: Sync + std::fmt::Debug {
     fn parse(
         &self,
         model: &Model,
-        operation: &Operation,
+        operation: OperationSchema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError>;
@@ -136,7 +137,7 @@ pub trait Protocol: Sync + std::fmt::Debug {
     fn parse_error(
         &self,
         model: &Model,
-        operation: &Operation,
+        operation: OperationSchema<'_>,
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<ServiceError, ParseError>;

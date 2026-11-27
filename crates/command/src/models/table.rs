@@ -2,8 +2,7 @@
 //! and the cross-cutting `building-argument-table` handlers build it.
 use super::*;
 use awscli_argparse::{Action, Nargs};
-use model::schema::{Flag, OperationSchema, Schema, ShapeType};
-use model::shapes::{Member, Operation, ShapeId, ShapeKind};
+use model::schema::{Flag, OperationSchema, Schema, SchemaId, ShapeType};
 
 /// How argparse converts an option's value (`add_argument(type=...)`):
 /// `CLIArgument.TYPE_MAP` gives `long` members `int` and `float`/`double`
@@ -32,11 +31,11 @@ pub enum Unpack {
 /// What a derived argument stands for, which says how it binds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
-    /// An input member: its serialized name and its shape. A boolean
+    /// An input member: its serialized name and its schema. A boolean
     /// member's `--no-` twin has the same origin.
     Member {
         member: Box<str>,
-        shape: ShapeId,
+        shape: SchemaId,
     },
     /// `cliinput`'s `--cli-input-json` and `--cli-input-yaml`.
     CliInputJson,
@@ -169,15 +168,15 @@ fn plain(name: &str, cli_type_name: &str, origin: Origin) -> DerivedArgument {
 /// `ListArgument` for a list, `BooleanArgument` (and its `--no-` twin) for a
 /// boolean, and `CLIArgument` for the rest.
 fn member_arguments(
-    member: &Member,
     schema: Schema<'_>,
     required: bool,
     special: &SpecialCases,
 ) -> Vec<DerivedArgument> {
-    let name = xform_name(&member.name, "-", special);
+    let member = schema.member_name().unwrap_or_default();
+    let name = xform_name(member, "-", special);
     let origin = Origin::Member {
-        member: member.name.clone(),
-        shape: member.shape,
+        member: member.into(),
+        shape: schema.index(),
     };
     let mut argument = plain(&name, schema.type_name(), origin);
     argument.unpack = unpack(schema);
@@ -213,61 +212,35 @@ fn unpack(shape: Schema<'_>) -> Unpack {
     }
 }
 
-/// botocore's `type_name` for a shape kind.
-pub fn kind_name(kind: &ShapeKind) -> &str {
-    match kind {
-        ShapeKind::Structure { .. } => "structure",
-        ShapeKind::List { .. } => "list",
-        ShapeKind::Map { .. } => "map",
-        ShapeKind::String => "string",
-        ShapeKind::Integer => "integer",
-        ShapeKind::Long => "long",
-        ShapeKind::Boolean => "boolean",
-        ShapeKind::Float => "float",
-        ShapeKind::Double => "double",
-        ShapeKind::Timestamp => "timestamp",
-        ShapeKind::Blob => "blob",
-        ShapeKind::Other(name) => name,
-    }
-}
-
 /// The members' arguments in model order. A member is required when the
 /// input shape lists it and it is no idempotency token.
-fn members_table(model: &Model, operation: &Operation, special: &SpecialCases) -> Table {
+fn members_table(operation: OperationSchema<'_>, special: &SpecialCases) -> Table {
     let mut table = Table {
         arguments: Vec::new(),
         overrides: Vec::new(),
         customized: false,
         paging: None,
     };
-    let (Some(input), Some(schema)) = (operation.input, operation_schema(model, operation)) else {
+    let Some(input) = operation.input() else {
         return table;
     };
-    let Some(input_schema) = schema.input() else {
-        return table;
-    };
-    // The arena's members name each argument's shape (`Origin::Member`);
-    // both readings list them in model order.
-    for (member, schema) in model.members(input).iter().zip(input_schema.members()) {
+    for schema in input.members() {
         let token = schema.flag(Flag::IdempotencyToken);
-        let listed = input_schema.required().any(|name| name == &*member.name);
+        let listed = input
+            .required()
+            .any(|name| Some(name) == schema.member_name());
         let is_required = listed && !token;
-        for argument in member_arguments(member, schema, is_required, special) {
+        for argument in member_arguments(schema, is_required, special) {
             table.insert(argument);
         }
     }
     table
 }
 
-/// The operation's schema in the model's [`model::schema::SchemaSet`].
-fn operation_schema<'m>(model: &'m Model, operation: &Operation) -> Option<OperationSchema<'m>> {
-    model.schema().service().operation(&operation.name)
-}
-
 /// `OperationModel.has_streaming_output`: the output's payload member is a
 /// blob (`_get_streaming_body`).
-fn streaming_output(model: &Model, operation: &Operation) -> Option<Box<str>> {
-    let output = operation_schema(model, operation)?.output()?;
+fn streaming_output(operation: OperationSchema<'_>) -> Option<Box<str>> {
+    let output = operation.output()?;
     let payload = output.payload()?;
     let member = output
         .members()
@@ -281,12 +254,11 @@ fn streaming_output(model: &Model, operation: &Operation) -> Option<Box<str>> {
 /// these in the order their initializers registered them.
 fn cross_cutting(
     table: &mut Table,
-    model: &Model,
-    operation: &Operation,
+    operation: OperationSchema<'_>,
     entry: Option<&Entry>,
     special: &SpecialCases,
 ) {
-    if let Some(response_key) = streaming_output(model, operation) {
+    if let Some(response_key) = streaming_output(operation) {
         let mut outfile = plain("outfile", "string", Origin::Outfile { response_key });
         outfile.positional = true;
         table.insert(outfile);
@@ -301,7 +273,7 @@ fn cross_cutting(
         }
     }
     if let Some(entry) = entry {
-        paging(table, model, operation, entry, special);
+        paging(table, operation, entry, special);
     }
     if !table.has("outfile") {
         let mut skeleton = plain(
@@ -337,8 +309,7 @@ fn override_option(name: &str) -> &'static str {
 /// argparse's `int`, integers, which binding reads as they stand.
 fn paging(
     table: &mut Table,
-    model: &Model,
-    operation: &Operation,
+    operation: OperationSchema<'_>,
     entry: &Entry,
     special: &SpecialCases,
 ) {
@@ -369,7 +340,7 @@ fn paging(
     shadow(table, &mut paging, starting_token);
     let limit_type = match limit_key {
         None => Some("integer"),
-        Some(key) => limit_type(model, operation, key),
+        Some(key) => limit_type(operation, key),
     };
     let Some(type_name) = limit_type else {
         table.customized = true;
@@ -408,8 +379,8 @@ fn shadow(table: &mut Table, paging: &mut Paging, option: DerivedArgument) {
 }
 
 /// The limit key member's type, when `PageArgument.type_map` has it.
-fn limit_type<'m>(model: &'m Model, operation: &Operation, key: &str) -> Option<&'m str> {
-    let input = operation_schema(model, operation)?.input()?;
+fn limit_type<'s>(operation: OperationSchema<'s>, key: &str) -> Option<&'s str> {
+    let input = operation.input()?;
     let member = input
         .members()
         .find(|member| member.member_name() == Some(key))?;
@@ -419,13 +390,12 @@ fn limit_type<'m>(model: &'m Model, operation: &Operation, key: &str) -> Option<
 
 /// The operation's table: its members, then the cross-cutting handlers'.
 pub fn derive(
-    model: &Model,
-    operation: &Operation,
+    operation: OperationSchema<'_>,
     entry: Option<&Entry>,
     special: &SpecialCases,
 ) -> Table {
-    let mut table = members_table(model, operation, special);
-    cross_cutting(&mut table, model, operation, entry, special);
+    let mut table = members_table(operation, special);
+    cross_cutting(&mut table, operation, entry, special);
     table
 }
 

@@ -100,7 +100,7 @@ fn fixture() -> TestResult<(Model, EndpointData)> {
 #[test]
 fn parameters_come_from_each_source_in_rule_set_order() -> TestResult {
     let (model, data) = fixture()?;
-    let operation = model.operation("Get").ok_or("Get")?;
+    let operation = model.schema().service().operation("Get").ok_or("Get")?;
     let mut input = Map::new();
     input.insert("Table".into(), Value::String("orders".into()));
     let config = EndpointConfig::new(&EndpointInputs {
@@ -111,7 +111,6 @@ fn parameters_come_from_each_source_in_rule_set_order() -> TestResult {
     let builtins = config.builtins(&data)?;
     let params = provider_params(
         &data,
-        &model,
         operation,
         &Value::Map(input),
         &builtins,
@@ -438,7 +437,7 @@ fn native(case: &Value) -> TestResult<Value> {
     let source = DirSource::new(repository().join("awscli/botocore/data"));
     let service = text(case, "service").ok_or("service")?;
     let model = Model::load(&source, service)?;
-    let data = EndpointData::load(&source, service, model.metadata())?;
+    let data = EndpointData::load(&source, service, model.schema().service())?;
     let config = EndpointConfig::new(&EndpointInputs {
         region: text(case, "region"),
         use_fips: flag(case, "fips"),
@@ -452,16 +451,12 @@ fn native(case: &Value) -> TestResult<Value> {
         .and_then(|()| config.builtins(&data))
         .and_then(|builtins| {
             let operation = model
+                .schema()
+                .service()
                 .operation(text(case, "operation").unwrap_or_default())
                 .ok_or_else(|| CallError::Endpoint("no operation".into()))?;
-            let params = provider_params(
-                &data,
-                &model,
-                operation,
-                &Value::Map(Map::new()),
-                &builtins,
-                None,
-            );
+            let params =
+                provider_params(&data, operation, &Value::Map(Map::new()), &builtins, None);
             resolve(&data, &params)
         });
     match outcome {
@@ -727,17 +722,21 @@ fn a_required_client_context_parameter_needs_the_operation() -> TestResult {
     let model = Model::from_json(CONTEXT_SERVICE.as_bytes())?;
     let data =
         EndpointData::from_documents(CONTEXT_RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
-    let pinned = model.operation("Pinned").ok_or("Pinned")?;
-    let loose = model.operation("Loose").ok_or("Loose")?;
+    let pinned = model
+        .schema()
+        .service()
+        .operation("Pinned")
+        .ok_or("Pinned")?;
+    let loose = model.schema().service().operation("Loose").ok_or("Loose")?;
     assert_eq!(missing_client_context(&data, &model, pinned), None);
     assert_eq!(
         missing_client_context(&data, &model, loose),
         Some("ServiceType".to_owned())
     );
     let builtins = Builtins::default();
-    let params = provider_params(&data, &model, loose, &Value::Null, &builtins, None);
+    let params = provider_params(&data, loose, &Value::Null, &builtins, None);
     assert_eq!(params.get("ServiceType"), None);
-    let params = provider_params(&data, &model, pinned, &Value::Null, &builtins, None);
+    let params = provider_params(&data, pinned, &Value::Null, &builtins, None);
     assert_eq!(
         params.get("ServiceType"),
         Some(&ParamValue::String("ACM".into()))

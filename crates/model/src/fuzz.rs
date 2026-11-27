@@ -25,8 +25,8 @@ pub fn model_json(bytes: &[u8]) {
         }
     };
     assert_eq!(arena::render(&model), model.projection());
-    for operation in model.operations() {
-        report(validate_input(&model, operation, &Value::Map(Map::new())));
+    for operation in model.schema().service().operations() {
+        report(validate_input(operation, &Value::Map(Map::new())));
     }
 }
 
@@ -36,8 +36,8 @@ pub fn validate(model: &Model, bytes: &[u8]) {
     let Ok(params) = Value::from_json(bytes) else {
         return;
     };
-    for operation in model.operations() {
-        report(validate_input(model, operation, &params));
+    for operation in model.schema().service().operations() {
+        report(validate_input(operation, &params));
     }
 }
 

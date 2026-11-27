@@ -98,12 +98,13 @@ pub fn root_rows(source: &ModelSource<'_>, root: &str) -> Vec<Row> {
         }];
     };
     let model = &service.model;
-    let api_version = model.metadata().api_version.as_deref().unwrap_or("-");
-    let endpoints = EndpointData::load(source.search(), &service.name, model.metadata());
+    let schema = model.schema().service();
+    let api_version = schema.version().unwrap_or("-");
+    let endpoints = EndpointData::load(source.search(), &service.name, schema);
     let mut rows = Vec::new();
     for operation in &service.operations {
         let found = service.operation(operation);
-        let entry = found.and_then(|found| service.paginator(&found.name));
+        let entry = found.and_then(|found| service.paginator(found.name()));
         let refusal = match (&endpoints, found) {
             (Err(_), _) => Some((PythonReason::EndpointData.name(), "-".to_owned())),
             (Ok(_), None) => Some((PythonReason::UnsupportedSubcommand.name(), "-".to_owned())),

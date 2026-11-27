@@ -38,7 +38,8 @@ fn dynamodb_s_retry_defaults_and_no_one_else_s() {
 }
 
 fn context_for<'a>(service: &'a str, model: &'a Model) -> Result<CallContext<'a>, &'static str> {
-    let operation = model.operations().first().ok_or("no operation")?;
+    let mut operations = model.schema().service().operations();
+    let operation = operations.next().ok_or("no operation")?;
     Ok(CallContext::new(service, model, operation))
 }
 
@@ -209,7 +210,7 @@ fn every_basis_holds() -> TestResult {
                 } => {
                     let carried = operation_with(key).ok_or(*key)?;
                     let model = Model::from_json(model_with(carried).as_bytes())?;
-                    let operation = model.operation("Op").ok_or("Op")?;
+                    let operation = model.schema().service().operation("Op").ok_or("Op")?;
                     let refused = client::admission::static_refusal(
                         &model,
                         operation,

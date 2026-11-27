@@ -142,7 +142,12 @@ fn adversarial_bodies_never_panic() -> Result<(), Box<dyn std::error::Error>> {
         "value":{"shape":"Out"}},"S":{"type":"string"},"Ts":{"type":"timestamp"},
         "Bl":{"type":"blob"},"E":{"type":"structure","members":{},"exception":true}}}"#,
     )?;
-    let operation = &model.operations()[0];
+    let operation = model
+        .schema()
+        .service()
+        .operations()
+        .next()
+        .ok_or("operation")?;
     let deep_xml = [
         b"<GoResponse><GoResult>".to_vec(),
         b"<L><member>".repeat(400),

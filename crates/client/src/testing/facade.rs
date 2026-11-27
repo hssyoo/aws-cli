@@ -15,7 +15,6 @@ use crate::endpoint::{EndpointConfig, EndpointInputs};
 use crate::protocol::{Protocol, json::Json, query::Query, rest_json::RestJson};
 use crate::useragent::{SessionExtras, UserAgentContext};
 use model::paginators::{Paginators, Refused};
-use model::shapes::ShapeKind;
 use model::source::{Kind, LoadError, Source};
 use model::validate::{Validation, validate_input};
 use model::value::{Map, Value};
@@ -79,27 +78,29 @@ pub fn model_from_json(bytes: &[u8]) -> Result<Arc<Model>, String> {
 /// The operations' names, in model order.
 pub fn operation_names(model: &Model) -> Vec<String> {
     model
+        .schema()
+        .service()
         .operations()
-        .iter()
-        .map(|operation| operation.name.to_string())
+        .map(|operation| operation.name().to_owned())
         .collect()
 }
 
 /// The model's `endpointPrefix`.
 pub fn endpoint_prefix(model: &Model) -> Option<String> {
     model
-        .metadata()
-        .endpoint_prefix
-        .as_deref()
+        .schema()
+        .service()
+        .endpoint_prefix()
         .map(str::to_owned)
 }
 
 /// The name of the error shape whose code is `code`
 /// (`ClientExceptionsFactory`'s class name).
 pub fn error_shape_name(model: &Model, code: &str) -> Option<String> {
-    model
-        .shape_for_error_code(code)
-        .map(|id| model.shape(id).name.to_string())
+    let registry = model.schema().registry();
+    registry
+        .entry_for_error_code(code)
+        .map(|schema| schema.id().name().to_owned())
 }
 
 /// One member of an operation's input structure.
@@ -116,49 +117,21 @@ pub struct MemberInfo {
     pub item_type_name: Option<String>,
 }
 
-fn type_name(kind: &ShapeKind) -> String {
-    match kind {
-        ShapeKind::Structure { .. } => "structure",
-        ShapeKind::List { .. } => "list",
-        ShapeKind::Map { .. } => "map",
-        ShapeKind::String => "string",
-        ShapeKind::Integer => "integer",
-        ShapeKind::Long => "long",
-        ShapeKind::Boolean => "boolean",
-        ShapeKind::Float => "float",
-        ShapeKind::Double => "double",
-        ShapeKind::Timestamp => "timestamp",
-        ShapeKind::Blob => "blob",
-        ShapeKind::Other(name) => name,
-    }
-    .to_owned()
-}
-
 /// The members of `operation`'s input, in model order: none for an
 /// operation without an input or that the model lacks.
 pub fn input_members(model: &Model, operation: &str) -> Vec<MemberInfo> {
-    let Some(input) = model
-        .operation(operation)
-        .and_then(|operation| operation.input)
-    else {
+    let service = model.schema().service();
+    let Some(input) = service.operation(operation).and_then(|found| found.input()) else {
         return Vec::new();
     };
-    model
-        .members(input)
-        .iter()
-        .map(|member| {
-            let shape = model.shape(member.shape);
-            let item_type_name = match shape.kind {
-                ShapeKind::List { member: item } => Some(type_name(&model.shape(item).kind)),
-                _ => None,
-            };
-            MemberInfo {
-                name: member.name.to_string(),
-                location: shape.traits.location.as_deref().map(str::to_owned),
-                location_name: shape.traits.name.as_deref().map(str::to_owned),
-                type_name: type_name(&shape.kind),
-                item_type_name,
-            }
+    input
+        .members()
+        .map(|member| MemberInfo {
+            name: member.member_name().unwrap_or_default().to_owned(),
+            location: member.location().map(str::to_owned),
+            location_name: member.location_name().map(str::to_owned),
+            type_name: member.type_name().to_owned(),
+            item_type_name: member.list_member().map(|item| item.type_name().to_owned()),
         })
         .collect()
 }
@@ -182,8 +155,9 @@ pub enum Validated {
 /// # Errors
 /// An operation the model lacks.
 pub fn validate_case(model: &Model, operation: &str, input: &Value) -> Result<Validated, String> {
-    let operation = model.operation(operation).ok_or("no operation")?;
-    Ok(match validate_input(model, operation, input) {
+    let service = model.schema().service();
+    let operation = service.operation(operation).ok_or("no operation")?;
+    Ok(match validate_input(operation, input) {
         Validation::Valid => Validated::Valid,
         Validation::Invalid(report) => Validated::Invalid {
             message: report.message(),
@@ -229,7 +203,7 @@ pub fn serialize_case(
     operation: &str,
     input: &Value,
 ) -> Result<Serialized, SerializeError> {
-    let found = model
+    let found = (model.schema().service())
         .operation(operation)
         .ok_or_else(|| SerializeError::new(no_operation(operation)))?;
     protocol.0.serialize(model, found, input)
@@ -276,7 +250,7 @@ pub fn parse_case(
     response: &HttpResponse,
     options: &ParseOptions<'_>,
 ) -> Result<Value, ParseError> {
-    let found = model
+    let found = (model.schema().service())
         .operation(operation)
         .ok_or_else(|| ParseError::new(no_operation(operation)))?;
     protocol.0.parse(model, found, response, options)
@@ -293,7 +267,7 @@ pub fn parse_error_case(
     response: &HttpResponse,
     options: &ParseOptions<'_>,
 ) -> Result<ServiceError, ParseError> {
-    let found = model
+    let found = (model.schema().service())
         .operation(operation)
         .ok_or_else(|| ParseError::new(no_operation(operation)))?;
     protocol.0.parse_error(model, found, response, options)
@@ -310,7 +284,8 @@ pub fn endpoint_data(
     service: &str,
     model: &Model,
 ) -> Result<EndpointData, String> {
-    EndpointData::load(&Dyn(source), service, model.metadata()).map_err(|error| error.to_string())
+    EndpointData::load(&Dyn(source), service, model.schema().service())
+        .map_err(|error| error.to_string())
 }
 
 /// Endpoint data from the documents' bytes: the rule set, `partitions.json`
@@ -351,9 +326,9 @@ pub fn rule_set(source: &dyn Source, service: &str, model: &Model) -> Result<Rul
     let partitions = load_data_bytes(&source, "partitions").map_err(text)?;
     let endpoints = load_data_bytes(&source, "endpoints").map_err(text)?;
     let prefix = model
-        .metadata()
-        .endpoint_prefix
-        .as_deref()
+        .schema()
+        .service()
+        .endpoint_prefix()
         .unwrap_or(service);
     let data = EndpointData::from_documents(
         rules.clone(),
@@ -438,7 +413,7 @@ pub fn endpoint_case(
     input: &Value,
     builtins: &[(&str, ParamValue)],
 ) -> Result<EndpointOutcome, String> {
-    let found = model
+    let found = (model.schema().service())
         .operation(operation)
         .ok_or_else(|| no_operation(operation))?;
     let mut set = crate::endpoint::Builtins::default();
@@ -449,8 +424,7 @@ pub fn endpoint_case(
             _ => set.set(name, value.clone()),
         }
     }
-    let params =
-        crate::endpoint::provider_params(&rules.data, model, found, input, &set, account_id);
+    let params = crate::endpoint::provider_params(&rules.data, found, input, &set, account_id);
     let params: Vec<(&str, ParamValue)> = params
         .iter()
         .map(|(name, value)| (name, value.clone()))
@@ -498,13 +472,13 @@ pub fn refusals(
     let source = Dyn(source);
     let text = |error: &dyn std::fmt::Display| error.to_string();
     let model = Model::load(&source, service).map_err(|e| text(&e))?;
-    let endpoints = EndpointData::load(&source, service, model.metadata()).map_err(|e| text(&e))?;
+    let schema = model.schema().service();
+    let endpoints = EndpointData::load(&source, service, schema).map_err(|e| text(&e))?;
     let pages = Paginators::load(&source, service).map_err(|e| text(&e))?;
-    Ok(model
+    Ok(schema
         .operations()
-        .iter()
         .map(|operation| {
-            let entry = pages.get(&operation.name).map(|entry| &entry.config);
+            let entry = pages.get(operation.name()).map(|entry| &entry.config);
             let refusal = static_refusal(
                 &model,
                 operation,
@@ -513,7 +487,7 @@ pub fn refusals(
                 customizations,
                 entry,
             );
-            (operation.name.to_string(), refusal.as_ref().map(row))
+            (operation.name().to_owned(), refusal.as_ref().map(row))
         })
         .collect())
 }
@@ -756,3 +730,6 @@ pub fn parse_starting_token(raw: &str, input_token: &[String]) -> Result<Startin
 pub fn resume_token(value: &Map, input_token: &[String]) -> Result<String, String> {
     crate::paginate::resume_token(value, input_token).map_err(|error| format!("{error:?}"))
 }
+
+#[cfg(test)]
+mod tests;

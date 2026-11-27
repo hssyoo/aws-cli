@@ -33,7 +33,7 @@ fn operations_with_unimplemented_traits_are_refused() -> Result<(), Box<dyn std:
         ("Endpoints", Some("endpointoperation")),
         ("Compressed", Some("requestcompression")),
     ] {
-        let operation = model.operation(name).ok_or(name)?;
+        let operation = model.schema().service().operation(name).ok_or(name)?;
         assert_eq!(
             unimplemented_trait(operation),
             refused.map(|name: &str| Unsupported::Trait(name.to_owned())),
@@ -77,7 +77,7 @@ fn static_refusals_need_only_the_model_and_the_rule_set() -> Result<(), Box<dyn 
     let model = Model::from_json(SERVICE.as_bytes())?;
     let data = EndpointData::from_documents(RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
     let refusal = |name: &str| -> Result<Option<Unsupported>, String> {
-        let operation = model.operation(name).ok_or(name)?;
+        let operation = model.schema().service().operation(name).ok_or(name)?;
         Ok(static_refusal(&model, operation, &data, "zjson", &[], None))
     };
     assert_eq!(
@@ -95,7 +95,7 @@ fn static_refusals_need_only_the_model_and_the_rule_set() -> Result<(), Box<dyn 
         Some(Unsupported::Builtin("AWS::Other::Thing".into()))
     );
     let xml = Model::from_json(SERVICE.replace(r#""json""#, r#""rest-xml""#).as_bytes())?;
-    let plain = xml.operation("Plain").ok_or("Plain")?;
+    let plain = xml.schema().service().operation("Plain").ok_or("Plain")?;
     assert_eq!(
         static_refusal(&xml, plain, &data, "zjson", &[], None),
         Some(Unsupported::Protocol("rest-xml".into()))
@@ -114,7 +114,7 @@ fn an_uninterpreted_key_refuses_the_operations_that_reach_it()
     );
     let model = Model::from_json(planted.as_bytes())?;
     let data = EndpointData::from_documents(RULES.as_bytes().to_vec(), b"{}".to_vec(), None)?;
-    let plain = model.operation("Plain").ok_or("Plain")?;
+    let plain = model.schema().service().operation("Plain").ok_or("Plain")?;
     assert_eq!(
         static_refusal(&model, plain, &data, "zjson", &[], None),
         Some(Unsupported::Trait("newTrait".into()))
@@ -132,7 +132,7 @@ fn a_paginator_entry_the_engine_does_not_run_is_refused() -> Result<(), Box<dyn 
     let model = Model::from_json(SERVICE.as_bytes())?;
     let rules = br#"{"version": "1.0", "parameters": {}, "rules": []}"#.to_vec();
     let data = EndpointData::from_documents(rules, b"{}".to_vec(), None)?;
-    let operation = model.operation("Plain").ok_or("Plain")?;
+    let operation = model.schema().service().operation("Plain").ok_or("Plain")?;
     let entry = |json: &str| {
         model::value::Value::from_json(json.as_bytes())
             .map(|entry| model::paginators::Config::from_value(&entry))

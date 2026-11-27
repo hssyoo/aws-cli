@@ -134,8 +134,10 @@ fn python_only_cases() -> Vec<(&'static str, Value)> {
 fn reports_match_botocore_for_every_error_kind() -> Result<()> {
     let model = model()?;
     let input = model
+        .schema()
+        .service()
         .operation("Check")
-        .and_then(|op| op.input)
+        .and_then(|op| op.input())
         .ok_or("input")?;
     let expected: serde_json::Value = serde_json::from_slice(include_bytes!("expected.json"))?;
     let expected = expected.as_object().ok_or("expected is not an object")?;
@@ -144,7 +146,7 @@ fn reports_match_botocore_for_every_error_kind() -> Result<()> {
     cases.extend(python_only_cases());
     assert_eq!(cases.len(), expected.len());
     for (name, params) in cases {
-        let report = match validate(&model, input, &params) {
+        let report = match validate(input, &params) {
             Validation::Valid => None,
             Validation::Invalid(report) => Some(report.to_string()),
             Validation::Undecided(reason) => return Err(format!("{name}: {reason:?}").into()),
@@ -158,16 +160,17 @@ fn reports_match_botocore_for_every_error_kind() -> Result<()> {
 #[test]
 fn the_error_message_wraps_the_report_and_no_input_shape_is_valid() -> Result<()> {
     let model = model()?;
-    let check = model.operation("Check").ok_or("Check")?;
-    let Validation::Invalid(report) = validate_input(&model, check, &json("{}")) else {
+    let service = model.schema().service();
+    let check = service.operation("Check").ok_or("Check")?;
+    let Validation::Invalid(report) = validate_input(check, &json("{}")) else {
         return Err("{} validated".into());
     };
     let text = "Parameter validation failed:\nMissing required parameter in input: \"Req\"\n\
         Missing required parameter in input: \"Nested\"";
     assert_eq!(report.message(), text);
-    let bare = model.operation("Bare").ok_or("Bare")?;
+    let bare = service.operation("Bare").ok_or("Bare")?;
     assert!(matches!(
-        validate_input(&model, bare, &json("[1]")),
+        validate_input(bare, &json("[1]")),
         Validation::Valid
     ));
     Ok(())
@@ -177,8 +180,10 @@ fn the_error_message_wraps_the_report_and_no_input_shape_is_valid() -> Result<()
 fn timestamps_python_accepts_are_valid() -> Result<()> {
     let model = model()?;
     let input = model
+        .schema()
+        .service()
         .operation("Check")
-        .and_then(|op| op.input)
+        .and_then(|op| op.input())
         .ok_or("input")?;
     for value in [
         utc_day(),
@@ -195,7 +200,7 @@ fn timestamps_python_accepts_are_valid() -> Result<()> {
     ] {
         let params = ok_with("When", value.clone());
         assert!(
-            matches!(validate(&model, input, &params), Validation::Valid),
+            matches!(validate(input, &params), Validation::Valid),
             "{value:?}"
         );
     }
@@ -208,8 +213,10 @@ fn timestamps_python_accepts_are_valid() -> Result<()> {
 fn what_only_python_can_decide_is_undecided() -> Result<()> {
     let model = model()?;
     let input = model
+        .schema()
+        .service()
         .operation("Check")
-        .and_then(|op| op.input)
+        .and_then(|op| op.input())
         .ok_or("input")?;
     for (member, value) in [
         ("When", Value::String("next tuesday".into())),
@@ -222,7 +229,7 @@ fn what_only_python_can_decide_is_undecided() -> Result<()> {
         ("Big", Value::Integer(1)),
     ] {
         let params = ok_with(member, value.clone());
-        let outcome = validate(&model, input, &params);
+        let outcome = validate(input, &params);
         assert!(
             matches!(outcome, Validation::Undecided(_)),
             "{value:?}: {outcome:?}"
@@ -379,7 +386,7 @@ fn a_reference_that_changes_document_or_union_validates_as_botocore_reads_it() -
                        "members": {"A": {"shape": "Free"}, "B": {"shape": "Free"}}},
             "Free": {"type": "string"}}});
     let model = Model::from_value(&description)?;
-    let operation = model.operation("Op").ok_or("Op")?;
+    let operation = model.schema().service().operation("Op").ok_or("Op")?;
     let mut params = Map::new();
     let mut document = Map::new();
     document.insert("Z".into(), Value::Blob(b"x".to_vec()));
@@ -388,7 +395,7 @@ fn a_reference_that_changes_document_or_union_validates_as_botocore_reads_it() -
     params.insert("AsPlain".into(), json(r#"{"Z":1}"#));
     params.insert("Cleared".into(), json(r#"{"A":"a","B":"b"}"#));
     params.insert("Named".into(), Value::Integer(1));
-    let Validation::Invalid(report) = validate_input(&model, operation, &Value::Map(params)) else {
+    let Validation::Invalid(report) = validate_input(operation, &Value::Map(params)) else {
         return Err("the parameters validated".into());
     };
     let expected = [

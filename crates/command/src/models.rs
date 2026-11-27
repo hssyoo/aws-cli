@@ -13,6 +13,7 @@ use crate::registry::OperationSource;
 use awscli_argparse::tables::RequiredOverride;
 use awscli_argparse::{Argument, CliType, DefaultValue};
 use model::paginators::{Entry, Paginators};
+use model::schema::OperationSchema;
 use model::search::SearchSource;
 use model::shapes::Model;
 use model::source::{Kind, LoadError, Source, load_service_model};
@@ -23,9 +24,7 @@ use std::collections::BTreeMap;
 
 mod table;
 #[doc(inline)]
-pub use table::{
-    DerivedArgument, Origin, Paging, PagingToken, Table, Unpack, ValueType, kind_name,
-};
+pub use table::{DerivedArgument, Origin, Paging, PagingToken, Table, Unpack, ValueType};
 
 type Json = serde_json::Value;
 
@@ -59,13 +58,14 @@ pub struct Service {
 impl Service {
     /// The model operation the CLI name `operation` stands for, with its
     /// place in `operations`.
-    fn position(&self, operation: &str) -> Option<(usize, &model::shapes::Operation)> {
+    fn position(&self, operation: &str) -> Option<(usize, OperationSchema<'_>)> {
         let index = self.operations.iter().position(|name| name == operation)?;
         let model_index = *self.indices.get(index)?;
-        Some((index, self.model.operations().get(model_index)?))
+        let mut operations = self.model.schema().service().operations();
+        Some((index, operations.nth(model_index)?))
     }
     /// The model operation the CLI name `operation` stands for.
-    pub fn operation(&self, operation: &str) -> Option<&model::shapes::Operation> {
+    pub fn operation(&self, operation: &str) -> Option<OperationSchema<'_>> {
         self.position(operation).map(|(_, found)| found)
     }
     /// The paginators file's entry for the model operation `operation`
@@ -226,12 +226,14 @@ impl<'a> ModelSource<'a> {
     fn load(&self, command: &str, service: &str) -> Option<Service> {
         let model = Model::load(&self.models, service).ok()?;
         let packed = self.models.packed(service).ok()?;
-        let mut table: Vec<(String, Option<usize>)> = model
+        let mut table: Vec<(String, Option<usize>)> = (model.schema().service())
             .operations()
-            .iter()
             .enumerate()
             .map(|(index, operation)| {
-                (xform_name(&operation.name, "-", &self.special), Some(index))
+                (
+                    xform_name(operation.name(), "-", &self.special),
+                    Some(index),
+                )
             })
             .collect();
         for edit in self.patterns.table_edits(command) {
@@ -289,8 +291,8 @@ impl<'a> ModelSource<'a> {
         let service = self.service(command)?;
         let (index, model_operation) = service.position(operation)?;
         Some(service.tables.get(index)?.get_or_init(|| {
-            let entry = service.pages.get(&model_operation.name);
-            let mut table = table::derive(&service.model, model_operation, entry, &self.special);
+            let entry = service.pages.get(model_operation.name());
+            let mut table = table::derive(model_operation, entry, &self.special);
             let events = [
                 format!("building-command-table.{command}_{operation}"),
                 format!("before-building-argument-table-parser.{command}.{operation}"),
@@ -342,7 +344,7 @@ impl<'a> ModelSource<'a> {
             endpoint_prefix: metadata.endpoint_prefix.as_deref().unwrap_or_default(),
             service_id: &service_id,
             command,
-            operation: &model_operation.name,
+            operation: model_operation.name(),
             cli_operation: operation,
             arguments: &arguments,
             packed: service.packed,

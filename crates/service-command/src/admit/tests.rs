@@ -5,6 +5,7 @@
 use super::*;
 use crate::ServiceSource;
 use crate::testing::{Result, parsed, replacing_all, with_models};
+use model::shapes::{ShapeId, ShapeKind};
 
 fn outcome(
     source: &ServiceSource<'_>,
@@ -123,7 +124,7 @@ fn paginators_of_names_and_dotted_paths_are_run() -> Result<()> {
                 .operation(operation)
                 .unwrap_or_else(|| panic!("{operation}"));
             service
-                .paginator(&found.name)
+                .paginator(found.name())
                 .map(|entry| entry.config.clone())
         };
         assert!(matches!(entry("zjson", "list-things"), Some(Ok(_))));
@@ -157,7 +158,7 @@ fn only_epoch_timestamps_need_the_local_zone() -> Result<()> {
                 .unwrap_or_else(|| panic!("{command}"));
             let output = service
                 .operation(operation)
-                .and_then(|found| found.output)
+                .and_then(|found| found.output())
                 .unwrap_or_else(|| panic!("{command} {operation}"));
             assert_eq!(
                 reaches_epoch_timestamp(&service.model, output),
@@ -206,9 +207,9 @@ fn a_blob_payload_at_either_end_is_streaming() -> Result<()> {
         let service = models
             .service("apigateway")
             .unwrap_or_else(|| panic!("apigateway"));
-        let endpoints =
-            EndpointData::load(models.search(), &service.name, service.model.metadata())
-                .unwrap_or_else(|error| panic!("{error:?}"));
+        let schema = service.model.schema().service();
+        let endpoints = EndpointData::load(models.search(), &service.name, schema)
+            .unwrap_or_else(|error| panic!("{error:?}"));
         for (operation, streams) in [
             ("get-export", true),
             ("import-rest-api", true),
@@ -232,6 +233,75 @@ fn a_blob_payload_at_either_end_is_streaming() -> Result<()> {
             );
         }
     })
+}
+
+/// The schema the C2J front-end built for the arena's `shape`, the bridge
+/// [`reaches_epoch_timestamp`] read through before it took a schema: a named
+/// shape, an operation's input, output or error reference, or a member,
+/// list member, map key or value reference of a named shape. Every arena
+/// shape is one of these, since a reference's own shape keeps its target's
+/// children. Both readings keep the same order of each.
+fn schema_of(model: &Model, shape: ShapeId) -> Option<Schema<'_>> {
+    let schema = model.schema();
+    for (operation, view) in model.operations().iter().zip(schema.service().operations()) {
+        let refs = [
+            (operation.input, view.input()),
+            (operation.output, view.output()),
+        ];
+        let errors = operation
+            .errors
+            .iter()
+            .map(|id| Some(*id))
+            .zip(view.errors().map(Some));
+        if let Some((_, found)) = refs
+            .into_iter()
+            .chain(errors)
+            .find(|(id, _)| *id == Some(shape))
+        {
+            return found;
+        }
+    }
+    for (named, view) in model.named_shapes().zip(schema.named()) {
+        if named == shape {
+            return Some(view);
+        }
+        let found = match model.shape(named).kind {
+            ShapeKind::Structure { .. } => model
+                .members(named)
+                .iter()
+                .zip(view.members())
+                .find(|(member, _)| member.shape == shape)
+                .map(|(_, member)| member),
+            ShapeKind::List { member } => view.list_member().filter(|_| member == shape),
+            ShapeKind::Map { key, value } => [(key, view.map_key()), (value, view.map_value())]
+                .into_iter()
+                .find(|(id, _)| *id == shape)
+                .and_then(|(_, found)| found),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+/// botocore's `type_name` for an arena shape kind.
+fn kind_name(kind: &ShapeKind) -> &str {
+    match kind {
+        ShapeKind::Structure { .. } => "structure",
+        ShapeKind::List { .. } => "list",
+        ShapeKind::Map { .. } => "map",
+        ShapeKind::String => "string",
+        ShapeKind::Integer => "integer",
+        ShapeKind::Long => "long",
+        ShapeKind::Boolean => "boolean",
+        ShapeKind::Float => "float",
+        ShapeKind::Double => "double",
+        ShapeKind::Timestamp => "timestamp",
+        ShapeKind::Blob => "blob",
+        ShapeKind::Other(name) => name,
+    }
 }
 
 /// Every shape id the arena hands out: the named shapes, their members,
@@ -272,7 +342,7 @@ fn check_schema_of(label: &str, model: &Model) -> std::result::Result<(), String
         let found = schema.members().len()
             + usize::from(schema.list_member().is_some())
             + 2 * usize::from(schema.map_key().is_some());
-        let same = schema.type_name() == command::models::kind_name(&shape.kind)
+        let same = schema.type_name() == kind_name(&shape.kind)
             && schema.timestamp_format_text() == shape.traits.timestamp_format.as_deref()
             && found == children;
         if !same {
@@ -323,18 +393,23 @@ fn a_reference_s_timestamp_format_decides_the_local_zone() -> Result<()> {
           }
         }"#,
     )?;
-    let output = |name: &str| model.operation(name).and_then(|found| found.output);
+    let set = model.schema();
+    let output = |name: &str| {
+        set.service()
+            .operation(name)
+            .and_then(|found| found.output())
+    };
     let (Some(get), Some(put)) = (output("Get"), output("Put")) else {
         panic!("outputs");
     };
     assert!(reaches_epoch_timestamp(&model, get));
     assert!(!reaches_epoch_timestamp(&model, put));
-    let stamps = model.shape_named("Stamps").ok_or("Stamps")?;
-    let ShapeKind::List { member } = model.shape(stamps).kind else {
+    let stamps = set.shape_named("Stamps").ok_or("Stamps")?;
+    let Some(member) = stamps.list_member() else {
         panic!("Stamps is a list");
     };
     assert!(reaches_epoch_timestamp(&model, member));
-    let time = model.shape_named("Time").ok_or("Time")?;
+    let time = set.shape_named("Time").ok_or("Time")?;
     assert!(!reaches_epoch_timestamp(&model, time));
     check_schema_of("inline", &model).map_err(Into::into)
 }

@@ -2,10 +2,16 @@ use super::*;
 use crate::error::ServiceError;
 use crate::http::{Headers, HttpResponse};
 use crate::transport::TransportError;
+use model::schema::OperationSchema;
 use model::shapes::Model;
 use std::time::Duration;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+/// The model's first operation.
+fn first(model: &Model) -> Option<OperationSchema<'_>> {
+    model.schema().service().operations().next()
+}
 
 /// An operation with two modelled errors: one retryable as throttling,
 /// one not retryable, and one retryable as transient by its error code.
@@ -42,7 +48,7 @@ fn error(code: &str, status: u16) -> ServiceError {
 /// What botocore's standard conditions say of a response: retryable, and
 /// if so whether as throttling.
 fn kind_of(model: &Model, status: u16, code: Option<&str>) -> Option<ErrorKind> {
-    let operation = &model.operations()[0];
+    let operation = first(model)?;
     let response = response(status);
     let error = code.map(|code| error(code, status));
     let attempt = Attempt::Response {
@@ -97,7 +103,7 @@ fn responses_are_classified_as_standard_mode_does() -> TestResult {
 #[test]
 fn transport_failures_are_transient() -> TestResult {
     let model = Model::from_json(MODEL.as_bytes())?;
-    let operation = &model.operations()[0];
+    let operation = first(&model).ok_or("no operation")?;
     for (error, kind) in [
         (TransportError::Connect, Some(ErrorKind::Transient)),
         (TransportError::ReadTimeout, Some(ErrorKind::Transient)),

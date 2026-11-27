@@ -8,7 +8,7 @@ use crate::endpoint::EndpointData;
 use crate::hooks::Customization;
 use model::paginators::{Config, Refused};
 use model::schema::{Flag, OperationSchema, Schema, ShapeType};
-use model::shapes::{Model, Operation};
+use model::shapes::Model;
 use model::validate::Undecided;
 
 /// Why a call is left to the Python route; each variant is one reason the
@@ -89,7 +89,7 @@ impl std::fmt::Display for Unsupported {
 /// reading of a starting token, neither of which needs credentials.
 pub fn static_refusal(
     model: &Model,
-    operation: &Operation,
+    operation: OperationSchema<'_>,
     endpoints: &EndpointData,
     service: &str,
     customizations: &[&'static Customization],
@@ -101,20 +101,13 @@ pub fn static_refusal(
     }
     // A key the model loader does not interpret may change what botocore
     // does with the call; the first one the operation reaches refuses it.
-    let schema = operation_schema(model, operation);
-    if let Some(uninterpreted) = schema.and_then(|schema| {
-        model
-            .schema()
-            .uninterpreted_reached(schema)
-            .first()
-            .copied()
-    }) {
+    if let Some(uninterpreted) = model.schema().uninterpreted_reached(operation).first() {
         return Some(Unsupported::Trait(uninterpreted.key.to_string()));
     }
-    if let Some(unsupported) = unimplemented_trait(operation).or_else(|| schema.and_then(streams)) {
+    if let Some(unsupported) = unimplemented_trait(operation).or_else(|| streams(operation)) {
         return Some(unsupported);
     }
-    if schema.is_some_and(|schema| schema.operation_context_params().next().is_some()) {
+    if operation.operation_context_params().next().is_some() {
         return Some(Unsupported::OperationContextParams);
     }
     if let Some(unsupported) = crate::auth::static_refusal(model, operation) {
@@ -131,16 +124,6 @@ pub fn static_refusal(
         .err()
         .cloned()
         .map(Unsupported::Paginator)
-}
-
-/// The schema of `operation`, found by name in `model`'s schemas, for an
-/// operation of `model` (as every caller's is: [`Model::operation`]). The
-/// C2J front-end builds both from one description, in the same order.
-pub(crate) fn operation_schema<'m>(
-    model: &'m Model,
-    operation: &Operation,
-) -> Option<OperationSchema<'m>> {
-    model.schema().service().operation(&operation.name)
 }
 
 /// An event stream, a streaming member or a blob payload at either end of
@@ -182,19 +165,19 @@ fn blob_payload(end: Schema<'_>) -> bool {
 /// `auto` mode discovers only for required operations
 /// (`_requires_endpoint_discovery`, `EndpointDiscoveryManager.
 /// describe_endpoint`).
-pub(crate) fn unimplemented_trait(operation: &Operation) -> Option<Unsupported> {
-    let found = if operation.http_checksum.is_some() {
+pub(crate) fn unimplemented_trait(operation: OperationSchema<'_>) -> Option<Unsupported> {
+    let found = if operation.http_checksum().is_some() {
         "httpChecksum"
-    } else if operation.http_checksum_required {
+    } else if operation.http_checksum_required() {
         "httpChecksumRequired"
     } else if operation
-        .endpoint_discovery
+        .endpoint_discovery()
         .is_some_and(|discovery| discovery.required)
     {
         "endpointdiscovery"
-    } else if operation.endpoint_operation {
+    } else if operation.endpoint_operation() {
         "endpointoperation"
-    } else if operation.request_compression.is_some() {
+    } else if operation.request_compression().is_some() {
         "requestcompression"
     } else {
         return None;

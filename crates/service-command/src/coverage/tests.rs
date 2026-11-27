@@ -449,9 +449,9 @@ fn static_refusal(command: &str, operation: &str) -> Result<Option<Unsupported>>
     with_models(|models| {
         let service = models.service(command)?;
         let found = service.operation(operation)?;
-        let endpoints =
-            EndpointData::load(models.search(), &service.name, service.model.metadata()).ok()?;
-        let entry = service.paginator(&found.name).map(|entry| &entry.config);
+        let schema = service.model.schema().service();
+        let endpoints = EndpointData::load(models.search(), &service.name, schema).ok()?;
+        let entry = service.paginator(found.name()).map(|entry| &entry.config);
         Some(client::admission::static_refusal(
             &service.model,
             found,

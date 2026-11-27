@@ -7,7 +7,7 @@ use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse};
 use model::pyrepr::{float_from_text, py_str};
 use model::schema::{Flag, OperationSchema, Schema, ShapeType, traits};
-use model::shapes::{Model, Operation};
+use model::shapes::Model;
 use model::value::{Key, Map, Value};
 use timestamp::Timestamp;
 
@@ -81,11 +81,10 @@ pub(super) fn parse(
 pub(super) fn parse_error(
     family: &dyn Family,
     model: &Model,
-    operation: &Operation,
+    operation: OperationSchema<'_>,
     response: &HttpResponse,
     options: &ParseOptions<'_>,
 ) -> Result<ServiceError, ParseError> {
-    let operation = operation_schema(model, operation).map_err(ParseError::new)?;
     let Value::Map(mut parsed) = parse(family, operation.output(), response, options)? else {
         return Err(ParseError::new("'NoneType' object has no attribute 'get'"));
     };
@@ -355,19 +354,6 @@ pub(super) fn member<'s>(shape: Schema<'s>, key: &Key) -> Result<Schema<'s>, Ser
     key.as_str()
         .and_then(|name| shape.member(name))
         .ok_or_else(|| SerializeError::new(format!("'{}'", key.text())))
-}
-
-/// The schema of `operation`, which the model's front-end built from the
-/// same description; `Err` only if the two readings disagree.
-pub(super) fn operation_schema<'m>(
-    model: &'m Model,
-    operation: &Operation,
-) -> Result<OperationSchema<'m>, String> {
-    model
-        .schema()
-        .service()
-        .operation(&operation.name)
-        .ok_or_else(|| format!("the model has no schema for {}", operation.name))
 }
 
 /// The model name of a shape a reference resolves to (`Shape.name`): a

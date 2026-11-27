@@ -1,6 +1,7 @@
-//! The schema an arena [`ShapeId`] names, so [`super::validate`] keeps its
-//! signature while it reads [`Schema`]s. S4a replaces the arena id with a
-//! schema at every call site and deletes this module.
+//! The schema an arena [`ShapeId`] names: the bridge the validator read
+//! through until its signatures took [`Schema`]s, kept for the test that
+//! checks every arena shape finds a schema that reads the same. It goes
+//! with the arena.
 use crate::schema::Schema;
 use crate::shapes::{Model, ShapeId, ShapeKind};
 

@@ -13,7 +13,6 @@ use crate::protocol::{Serialized, common, json};
 use model::pyjson::{Options, dumps};
 use model::pyrepr::py_str;
 use model::schema::{Flag, OperationSchema, Schema, ShapeType};
-use model::shapes::{Model, Operation};
 use model::value::{Key, Map, Value};
 
 /// `BaseRestSerializer.serialize_to_request` with `RestJSONSerializer`'s
@@ -24,16 +23,6 @@ use model::value::{Key, Map, Value};
 /// # Errors
 /// An input the protocol cannot put on the wire.
 pub(super) fn request(
-    model: &Model,
-    operation: &Operation,
-    input: &Value,
-) -> Result<Serialized, SerializeError> {
-    let operation = common::operation_schema(model, operation).map_err(SerializeError::new)?;
-    operation_request(operation, input)
-}
-
-/// [`request`] of the operation's schema.
-fn operation_request(
     operation: OperationSchema<'_>,
     input: &Value,
 ) -> Result<Serialized, SerializeError> {

@@ -60,7 +60,7 @@ impl Protocol for Fake {
     fn serialize(
         &self,
         _model: &Model,
-        _operation: &Operation,
+        _operation: OperationSchema<'_>,
         _input: &Value,
     ) -> Result<Serialized, SerializeError> {
         Err(SerializeError::new("fake"))
@@ -68,7 +68,7 @@ impl Protocol for Fake {
     fn parse(
         &self,
         _model: &Model,
-        _operation: &Operation,
+        _operation: OperationSchema<'_>,
         _response: &HttpResponse,
         _options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
@@ -77,11 +77,11 @@ impl Protocol for Fake {
     fn parse_error(
         &self,
         _model: &Model,
-        operation: &Operation,
+        operation: OperationSchema<'_>,
         response: &HttpResponse,
         _options: &ParseOptions<'_>,
     ) -> Result<ServiceError, ParseError> {
-        Ok(ServiceError::new(&operation.name, response.status))
+        Ok(ServiceError::new(operation.name(), response.status))
     }
 }
 

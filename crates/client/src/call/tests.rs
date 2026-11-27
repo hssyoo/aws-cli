@@ -15,7 +15,8 @@ use crate::transport::TransportError;
 use cli_core::client_config::ClientSettings;
 use cli_core::client_config::user_agent::{Host, Versions};
 use cli_core::client_config::{Resolved, Source};
-use model::shapes::{Model, Operation};
+use model::schema::OperationSchema;
+use model::shapes::Model;
 use model::value::{Map, Value};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -78,7 +79,7 @@ impl Protocol for Fake {
     fn serialize(
         &self,
         _: &Model,
-        op: &Operation,
+        op: OperationSchema<'_>,
         input: &Value,
     ) -> Result<Serialized, SerializeError> {
         let body = model::pyjson::dumps(input, &model::pyjson::Options::compact(), None)
@@ -88,17 +89,17 @@ impl Protocol for Fake {
             path: "/".into(),
             query: String::new(),
             headers: Headers::from_pairs([
-                ("X-Amz-Target", format!("ZFake.{}", op.name).as_str()),
+                ("X-Amz-Target", format!("ZFake.{}", op.name()).as_str()),
                 ("Content-Type", "application/x-amz-json-1.0"),
             ]),
             body: body.into_bytes(),
-            host_prefix: op.host_prefix.as_deref().map(Into::into),
+            host_prefix: op.host_prefix().map(Into::into),
         })
     }
     fn parse(
         &self,
         _: &Model,
-        _: &Operation,
+        _: OperationSchema<'_>,
         response: &HttpResponse,
         _: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
@@ -118,7 +119,7 @@ impl Protocol for Fake {
     fn parse_error(
         &self,
         _: &Model,
-        op: &Operation,
+        op: OperationSchema<'_>,
         response: &HttpResponse,
         _: &ParseOptions<'_>,
     ) -> Result<ServiceError, ParseError> {
@@ -132,7 +133,7 @@ impl Protocol for Fake {
         error.insert("Message".into(), Value::String("fake".into()));
         Ok(ServiceError {
             error,
-            ..ServiceError::new(&op.name, response.status)
+            ..ServiceError::new(op.name(), response.status)
         })
     }
 }

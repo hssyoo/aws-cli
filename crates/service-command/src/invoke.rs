@@ -87,9 +87,9 @@ impl ServiceInvocation {
         embedded_trust: Option<&'static [u8]>,
         versions: cli_core::client_config::user_agent::Versions<'static>,
     ) -> Self {
-        let output_epochs = model
+        let output_epochs = (model.schema().service())
             .operation(&admitted.operation)
-            .and_then(|operation| operation.output)
+            .and_then(|operation| operation.output())
             .is_some_and(|shape| crate::admit::reaches_epoch_timestamp(&model, shape));
         Self {
             admitted,

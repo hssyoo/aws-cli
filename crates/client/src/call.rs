@@ -29,8 +29,8 @@ use crate::transport::{Timeouts, Transport, TransportError};
 pub use crate::useragent::UserAgentContext;
 use cli_core::client_config::ClientSettings;
 use cli_core::client_config::user_agent::Features;
-use model::schema::Flag;
-use model::shapes::{Model, Operation};
+use model::schema::{Flag, OperationSchema};
+use model::shapes::Model;
 use model::validate::{Validation, validate_input};
 use model::value::{Map, Value};
 use std::sync::Arc;
@@ -216,10 +216,7 @@ impl Client {
         extra: Features,
     ) -> Result<Prepared, CallError> {
         let parts = &self.parts;
-        let operation = parts
-            .model
-            .operation(operation)
-            .ok_or_else(|| CallError::UnknownOperation(operation.to_owned()))?;
+        let operation = find(&parts.model, operation)?;
         if let Some(unsupported) = crate::admission::static_refusal(
             &parts.model,
             operation,
@@ -235,14 +232,14 @@ impl Client {
         parts.endpoint.check(&parts.endpoints)?;
         let mut cx = CallContext::new(&parts.service, &parts.model, operation);
         let mut input = input;
-        for hook in self.hooks.interceptors(&operation.name) {
+        for hook in self.hooks.interceptors(operation.name()) {
             hook.modify_input(&mut cx, &mut input)
                 .map_err(prepare_hook_error)?;
         }
         self.fill_idempotency_tokens(operation, &mut input);
-        let (endpoint, mut features) = self.resolve_endpoint(&mut cx, operation, &input, None)?;
+        let (endpoint, mut features) = self.resolve_endpoint(&mut cx, &input, None)?;
         features.extend(extra.iter());
-        match validate_input(&parts.model, operation, &input) {
+        match validate_input(operation, &input) {
             Validation::Valid => {}
             Validation::Invalid(report) => return Err(CallError::Validation(report)),
             Validation::Undecided(undecided) => {
@@ -254,9 +251,9 @@ impl Client {
             .serialize(&parts.model, operation, &input)
             .map_err(CallError::Serialize)?;
         let request = self.join_request(&mut cx, &serialized, &endpoint.url, features)?;
-        let scheme = self.select_auth(&mut cx, operation, &endpoint)?;
+        let scheme = self.select_auth(&mut cx, &endpoint)?;
         Ok(Prepared {
-            operation: operation.name.to_string(),
+            operation: operation.name().to_owned(),
             slots: cx.into_slots(),
             request,
             scheme,
@@ -278,7 +275,7 @@ impl Client {
         let parts = &self.parts;
         let user_agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
         let mut request = join(serialized.clone(), url, &user_agent)?;
-        for hook in self.hooks.interceptors(&cx.operation.name) {
+        for hook in self.hooks.interceptors(cx.operation.name()) {
             hook.after_serialize(cx, &mut request)
                 .map_err(prepare_hook_error)?;
         }
@@ -286,9 +283,8 @@ impl Client {
     }
     /// `generate_idempotent_uuid`: each input member marked
     /// `idempotencyToken` and left out gets `str(uuid.uuid4())`.
-    fn fill_idempotency_tokens(&self, operation: &Operation, input: &mut Value) {
-        let schema = crate::admission::operation_schema(&self.parts.model, operation);
-        let Some(shape) = schema.and_then(|schema| schema.input()) else {
+    fn fill_idempotency_tokens(&self, operation: OperationSchema<'_>, input: &mut Value) {
+        let Some(shape) = operation.input() else {
             return;
         };
         let tokens: Vec<&str> = shape
@@ -316,24 +312,17 @@ impl Client {
     fn resolve_endpoint(
         &self,
         cx: &mut CallContext<'_>,
-        operation: &Operation,
         input: &Value,
         account_id: Option<&str>,
     ) -> Result<(ResolvedEndpoint, Features), CallError> {
-        let parts = &self.parts;
+        let (parts, operation) = (&self.parts, cx.operation);
         let mut builtins = parts.endpoint.builtins(&parts.endpoints)?;
-        for hook in self.hooks.interceptors(&operation.name) {
+        for hook in self.hooks.interceptors(operation.name()) {
             hook.endpoint_builtins(cx, &mut builtins)
                 .map_err(prepare_hook_error)?;
         }
-        let params = endpoint::provider_params(
-            &parts.endpoints,
-            &parts.model,
-            operation,
-            input,
-            &builtins,
-            account_id,
-        );
+        let params =
+            endpoint::provider_params(&parts.endpoints, operation, input, &builtins, account_id);
         let resolved = endpoint::resolve(&parts.endpoints, &params)?;
         Ok((resolved, crate::useragent::endpoint_features(&params)))
     }
@@ -356,10 +345,9 @@ impl Client {
     fn select_auth(
         &self,
         cx: &mut CallContext<'_>,
-        operation: &Operation,
         endpoint: &ResolvedEndpoint,
     ) -> Result<AuthScheme, CallError> {
-        let parts = &self.parts;
+        let (parts, operation) = (&self.parts, cx.operation);
         let resolved = auth::select(
             &parts.model,
             &parts.service,
@@ -370,10 +358,17 @@ impl Client {
         )?;
         let chosen = self
             .hooks
-            .interceptors(&operation.name)
+            .interceptors(operation.name())
             .find_map(|hook| hook.select_auth(cx, &resolved));
         Ok(chosen.unwrap_or(resolved))
     }
+}
+
+/// The operation of `model` named `name`.
+fn find<'m>(model: &'m Model, name: &str) -> Result<OperationSchema<'m>, CallError> {
+    (model.schema().service())
+        .operation(name)
+        .ok_or_else(|| CallError::UnknownOperation(name.to_owned()))
 }
 
 /// A `prepare` stage's hook error: a refusal leaves the call to Python,
@@ -470,10 +465,7 @@ impl Client {
             endpoint_url,
         } = prepared;
         let parts = &self.parts;
-        let operation = parts
-            .model
-            .operation(&operation)
-            .ok_or_else(|| CallError::UnknownOperation(operation.clone()))?;
+        let operation = find(&parts.model, &operation)?;
         let mut cx = CallContext::resume(&parts.service, &parts.model, operation, slots);
         if let Some(account_id) = self.deferred_account_id()? {
             // The endpoint as the account id gives it; the refusals it could
@@ -481,14 +473,14 @@ impl Client {
             // (`account_id_endpoints_refuse_nothing_more` pins it), so one
             // here is a defect, not a reason to leave the call to Python.
             let (endpoint, resolved_features) = self
-                .resolve_endpoint(&mut cx, operation, &input, Some(&account_id))
+                .resolve_endpoint(&mut cx, &input, Some(&account_id))
                 .map_err(after_prepare)?;
             if endpoint.url != endpoint_url || resolved_features != features {
                 request = self
                     .join_request(&mut cx, &serialized, &endpoint.url, resolved_features)
                     .map_err(after_prepare)?;
                 scheme = self
-                    .select_auth(&mut cx, operation, &endpoint)
+                    .select_auth(&mut cx, &endpoint)
                     .map_err(after_prepare)?;
             }
         }
@@ -535,7 +527,7 @@ impl Client {
         ttl: Option<&str>,
     ) -> Result<HttpRequest, CallError> {
         let mut request = request.clone();
-        for hook in self.hooks.interceptors(&cx.operation.name) {
+        for hook in self.hooks.interceptors(cx.operation.name()) {
             hook.before_sign(cx, &mut request)
                 .map_err(|error| CallError::Hook(error.after_prepare()))?;
         }
@@ -594,7 +586,7 @@ impl Client {
         cx: &mut CallContext<'_>,
         request: &HttpRequest,
     ) -> Result<Result<HttpResponse, TransportError>, CallError> {
-        for hook in self.hooks.interceptors(&cx.operation.name) {
+        for hook in self.hooks.interceptors(cx.operation.name()) {
             if let Some(response) = hook
                 .before_transmit(cx, request)
                 .map_err(|error| CallError::Hook(error.after_prepare()))?
@@ -632,7 +624,7 @@ impl Client {
             Err(TransportError::Interrupted) => return Step::Done(Err(CallError::Interrupted)),
             Err(error) => return self.failed(cx, attempt, request, error),
         };
-        for hook in self.hooks.interceptors(&cx.operation.name) {
+        for hook in self.hooks.interceptors(cx.operation.name()) {
             if let Err(error) = hook.after_receive(cx, &mut response) {
                 return Step::Done(Err(CallError::Hook(error.after_prepare())));
             }
@@ -671,7 +663,7 @@ impl Client {
     ) -> Result<Option<ErrorKind>, CallError> {
         let decided = self
             .hooks
-            .interceptors(&cx.operation.name)
+            .interceptors(cx.operation.name())
             .find_map(|hook| hook.classify_retry(cx, attempt));
         Ok(match decided {
             Some(RetryDecision::Stop) => None,
@@ -693,7 +685,7 @@ impl Client {
         verdict: &retry::Verdict,
     ) -> Result<(), CallError> {
         if let (None, Some(delay)) = (verdict.delay, verdict.exhausted_delay)
-            && self.hooks.long_polls(&cx.operation.name)
+            && self.hooks.long_polls(cx.operation.name())
         {
             self.parts
                 .runtime
@@ -795,7 +787,7 @@ impl Client {
             };
         }
         self.retry.succeeded(last_cost);
-        for hook in self.hooks.interceptors(&cx.operation.name) {
+        for hook in self.hooks.interceptors(cx.operation.name()) {
             if let Err(error) = hook.modify_output(cx, &mut value) {
                 return Step::Done(Err(CallError::Hook(error.after_prepare())));
             }

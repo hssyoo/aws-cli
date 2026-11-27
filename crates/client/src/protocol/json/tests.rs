@@ -24,6 +24,11 @@ fn model() -> Option<Model> {
     Model::from_json(MODEL.as_bytes()).ok()
 }
 
+/// The model's first operation.
+fn first(model: &Model) -> Option<OperationSchema<'_>> {
+    model.schema().service().operations().next()
+}
+
 fn response(status: u16, headers: &[(&str, &str)], body: &str) -> HttpResponse {
     HttpResponse {
         status,
@@ -37,7 +42,7 @@ fn response(status: u16, headers: &[(&str, &str)], body: &str) -> HttpResponse {
 #[test]
 fn the_request_is_botocore_s() -> Result<(), Box<dyn std::error::Error>> {
     let model = model().ok_or("model")?;
-    let operation = &model.operations()[0];
+    let operation = first(&model).ok_or("operation")?;
     let input = Value::from_json(br#"{"N":1.5,"When":"2015-08-30T12:36:00Z","Data":"hi"}"#)?;
     let request = Json.serialize(&model, operation, &input)?;
     assert_eq!(request.headers.get("X-Amz-Target"), Some("Svc.Go"));
@@ -68,7 +73,7 @@ fn a_query_compatible_error_takes_its_code_from_the_header()
     let body = r#"{"__type":"com.amazon#New","message":"m"}"#;
     let error = Json.parse_error(
         &model,
-        &model.operations()[0],
+        first(&model).ok_or("operation")?,
         &response(400, &headers, body),
         &ParseOptions::BOTOCORE,
     )?;
@@ -94,7 +99,7 @@ fn a_query_compatible_error_takes_its_code_from_the_header()
 fn json_error_codes_and_modelled_members_are_botocore_s() -> Result<(), Box<dyn std::error::Error>>
 {
     let model = model().ok_or("model")?;
-    let operation = &model.operations()[0];
+    let operation = first(&model).ok_or("operation")?;
     for (body, code) in [
         (
             r#"{"__type":"aws.protocoltests#Bad:http://internal/","Detail":"d","Other":1}"#,
@@ -141,7 +146,7 @@ fn the_cli_s_handlers_keep_the_wire_values() -> Result<(), Box<dyn std::error::E
     let body = r#"{"When":1440938160.5,"Data":"aGk=","Pick":{"New":1}}"#;
     let Value::Map(parsed) = Json.parse(
         &model,
-        &model.operations()[0],
+        first(&model).ok_or("operation")?,
         &response(200, &[], body),
         &options,
     )?
@@ -158,7 +163,7 @@ fn the_cli_s_handlers_keep_the_wire_values() -> Result<(), Box<dyn std::error::E
 /// The output of `Go` for `body`, or the parser's error.
 fn output(headers: &[(&str, &str)], body: &[u8]) -> Result<Value, ParseError> {
     let model = model().ok_or_else(|| ParseError::new("model"))?;
-    let operation = &model.operations()[0];
+    let operation = first(&model).ok_or_else(|| ParseError::new("operation"))?;
     let response = HttpResponse {
         status: 200,
         headers: Headers::from_pairs(headers.iter().copied()),
