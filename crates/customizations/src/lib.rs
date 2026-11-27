@@ -19,8 +19,9 @@ const fn implemented(at: &'static str) -> Basis {
 }
 
 /// Every customization, in the order a client applies them.
-pub static TABLE: [&Customization; 8] = [
+pub static TABLE: [&Customization; 9] = [
     &CORE,
+    &EC2,
     &DYNAMODB,
     &DYNAMODB_STREAMS,
     &STS,
@@ -139,6 +140,30 @@ pub static CORE: Customization = Customization {
             implemented("client::retry::Standard::succeeded"),
         ),
     ],
+};
+
+/// ec2: botocore's `ParameterAlias('Filter', 'Filters')` on
+/// `before-parameter-build.ec2.*` (`_add_parameter_aliases`). It moves a
+/// `Filters` key of the call's params to `Filter`, and only for an
+/// operation whose input has a `Filter` member. A CLI parse keys the
+/// params by input member, and no ec2 input has both members (a test
+/// checks), so only `--cli-input-json` can give it a `Filters` to move;
+/// the router sends that option to Python.
+pub static EC2: Customization = Customization {
+    id: "ec2",
+    scope: Scope::service("ec2"),
+    setting_defaults: &[],
+    builtins: &[],
+    interceptors: &[],
+    retry_classifiers: &[],
+    long_polling: false,
+    replaces: &[(
+        "botocore.handlers.ParameterAlias.alias_parameter_in_call",
+        Basis::Inert {
+            acts_when: "--cli-input-json gives Filters for an operation whose input has Filter",
+            refused_as: Refusal::Router(PythonReason::UnsupportedOption),
+        },
+    )],
 };
 
 /// dynamodb's defaults: `retries/standard.py`'s `_SERVICE_MAX_ATTEMPTS`

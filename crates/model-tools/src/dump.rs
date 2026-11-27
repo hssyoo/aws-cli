@@ -1,7 +1,7 @@
 //! The derived tables in the form `cargo xtask check-argparse --derived`
 //! compares with the AWS CLI's own (`tests/argparse/argtables.py`).
 use awscli_argparse::{Action, Nargs, ValueType};
-use command::models::{DerivedArgument, ModelSource};
+use command::models::{ArgDefault, DerivedArgument, ModelSource};
 use serde_json::{Map, Value as Json, json};
 
 fn action(action: Action) -> &'static str {
@@ -38,7 +38,11 @@ pub fn argument(argument: &DerivedArgument) -> Json {
         "action": action(argument.action),
         "nargs": nargs(argument.nargs),
         "const": argument.constant,
-        "default": Json::Null,
+        // `plain_json` of `toplevelbool`'s sentinel is its type's name.
+        "default": match argument.default {
+            ArgDefault::Unset | ArgDefault::Null => Json::Null,
+            ArgDefault::NotSpecified => "<object>".into(),
+        },
         "choices": argument.choices,
         "dest": dest,
         "required": argument.required || (argument.positional && argument.nargs.is_none()),
