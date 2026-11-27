@@ -754,12 +754,6 @@ fn rule_error_text(message: &str) -> String {
     }
 }
 
-/// The `authSchemes` of a resolved endpoint's properties, as JSON text.
-#[cfg(test)]
-fn auth_schemes(properties: &[u8]) -> Vec<SchemeProps> {
-    serde_json::from_slice(properties).map_or_else(|_| Vec::new(), |value| schemes_of(&value))
-}
-
 /// The `authSchemes` of a resolved endpoint's properties: each entry's
 /// strings and flag, a member of another type left unset.
 fn schemes_of(properties: &serde_json::Value) -> Vec<SchemeProps> {
