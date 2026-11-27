@@ -1,5 +1,6 @@
 use super::*;
-use crate::protocol::Protocol;
+use crate::http::Headers;
+use crate::protocol::{ClientProtocol, REST_JSON_1};
 use model::shapes::Model;
 use model::value::Key;
 
@@ -88,8 +89,7 @@ fn output(operation: &str, headers: &[(&str, &str)], body: &[u8]) -> Result<Map,
         .service()
         .operation(operation)
         .ok_or_else(|| ParseError::new("operation"))?;
-    match RestJson.parse(
-        &model,
+    match REST_JSON_1.parse(
         operation,
         &response(200, headers, body),
         &ParseOptions::BOTOCORE,
@@ -110,11 +110,11 @@ fn error(status: u16, headers: &[(&str, &str)], body: &str) -> Result<ServiceErr
         .service()
         .operation("Go")
         .ok_or_else(|| ParseError::new("operation"))?;
-    RestJson.parse_error(
-        &model,
+    REST_JSON_1.parse_error(
         operation,
         &response(status, headers, body.as_bytes()),
         &ParseOptions::BOTOCORE,
+        model.schema().registry(),
     )
 }
 
@@ -222,7 +222,12 @@ fn error_bodies_parse_as_base_json_parser_s() -> TestResult {
         .ok_or("operation")?;
     let latin = response(400, &[], b"{\"message\":\"\xe9\"}");
     assert_eq!(
-        RestJson.parse_error(&model, operation, &latin, &ParseOptions::BOTOCORE),
+        REST_JSON_1.parse_error(
+            operation,
+            &latin,
+            &ParseOptions::BOTOCORE,
+            model.schema().registry()
+        ),
         Err(ParseError::new(
             "'utf-8' codec can't decode byte 0xe9 in position 12: invalid continuation byte"
         ))
@@ -455,7 +460,8 @@ fn the_request_id_comes_from_either_header() -> TestResult {
         ),
         (&[], "{}"),
     ] {
-        let parsed = RestJson.do_parse(
+        let parsed = REST_JSON_1.deserialize_response(
+            operation,
             operation.output(),
             &response(200, headers, b"not json"),
             &ParseOptions::BOTOCORE,
@@ -561,8 +567,7 @@ fn a_gzip_body_fails_as_its_decode_does() {
 fn response_metadata_comes_before_the_output_s_members() -> TestResult {
     let model = model()?;
     let operation = model.schema().service().operation("Go").ok_or("Go")?;
-    let parsed = RestJson.parse(
-        &model,
+    let parsed = REST_JSON_1.parse(
         operation,
         &response(200, &[("X-Count", "3")], br#"{"N": 1}"#),
         &ParseOptions::BOTOCORE,
