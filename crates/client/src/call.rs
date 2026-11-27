@@ -15,23 +15,27 @@
 //! event, when `Endpoint.create_request` prepares the request
 //! (awsrequest.py `AWSRequestPreparer._prepare_headers`). So the signature
 //! covers none of the three.
+//!
+//! The phases themselves, in that order, are [`crate::orchestrator`]'s.
+// The call's tests name the refusals through this module, as they did
+// when the prepare phases were defined here.
+#[cfg(test)]
 use crate::admission::Unsupported;
-use crate::auth::{self, AuthScheme};
+use crate::auth::AuthScheme;
 use crate::credentials::CredentialSource;
-use crate::endpoint::{self, EndpointConfig, EndpointData, ResolvedEndpoint};
-use crate::error::{CallError, ParseError, ServiceError};
-use crate::hooks::{CallContext, Customization, HookError, Hooks, Slots};
+use crate::endpoint::{EndpointConfig, EndpointData};
+use crate::error::CallError;
+use crate::hooks::{CallContext, Customization, Hooks, Slots};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method};
 use crate::protocol::{self, ClientProtocol, ParseHooks, Serialized};
-use crate::retry::{self, Attempt, ErrorKind, RetryDecision, Standard};
+use crate::retry::{ErrorKind, Standard};
 use crate::runtime::Runtime;
-use crate::transport::{Timeouts, Transport, TransportError};
+use crate::transport::{Timeouts, Transport};
 pub use crate::useragent::UserAgentContext;
 use cli_core::client_config::ClientSettings;
 use cli_core::client_config::user_agent::Features;
 use model::schema::{Flag, OperationSchema};
 use model::shapes::Model;
-use model::validate::{Validation, validate_input};
 use model::value::{Map, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,12 +75,12 @@ pub struct Output {
 /// A client of one service.
 #[derive(Debug)]
 pub struct Client {
-    parts: ClientParts,
-    protocol: &'static dyn ClientProtocol,
-    hooks: Hooks,
-    retry: Standard,
-    region: Option<String>,
-    timeouts: Timeouts,
+    pub(crate) parts: ClientParts,
+    pub(crate) protocol: &'static dyn ClientProtocol,
+    pub(crate) hooks: Hooks,
+    pub(crate) retry: Standard,
+    pub(crate) region: Option<String>,
+    pub(crate) timeouts: Timeouts,
 }
 
 /// A call ready to send: [`Client::prepare`]'s result, which owns all it
@@ -84,17 +88,17 @@ pub struct Client {
 /// without preparing again.
 #[derive(Debug)]
 pub struct Prepared {
-    operation: String,
-    slots: Slots,
-    request: HttpRequest,
-    scheme: AuthScheme,
+    pub(crate) operation: String,
+    pub(crate) slots: Slots,
+    pub(crate) request: HttpRequest,
+    pub(crate) scheme: AuthScheme,
     /// The serialized request and the call's feature ids, to join again
     /// when the deferred account id changes the endpoint.
-    serialized: Serialized,
-    features: cli_core::client_config::user_agent::Features,
-    input: Value,
+    pub(crate) serialized: Serialized,
+    pub(crate) features: Features,
+    pub(crate) input: Value,
     /// The endpoint the deferred account id left out.
-    endpoint_url: String,
+    pub(crate) endpoint_url: String,
 }
 
 impl Client {
@@ -212,77 +216,15 @@ impl Client {
         input: Value,
         extra: Features,
     ) -> Result<Prepared, CallError> {
-        let parts = &self.parts;
-        let operation = find(&parts.model, operation)?;
-        if let Some(unsupported) = crate::admission::static_refusal(
-            &parts.model,
-            operation,
-            &parts.endpoints,
-            &parts.service,
-            parts.customizations,
-            // The paginator's entry was judged where the call was admitted.
-            None,
-        ) {
-            return Err(CallError::Unsupported(unsupported));
-        }
-        // What botocore's client creation raises once a region resolves.
-        parts.endpoint.check(&parts.endpoints)?;
-        let mut cx = CallContext::new(&parts.service, &parts.model, operation);
-        let mut input = input;
-        for hook in self.hooks.interceptors(operation.name()) {
-            hook.modify_input(&mut cx, &mut input)
-                .map_err(prepare_hook_error)?;
-        }
-        self.fill_idempotency_tokens(operation, &mut input);
-        let (endpoint, mut features) = self.resolve_endpoint(&mut cx, &input, None)?;
-        features.extend(extra.iter());
-        match validate_input(operation, &input) {
-            Validation::Valid => {}
-            Validation::Invalid(report) => return Err(CallError::Validation(report)),
-            Validation::Undecided(undecided) => {
-                return Err(CallError::Unsupported(Unsupported::Validation(undecided)));
-            }
-        }
-        let serialized = self
-            .protocol
-            .serialize_request(operation, &input, &parts.model)
-            .map_err(CallError::Serialize)?;
-        let request = self.join_request(&mut cx, &serialized, &endpoint.url, features)?;
-        let scheme = self.select_auth(&mut cx, &endpoint)?;
-        Ok(Prepared {
-            operation: operation.name().to_owned(),
-            slots: cx.into_slots(),
-            request,
-            scheme,
-            serialized,
-            features,
-            input,
-            endpoint_url: endpoint.url,
-        })
-    }
-    /// The serialized request joined to `url` with the call's
-    /// `User-Agent`, after the `after_serialize` stage.
-    fn join_request(
-        &self,
-        cx: &mut CallContext<'_>,
-        serialized: &Serialized,
-        url: &str,
-        features: cli_core::client_config::user_agent::Features,
-    ) -> Result<HttpRequest, CallError> {
-        let parts = &self.parts;
-        let user_agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
-        let mut request = self
-            .protocol
-            .update_endpoint(serialized, url, &user_agent)?;
-        for hook in self.hooks.interceptors(cx.operation.name()) {
-            hook.after_serialize(cx, &mut request)
-                .map_err(prepare_hook_error)?;
-        }
-        Ok(request)
+        crate::orchestrator::prepare(self, operation, input, extra)
     }
     /// `generate_idempotent_uuid`: each input member marked
     /// `idempotencyToken` and left out gets `str(uuid.uuid4())`.
-    fn fill_idempotency_tokens(&self, operation: OperationSchema<'_>, input: &mut Value) {
+    pub(crate) fn fill_idempotency_tokens(
+        &self,
+        operation: OperationSchema<'_>,
+        input: &mut Value,
+    ) {
         let Some(shape) = operation.input() else {
             return;
         };
@@ -305,107 +247,6 @@ impl Client {
             }
         }
     }
-    /// The endpoint of a call of `operation` with `input`, the built-ins
-    /// after the `endpoint_builtins` stage and the deferred account id
-    /// `account_id`, and the feature ids resolving it registered.
-    fn resolve_endpoint(
-        &self,
-        cx: &mut CallContext<'_>,
-        input: &Value,
-        account_id: Option<&str>,
-    ) -> Result<(ResolvedEndpoint, Features), CallError> {
-        let (parts, operation) = (&self.parts, cx.operation);
-        let mut builtins = parts.endpoint.builtins(&parts.endpoints)?;
-        for hook in self.hooks.interceptors(operation.name()) {
-            hook.endpoint_builtins(cx, &mut builtins)
-                .map_err(prepare_hook_error)?;
-        }
-        let params =
-            endpoint::provider_params(&parts.endpoints, operation, input, &builtins, account_id);
-        let resolved = endpoint::resolve(&parts.endpoints, &params)?;
-        Ok((resolved, crate::useragent::endpoint_features(&params)))
-    }
-    /// The account id the deferred `AWS::Auth::AccountId` reads, when the
-    /// rule set reads it and the client signs: the credentials' own, which
-    /// loads them as botocore's deferred property does.
-    fn deferred_account_id(&self) -> Result<Option<String>, CallError> {
-        let parts = &self.parts;
-        if !parts.settings.signing.value || !endpoint::reads_account_id(&parts.endpoints) {
-            return Ok(None);
-        }
-        let credentials = parts
-            .credentials
-            .credentials()
-            .map_err(|error| CallError::Credentials(error.0))?;
-        Ok(credentials.and_then(|credentials| credentials.account_id))
-    }
-    /// The scheme botocore's selection gives, unless a `select_auth`
-    /// interceptor gives another.
-    fn select_auth(
-        &self,
-        cx: &mut CallContext<'_>,
-        endpoint: &ResolvedEndpoint,
-    ) -> Result<AuthScheme, CallError> {
-        let (parts, operation) = (&self.parts, cx.operation);
-        let resolved = auth::select(
-            &parts.model,
-            &parts.service,
-            operation,
-            endpoint,
-            parts.settings.signing.value,
-            self.region.as_deref(),
-        )?;
-        let chosen = self
-            .hooks
-            .interceptors(operation.name())
-            .find_map(|hook| hook.select_auth(cx, &resolved));
-        Ok(chosen.unwrap_or(resolved))
-    }
-}
-
-/// The operation of `model` named `name`.
-fn find<'m>(model: &'m Model, name: &str) -> Result<OperationSchema<'m>, CallError> {
-    (model.schema().service())
-        .operation(name)
-        .ok_or_else(|| CallError::UnknownOperation(name.to_owned()))
-}
-
-/// A `prepare` stage's hook error: a refusal leaves the call to Python,
-/// which is legal there because nothing has been sent and no credential
-/// provider has run.
-fn prepare_hook_error(error: HookError) -> CallError {
-    match error {
-        HookError::Refuse(reason) => CallError::Unsupported(Unsupported::Hook(reason)),
-        other => CallError::Hook(other),
-    }
-}
-
-/// A `prepare` stage's error when [`Client::send`] runs it again, after a
-/// credential provider has run, too late to leave the call to Python: a
-/// customization's refusal fails the call ([`HookError::after_prepare`]),
-/// and any other refusal is a defect of the client, named as one.
-fn after_prepare(error: CallError) -> CallError {
-    match error {
-        CallError::Unsupported(Unsupported::Hook(reason)) => {
-            CallError::Hook(HookError::Refuse(reason).after_prepare())
-        }
-        CallError::Unsupported(unsupported) => CallError::Internal(format!(
-            "the call was refused after credentials had loaded, which prepare should have \
-             done: {unsupported}"
-        )),
-        other => other,
-    }
-}
-
-/// What one attempt decided.
-enum Step {
-    Done(Result<Output, CallError>),
-    Retry {
-        delay: Duration,
-        cost: Option<u32>,
-        /// The response's `Date`, which sets the next attempt's `ttl`.
-        date: Option<timestamp::Timestamp>,
-    },
 }
 
 impl Client {
@@ -415,123 +256,24 @@ impl Client {
     /// # Errors
     /// See [`CallError`].
     pub fn send(&self, prepared: Prepared) -> Result<Output, CallError> {
-        let Prepared {
-            operation,
-            slots,
-            mut request,
-            mut scheme,
-            serialized,
-            features,
-            input,
-            endpoint_url,
-        } = prepared;
-        let parts = &self.parts;
-        let operation = find(&parts.model, &operation)?;
-        let mut cx = CallContext::resume(&parts.service, &parts.model, operation, slots);
-        if let Some(account_id) = self.deferred_account_id()? {
-            // The endpoint as the account id gives it; the refusals it could
-            // meet were made on the same rule set in prepare
-            // (`account_id_endpoints_refuse_nothing_more` pins it), so one
-            // here is a defect, not a reason to leave the call to Python.
-            let (endpoint, resolved_features) = self
-                .resolve_endpoint(&mut cx, &input, Some(&account_id))
-                .map_err(after_prepare)?;
-            if endpoint.url != endpoint_url || resolved_features != features {
-                request = self
-                    .join_request(&mut cx, &serialized, &endpoint.url, resolved_features)
-                    .map_err(after_prepare)?;
-                scheme = self
-                    .select_auth(&mut cx, &endpoint)
-                    .map_err(after_prepare)?;
-            }
-        }
-        let invocation = self.parts.runtime.uuid4();
-        let mut ttl: Option<String> = None;
-        let mut last_cost = None;
-        let mut attempt = 1;
-        loop {
-            cx.attempt = attempt;
-            let sent = self.attempt_request(
-                &mut cx,
-                &request,
-                &scheme,
-                features,
-                &invocation,
-                ttl.as_deref(),
-            )?;
-            let result = self.transmit(&mut cx, &sent)?;
-            match self.evaluate(&mut cx, attempt, &sent, result, last_cost) {
-                Step::Done(outcome) => return outcome,
-                Step::Retry { delay, cost, date } => {
-                    if let Some(date) = date {
-                        ttl = Some(self.ttl(date));
-                    }
-                    self.parts
-                        .runtime
-                        .sleep(delay)
-                        .map_err(|_| CallError::Interrupted)?;
-                    last_cost = cost;
-                    attempt += 1;
-                }
-            }
-        }
+        crate::orchestrator::send(self, prepared)
     }
-    /// One attempt's request: the `before_sign` stage, the signature, then
-    /// the unsigned headers (`add_retry_headers`, `_prepare_headers`).
-    fn attempt_request(
+    /// The core's part of an attempt's `modify_before_transmit`: the
+    /// unsigned headers, after the signature (`add_retry_headers`, with
+    /// `max` as `seed_max_attempts` seeds it, then `_prepare_headers`).
+    pub(crate) fn attempt_request(
         &self,
-        cx: &mut CallContext<'_>,
-        request: &HttpRequest,
-        scheme: &AuthScheme,
-        features: cli_core::client_config::user_agent::Features,
+        request: &mut HttpRequest,
+        attempt: u32,
         invocation: &str,
         ttl: Option<&str>,
-    ) -> Result<HttpRequest, CallError> {
-        let mut request = request.clone();
-        for hook in self.hooks.interceptors(cx.operation.name()) {
-            hook.before_sign(cx, &mut request)
-                .map_err(|error| CallError::Hook(error.after_prepare()))?;
-        }
-        if let AuthScheme::SigV4 {
-            signing_region,
-            signing_name,
-        } = scheme
-        {
-            let credentials = self
-                .parts
-                .credentials
-                .credentials()
-                .map_err(|error| CallError::Credentials(error.0))?
-                .ok_or(CallError::NoCredentials)?;
-            // The provider registers its feature ids as it answers, and
-            // `rebuild_and_replace_user_agent_handler` rebuilds the header
-            // after the signer, which does not sign `User-Agent`.
-            if let Some(method) = self.parts.credentials.method() {
-                let mut features = features;
-                features.extend(
-                    cli_core::client_config::user_agent::credential_features(method)
-                        .iter()
-                        .copied(),
-                );
-                let parts = &self.parts;
-                let agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
-                request.headers.set("User-Agent", agent);
-            }
-            let now = self.parts.runtime.now();
-            auth::sign(
-                signing_region,
-                signing_name,
-                &credentials,
-                now,
-                &mut request,
-            );
-        }
+    ) {
         request.headers.set("amz-sdk-invocation-id", invocation);
         let ttl = ttl.map(|ttl| format!("ttl={ttl}; ")).unwrap_or_default();
         let max = self.retry.max_attempts();
         request.headers.set(
             "amz-sdk-request",
-            format!("{ttl}attempt={}; max={max}", cx.attempt),
+            format!("{ttl}attempt={attempt}; max={max}"),
         );
         let framed = !matches!(request.method, Method::Get | Method::Head | Method::Options);
         if framed && !request.headers.contains("Content-Length") {
@@ -539,235 +281,30 @@ impl Client {
                 .headers
                 .set("Content-Length", request.body.len().to_string());
         }
-        Ok(request)
     }
-    /// The `before_transmit` stage's response, else the transport's.
-    fn transmit(
-        &self,
-        cx: &mut CallContext<'_>,
-        request: &HttpRequest,
-    ) -> Result<Result<HttpResponse, TransportError>, CallError> {
-        for hook in self.hooks.interceptors(cx.operation.name()) {
-            if let Some(response) = hook
-                .before_transmit(cx, request)
-                .map_err(|error| CallError::Hook(error.after_prepare()))?
-            {
-                return Ok(Ok(response));
-            }
-        }
-        Ok(self.parts.transport.send(request, self.timeouts))
-    }
-    /// `_update_retries_context`'s `ttl` (`Endpoint._calculate_ttl`): now,
-    /// plus the read timeout, plus the server's clock skew.
-    fn ttl(&self, date: timestamp::Timestamp) -> String {
-        let now = self.parts.runtime.now();
-        let read = i64::try_from(self.timeouts.read.as_micros()).unwrap_or(i64::MAX);
-        let skew = date.unix_micros() - now.unix_micros();
-        let micros = now.unix_micros().saturating_add(read).saturating_add(skew);
-        timestamp::Timestamp::from_unix_micros(micros)
-            .map_or_else(String::new, |ttl| ttl.iso8601_basic())
-    }
-}
-
-impl Client {
-    /// What one attempt's result decides: botocore's `needs-retry`, after
-    /// the response is parsed, or the call's result.
-    fn evaluate(
-        &self,
-        cx: &mut CallContext<'_>,
-        attempt: u32,
-        request: &HttpRequest,
-        result: Result<HttpResponse, TransportError>,
-        last_cost: Option<u32>,
-    ) -> Step {
-        let mut response = match result {
-            Ok(response) => response,
-            Err(TransportError::Interrupted) => return Step::Done(Err(CallError::Interrupted)),
-            Err(error) => return self.failed(cx, attempt, request, error),
-        };
-        for hook in self.hooks.interceptors(cx.operation.name()) {
-            if let Err(error) = hook.after_receive(cx, &mut response) {
-                return Step::Done(Err(CallError::Hook(error.after_prepare())));
-            }
-        }
-        // A body neither parse can read is `ResponseParserError`, which
-        // botocore raises before `needs-retry`.
-        let (model, options) = (&self.parts.model, &self.parts.parse.options());
-        if response.status >= 300 {
-            return match self.protocol.parse_error(
-                cx.operation,
-                &response,
-                options,
-                model.schema().registry(),
-            ) {
-                Err(error) => Step::Done(Err(CallError::Parse(error))),
-                Ok(error) => self.service_error(cx, attempt, &response, error),
-            };
-        }
-        match self.protocol.parse(cx.operation, &response, options) {
-            Err(error) => Step::Done(Err(CallError::Parse(error))),
-            // `parsed_response.update(customized_response_dict)` in
-            // `Endpoint._do_get_response`: a parse to `None` raises there.
-            Ok(Value::Null) => Step::Done(Err(CallError::Parse(ParseError::new(
-                "'NoneType' object has no attribute 'update'",
-            )))),
-            Ok(value) => self.succeeded(cx, attempt, response, value, last_cost),
-        }
-    }
-    /// The retry kind of an attempt: a `classify_retry` interceptor's
-    /// decision, else standard mode's.
-    ///
-    /// # Errors
-    /// An interceptor's check that raised ([`RetryDecision::Fail`]).
-    fn classify(
-        &self,
-        cx: &mut CallContext<'_>,
-        attempt: &Attempt<'_>,
-    ) -> Result<Option<ErrorKind>, CallError> {
-        let decided = self
-            .hooks
-            .interceptors(cx.operation.name())
-            .find_map(|hook| hook.classify_retry(cx, attempt));
-        Ok(match decided {
-            Some(RetryDecision::Stop) => None,
-            Some(RetryDecision::Retry) => Some(
-                retry::classify(&self.parts.model, cx.operation, attempt)
-                    .unwrap_or(ErrorKind::Transient),
-            ),
-            Some(RetryDecision::Fail(error)) => {
-                return Err(CallError::Hook(error.after_prepare()));
-            }
-            None => retry::classify(&self.parts.model, cx.operation, attempt),
-        })
-    }
-    /// `RetryHandler.needs_retry` for a long-polling operation whose retry
-    /// only the quota refused: it sleeps the delay it would have waited.
-    fn long_poll_wait(
-        &self,
-        cx: &CallContext<'_>,
-        verdict: &retry::Verdict,
-    ) -> Result<(), CallError> {
-        if let (None, Some(delay)) = (verdict.delay, verdict.exhausted_delay)
-            && self.hooks.long_polls(cx.operation.name())
-        {
-            self.parts
-                .runtime
-                .sleep(delay)
-                .map_err(|_| CallError::Interrupted)?;
-        }
-        Ok(())
-    }
-    fn failed(
-        &self,
-        cx: &mut CallContext<'_>,
-        attempt: u32,
-        request: &HttpRequest,
-        error: TransportError,
-    ) -> Step {
-        let kind = match self.classify(cx, &Attempt::Failed(&error)) {
-            Ok(kind) => kind,
-            Err(failure) => return Step::Done(Err(failure)),
-        };
-        let verdict = self
-            .retry
-            .needs_retry(attempt, kind, None, self.parts.runtime.random());
-        if let Err(error) = self.long_poll_wait(cx, &verdict) {
-            return Step::Done(Err(error));
-        }
-        match verdict.delay {
-            Some(delay) => Step::Retry {
-                delay,
-                cost: verdict.retry_cost,
-                date: None,
-            },
-            None => Step::Done(Err(CallError::Transport {
-                error,
-                endpoint_url: request.url.to_string(),
-            })),
-        }
-    }
-    fn service_error(
-        &self,
-        cx: &mut CallContext<'_>,
-        attempt: u32,
-        response: &HttpResponse,
-        mut error: ServiceError,
-    ) -> Step {
-        let attempted = Attempt::Response {
-            response,
-            error: Some(&error),
-        };
-        let kind = match self.classify(cx, &attempted) {
-            Ok(kind) => kind,
-            Err(failure) => return Step::Done(Err(failure)),
-        };
-        let retry_after = retry::retry_after(&response.headers);
-        let verdict =
-            self.retry
-                .needs_retry(attempt, kind, retry_after, self.parts.runtime.random());
-        if let Err(error) = self.long_poll_wait(cx, &verdict) {
-            return Step::Done(Err(error));
-        }
-        if let Some(delay) = verdict.delay {
-            return Step::Retry {
-                delay,
-                cost: verdict.retry_cost,
-                date: date_of(response),
-            };
-        }
-        error.retry_attempts = attempt - 1;
-        error.max_attempts_reached = verdict.max_attempts_reached;
-        error.headers = response.headers.clone();
-        Step::Done(Err(CallError::Service(Box::new(error))))
-    }
-    fn succeeded(
+    /// A parsed response no retry was decided for: the quota's refund
+    /// (`release_retry_quota`), then `modify_before_completion`, the
+    /// `modify_output` stage.
+    pub(crate) fn succeeded(
         &self,
         cx: &mut CallContext<'_>,
         attempt: u32,
         response: HttpResponse,
         mut value: Value,
         last_cost: Option<u32>,
-    ) -> Step {
-        let attempted = Attempt::Response {
-            response: &response,
-            error: None,
-        };
-        let kind = match self.classify(cx, &attempted) {
-            Ok(kind) => kind,
-            Err(failure) => return Step::Done(Err(failure)),
-        };
-        let verdict = self
-            .retry
-            .needs_retry(attempt, kind, None, self.parts.runtime.random());
-        if let Err(error) = self.long_poll_wait(cx, &verdict) {
-            return Step::Done(Err(error));
-        }
-        if let Some(delay) = verdict.delay {
-            return Step::Retry {
-                delay,
-                cost: verdict.retry_cost,
-                date: date_of(&response),
-            };
-        }
+    ) -> Result<Output, CallError> {
         self.retry.succeeded(last_cost);
         for hook in self.hooks.interceptors(cx.operation.name()) {
-            if let Err(error) = hook.modify_output(cx, &mut value) {
-                return Step::Done(Err(CallError::Hook(error.after_prepare())));
-            }
+            hook.modify_output(cx, &mut value)
+                .map_err(|error| CallError::Hook(error.after_prepare()))?;
         }
-        Step::Done(Ok(Output {
+        Ok(Output {
             value,
             status: response.status,
             headers: response.headers,
             retry_attempts: attempt - 1,
-        }))
+        })
     }
-}
-
-/// A response's `Date`, as `_calculate_ttl` reads it from the
-/// `HeadersDict`: a repeated header's values joined, which no date reads.
-fn date_of(response: &HttpResponse) -> Option<timestamp::Timestamp> {
-    timestamp::Timestamp::parse_rfc822(&response.headers.joined("Date")?)
 }
 
 #[cfg(test)]
