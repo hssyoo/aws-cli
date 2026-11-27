@@ -8,25 +8,25 @@
 //!
 //! The ElementTree helpers botocore's XML parsers share,
 //! `_build_name_to_xml_node` ([`by_name`]) and `_replace_nodes`
-//! ([`replaced`]), live here too. There is no serializer: rest-xml is not
-//! implemented.
+//! ([`replaced`]), live here too. The serializer, [`XmlSerializer`], is
+//! `RestXMLSerializer`'s body ([`write`]).
 use super::value::build_value;
 use crate::protocol::ParseOptions;
 use crate::xml::{self, Element};
 use model::pyrepr::{float_from_text, int_from_text, py_repr};
 use model::schema::{Flag, Schema, ShapeType};
-use model::serde::{
-    Codec, FinishSerializer, MapSerializer, Read, SerdeError, SerdeResult, SerializableStruct,
-    ShapeDeserializer, ShapeSerializer,
-};
+use model::serde::{Codec, FinishSerializer, Read, SerdeError, SerdeResult, ShapeDeserializer};
 use model::value::{Key, Map, Value};
 
-/// The XML codec. It reads only.
+/// The XML codec.
 #[derive(Debug)]
 pub struct XmlCodec;
 
 /// The one [`XmlCodec`].
 pub static XML: XmlCodec = XmlCodec;
+
+pub mod write;
+pub use write::XmlSerializer;
 
 impl Codec for XmlCodec {
     fn media_type(&self) -> &'static str {
@@ -34,7 +34,7 @@ impl Codec for XmlCodec {
     }
 
     fn serializer(&self) -> Box<dyn FinishSerializer + '_> {
-        Box::new(Unwritable)
+        Box::new(XmlSerializer::default())
     }
 
     fn deserializer<'a>(
@@ -475,72 +475,6 @@ fn error_root(root: &Element, errors: ErrorRoot) -> &Element {
             .find_map(|errors| errors.children.iter().find(|child| named(child, "Error"))),
     };
     found.unwrap_or(root)
-}
-
-/// The serializer an [`XmlCodec`] gives: rest-xml is not implemented, so
-/// every write fails.
-struct Unwritable;
-
-fn refuse() -> SerdeResult {
-    Err(SerdeError::new("the XML codec does not serialize"))
-}
-
-macro_rules! refuse_scalars {
-    ($($name:ident),+) => {$(
-        fn $name(&mut self, _: Schema<'_>, _: &Value) -> SerdeResult {
-            refuse()
-        }
-    )+};
-}
-
-impl ShapeSerializer for Unwritable {
-    fn write_struct(&mut self, _: Schema<'_>, _: &dyn SerializableStruct) -> SerdeResult {
-        refuse()
-    }
-
-    fn write_list(
-        &mut self,
-        _: Schema<'_>,
-        _: usize,
-        _: &mut dyn FnMut(&mut dyn ShapeSerializer) -> SerdeResult,
-    ) -> SerdeResult {
-        refuse()
-    }
-
-    fn write_map(
-        &mut self,
-        _: Schema<'_>,
-        _: usize,
-        _: &mut dyn FnMut(&mut dyn MapSerializer) -> SerdeResult,
-    ) -> SerdeResult {
-        refuse()
-    }
-
-    refuse_scalars!(
-        write_boolean,
-        write_byte,
-        write_short,
-        write_integer,
-        write_long,
-        write_float,
-        write_double,
-        write_big_integer,
-        write_big_decimal,
-        write_string,
-        write_blob,
-        write_timestamp,
-        write_document
-    );
-
-    fn write_null(&mut self, _: Schema<'_>) -> SerdeResult {
-        refuse()
-    }
-}
-
-impl FinishSerializer for Unwritable {
-    fn finish(self: Box<Self>) -> Result<Vec<u8>, SerdeError> {
-        refuse().map(|()| Vec::new())
-    }
 }
 
 #[cfg(test)]

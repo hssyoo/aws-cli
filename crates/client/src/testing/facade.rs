@@ -179,7 +179,7 @@ pub fn protocol_named(name: &str) -> Option<ProtocolHandle> {
 }
 
 /// The protocol named `name` among those implemented or built but switched
-/// off (`ec2`): admission refuses the latter, so tests reach them only here.
+/// off (`ec2`, `rest-xml`): admission refuses the latter, so tests reach them only here.
 pub fn built_protocol_named(name: &str) -> Option<ProtocolHandle> {
     (IMPLEMENTED.named(name))
         .or_else(|| SWITCHED_OFF.named(name))
