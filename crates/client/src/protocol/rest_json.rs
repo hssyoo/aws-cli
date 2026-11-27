@@ -11,17 +11,17 @@ use model::serde::Codec;
 use model::shapes::Model;
 use model::value::{Map, Value};
 
-mod parse;
-mod serialize;
+pub(super) mod parse;
+pub(super) mod serialize;
 
 /// A protocol whose members bind to the HTTP message (Smithy's restJson1,
 /// later restXml): the URI, query, headers and status, with the rest in a
 /// body of the codec's format.
 #[derive(Debug)]
 pub struct HttpBindingProtocol<C: Codec + 'static> {
-    id: TraitId,
-    codec: &'static C,
-    compat: BotocoreCompat,
+    pub(super) id: TraitId,
+    pub(super) codec: &'static C,
+    pub(super) compat: BotocoreCompat,
 }
 
 /// restJson1, botocore's `rest-json`.
