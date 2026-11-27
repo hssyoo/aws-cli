@@ -7,7 +7,7 @@
 use crate::endpoint::EndpointData;
 use crate::hooks::Customization;
 use model::paginators::{Config, Refused};
-use model::schema::{Flag, OperationSchema, Schema, ShapeType};
+use model::schema::{Flag, OperationSchema, Schema, ShapeType, traits};
 use model::shapes::Model;
 use model::validate::Undecided;
 
@@ -20,7 +20,8 @@ pub enum Unsupported {
     /// An operation trait the client does not implement, by its model key:
     /// a request checksum, required endpoint discovery, the discovery
     /// operation, request compression, an event stream, a streaming member
-    /// or blob payload, or a key the model loader does not interpret.
+    /// the client does not carry, or a key the model loader does not
+    /// interpret.
     Trait(String),
     /// `operationContextParams`, which botocore evaluates with JMESPath.
     OperationContextParams,
@@ -131,7 +132,7 @@ pub(crate) fn refusal(
     } else {
         unimplemented_trait(operation)
     };
-    if let Some(unsupported) = traits.or_else(|| streams(operation)) {
+    if let Some(unsupported) = traits.or_else(|| streams(model, operation)) {
         return Some(unsupported);
     }
     if operation.operation_context_params().next().is_some() {
@@ -153,11 +154,20 @@ pub(crate) fn refusal(
         .map(Unsupported::Paginator)
 }
 
-/// An event stream, a streaming member or a blob payload at either end of
-/// the operation, which botocore reads from the top-level members and the
-/// payload (`OperationModel.has_event_stream_input`, `has_streaming_output`
-/// and their kin).
-fn streams(operation: OperationSchema<'_>) -> Option<Unsupported> {
+/// An event stream at either end of the operation, which botocore reads
+/// from the top-level members (`OperationModel.has_event_stream_input`,
+/// `has_event_stream_output`); and a streaming end the client does not
+/// carry: a `streaming` member that is not its end's blob payload, or a
+/// blob payload under a protocol without payloads.
+///
+/// A blob payload is what botocore streams, marked `streaming` or not
+/// (`_get_streaming_body`, `has_streaming_input`, `has_streaming_output`):
+/// the client sends the input's bytes as the body, with the
+/// `Content-Length` and payload hash botocore computes from a file it can
+/// seek, and returns the output's raw bytes under the payload member
+/// ([`crate::protocol::rest_json`]'s parse), which the CLI writes to its
+/// `outfile` (`streamingoutputarg`). Only the REST protocols bind a payload.
+fn streams(model: &Model, operation: OperationSchema<'_>) -> Option<Unsupported> {
     let reaches = |end: Option<Schema<'_>>, flag: Flag| {
         end.is_some_and(|end| end.flag(flag) || end.members().any(|member| member.flag(flag)))
     };
@@ -165,23 +175,31 @@ fn streams(operation: OperationSchema<'_>) -> Option<Unsupported> {
     if ends.iter().any(|end| reaches(*end, Flag::EventStream)) {
         return Some(Unsupported::Trait("eventstream".to_owned()));
     }
-    let blob = |end: &Option<Schema<'_>>| end.is_some_and(blob_payload);
-    if ends
-        .iter()
-        .any(|end| reaches(*end, Flag::Streaming) || blob(end))
-    {
+    let rest = crate::protocol::select(model).is_ok_and(|protocol| {
+        let id = protocol.protocol_id();
+        id == traits::REST_JSON_1 || id == traits::REST_XML
+    });
+    let carried = |end: &Option<Schema<'_>>| {
+        end.is_none_or(|end| {
+            let payload = blob_payload(end);
+            let streamed = |member: Schema<'_>| {
+                !member.flag(Flag::Streaming) || payload.is_some_and(|blob| blob == member)
+            };
+            !end.flag(Flag::Streaming) && end.members().all(streamed) && (payload.is_none() || rest)
+        })
+    };
+    if !ends.iter().all(carried) {
         return Some(Unsupported::Trait("streaming".to_owned()));
     }
     None
 }
 
-/// `OperationModel._get_streaming_body`: a `payload` member that is a blob
-/// streams whether or not it is marked `streaming`, so botocore returns it
-/// as a `StreamingBody` and the CLI writes it to `outfile`.
-fn blob_payload(end: Schema<'_>) -> bool {
+/// `OperationModel._get_streaming_body`: the `payload` member, when it is a
+/// blob, which streams whether or not it is marked `streaming`.
+fn blob_payload(end: Schema<'_>) -> Option<Schema<'_>> {
     end.payload()
         .and_then(|payload| end.member(payload))
-        .is_some_and(|member| member.shape_type() == ShapeType::Blob)
+        .filter(|member| member.shape_type() == ShapeType::Blob)
 }
 
 /// The first operation trait the client does not implement: request

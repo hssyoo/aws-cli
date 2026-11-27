@@ -213,10 +213,11 @@ fn each_client_refusal_names_its_own_reason() {
 }
 
 /// A blob payload streams at either end, marked `streaming` or not
-/// (`_get_streaming_body`): apigateway's GetExport returns one and
-/// ImportRestApi sends one; GetAccount has neither.
+/// (`_get_streaming_body`), and the client carries it: apigateway's
+/// GetExport returns one, which `outfile` takes, and ImportRestApi sends
+/// one; GetAccount has neither. None is refused for streaming.
 #[test]
-fn a_blob_payload_at_either_end_is_streaming() -> Result<()> {
+fn a_blob_payload_at_either_end_is_carried() -> Result<()> {
     with_models(|models| {
         let service = models
             .service("apigateway")
@@ -224,11 +225,7 @@ fn a_blob_payload_at_either_end_is_streaming() -> Result<()> {
         let schema = service.model.schema().service();
         let endpoints = EndpointData::load(models.search(), &service.name, schema)
             .unwrap_or_else(|error| panic!("{error:?}"));
-        for (operation, streams) in [
-            ("get-export", true),
-            ("import-rest-api", true),
-            ("get-account", false),
-        ] {
+        for operation in ["get-export", "import-rest-api", "get-account"] {
             let found = service
                 .operation(operation)
                 .unwrap_or_else(|| panic!("{operation}"));
@@ -240,11 +237,7 @@ fn a_blob_payload_at_either_end_is_streaming() -> Result<()> {
                 &[],
                 None,
             );
-            assert_eq!(
-                refused == Some(Unsupported::Trait("streaming".into())),
-                streams,
-                "{operation}: {refused:?}"
-            );
+            assert_eq!(refused, None, "{operation}");
         }
     })
 }

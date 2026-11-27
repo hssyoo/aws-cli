@@ -34,7 +34,7 @@ pub(in crate::protocol) fn do_parse(
         Value::Map(response_metadata(&response.headers)),
     );
     if let Some(shape) = shape {
-        add_modeled_parse(body, shape, response, &mut parsed)?;
+        add_modeled_parse(body, shape, response, &mut parsed, Payload::Streamed)?;
     }
     Ok(parsed)
 }
@@ -47,8 +47,18 @@ pub(in crate::protocol) fn do_modeled_error_parse(
     response: &HttpResponse,
 ) -> Result<Map, ParseError> {
     let mut parsed = Map::new();
-    add_modeled_parse(body, shape, response, &mut parsed)?;
+    add_modeled_parse(body, shape, response, &mut parsed, Payload::Read)?;
     Ok(parsed)
+}
+
+/// How a blob payload is held: as the `StreamingBody` botocore makes of a
+/// successful response's body (`convert_to_response_dict` with
+/// `has_streaming_output`), its bytes as they arrived; or, in an error,
+/// read whole and decoded as text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Payload {
+    Streamed,
+    Read,
 }
 
 /// `_add_modeled_parse`: the members outside the body, then the payload or
@@ -58,9 +68,10 @@ fn add_modeled_parse(
     shape: Schema<'_>,
     response: &HttpResponse,
     parsed: &mut Map,
+    blob: Payload,
 ) -> Result<(), ParseError> {
     non_payload_attrs(body, shape, response, parsed)?;
-    payload(body, shape, response, parsed)
+    payload(body, shape, response, parsed, blob)
 }
 
 /// `_populate_response_metadata`: `x-amzn-requestid` as `RequestId`, else
@@ -124,12 +135,14 @@ fn header_map(prefix: &str, headers: &Headers) -> Map {
 }
 
 /// `_parse_payload`: with a `payload`, that member alone from the body (a
-/// string or blob as the decoded text); without one, the body's members.
+/// string as the decoded text, a blob as `blob` holds it); without one, the
+/// body's members.
 fn payload(
     body: &impl Body,
     shape: Schema<'_>,
     response: &HttpResponse,
     parsed: &mut Map,
+    blob: Payload,
 ) -> Result<(), ParseError> {
     let Some(name) = shape.payload() else {
         let members = body.parse(shape, &body.initial(&response.body)?)?;
@@ -140,6 +153,8 @@ fn payload(
         .ok_or_else(|| ParseError::new(format!("'{name}'")))?;
     let value = if member.flag(Flag::EventStream) {
         return Err(ParseError::new("event stream responses are not supported"));
+    } else if member.shape_type() == ShapeType::Blob && blob == Payload::Streamed {
+        Value::Blob(response.body.clone())
     } else if matches!(member.shape_type(), ShapeType::String | ShapeType::Blob) {
         Value::String(common::decoded(&response.body)?.to_owned())
     } else {
