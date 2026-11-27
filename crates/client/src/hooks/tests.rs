@@ -3,13 +3,22 @@ use std::time::Duration;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-/// A model with one operation, `Any`, and that operation.
-fn fixture() -> TestResult<(Model, Operation)> {
-    let json = br#"{"metadata": {}, "shapes": {},
-        "operations": {"Any": {"name": "Any", "http": {"method": "POST", "requestUri": "/"}}}}"#;
-    let model = Model::from_json(json)?;
-    let operation = model.operation("Any").ok_or("no operation")?.clone();
-    Ok((model, operation))
+/// A model with the operations `Any`, `GetThing` and `PutThing`.
+fn fixture() -> TestResult<Model> {
+    let json = br#"{"metadata": {}, "shapes": {}, "operations": {
+        "Any": {"name": "Any", "http": {"method": "POST", "requestUri": "/"}},
+        "GetThing": {"name": "GetThing", "http": {"method": "POST", "requestUri": "/"}},
+        "PutThing": {"name": "PutThing", "http": {"method": "POST", "requestUri": "/"}}}}"#;
+    Ok(Model::from_json(json)?)
+}
+
+/// `model`'s operation `name`.
+fn operation<'m>(model: &'m Model, name: &str) -> TestResult<OperationSchema<'m>> {
+    Ok(model
+        .schema()
+        .service()
+        .operation(name)
+        .ok_or(name.to_owned())?)
 }
 
 /// An interceptor that says who it is through `modify_input`, which
@@ -80,14 +89,11 @@ static TABLE: [&Customization; 4] = [&EVERYWHERE, &ZQUERY, &ZQUERY_ONE, &ZJSON];
 
 /// The names of the interceptors that run for `operation`, in order.
 fn run_order(hooks: &Hooks, operation: &str) -> TestResult<String> {
-    let (model, any) = fixture()?;
-    let operation = Operation {
-        name: operation.into(),
-        ..any
-    };
-    let mut cx = CallContext::new("zquery", &model, &operation);
+    let model = fixture()?;
+    let operation = self::operation(&model, operation)?;
+    let mut cx = CallContext::new("zquery", &model, operation);
     let mut input = Value::String(String::new());
-    for interceptor in hooks.interceptors(&operation.name) {
+    for interceptor in hooks.interceptors(operation.name()) {
         interceptor.modify_input(&mut cx, &mut input)?;
     }
     match input {
@@ -190,8 +196,8 @@ struct Label(String);
 /// slot, made from its default on first use and kept for the call.
 #[test]
 fn context_slots_are_typed_and_kept_for_the_call() -> TestResult {
-    let (model, operation) = fixture()?;
-    let mut cx = CallContext::new("zquery", &model, &operation);
+    let model = fixture()?;
+    let mut cx = CallContext::new("zquery", &model, operation(&model, "Any")?);
     assert_eq!(cx.attempt, 1);
     assert_eq!(*cx.slot::<Counter>(), Counter(0));
     cx.slot::<Counter>().0 += 2;
@@ -200,7 +206,7 @@ fn context_slots_are_typed_and_kept_for_the_call() -> TestResult {
     assert_eq!(*cx.slot::<Counter>(), Counter(3));
     assert_eq!(cx.slot::<Label>().0, "signed");
     assert_eq!(cx.service, "zquery");
-    assert_eq!(&*cx.operation.name, "Any");
+    assert_eq!(cx.operation.name(), "Any");
     let debug = format!("{cx:?}");
     assert!(debug.contains("zquery") && debug.contains("Any"), "{debug}");
     Ok(())
@@ -210,8 +216,8 @@ fn context_slots_are_typed_and_kept_for_the_call() -> TestResult {
 /// stages it needs, and the short-circuiting ones decline.
 #[test]
 fn every_stage_defaults_to_doing_nothing() -> TestResult {
-    let (model, operation) = fixture()?;
-    let mut cx = CallContext::new("zquery", &model, &operation);
+    let model = fixture()?;
+    let mut cx = CallContext::new("zquery", &model, operation(&model, "Any")?);
     let hook: &dyn Interceptor = &DEFAULT_B;
     let mut request = crate::http::HttpRequest {
         method: crate::http::Method::Post,

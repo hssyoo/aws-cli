@@ -11,7 +11,8 @@ use crate::auth::AuthScheme;
 use crate::endpoint::Builtins;
 use crate::http::{HttpRequest, HttpResponse};
 use crate::retry::{Attempt, RetryDecision};
-use model::shapes::{Model, Operation};
+use model::schema::OperationSchema;
+use model::shapes::Model;
 use model::value::Value;
 use std::any::Any;
 use std::time::Duration;
@@ -113,14 +114,14 @@ pub struct CallContext<'a> {
     /// The service, as [`Scope::service`] names it.
     pub service: &'a str,
     pub model: &'a Model,
-    pub operation: &'a Operation,
+    pub operation: OperationSchema<'a>,
     /// 1 for the first attempt.
     pub attempt: u32,
     slots: Vec<Box<dyn Any + Send>>,
 }
 
 impl<'a> CallContext<'a> {
-    pub fn new(service: &'a str, model: &'a Model, operation: &'a Operation) -> Self {
+    pub fn new(service: &'a str, model: &'a Model, operation: OperationSchema<'a>) -> Self {
         Self {
             service,
             model,
@@ -169,7 +170,7 @@ impl<'a> CallContext<'a> {
     pub(crate) fn resume(
         service: &'a str,
         model: &'a Model,
-        operation: &'a Operation,
+        operation: OperationSchema<'a>,
         slots: Slots,
     ) -> Self {
         Self {
@@ -186,7 +187,7 @@ impl std::fmt::Debug for CallContext<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CallContext")
             .field("service", &self.service)
-            .field("operation", &self.operation.name)
+            .field("operation", &self.operation.name())
             .field("attempt", &self.attempt)
             .field("slots", &self.slots.len())
             .finish()

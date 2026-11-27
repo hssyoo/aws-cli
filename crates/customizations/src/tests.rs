@@ -38,7 +38,8 @@ fn dynamodb_s_retry_defaults_and_no_one_else_s() {
 }
 
 fn context_for<'a>(service: &'a str, model: &'a Model) -> Result<CallContext<'a>, &'static str> {
-    let operation = model.operations().first().ok_or("no operation")?;
+    let mut operations = model.schema().service().operations();
+    let operation = operations.next().ok_or("no operation")?;
     Ok(CallContext::new(service, model, operation))
 }
 

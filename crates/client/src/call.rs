@@ -30,7 +30,7 @@ pub use crate::useragent::UserAgentContext;
 use cli_core::client_config::ClientSettings;
 use cli_core::client_config::user_agent::Features;
 use model::schema::{Flag, OperationSchema};
-use model::shapes::{Model, Operation};
+use model::shapes::Model;
 use model::validate::{Validation, validate_input};
 use model::value::{Map, Value};
 use std::sync::Arc;
@@ -216,7 +216,7 @@ impl Client {
         extra: Features,
     ) -> Result<Prepared, CallError> {
         let parts = &self.parts;
-        let (operation, arena) = find(&parts.model, operation)?;
+        let operation = find(&parts.model, operation)?;
         if let Some(unsupported) = crate::admission::static_refusal(
             &parts.model,
             operation,
@@ -230,14 +230,14 @@ impl Client {
         }
         // What botocore's client creation raises once a region resolves.
         parts.endpoint.check(&parts.endpoints)?;
-        let mut cx = CallContext::new(&parts.service, &parts.model, arena);
+        let mut cx = CallContext::new(&parts.service, &parts.model, operation);
         let mut input = input;
         for hook in self.hooks.interceptors(operation.name()) {
             hook.modify_input(&mut cx, &mut input)
                 .map_err(prepare_hook_error)?;
         }
         self.fill_idempotency_tokens(operation, &mut input);
-        let (endpoint, mut features) = self.resolve_endpoint(&mut cx, operation, &input, None)?;
+        let (endpoint, mut features) = self.resolve_endpoint(&mut cx, &input, None)?;
         features.extend(extra.iter());
         match validate_input(operation, &input) {
             Validation::Valid => {}
@@ -251,7 +251,7 @@ impl Client {
             .serialize(&parts.model, operation, &input)
             .map_err(CallError::Serialize)?;
         let request = self.join_request(&mut cx, &serialized, &endpoint.url, features)?;
-        let scheme = self.select_auth(&mut cx, operation, &endpoint)?;
+        let scheme = self.select_auth(&mut cx, &endpoint)?;
         Ok(Prepared {
             operation: operation.name().to_owned(),
             slots: cx.into_slots(),
@@ -275,7 +275,7 @@ impl Client {
         let parts = &self.parts;
         let user_agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
         let mut request = join(serialized.clone(), url, &user_agent)?;
-        for hook in self.hooks.interceptors(&cx.operation.name) {
+        for hook in self.hooks.interceptors(cx.operation.name()) {
             hook.after_serialize(cx, &mut request)
                 .map_err(prepare_hook_error)?;
         }
@@ -312,11 +312,10 @@ impl Client {
     fn resolve_endpoint(
         &self,
         cx: &mut CallContext<'_>,
-        operation: OperationSchema<'_>,
         input: &Value,
         account_id: Option<&str>,
     ) -> Result<(ResolvedEndpoint, Features), CallError> {
-        let parts = &self.parts;
+        let (parts, operation) = (&self.parts, cx.operation);
         let mut builtins = parts.endpoint.builtins(&parts.endpoints)?;
         for hook in self.hooks.interceptors(operation.name()) {
             hook.endpoint_builtins(cx, &mut builtins)
@@ -346,10 +345,9 @@ impl Client {
     fn select_auth(
         &self,
         cx: &mut CallContext<'_>,
-        operation: OperationSchema<'_>,
         endpoint: &ResolvedEndpoint,
     ) -> Result<AuthScheme, CallError> {
-        let parts = &self.parts;
+        let (parts, operation) = (&self.parts, cx.operation);
         let resolved = auth::select(
             &parts.model,
             &parts.service,
@@ -366,19 +364,11 @@ impl Client {
     }
 }
 
-/// The operation of `model` named `name`: its schema, and the arena's
-/// reading of it, which [`CallContext`] still carries.
-fn find<'m>(
-    model: &'m Model,
-    name: &str,
-) -> Result<(OperationSchema<'m>, &'m Operation), CallError> {
-    let unknown = || CallError::UnknownOperation(name.to_owned());
-    let operation = model
-        .schema()
-        .service()
+/// The operation of `model` named `name`.
+fn find<'m>(model: &'m Model, name: &str) -> Result<OperationSchema<'m>, CallError> {
+    (model.schema().service())
         .operation(name)
-        .ok_or_else(unknown)?;
-    Ok((operation, model.operation(name).ok_or_else(unknown)?))
+        .ok_or_else(|| CallError::UnknownOperation(name.to_owned()))
 }
 
 /// A `prepare` stage's hook error: a refusal leaves the call to Python,
@@ -475,22 +465,22 @@ impl Client {
             endpoint_url,
         } = prepared;
         let parts = &self.parts;
-        let (operation, arena) = find(&parts.model, &operation)?;
-        let mut cx = CallContext::resume(&parts.service, &parts.model, arena, slots);
+        let operation = find(&parts.model, &operation)?;
+        let mut cx = CallContext::resume(&parts.service, &parts.model, operation, slots);
         if let Some(account_id) = self.deferred_account_id()? {
             // The endpoint as the account id gives it; the refusals it could
             // meet were made on the same rule set in prepare
             // (`account_id_endpoints_refuse_nothing_more` pins it), so one
             // here is a defect, not a reason to leave the call to Python.
             let (endpoint, resolved_features) = self
-                .resolve_endpoint(&mut cx, operation, &input, Some(&account_id))
+                .resolve_endpoint(&mut cx, &input, Some(&account_id))
                 .map_err(after_prepare)?;
             if endpoint.url != endpoint_url || resolved_features != features {
                 request = self
                     .join_request(&mut cx, &serialized, &endpoint.url, resolved_features)
                     .map_err(after_prepare)?;
                 scheme = self
-                    .select_auth(&mut cx, operation, &endpoint)
+                    .select_auth(&mut cx, &endpoint)
                     .map_err(after_prepare)?;
             }
         }
@@ -509,7 +499,7 @@ impl Client {
                 ttl.as_deref(),
             )?;
             let result = self.transmit(&mut cx, &sent)?;
-            match self.evaluate(&mut cx, operation, attempt, &sent, result, last_cost) {
+            match self.evaluate(&mut cx, attempt, &sent, result, last_cost) {
                 Step::Done(outcome) => return outcome,
                 Step::Retry { delay, cost, date } => {
                     if let Some(date) = date {
@@ -537,7 +527,7 @@ impl Client {
         ttl: Option<&str>,
     ) -> Result<HttpRequest, CallError> {
         let mut request = request.clone();
-        for hook in self.hooks.interceptors(&cx.operation.name) {
+        for hook in self.hooks.interceptors(cx.operation.name()) {
             hook.before_sign(cx, &mut request)
                 .map_err(|error| CallError::Hook(error.after_prepare()))?;
         }
@@ -596,7 +586,7 @@ impl Client {
         cx: &mut CallContext<'_>,
         request: &HttpRequest,
     ) -> Result<Result<HttpResponse, TransportError>, CallError> {
-        for hook in self.hooks.interceptors(&cx.operation.name) {
+        for hook in self.hooks.interceptors(cx.operation.name()) {
             if let Some(response) = hook
                 .before_transmit(cx, request)
                 .map_err(|error| CallError::Hook(error.after_prepare()))?
@@ -624,7 +614,6 @@ impl Client {
     fn evaluate(
         &self,
         cx: &mut CallContext<'_>,
-        operation: OperationSchema<'_>,
         attempt: u32,
         request: &HttpRequest,
         result: Result<HttpResponse, TransportError>,
@@ -633,9 +622,9 @@ impl Client {
         let mut response = match result {
             Ok(response) => response,
             Err(TransportError::Interrupted) => return Step::Done(Err(CallError::Interrupted)),
-            Err(error) => return self.failed(cx, operation, attempt, request, error),
+            Err(error) => return self.failed(cx, attempt, request, error),
         };
-        for hook in self.hooks.interceptors(&cx.operation.name) {
+        for hook in self.hooks.interceptors(cx.operation.name()) {
             if let Err(error) = hook.after_receive(cx, &mut response) {
                 return Step::Done(Err(CallError::Hook(error.after_prepare())));
             }
@@ -646,20 +635,20 @@ impl Client {
         if response.status >= 300 {
             return match self
                 .protocol
-                .parse_error(model, operation, &response, options)
+                .parse_error(model, cx.operation, &response, options)
             {
                 Err(error) => Step::Done(Err(CallError::Parse(error))),
-                Ok(error) => self.service_error(cx, operation, attempt, &response, error),
+                Ok(error) => self.service_error(cx, attempt, &response, error),
             };
         }
-        match self.protocol.parse(model, operation, &response, options) {
+        match self.protocol.parse(model, cx.operation, &response, options) {
             Err(error) => Step::Done(Err(CallError::Parse(error))),
             // `parsed_response.update(customized_response_dict)` in
             // `Endpoint._do_get_response`: a parse to `None` raises there.
             Ok(Value::Null) => Step::Done(Err(CallError::Parse(ParseError::new(
                 "'NoneType' object has no attribute 'update'",
             )))),
-            Ok(value) => self.succeeded(cx, operation, attempt, response, value, last_cost),
+            Ok(value) => self.succeeded(cx, attempt, response, value, last_cost),
         }
     }
     /// The retry kind of an attempt: a `classify_retry` interceptor's
@@ -670,23 +659,22 @@ impl Client {
     fn classify(
         &self,
         cx: &mut CallContext<'_>,
-        operation: OperationSchema<'_>,
         attempt: &Attempt<'_>,
     ) -> Result<Option<ErrorKind>, CallError> {
         let decided = self
             .hooks
-            .interceptors(&cx.operation.name)
+            .interceptors(cx.operation.name())
             .find_map(|hook| hook.classify_retry(cx, attempt));
         Ok(match decided {
             Some(RetryDecision::Stop) => None,
             Some(RetryDecision::Retry) => Some(
-                retry::classify(&self.parts.model, operation, attempt)
+                retry::classify(&self.parts.model, cx.operation, attempt)
                     .unwrap_or(ErrorKind::Transient),
             ),
             Some(RetryDecision::Fail(error)) => {
                 return Err(CallError::Hook(error.after_prepare()));
             }
-            None => retry::classify(&self.parts.model, operation, attempt),
+            None => retry::classify(&self.parts.model, cx.operation, attempt),
         })
     }
     /// `RetryHandler.needs_retry` for a long-polling operation whose retry
@@ -697,7 +685,7 @@ impl Client {
         verdict: &retry::Verdict,
     ) -> Result<(), CallError> {
         if let (None, Some(delay)) = (verdict.delay, verdict.exhausted_delay)
-            && self.hooks.long_polls(&cx.operation.name)
+            && self.hooks.long_polls(cx.operation.name())
         {
             self.parts
                 .runtime
@@ -709,12 +697,11 @@ impl Client {
     fn failed(
         &self,
         cx: &mut CallContext<'_>,
-        operation: OperationSchema<'_>,
         attempt: u32,
         request: &HttpRequest,
         error: TransportError,
     ) -> Step {
-        let kind = match self.classify(cx, operation, &Attempt::Failed(&error)) {
+        let kind = match self.classify(cx, &Attempt::Failed(&error)) {
             Ok(kind) => kind,
             Err(failure) => return Step::Done(Err(failure)),
         };
@@ -739,7 +726,6 @@ impl Client {
     fn service_error(
         &self,
         cx: &mut CallContext<'_>,
-        operation: OperationSchema<'_>,
         attempt: u32,
         response: &HttpResponse,
         mut error: ServiceError,
@@ -748,7 +734,7 @@ impl Client {
             response,
             error: Some(&error),
         };
-        let kind = match self.classify(cx, operation, &attempted) {
+        let kind = match self.classify(cx, &attempted) {
             Ok(kind) => kind,
             Err(failure) => return Step::Done(Err(failure)),
         };
@@ -774,7 +760,6 @@ impl Client {
     fn succeeded(
         &self,
         cx: &mut CallContext<'_>,
-        operation: OperationSchema<'_>,
         attempt: u32,
         response: HttpResponse,
         mut value: Value,
@@ -784,7 +769,7 @@ impl Client {
             response: &response,
             error: None,
         };
-        let kind = match self.classify(cx, operation, &attempted) {
+        let kind = match self.classify(cx, &attempted) {
             Ok(kind) => kind,
             Err(failure) => return Step::Done(Err(failure)),
         };
@@ -802,7 +787,7 @@ impl Client {
             };
         }
         self.retry.succeeded(last_cost);
-        for hook in self.hooks.interceptors(&cx.operation.name) {
+        for hook in self.hooks.interceptors(cx.operation.name()) {
             if let Err(error) = hook.modify_output(cx, &mut value) {
                 return Step::Done(Err(CallError::Hook(error.after_prepare())));
             }
