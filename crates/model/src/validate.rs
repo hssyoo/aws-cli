@@ -8,8 +8,6 @@ use crate::value::Value;
 
 mod datetime;
 mod number;
-#[cfg(test)]
-mod root;
 
 /// The outcome of validating parameters.
 #[derive(Clone, Debug, PartialEq)]
