@@ -42,7 +42,10 @@ impl Protocol for RestJson {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Value, ParseError> {
-        common::parse(self, model, operation.output, response, options)
+        let output = common::operation_schema(model, operation)
+            .map_err(ParseError::new)?
+            .output();
+        common::parse(self, output, response, options)
     }
 
     fn parse_error(

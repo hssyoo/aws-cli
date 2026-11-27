@@ -5,7 +5,7 @@
 use crate::error::ParseError;
 use crate::http::{Headers, HttpResponse};
 use crate::protocol::common;
-use model::shapes::{Flag, Model, Shape, ShapeId, ShapeKind};
+use model::schema::{Flag, Schema, ShapeType};
 use model::value::{Map, Value};
 
 /// What `BaseRestParser` leaves to its subclass: `_initial_body_parse`,
@@ -16,17 +16,16 @@ pub(super) trait Body {
     /// `_initial_body_parse`.
     fn initial(&self, body: &[u8]) -> Result<Self::Parsed, ParseError>;
     /// `_parse_shape` of what [`Body::initial`] read.
-    fn parse(&self, shape: ShapeId, parsed: &Self::Parsed) -> Result<Value, ParseError>;
+    fn parse(&self, shape: Schema<'_>, parsed: &Self::Parsed) -> Result<Value, ParseError>;
     /// `_parse_shape` of a header's text or the status code.
-    fn value(&self, shape: ShapeId, value: &Value) -> Result<Value, ParseError>;
+    fn value(&self, shape: Schema<'_>, value: &Value) -> Result<Value, ParseError>;
 }
 
 /// `BaseRestParser._do_parse`: `ResponseMetadata` first, then the
 /// output's members.
 pub(super) fn do_parse(
     body: &impl Body,
-    model: &Model,
-    shape: Option<ShapeId>,
+    shape: Option<Schema<'_>>,
     response: &HttpResponse,
 ) -> Result<Map, ParseError> {
     let mut parsed = Map::new();
@@ -35,7 +34,7 @@ pub(super) fn do_parse(
         Value::Map(response_metadata(&response.headers)),
     );
     if let Some(shape) = shape {
-        add_modeled_parse(body, model, shape, response, &mut parsed)?;
+        add_modeled_parse(body, shape, response, &mut parsed)?;
     }
     Ok(parsed)
 }
@@ -44,12 +43,11 @@ pub(super) fn do_parse(
 /// those outside the body included.
 pub(super) fn do_modeled_error_parse(
     body: &impl Body,
-    model: &Model,
-    shape: ShapeId,
+    shape: Schema<'_>,
     response: &HttpResponse,
 ) -> Result<Map, ParseError> {
     let mut parsed = Map::new();
-    add_modeled_parse(body, model, shape, response, &mut parsed)?;
+    add_modeled_parse(body, shape, response, &mut parsed)?;
     Ok(parsed)
 }
 
@@ -57,13 +55,12 @@ pub(super) fn do_modeled_error_parse(
 /// the body's members.
 fn add_modeled_parse(
     body: &impl Body,
-    model: &Model,
-    shape: ShapeId,
+    shape: Schema<'_>,
     response: &HttpResponse,
     parsed: &mut Map,
 ) -> Result<(), ParseError> {
-    non_payload_attrs(body, model, shape, response, parsed)?;
-    payload(body, model, shape, response, parsed)
+    non_payload_attrs(body, shape, response, parsed)?;
+    payload(body, shape, response, parsed)
 }
 
 /// `_populate_response_metadata`: `x-amzn-requestid` as `RequestId`, else
@@ -85,32 +82,29 @@ fn response_metadata(headers: &Headers) -> Map {
 /// a `header` member from its header when the response has it.
 fn non_payload_attrs(
     body: &impl Body,
-    model: &Model,
-    shape: ShapeId,
+    shape: Schema<'_>,
     response: &HttpResponse,
     parsed: &mut Map,
 ) -> Result<(), ParseError> {
-    for member in model.members(shape) {
-        let traits = &model.shape(member.shape).traits;
-        let value = match traits.location.as_deref() {
+    for member in shape.members() {
+        let value = match member.location() {
             Some("statusCode") => {
                 let status = Value::Integer(i64::from(response.status));
-                body.value(member.shape, &status)?
+                body.value(member, &status)?
             }
             Some("headers") => {
-                let prefix = traits.name.as_deref().unwrap_or("");
+                let prefix = member.location_name().unwrap_or("");
                 Value::Map(header_map(prefix, &response.headers))
             }
             Some("header") => {
-                let name = traits.name.as_deref().unwrap_or(&member.name);
-                let Some(text) = response.headers.joined(name) else {
+                let Some(text) = response.headers.joined(common::wire_name(member)) else {
                     continue;
                 };
-                body.value(member.shape, &Value::String(text))?
+                body.value(member, &Value::String(text))?
             }
             _ => continue,
         };
-        parsed.insert(member.name.to_string(), value);
+        parsed.insert(common::member_name(member).to_owned(), value);
     }
     Ok(())
 }
@@ -133,27 +127,23 @@ fn header_map(prefix: &str, headers: &Headers) -> Map {
 /// string or blob as the decoded text); without one, the body's members.
 fn payload(
     body: &impl Body,
-    model: &Model,
-    shape: ShapeId,
+    shape: Schema<'_>,
     response: &HttpResponse,
     parsed: &mut Map,
 ) -> Result<(), ParseError> {
-    let Some(name) = model.shape(shape).traits.payload.as_deref() else {
+    let Some(name) = shape.payload() else {
         let members = body.parse(shape, &body.initial(&response.body)?)?;
         return update(parsed, members);
     };
-    let member = model
-        .members(shape)
-        .iter()
-        .find(|member| &*member.name == name)
+    let member = shape
+        .member(name)
         .ok_or_else(|| ParseError::new(format!("'{name}'")))?;
-    let resolved = model.shape(member.shape);
-    let value = if resolved.traits.is(Flag::EventStream) {
+    let value = if member.flag(Flag::EventStream) {
         return Err(ParseError::new("event stream responses are not supported"));
-    } else if matches!(resolved.kind, ShapeKind::String | ShapeKind::Blob) {
+    } else if matches!(member.shape_type(), ShapeType::String | ShapeType::Blob) {
         Value::String(common::decoded(&response.body)?.to_owned())
     } else {
-        body.parse(member.shape, &body.initial(&response.body)?)?
+        body.parse(member, &body.initial(&response.body)?)?
     };
     parsed.insert(name.to_owned(), value);
     Ok(())
@@ -179,9 +169,9 @@ fn update(parsed: &mut Map, members: Value) -> Result<(), ParseError> {
 /// `BaseRestParser._handle_string` for a `jsonvalue` header
 /// (`is_json_value_header`): the text base64-decoded and read as JSON.
 /// `None` for any other string, which stays as it is.
-pub(super) fn json_value(shape: &Shape, value: &Value) -> Option<Result<Value, ParseError>> {
-    let header = shape.traits.location.as_deref() == Some("header");
-    (header && shape.traits.is(Flag::JsonValue)).then(|| json_value_of(value))
+pub(super) fn json_value(shape: Schema<'_>, value: &Value) -> Option<Result<Value, ParseError>> {
+    let header = shape.location() == Some("header");
+    (header && shape.flag(Flag::JsonValue)).then(|| json_value_of(value))
 }
 
 /// `json.loads(base64.b64decode(value).decode('utf-8'))`.
@@ -208,8 +198,8 @@ fn json_value_of(value: &Value) -> Result<Value, ParseError> {
 /// `BaseRestParser._handle_list`'s split: a header list's text as its
 /// comma-separated parts, each stripped, as RFC 7230 lists them. `None`
 /// for a list that is no header or is a list already.
-pub(super) fn header_items(shape: &Shape, value: &Value) -> Option<Result<Value, ParseError>> {
-    if shape.traits.location.as_deref() != Some("header") {
+pub(super) fn header_items(shape: Schema<'_>, value: &Value) -> Option<Result<Value, ParseError>> {
+    if shape.location() != Some("header") {
         return None;
     }
     match value {
