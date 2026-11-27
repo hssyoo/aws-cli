@@ -3,15 +3,16 @@
 //! into what its two readers take from it. `unify_paging_params` reads the
 //! input tokens and the limit key to edit the operation's argument table
 //! whatever else the entry holds; `Paginator` reads the whole entry to
-//! page, and the native paginator runs only an entry whose expressions are
-//! member names and dotted paths of them ([`Expression`]).
+//! page, and the native paginator runs only an entry whose expressions it
+//! evaluates ([`Expression`]), and whose result and non-aggregate keys,
+//! which it also writes, are member names and dotted paths of them.
 use crate::pyrepr::py_repr;
 use crate::source::{Kind, LoadError, Source, load_service_model};
 use crate::value::{Map, Value};
 
 mod expression;
 
-pub use expression::{Assign, Expression, Lookup, NotADict};
+pub use expression::{Assign, Expression, Lookup, NotADict, PAGINATORS};
 
 /// Every operation's entry, by its model name, in the file's order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -47,7 +48,8 @@ pub struct Config {
 /// Why a paginator entry is not one the native paginator runs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refused {
-    /// A JMESPath expression beyond a member name or a dotted path.
+    /// A JMESPath expression the paginator does not evaluate, or a result
+    /// or non-aggregate key beyond a member name or a dotted path.
     Expression(String),
     /// An entry botocore itself could not read.
     Malformed(String),
@@ -145,9 +147,11 @@ impl Config {
     /// as `Paginator.__init__` reads it: `output_token`, `input_token` and
     /// `result_key` a string or a list of them, `non_aggregate_keys` a
     /// list, `more_results` and `limit_key` a string. Each expression
-    /// `jmespath.compile`s must be a name or a dotted path of names, which
-    /// `set_value_from_jmespath` also writes nested. `input_token` and
-    /// `limit_key` are parameter names, which botocore sends as they are.
+    /// `jmespath.compile`s must be one [`Expression::parse`] gives; a
+    /// result key and a non-aggregate key, which `set_value_from_jmespath`
+    /// also writes, must be a name or a dotted path of names.
+    /// `input_token` and `limit_key` are parameter names, which botocore
+    /// sends as they are.
     ///
     /// # Errors
     /// See [`Refused`]. An entry without `result_key`, or with an empty
@@ -156,13 +160,13 @@ impl Config {
         let Value::Map(entry) = entry else {
             return Err(malformed("the entry is not an object"));
         };
-        let result_key = expressions(required(entry, "result_key")?)?;
+        let result_key = paths(required(entry, "result_key")?)?;
         if result_key.is_empty() {
             return Err(malformed("result_key is empty"));
         }
         let non_aggregate_keys = match entry.get("non_aggregate_keys") {
             None => Vec::new(),
-            Some(Value::List(keys)) => keys.iter().map(expression).collect::<Result<_, _>>()?,
+            Some(Value::List(keys)) => keys.iter().map(path).collect::<Result<_, _>>()?,
             Some(_) => return Err(malformed("non_aggregate_keys is not a list")),
         };
         Ok(Self {
@@ -211,6 +215,10 @@ fn expressions(value: &Value) -> Result<Vec<Expression>, Refused> {
     listed(value).iter().map(expression).collect()
 }
 
+fn paths(value: &Value) -> Result<Vec<Expression>, Refused> {
+    listed(value).iter().map(path).collect()
+}
+
 /// A parameter name.
 fn name(value: &Value) -> Result<String, Refused> {
     match value {
@@ -226,6 +234,16 @@ fn name(value: &Value) -> Result<String, Refused> {
 fn expression(value: &Value) -> Result<Expression, Refused> {
     let text = name(value)?;
     Expression::parse(&text).ok_or(Refused::Expression(text))
+}
+
+/// An expression this paginator reads and writes: a name or a dotted path.
+fn path(value: &Value) -> Result<Expression, Refused> {
+    let found = expression(value)?;
+    if found.is_path() {
+        Ok(found)
+    } else {
+        Err(Refused::Expression(found.as_str().to_owned()))
+    }
 }
 
 #[cfg(test)]

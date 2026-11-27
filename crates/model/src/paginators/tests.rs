@@ -41,28 +41,41 @@ fn an_entry_reads_as_paginator_reads_it() -> Result<()> {
     Ok(())
 }
 
-/// The JMESPath the configurations use beyond names and dotted paths:
-/// s3's `NextMarker || Contents[-1].Key`, importexport's `Jobs[-1].JobId`.
+/// The JMESPath the configurations use beyond names and dotted paths
+/// (s3's `NextMarker || Contents[-1].Key`, importexport's
+/// `Jobs[-1].JobId`) reads an output token or `more_results`; a result key
+/// or a non-aggregate key, which the paginator also writes, stays a path;
+/// and an expression outside [`PAGINATORS`] is refused wherever it is.
 #[test]
-fn an_expression_beyond_a_dotted_path_is_refused() -> Result<()> {
+fn an_expression_beyond_a_dotted_path_is_read_but_never_written() -> Result<()> {
     let refused = |entry: &str, text: &str| -> Result<bool> {
         Ok(Config::from_value(&json(entry)?) == Err(Refused::Expression(text.into())))
     };
-    assert!(refused(
+    let read = Config::from_value(&json(
         r#"{"input_token": "M", "output_token": ["NextMarker || Contents[-1].Key"],
-            "result_key": "U"}"#,
-        "NextMarker || Contents[-1].Key"
-    )?);
+            "result_key": "U", "more_results": "\"Quoted\""}"#,
+    )?)
+    .map_err(|r| format!("{r:?}"))?;
+    assert_eq!(read.output_token, ["NextMarker || Contents[-1].Key"]);
+    assert_eq!(
+        read.more_results
+            .map(|more| (more.to_string(), more.is_path())),
+        Some(("\"Quoted\"".into(), false))
+    );
     assert!(refused(
         r#"{"input_token": "M", "output_token": "M", "result_key": "Jobs[-1].JobId"}"#,
         "Jobs[-1].JobId"
     )?);
     assert!(refused(
-        r#"{"input_token": "M", "output_token": "M", "result_key": "U",
-            "more_results": "\"Quoted\""}"#,
-        "\"Quoted\""
+        r#"{"input_token": "M", "output_token": "length(M)", "result_key": "U"}"#,
+        "length(M)"
     )?);
-    for key in ["A.b-c", "A.", "1st"] {
+    assert!(refused(
+        r#"{"input_token": "M", "output_token": "M", "result_key": "U",
+            "more_results": "a < b"}"#,
+        "a < b"
+    )?);
+    for key in ["A.b-c", "A.", "1st", "A[0]"] {
         let entry = format!(
             r#"{{"input_token": "M", "output_token": "M", "result_key": "U",
                 "non_aggregate_keys": ["{key}"]}}"#
@@ -102,7 +115,7 @@ fn an_entry_botocore_cannot_read_is_malformed() -> Result<()> {
 #[test]
 fn the_table_reads_every_entry_s_tokens() -> Result<()> {
     let refused = Entry::from_value(&json(
-        r#"{"input_token": "Marker", "output_token": "Jobs[-1].JobId",
+        r#"{"input_token": "Marker", "output_token": "length(Jobs)",
             "result_key": "Jobs", "limit_key": "MaxJobs"}"#,
     )?);
     assert_eq!(refused.input_token, ["Marker"]);
@@ -134,8 +147,8 @@ fn a_service_s_file_loads_once_by_operation() -> Result<()> {
     );
     let jobs = zquery.get("ListJobs").ok_or("ListJobs")?;
     assert_eq!(
-        jobs.config,
-        Err(Refused::Expression("Jobs[-1].JobId".into()))
+        jobs.config.as_ref().map(|config| &config.output_token),
+        Ok(&expressions(&["Jobs[-1].JobId"]))
     );
     assert!(zquery.get("GetThing").is_none());
     assert_eq!(Paginators::load(&models, "zglobal")?, Paginators::default());

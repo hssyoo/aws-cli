@@ -1,9 +1,10 @@
 //! The paginator's shared objects ([`Object`]) as paths of names are read
-//! and written through them: [`model::paginators::Expression`]'s
-//! `jmespath.search` and `set_value_from_jmespath` over them, and
+//! and written through them, and other expressions evaluated on a copy:
+//! [`model::paginators::Expression`]'s `jmespath.search` and
+//! `set_value_from_jmespath` over them, and
 //! `merge_dicts` (botocore/utils.py), which only the full result uses.
 use super::object::Object;
-use model::paginators::{Assign, Lookup, NotADict};
+use model::paginators::{Assign, Expression, Lookup, NotADict};
 
 impl Lookup for Object {
     fn lookup(&self, name: &str) -> Option<Self> {
@@ -11,6 +12,11 @@ impl Lookup for Object {
     }
     fn is_none(&self) -> bool {
         Self::is_none(self)
+    }
+    /// What the search finds is new objects: an output token or
+    /// `more_results`, which the paginator only reads.
+    fn evaluate(&self, expression: &Expression) -> Option<Self> {
+        Some(Self::new(expression.find(&self.value())))
     }
 }
 

@@ -4,6 +4,7 @@
 //! shrinks. It reads the models itself and imports nothing from `model`,
 //! so no later change to the crate's modules reaches it.
 use awscli_argparse as _;
+use jmespath as _;
 use model as _;
 use pyload as _;
 use pytext as _;

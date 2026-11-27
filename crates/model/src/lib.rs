@@ -13,6 +13,7 @@ pub mod fuzz;
 pub mod overlay;
 pub mod paginators;
 pub mod payload;
+pub mod pyjmespath;
 pub mod pyjson;
 pub mod pyrepr;
 pub mod schema;

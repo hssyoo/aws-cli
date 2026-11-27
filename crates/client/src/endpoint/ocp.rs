@@ -13,9 +13,7 @@ use jmespath::{Expression, OPERATION_CONTEXT_PARAMS};
 use model::schema::OperationSchema;
 use model::value::Value;
 
-mod runtime;
-
-pub use runtime::Python;
+pub use model::pyjmespath::Python;
 
 /// Whether `operation` declares `name` in its `operationContextParams`.
 pub(super) fn declares(operation: OperationSchema<'_>, name: &str) -> bool {
