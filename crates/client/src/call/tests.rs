@@ -205,7 +205,17 @@ fn fixture_with(
     credentials: Arc<dyn CredentialSource>,
     customizations: &'static [&'static Customization],
 ) -> TestResult<Fixture> {
-    let model = Arc::new(Model::from_json(SERVICE.as_bytes())?);
+    fixture_of(SERVICE, rules, settings, credentials, customizations)
+}
+
+fn fixture_of(
+    service: &str,
+    rules: &str,
+    settings: ClientSettings,
+    credentials: Arc<dyn CredentialSource>,
+    customizations: &'static [&'static Customization],
+) -> TestResult<Fixture> {
+    let model = Arc::new(Model::from_json(service.as_bytes())?);
     let endpoints = EndpointData::from_documents(
         rules.as_bytes().to_vec(),
         PARTITIONS.as_bytes().to_vec(),
@@ -553,6 +563,37 @@ fn a_retry_after_a_dated_response_carries_a_ttl() -> TestResult {
     dated.headers.set("Date", "Sun, 30 Aug 2015 12:36:10 GMT");
     f.transport.respond(dated);
     f.transport.respond(ok("{}"));
+    f.client.call("Op", input("a"))?;
+    let sent = f.transport.sent();
+    assert_eq!(
+        sent[1].0.headers.get("amz-sdk-request"),
+        Some("ttl=20150830T123710Z; attempt=2; max=3")
+    );
+    Ok(())
+}
+
+/// A streaming input's retry carries a `ttl` as any other does:
+/// `Endpoint._set_ttl` skips it for `has_streaming_input` in the retries
+/// context, which botocore sets in the request context instead.
+#[test]
+fn a_streaming_input_s_retry_carries_a_ttl_too() -> TestResult {
+    let service = SERVICE
+        .replace(r#""protocol": "json""#, r#""protocol": "rest-json""#)
+        .replace(
+            r#""OpInput": {"type": "structure", "members": {"#,
+            r#""OpInput": {"type": "structure", "payload": "Body", "members": {
+            "Body": {"shape": "Stream"},"#,
+        )
+        .replace(
+            r#""S": {"type": "string"}"#,
+            r#""S": {"type": "string"}, "Stream": {"type": "blob", "streaming": true}"#,
+        );
+    let f = fixture_of(&service, RULES, settings(), keys(), &[])?;
+    let mut dated = status(500, "InternalError");
+    dated.headers.set("Date", "Sun, 30 Aug 2015 12:36:10 GMT");
+    f.transport.respond(dated);
+    f.transport.respond(ok("{}"));
+    // The operation, not the input, decides: no body is given here.
     f.client.call("Op", input("a"))?;
     let sent = f.transport.sent();
     assert_eq!(

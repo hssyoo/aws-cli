@@ -426,6 +426,37 @@ fn the_static_refusal_reads_the_client_s_version_as_botocore_resolves_it() -> Te
     Ok(())
 }
 
+/// A streaming input S3's signer would sign is refused as streaming,
+/// statically and as the endpoint selects the signer: botocore leaves its
+/// payload unsigned over https beside a checksum header.
+#[test]
+fn a_streaming_input_under_s3_s_signer_is_refused() -> TestResult {
+    let model = |version: &str| -> TestResult<Model> {
+        let json = format!(
+            r#"{{"metadata": {{"protocol": "rest-xml", "endpointPrefix": "zs3",
+                "signatureVersion": "{version}"}},
+                "operations": {{"Op": {{"name": "Op", "http": {{"method": "PUT",
+                    "requestUri": "/"}}, "input": {{"shape": "In"}}}}}},
+                "shapes": {{"In": {{"type": "structure", "payload": "Body",
+                    "members": {{"Body": {{"shape": "Stream"}}}}}},
+                    "Stream": {{"type": "blob", "streaming": true}}}}}}"#
+        );
+        Ok(Model::from_json(json.as_bytes())?)
+    };
+    let streaming = Unsupported::Trait("streaming".into());
+    let s3v4 = model("s3v4")?;
+    let op = s3v4.schema().service().operation("Op").ok_or("no Op")?;
+    assert_eq!(static_refusal(&s3v4, "zs3", op), Some(streaming.clone()));
+    let plain = model("v4")?;
+    let op = plain.schema().service().operation("Op").ok_or("no Op")?;
+    assert_eq!(static_refusal(&plain, "zs3", op), None);
+    let schemes = vec![scheme("sigv4", "s3")];
+    assert_eq!(refused(resolve_on(&plain, "zs3", schemes))?, streaming);
+    let schemes = vec![scheme("sigv4", "zs3")];
+    assert!(resolve_on(&plain, "zs3", schemes).is_ok());
+    Ok(())
+}
+
 /// The configured `payload_signing_enabled` reaches S3's option alone.
 #[test]
 fn only_s3_s_option_carries_the_payload_signing_setting() -> TestResult {
