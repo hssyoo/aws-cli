@@ -497,10 +497,11 @@ pub fn missing_builtin(
 
 /// `EndpointRulesetResolver._get_provider_params`: for each parameter the
 /// rule set declares, in its order, the operation's static context value,
-/// else the input member's that names it (`contextParam`), else the client
-/// context's (`_resolve_param_as_client_context_param`), which in the CLI
-/// is empty ([`missing_client_context`]), else the built-in's, so a
-/// customization's built-in never overrides a context parameter.
+/// else the input member's that names it (`contextParam`), else what its
+/// `operationContextParams` path finds in the input ([`ocp`]), else the
+/// client context's (`_resolve_param_as_client_context_param`), which in
+/// the CLI is empty ([`missing_client_context`]), else the built-in's, so
+/// a customization's built-in never overrides a context parameter.
 /// `account_id` is the deferred `AWS::Auth::AccountId`, `None` until the
 /// credentials are known.
 pub fn provider_params(
@@ -514,6 +515,7 @@ pub fn provider_params(
     for def in data.parameters.iter() {
         let value = static_param(operation, &def.name)
             .or_else(|| context_param(operation, input, &def.name))
+            .or_else(|| ocp::param(operation, input, &def.name))
             .or_else(|| match def.builtin.as_deref()? {
                 "AWS::Auth::AccountId" => account_id.map(|id| ParamValue::String(id.to_owned())),
                 builtin => builtins.get(builtin).cloned(),
@@ -528,7 +530,8 @@ pub fn provider_params(
 /// The first parameter the rule set requires, without a default or a
 /// built-in, that only the client context could give `operation`: one the
 /// model declares in `clientContextParams` and the operation neither sets
-/// (`staticContextParams`) nor binds to an input member (`contextParam`).
+/// (`staticContextParams`) nor binds to an input member (`contextParam`)
+/// or a path in its input (`operationContextParams`).
 /// The AWS CLI's client context is empty: it builds its clients with no
 /// `Config(client_context_params=...)`, and only an S3 client folds its `s3`
 /// configuration section into it (args.py
@@ -540,7 +543,9 @@ pub fn missing_client_context(
     operation: OperationSchema<'_>,
 ) -> Option<String> {
     let bound = |name: &str| {
-        static_param(operation, name).is_some() || context_member(operation, name).is_some()
+        static_param(operation, name).is_some()
+            || context_member(operation, name).is_some()
+            || ocp::declares(operation, name)
     };
     let declared = model.schema().service().client_context_params();
     data.parameters
@@ -786,6 +791,7 @@ fn schemes_of(properties: &serde_json::Value) -> Vec<SchemeProps> {
 }
 
 mod legacy;
+mod ocp;
 
 #[cfg(test)]
 mod tests;

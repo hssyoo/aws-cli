@@ -14,6 +14,7 @@ tests/argparse/**
 tests/models/**
 tests/diff/**
 aws-cli/tests/**
+crates/jmespath/testdata/**
 
 # Harness code and the configuration pytest reads (it searches upward
 # from each test, so a new file anywhere below tests/ can change a run).
