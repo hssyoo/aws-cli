@@ -1,5 +1,5 @@
 use super::*;
-use crate::protocol::ParseOptions;
+use crate::protocol::{AWS_QUERY, ParseOptions};
 use model::value::Key;
 
 const MODEL: &str = r#"{
@@ -48,10 +48,10 @@ fn input(json: &str) -> Value {
 #[test]
 fn the_form_is_botocore_s() -> Result<(), Box<dyn std::error::Error>> {
     let model = model()?;
-    let request = Query.serialize(
-        &model,
+    let request = AWS_QUERY.serialize_request(
         go(&model)?,
         &input(r#"{"Text":"a b&c=é/~+*'!()","Tags":[],"On":1,"Name":"n"}"#),
+        &model,
     )?;
     let body = String::from_utf8_lossy(&request.body).into_owned();
     assert_eq!(
@@ -85,12 +85,7 @@ fn attributes_and_metadata_are_read() -> Result<(), ParseError> {
         "xsi:type=\"T\">v</Value></GoResult>",
         "<ResponseMetadata><RequestId>id-1</RequestId></ResponseMetadata></GoResponse>"
     );
-    let parsed = Query.parse(
-        &model,
-        go(&model)?,
-        &response(200, body),
-        &ParseOptions::BOTOCORE,
-    )?;
+    let parsed = AWS_QUERY.parse(go(&model)?, &response(200, body), &ParseOptions::BOTOCORE)?;
     let Value::Map(parsed) = parsed else {
         return Err(ParseError::new("not a map"));
     };
@@ -114,11 +109,11 @@ fn a_query_error_keeps_botocore_s_error_dict() -> Result<(), ParseError> {
     let model = model()?;
     let body = "<ErrorResponse><Error><Type>Sender</Type><Code>Bad</Code><Message>no</Message>\
         <Detail>d</Detail></Error><RequestId>id-2</RequestId></ErrorResponse>";
-    let error = Query.parse_error(
-        &model,
+    let error = AWS_QUERY.parse_error(
         go(&model)?,
         &response(400, body),
         &ParseOptions::BOTOCORE,
+        model.schema().registry(),
     )?;
     let keys: Vec<&str> = error.error.keys().filter_map(Key::as_str).collect();
     assert_eq!(keys, ["Type", "Code", "Message", "Detail"]);
@@ -140,13 +135,8 @@ fn a_query_error_keeps_botocore_s_error_dict() -> Result<(), ParseError> {
 #[test]
 fn malformed_xml_is_a_response_parser_error() -> Result<(), ParseError> {
     let model = model()?;
-    let error = Query
-        .parse(
-            &model,
-            go(&model)?,
-            &response(200, "<a>"),
-            &ParseOptions::BOTOCORE,
-        )
+    let error = AWS_QUERY
+        .parse(go(&model)?, &response(200, "<a>"), &ParseOptions::BOTOCORE)
         .err();
     let expected = "Unable to parse response (no element found: line 1, column 3), invalid XML \
         received. Further retries may succeed:\nb'<a>'";
@@ -166,8 +156,8 @@ fn a_lone_surrogate_fails_the_form_as_urlencode_does() -> Result<(), Box<dyn std
             0x61, 0x62, 0xDC80,
         ])),
     );
-    let failed = Query
-        .serialize(&model, go(&model)?, &Value::Map(fields))
+    let failed = AWS_QUERY
+        .serialize_request(go(&model)?, &Value::Map(fields), &model)
         .err();
     assert_eq!(
         failed.map(|error| error.message),

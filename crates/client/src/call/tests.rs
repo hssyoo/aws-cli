@@ -8,7 +8,7 @@ use crate::hooks::{
     CallContext, Customization, HookError, HookResult, Interceptor, Scope, SettingDefault,
 };
 use crate::http::{Headers, HttpRequest, HttpResponse, Method};
-use crate::protocol::{ParseOptions, Protocol, Serialized};
+use crate::protocol::{BotocoreCompat, ClientProtocol, ParseOptions, Serialized};
 use crate::retry::{Attempt, RetryDecision};
 use crate::testing::{FixedRuntime, InMemoryTransport};
 use crate::transport::TransportError;
@@ -69,18 +69,21 @@ const PARTITIONS: &str = r#"{"version": "1.1", "partitions": [{"id": "aws",
 #[derive(Debug)]
 struct Fake;
 
-impl Protocol for Fake {
-    fn name(&self) -> &'static str {
-        "json"
+impl ClientProtocol for Fake {
+    fn protocol_id(&self) -> model::schema::TraitId {
+        model::schema::traits::AWS_QUERY
     }
-    fn epoch_timestamps(&self) -> bool {
-        false
+    fn payload_codec(&self) -> Option<&dyn model::serde::Codec> {
+        None
     }
-    fn serialize(
+    fn compat(&self) -> &BotocoreCompat {
+        &BotocoreCompat::RPC
+    }
+    fn serialize_request(
         &self,
-        _: &Model,
         op: OperationSchema<'_>,
         input: &Value,
+        _: &Model,
     ) -> Result<Serialized, SerializeError> {
         let body = model::pyjson::dumps(input, &model::pyjson::Options::compact(), None)
             .map_err(|error| SerializeError::new(error.to_string()))?;
@@ -96,9 +99,28 @@ impl Protocol for Fake {
             host_prefix: op.host_prefix().map(Into::into),
         })
     }
+    fn deserialize_response(
+        &self,
+        _: OperationSchema<'_>,
+        _: Option<model::schema::Schema<'_>>,
+        _: &HttpResponse,
+        _: &ParseOptions<'_>,
+    ) -> Result<Value, ParseError> {
+        Err(ParseError::new("the fake answers for the whole parse"))
+    }
+    fn parse_error_metadata(&self, _: &HttpResponse) -> Result<Map, ParseError> {
+        Err(ParseError::new("the fake answers for the whole parse"))
+    }
+    fn deserialize_modeled_error(
+        &self,
+        _: model::schema::Schema<'_>,
+        _: &HttpResponse,
+        _: &ParseOptions<'_>,
+    ) -> Result<Map, ParseError> {
+        Err(ParseError::new("the fake answers for the whole parse"))
+    }
     fn parse(
         &self,
-        _: &Model,
         _: OperationSchema<'_>,
         response: &HttpResponse,
         _: &ParseOptions<'_>,
@@ -118,10 +140,10 @@ impl Protocol for Fake {
     }
     fn parse_error(
         &self,
-        _: &Model,
         op: OperationSchema<'_>,
         response: &HttpResponse,
         _: &ParseOptions<'_>,
+        _: model::schema::TypeRegistry<'_>,
     ) -> Result<ServiceError, ParseError> {
         if response.body == b"bad" {
             return Err(ParseError::new("Unable to parse response"));

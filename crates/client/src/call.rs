@@ -21,8 +21,8 @@ use crate::credentials::CredentialSource;
 use crate::endpoint::{self, EndpointConfig, EndpointData, ResolvedEndpoint};
 use crate::error::{CallError, ParseError, ServiceError};
 use crate::hooks::{CallContext, Customization, HookError, Hooks, Slots};
-use crate::http::{Headers, HttpRequest, HttpResponse, Method, Url};
-use crate::protocol::{self, ParseHooks, Protocol, Serialized};
+use crate::http::{Headers, HttpRequest, HttpResponse, Method};
+use crate::protocol::{self, ClientProtocol, ParseHooks, Serialized};
 use crate::retry::{self, Attempt, ErrorKind, RetryDecision, Standard};
 use crate::runtime::Runtime;
 use crate::transport::{Timeouts, Transport, TransportError};
@@ -72,7 +72,7 @@ pub struct Output {
 #[derive(Debug)]
 pub struct Client {
     parts: ClientParts,
-    protocol: &'static dyn Protocol,
+    protocol: &'static dyn ClientProtocol,
     hooks: Hooks,
     retry: Standard,
     region: Option<String>,
@@ -104,10 +104,7 @@ impl Client {
     /// [`Unsupported::Protocol`] for one not implemented; see
     /// [`Self::with_protocol`].
     pub fn new(parts: ClientParts) -> Result<Self, CallError> {
-        let protocol = protocol::for_model(&parts.model).ok_or_else(|| {
-            let name = protocol::resolved_protocol(parts.model.metadata()).unwrap_or_default();
-            CallError::Unsupported(Unsupported::Protocol(name.to_owned()))
-        })?;
+        let protocol = protocol::select(&parts.model).map_err(CallError::Unsupported)?;
         Self::with_protocol(parts, protocol)
     }
     /// A client speaking `protocol`, its customizations chosen by scope
@@ -118,7 +115,7 @@ impl Client {
     /// `NoRegionError`, which botocore raises as it creates the client.
     pub fn with_protocol(
         parts: ClientParts,
-        protocol: &'static dyn Protocol,
+        protocol: &'static dyn ClientProtocol,
     ) -> Result<Self, CallError> {
         let hooks = Hooks::for_service(parts.customizations, &parts.service);
         let configured = parts
@@ -248,7 +245,7 @@ impl Client {
         }
         let serialized = self
             .protocol
-            .serialize(&parts.model, operation, &input)
+            .serialize_request(operation, &input, &parts.model)
             .map_err(CallError::Serialize)?;
         let request = self.join_request(&mut cx, &serialized, &endpoint.url, features)?;
         let scheme = self.select_auth(&mut cx, &endpoint)?;
@@ -274,7 +271,9 @@ impl Client {
     ) -> Result<HttpRequest, CallError> {
         let parts = &self.parts;
         let user_agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
-        let mut request = join(serialized.clone(), url, &user_agent)?;
+        let mut request = self
+            .protocol
+            .update_endpoint(serialized, url, &user_agent)?;
         for hook in self.hooks.interceptors(cx.operation.name()) {
             hook.after_serialize(cx, &mut request)
                 .map_err(prepare_hook_error)?;
@@ -396,44 +395,6 @@ fn after_prepare(error: CallError) -> CallError {
         )),
         other => other,
     }
-}
-
-/// `prepare_request_dict`: the serialized request joined to the endpoint
-/// (`_urljoin`), its host prefix before the endpoint's host, its query
-/// after the endpoint's, and `User-Agent` set after the serializer's
-/// headers. Host prefix injection is always on: the router sends
-/// `disable_host_prefix_injection` to Python.
-fn join(
-    serialized: Serialized,
-    endpoint: &str,
-    user_agent: &str,
-) -> Result<HttpRequest, CallError> {
-    let mut url = Url::parse(endpoint)
-        .ok_or_else(|| CallError::Endpoint(format!("Invalid endpoint: {endpoint}")))?;
-    if let Some(prefix) = &serialized.host_prefix {
-        url.authority.insert_str(0, prefix);
-    }
-    let path = &serialized.path;
-    if !(path.is_empty() || path == "/") {
-        match (url.path.strip_suffix('/'), path.starts_with('/')) {
-            (Some(base), true) => url.path = format!("{base}{path}"),
-            _ => url.path.push_str(path),
-        }
-    }
-    if !serialized.query.is_empty() {
-        if !url.query.is_empty() {
-            url.query.push('&');
-        }
-        url.query.push_str(&serialized.query);
-    }
-    let mut headers = serialized.headers;
-    headers.set("User-Agent", user_agent);
-    Ok(HttpRequest {
-        method: serialized.method,
-        url,
-        headers,
-        body: serialized.body,
-    })
 }
 
 /// What one attempt decided.
@@ -633,15 +594,17 @@ impl Client {
         // botocore raises before `needs-retry`.
         let (model, options) = (&self.parts.model, &self.parts.parse.options());
         if response.status >= 300 {
-            return match self
-                .protocol
-                .parse_error(model, cx.operation, &response, options)
-            {
+            return match self.protocol.parse_error(
+                cx.operation,
+                &response,
+                options,
+                model.schema().registry(),
+            ) {
                 Err(error) => Step::Done(Err(CallError::Parse(error))),
                 Ok(error) => self.service_error(cx, attempt, &response, error),
             };
         }
-        match self.protocol.parse(model, cx.operation, &response, options) {
+        match self.protocol.parse(cx.operation, &response, options) {
             Err(error) => Step::Done(Err(CallError::Parse(error))),
             // `parsed_response.update(customized_response_dict)` in
             // `Endpoint._do_get_response`: a parse to `None` raises there.
