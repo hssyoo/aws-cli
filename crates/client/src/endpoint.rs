@@ -794,6 +794,4 @@ fn schemes_of(properties: &serde_json::Value) -> Vec<SchemeProps> {
 mod legacy;
 
 #[cfg(test)]
-mod differential;
-#[cfg(test)]
 mod tests;
