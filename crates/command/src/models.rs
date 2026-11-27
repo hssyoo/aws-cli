@@ -26,6 +26,10 @@ mod table;
 #[doc(inline)]
 pub use table::{DerivedArgument, Origin, Paging, PagingToken, Table, Unpack, ValueType};
 
+/// The tests' parsed paginator entries.
+#[cfg(test)]
+type Json = serde_json::Value;
+
 /// A loaded service: its model, its command table and its operations'
 /// tables, derived once each.
 #[derive(Debug)]

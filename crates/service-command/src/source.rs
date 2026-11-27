@@ -71,7 +71,7 @@ impl Binder for ServiceSource<'_> {
             .ok_or(Admission::Python(PythonReason::UnsupportedSubcommand))?;
         let service_id = service
             .model
-            .metadata()
+            .facts()
             .hyphenized_service_id()
             .unwrap_or_else(|| command.clone());
         let admitted = match outcome {
