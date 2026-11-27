@@ -730,3 +730,6 @@ pub fn parse_starting_token(raw: &str, input_token: &[String]) -> Result<Startin
 pub fn resume_token(value: &Map, input_token: &[String]) -> Result<String, String> {
     crate::paginate::resume_token(value, input_token).map_err(|error| format!("{error:?}"))
 }
+
+#[cfg(test)]
+mod tests;
