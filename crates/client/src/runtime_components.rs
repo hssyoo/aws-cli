@@ -10,7 +10,7 @@ use crate::credentials::CredentialSource;
 use crate::endpoint::{EndpointConfig, EndpointData, EndpointParams, ResolvedEndpoint};
 use crate::error::CallError;
 use crate::interceptors::InterceptorContext;
-use crate::protocol::Protocol;
+use crate::protocol::ClientProtocol;
 use crate::retry::{Attempt, ErrorKind, RetryDecision, Standard};
 use crate::runtime::Runtime;
 use crate::runtime_plugin::ServicePlugins;
@@ -54,7 +54,7 @@ impl EndpointResolver {
 /// What a client's components are built from.
 #[derive(Debug)]
 pub struct ComponentParts {
-    pub protocol: &'static dyn Protocol,
+    pub protocol: &'static dyn ClientProtocol,
     pub endpoints: EndpointData,
     pub endpoint: EndpointConfig,
     pub credentials: Arc<dyn CredentialSource>,
@@ -67,7 +67,7 @@ pub struct ComponentParts {
 /// A client's components.
 #[derive(Debug)]
 pub struct RuntimeComponents {
-    pub protocol: &'static dyn Protocol,
+    pub protocol: &'static dyn ClientProtocol,
     pub endpoint_resolver: EndpointResolver,
     /// The one strategy, and so the one quota, of all the client's calls.
     pub retry_strategy: Standard,

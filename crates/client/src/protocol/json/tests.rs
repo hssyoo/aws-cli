@@ -1,6 +1,6 @@
 use super::*;
 use crate::codec::json::load as body_json;
-use crate::protocol::ParseOptions;
+use crate::protocol::{AWS_JSON_1_0, ParseOptions};
 use model::value::Key;
 
 const MODEL: &str = r#"{
@@ -45,7 +45,7 @@ fn the_request_is_botocore_s() -> Result<(), Box<dyn std::error::Error>> {
     let model = model().ok_or("model")?;
     let operation = first(&model).ok_or("operation")?;
     let input = Value::from_json(br#"{"N":1.5,"When":"2015-08-30T12:36:00Z","Data":"hi"}"#)?;
-    let request = Json.serialize(&model, operation, &input)?;
+    let request = AWS_JSON_1_0.serialize_request(operation, &input, &model)?;
     assert_eq!(request.headers.get("X-Amz-Target"), Some("Svc.Go"));
     assert_eq!(
         request.headers.get("Content-Type"),
@@ -56,7 +56,7 @@ fn the_request_is_botocore_s() -> Result<(), Box<dyn std::error::Error>> {
         String::from_utf8(request.body)?,
         r#"{"N": 1.5, "When": 1440938160, "Data": "aGk="}"#
     );
-    let empty = Json.serialize(&model, operation, &Value::Map(Map::new()))?;
+    let empty = AWS_JSON_1_0.serialize_request(operation, &Value::Map(Map::new()), &model)?;
     assert_eq!(empty.body, b"{}");
     Ok(())
 }
@@ -72,11 +72,11 @@ fn a_query_compatible_error_takes_its_code_from_the_header()
         ("x-amzn-requestid", "r"),
     ];
     let body = r#"{"__type":"com.amazon#New","message":"m"}"#;
-    let error = Json.parse_error(
-        &model,
+    let error = AWS_JSON_1_0.parse_error(
         first(&model).ok_or("operation")?,
         &response(400, &headers, body),
         &ParseOptions::BOTOCORE,
+        model.schema().registry(),
     )?;
     assert_eq!(
         error.error.keys().collect::<Vec<_>>(),
@@ -109,11 +109,11 @@ fn json_error_codes_and_modelled_members_are_botocore_s() -> Result<(), Box<dyn 
         (r#"{"__type":"Plain"}"#, "Plain"),
         (r#"{}"#, "500"),
     ] {
-        let error = Json.parse_error(
-            &model,
+        let error = AWS_JSON_1_0.parse_error(
             operation,
             &response(500, &[], body),
             &ParseOptions::BOTOCORE,
+            model.schema().registry(),
         )?;
         assert_eq!(error.code(), Some(code), "{body}");
         assert_eq!(error.error.keys().collect::<Vec<_>>(), ["Message", "Code"]);
@@ -121,11 +121,11 @@ fn json_error_codes_and_modelled_members_are_botocore_s() -> Result<(), Box<dyn 
         let expected: &[&str] = if code == "Bad" { &["Detail"] } else { &[] };
         assert_eq!(members, expected, "{body}");
     }
-    let plain = Json.parse_error(
-        &model,
+    let plain = AWS_JSON_1_0.parse_error(
         operation,
         &response(400, &[], "not json"),
         &ParseOptions::BOTOCORE,
+        model.schema().registry(),
     )?;
     assert_eq!(
         (plain.code(), plain.message()),
@@ -145,8 +145,7 @@ fn the_cli_s_handlers_keep_the_wire_values() -> Result<(), Box<dyn std::error::E
         blob: &text,
     };
     let body = r#"{"When":1440938160.5,"Data":"aGk=","Pick":{"New":1}}"#;
-    let Value::Map(parsed) = Json.parse(
-        &model,
+    let Value::Map(parsed) = AWS_JSON_1_0.parse(
         first(&model).ok_or("operation")?,
         &response(200, &[], body),
         &options,
@@ -170,7 +169,7 @@ fn output(headers: &[(&str, &str)], body: &[u8]) -> Result<Value, ParseError> {
         headers: Headers::from_pairs(headers.iter().copied()),
         body: body.to_vec(),
     };
-    Json.parse(&model, operation, &response, &ParseOptions::BOTOCORE)
+    AWS_JSON_1_0.parse(operation, &response, &ParseOptions::BOTOCORE)
 }
 
 /// A body is `json.loads`' document: `NaN` and the infinities are floats,

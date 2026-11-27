@@ -259,7 +259,7 @@ fn model_file(case: &Json) -> Result<PathBuf> {
 fn replay(case: &Json, counts: &mut [usize; 2]) -> Result<()> {
     let bytes = std::fs::read(model_file(case)?)?;
     let old = facade::model_from_json(&bytes)?;
-    if crate::protocol::for_model(&old).map(|p| p.name()) != Some("json") {
+    if crate::protocol::resolved_protocol(old.metadata()) != Ok("json") {
         return Ok(());
     }
     let set = c2j::schema_set(&serde_json::from_slice(&bytes)?)?;

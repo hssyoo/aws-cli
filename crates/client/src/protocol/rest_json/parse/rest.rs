@@ -165,11 +165,3 @@ fn update(parsed: &mut Map, members: Value) -> Result<(), ParseError> {
         ))),
     }
 }
-
-/// The `AttributeError` of `value.name` on a value without that method.
-pub(super) fn no_attribute(value: &Value, name: &str) -> ParseError {
-    ParseError::new(format!(
-        "'{}' object has no attribute '{name}'",
-        common::short_type(value)
-    ))
-}
