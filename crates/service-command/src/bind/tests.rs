@@ -372,3 +372,92 @@ fn max_items_precedes_only_a_later_argument_s_failure() -> Result<()> {
         assert!(!precedes("0", "max_results"));
     })
 }
+
+const MODIFY: [&str; 4] = ["ec2", "modify-instance-attribute", "--instance-id", "i-1"];
+
+fn modify(extra: &[&'static str]) -> Vec<&'static str> {
+    [&MODIFY[..], extra].concat()
+}
+
+/// toplevelbool's pair: `--flag` alone binds `{"Value": true}`, `--no-flag`
+/// `{"Value": false}`, and neither nothing.
+#[test]
+fn a_pulled_up_pair_binds_its_value_structure() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let flag =
+            |extra: &[&'static str]| input(&source, &modify(extra)).get("EbsOptimized").cloned();
+        assert_eq!(
+            flag(&["--ebs-optimized"]),
+            Some(value(r#"{"Value": true}"#))
+        );
+        assert_eq!(
+            flag(&["--no-ebs-optimized"]),
+            Some(value(r#"{"Value": false}"#))
+        );
+        assert_eq!(flag(&[]), None);
+        let both = input(
+            &source,
+            &modify(&["--no-source-dest-check", "--ebs-optimized"]),
+        );
+        assert_eq!(
+            keys(&both),
+            ["InstanceId", "EbsOptimized", "SourceDestCheck"]
+        );
+    })
+}
+
+/// Both halves of a pair raise `validate_boolean_mutex_groups`' error,
+/// ahead of the paging check, whichever order argv gives them in.
+#[test]
+fn both_halves_of_a_pair_raise() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let expected = concat!(
+            r#"Cannot specify both the "--ebs-optimized" option and "#,
+            r#"the "--no-ebs-optimized" option."#
+        );
+        for extra in [
+            &["--ebs-optimized", "--no-ebs-optimized"][..],
+            &["--no-ebs-optimized", "--ebs-optimized"],
+        ] {
+            assert_eq!(raised(&source, &modify(extra)), expected, "{extra:?}");
+        }
+        let first = raised(
+            &source,
+            &modify(&[
+                "--no-source-dest-check",
+                "--no-ebs-optimized",
+                "--source-dest-check",
+                "--ebs-optimized",
+            ]),
+        );
+        assert!(first.contains("\"--source-dest-check\""), "{first}");
+    })
+}
+
+/// `--flag VALUE` is unpacked as the structure, which only Python does;
+/// the mutex check runs before an unpack failure, which is then Python's.
+#[test]
+fn a_pair_s_value_and_its_conflict_route_to_python() -> Result<()> {
+    let route = |argv: &[&str]| crate::testing::route(argv, &[], &crate::testing::files("", ""));
+    let valued = route(&modify(&["--ebs-optimized", "Value=true"]))?;
+    assert!(
+        matches!(valued, Verdict::Python(PythonReason::UnsupportedOption)),
+        "{valued:?}"
+    );
+    let missing = ["--attribute", "file://missing"];
+    let conflict = route(&modify(
+        &[&missing[..], &["--ebs-optimized", "--no-ebs-optimized"]].concat(),
+    ))?;
+    assert!(
+        matches!(conflict, Verdict::Python(PythonReason::PagingHandler)),
+        "{conflict:?}"
+    );
+    let alone = route(&modify(&missing))?;
+    assert!(
+        matches!(&alone, Verdict::Failure(failure) if failure.kind == "paramfile_load"),
+        "{alone:?}"
+    );
+    Ok(())
+}
