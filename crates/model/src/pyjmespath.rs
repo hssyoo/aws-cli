@@ -1,10 +1,10 @@
 //! [`Value`]s as the Python objects JMESPath evaluates: the
 //! [`jmespath::Runtime`] that reads and builds them, and borrows Python's
-//! own texts from `model`'s `json`, `str()` and `int()`.
+//! own texts from this crate's `json`, `str()` and `int()`.
+use crate::pyjson::{self, LoadError, Options};
+use crate::pyrepr::{float_from_py_text, int_from_py_text, py_str, py_type_name};
+use crate::value::{Key, Map, Value, Wtf8Buf};
 use jmespath::{Error, Number, View};
-use model::pyjson::{self, LoadError, Options};
-use model::pyrepr::{float_from_py_text, int_from_py_text, py_str, py_type_name};
-use model::value::{Key, Map, Value, Wtf8Buf};
 
 /// The [`jmespath::Runtime`] of [`Value`]s.
 #[derive(Clone, Copy, Debug, Default)]
@@ -128,3 +128,6 @@ impl jmespath::Runtime for Python {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
