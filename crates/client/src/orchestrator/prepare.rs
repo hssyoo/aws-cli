@@ -242,6 +242,11 @@ pub(super) fn resolve_auth_scheme(
                 endpoint,
                 signing_enabled: client.settings.signing.value,
                 client_region: client.region.as_deref(),
+                payload_signing: client
+                    .settings
+                    .payload_signing
+                    .as_ref()
+                    .map(|setting| setting.value),
             })?;
     auth::choose(options, components.auth_schemes)
 }

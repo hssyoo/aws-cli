@@ -151,6 +151,10 @@ pub enum Field {
     /// The `s3` block's endpoint rule inputs: `addressing_style`,
     /// `use_accelerate_endpoint`, and `use_dualstack_endpoint`.
     S3Endpoint,
+    /// The `s3` block's `payload_signing_enabled`, which S3's signer reads
+    /// (`S3SigV4Auth._should_sha256_sign_payload`) and `ensure_boolean`
+    /// converts, never rejecting a value.
+    PayloadSigning,
     /// `AWS_MAX_ATTEMPTS`, then the profile's `max_attempts`.
     MaxAttempts,
     /// `AWS_REQUEST_CHECKSUM_CALCULATION`, then the profile's
@@ -186,6 +190,7 @@ const S3_ENDPOINT_KEYS: [&str; 3] = [
     "use_accelerate_endpoint",
     "use_dualstack_endpoint",
 ];
+const PAYLOAD_SIGNING_KEY: &str = "payload_signing_enabled";
 const MEMORY_LIMIT_VARIABLES: [(&str, u64); 2] = [
     ("AWS_CRT_S3_MEMORY_LIMIT_IN_MB", MEMORY_LIMIT_MIB),
     ("AWS_CRT_S3_MEMORY_LIMIT_IN_GIB", MEMORY_LIMIT_GIB),
@@ -198,8 +203,9 @@ const MEMORY_LIMIT_SETTINGS: [Source; 2] =
 impl Field {
     /// Every field, in declaration order, which is the order [`resolve`]
     /// reads them.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::S3Endpoint,
+        Self::PayloadSigning,
         Self::MaxAttempts,
         Self::RequestChecksumCalculation,
         Self::ResponseChecksumValidation,
@@ -220,6 +226,7 @@ impl Field {
     pub const fn settings(self) -> &'static [Source] {
         match self {
             Self::S3Endpoint => &S3_ENDPOINT_SETTINGS,
+            Self::PayloadSigning => &[Source::S3(PAYLOAD_SIGNING_KEY)],
             Self::MaxAttempts => &[
                 Source::Env("AWS_MAX_ATTEMPTS"),
                 Source::Profile("max_attempts"),
@@ -256,7 +263,8 @@ impl Field {
             Self::S3Endpoint => PythonReason::EndpointSetting,
             Self::MaxAttempts | Self::RetryMode => PythonReason::RetrySetting,
             Self::TcpKeepalive | Self::CaBundle | Self::Proxy => PythonReason::NetworkSetting,
-            Self::Transfer
+            Self::PayloadSigning
+            | Self::Transfer
             | Self::MemoryLimit
             | Self::RequestChecksumCalculation
             | Self::ResponseChecksumValidation => PythonReason::TransferSetting,

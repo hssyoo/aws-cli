@@ -175,6 +175,7 @@ const RETRY_MODE_ROW: Support = record(Field::RetryMode);
 const TRANSFER_ROW: Support = record(Field::Transfer);
 const MEMORY_LIMIT_ROW: Support = record(Field::MemoryLimit);
 const S3_ENDPOINT_ROW: Support = record(Field::S3Endpoint);
+const PAYLOAD_SIGNING_ROW: Support = record(Field::PayloadSigning);
 const REQUEST_CHECKSUM_ROW: Support = record(Field::RequestChecksumCalculation);
 const RESPONSE_CHECKSUM_ROW: Support = record(Field::ResponseChecksumValidation);
 const APP_ID_ROW: Support = record(Field::AppId);
@@ -827,9 +828,10 @@ pub const SETTINGS: &[Setting] = &[
     // the wrong type. `use_arn_region` arrives converted to a boolean, and
     // `disable_s3_express_session_auth` is always replaced by the resolved
     // top-level switch, so neither fails. Only an S3 client hands the block
-    // to its rules (`_is_s3_service` in `_build_endpoint_resolver`), and only
-    // its signer reads `payload_signing_enabled`, so another client ignores
-    // all four.
+    // to its rules (`_is_s3_service` in `_build_endpoint_resolver`), so
+    // another client ignores the first three. `payload_signing_enabled` is
+    // read by S3's signer (`S3SigV4Auth`), whatever the service, which a
+    // model operation's client honours.
     Setting {
         source: Source::S3("force_path_style"),
         support: Support::Unsupported(PythonReason::EndpointSetting),
@@ -874,7 +876,7 @@ pub const SETTINGS: &[Setting] = &[
     },
     Setting {
         source: Source::S3("payload_signing_enabled"),
-        support: Support::Ignored,
+        support: PAYLOAD_SIGNING_ROW,
         matching: Match::Present,
         scope: Scope::Service,
     },

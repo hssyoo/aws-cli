@@ -1106,3 +1106,42 @@ fn a_long_polling_operation_sleeps_when_the_quota_runs_out() -> TestResult {
     }
     Ok(())
 }
+
+/// An endpoint that names S3's signing name signs with S3's signer, and
+/// the configured `payload_signing_enabled` reaches it: `UNSIGNED-PAYLOAD`
+/// when false, the body's hash otherwise.
+#[test]
+fn an_s3_signed_call_honours_the_configured_payload_signing() -> TestResult {
+    const S3_RULES: &str = r#"{"version": "1.0", "parameters": {},
+        "rules": [{"conditions": [], "type": "endpoint", "endpoint": {
+            "url": "https://zfake.us-west-2.example.com",
+            "properties": {"authSchemes": [{"name": "sigv4", "signingName": "s3",
+                "signingRegion": "us-west-2", "disableDoubleEncoding": true}]}}}]}"#;
+    for (configured, expected) in [
+        (Some(false), Some("UNSIGNED-PAYLOAD".to_owned())),
+        (Some(true), None),
+        (None, None),
+    ] {
+        let mut settings = settings();
+        settings.payload_signing =
+            configured.map(|value| Resolved::new(value, Source::S3("payload_signing_enabled")));
+        let f = fixture_with(S3_RULES, settings, keys(), &[])?;
+        f.transport.respond(ok("{}"));
+        f.client.call("Op", input("a"))?;
+        let sent = f.transport.sent();
+        let request = &sent[0].0;
+        let hash = request.headers.get("X-Amz-Content-SHA256");
+        let body_hash = sigv4::sha256_hex(&request.body);
+        assert_eq!(
+            hash,
+            Some(expected.as_deref().unwrap_or(&body_hash)),
+            "{configured:?}"
+        );
+        let authorization = request.headers.get("Authorization").unwrap_or_default();
+        assert!(
+            authorization.contains("/us-west-2/s3/aws4_request"),
+            "{authorization}"
+        );
+    }
+    Ok(())
+}

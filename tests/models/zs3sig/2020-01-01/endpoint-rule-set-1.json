@@ -92,7 +92,17 @@
             }
           ],
           "endpoint": {
-            "url": "https://zs3sig-fips.{Region}.{PartitionResult#dualStackDnsSuffix}"
+            "url": "https://zs3sig-fips.{Region}.{PartitionResult#dualStackDnsSuffix}",
+            "properties": {
+              "authSchemes": [
+                {
+                  "name": "sigv4",
+                  "signingName": "s3",
+                  "signingRegion": "{Region}",
+                  "disableDoubleEncoding": true
+                }
+              ]
+            }
           }
         },
         {
@@ -109,7 +119,17 @@
             }
           ],
           "endpoint": {
-            "url": "https://zs3sig-fips.{Region}.{PartitionResult#dnsSuffix}"
+            "url": "https://zs3sig-fips.{Region}.{PartitionResult#dnsSuffix}",
+            "properties": {
+              "authSchemes": [
+                {
+                  "name": "sigv4",
+                  "signingName": "s3",
+                  "signingRegion": "{Region}",
+                  "disableDoubleEncoding": true
+                }
+              ]
+            }
           }
         },
         {
@@ -126,14 +146,34 @@
             }
           ],
           "endpoint": {
-            "url": "https://zs3sig.{Region}.{PartitionResult#dualStackDnsSuffix}"
+            "url": "https://zs3sig.{Region}.{PartitionResult#dualStackDnsSuffix}",
+            "properties": {
+              "authSchemes": [
+                {
+                  "name": "sigv4",
+                  "signingName": "s3",
+                  "signingRegion": "{Region}",
+                  "disableDoubleEncoding": true
+                }
+              ]
+            }
           }
         },
         {
           "type": "endpoint",
           "conditions": [],
           "endpoint": {
-            "url": "https://zs3sig.{Region}.{PartitionResult#dnsSuffix}"
+            "url": "https://zs3sig.{Region}.{PartitionResult#dnsSuffix}",
+            "properties": {
+              "authSchemes": [
+                {
+                  "name": "sigv4",
+                  "signingName": "s3",
+                  "signingRegion": "{Region}",
+                  "disableDoubleEncoding": true
+                }
+              ]
+            }
           }
         }
       ]

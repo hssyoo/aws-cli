@@ -32,6 +32,36 @@
       "output": {
         "shape": "NoteOutput"
       }
+    },
+    "PutKey": {
+      "name": "PutKey",
+      "http": {
+        "method": "PUT",
+        "requestUri": "/{Bucket}/{Key+}"
+      },
+      "input": {
+        "shape": "PutKeyInput",
+        "locationName": "PutKeyRequest",
+        "xmlNamespace": {
+          "uri": "https://zs3sig.example.com/doc/"
+        }
+      },
+      "output": {
+        "shape": "PutKeyOutput"
+      }
+    },
+    "ListKeys": {
+      "name": "ListKeys",
+      "http": {
+        "method": "GET",
+        "requestUri": "/{Bucket}?list-type=2"
+      },
+      "input": {
+        "shape": "ListKeysInput"
+      },
+      "output": {
+        "shape": "ListKeysOutput"
+      }
     }
   },
   "shapes": {
@@ -53,6 +83,93 @@
     },
     "Text": {
       "type": "string"
+    },
+    "PutKeyInput": {
+      "type": "structure",
+      "required": [
+        "Bucket",
+        "Key"
+      ],
+      "members": {
+        "Bucket": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "Bucket"
+        },
+        "Key": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "Key"
+        },
+        "Tag": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "x-amz-meta-tag"
+        },
+        "Note": {
+          "shape": "Text"
+        }
+      }
+    },
+    "PutKeyOutput": {
+      "type": "structure",
+      "members": {
+        "ETag": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "ETag"
+        }
+      }
+    },
+    "ListKeysInput": {
+      "type": "structure",
+      "required": [
+        "Bucket"
+      ],
+      "members": {
+        "Bucket": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "Bucket"
+        },
+        "Prefix": {
+          "shape": "Text",
+          "location": "querystring",
+          "locationName": "prefix"
+        },
+        "StartAfter": {
+          "shape": "Text",
+          "location": "querystring",
+          "locationName": "start-after"
+        },
+        "MaxKeys": {
+          "shape": "Count",
+          "location": "querystring",
+          "locationName": "max-keys"
+        }
+      }
+    },
+    "ListKeysOutput": {
+      "type": "structure",
+      "members": {
+        "Keys": {
+          "shape": "KeyList",
+          "locationName": "Key"
+        },
+        "KeyCount": {
+          "shape": "Count"
+        }
+      }
+    },
+    "KeyList": {
+      "type": "list",
+      "member": {
+        "shape": "Text"
+      },
+      "flattened": true
+    },
+    "Count": {
+      "type": "integer"
     }
   }
 }
