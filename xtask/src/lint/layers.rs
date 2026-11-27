@@ -81,6 +81,7 @@ const CLIENT: &[&str] = &[
     "credentials",
     "crt",
     "endpoint-rules",
+    "jmespath",
     "model",
     "pytext",
     "sigv4",

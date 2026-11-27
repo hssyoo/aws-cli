@@ -93,6 +93,7 @@ dependencies = [
  "credentials",
  "crt",
  "endpoint-rules",
+ "jmespath",
  "model",
  "pytext",
  "serde_json",
