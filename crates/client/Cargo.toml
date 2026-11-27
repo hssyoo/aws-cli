@@ -14,20 +14,21 @@ testing = []
 cli-core = { path = "../cli-core" }
 credentials = { path = "../credentials" }
 crt = { path = "../crt" }
+# The rules engine every endpoint resolves with.
+endpoint-rules = { path = "../endpoint-rules" }
 model = { path = "../model" }
 pytext = { path = "../pytext" }
 sigv4 = { path = "../sigv4" }
 timestamp = { path = "../timestamp" }
+# The type of a resolved endpoint's properties.
+serde_json.workspace = true
 
 [dev-dependencies]
 awscli-argparse = { path = "../awscli-argparse", features = ["testing"] }
 crt = { path = "../crt", features = ["loopback"] }
-# The native engine, which `endpoint::differential` compares with the CRT.
-endpoint-rules = { path = "../endpoint-rules" }
 model = { path = "../model", features = ["testing"] }
 sigv4 = { path = "../sigv4", features = ["testing"] }
 timestamp = { path = "../timestamp", features = ["testing"] }
-serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -1,13 +1,15 @@
 //! Endpoint resolution for one call, as botocore's `EndpointRulesetResolver`
 //! does it (botocore/regions.py): the parameters, from the operation, its
 //! input and the client's built-ins, then the service's rule set,
-//! evaluated by the CRT's rules engine.
+//! evaluated by the native rules engine (`endpoint-rules`), which a client
+//! decodes once and its clones share.
 //!
 //! The client sends no endpoint headers, so a resolution that returns any
 //! is refused ([`Unsupported::EndpointHeaders`]): of the rule sets this
 //! botocore ships, only s3control's returns them.
 use crate::admission::Unsupported;
 use crate::error::CallError;
+use endpoint_rules::{DecodeError, EvalValue, Library, Outcome, Params, Partitions, Program};
 use model::schema::{OperationSchema, ServiceSchema};
 use model::shapes::Model;
 use model::source::{Kind, LoadError, Source, load_data_bytes, load_service_bytes};
@@ -84,13 +86,20 @@ impl From<LoadError> for DataError {
     }
 }
 
+/// A decoded document, decoded on first use and shared by every clone.
+type Decoded<T> = Arc<OnceLock<Result<Arc<T>, DecodeError>>>;
+
 /// A service's rule set and the partitions it reads, with what the legacy
-/// resolver says of a call with no region.
+/// resolver says of a call with no region. A clone (one per client, and so
+/// per page) shares the documents and their decode, so each is decoded at
+/// most once.
 #[derive(Clone, Debug)]
 pub struct EndpointData {
-    rules: Vec<u8>,
-    partitions: Vec<u8>,
-    parameters: Vec<ParamDef>,
+    rules: Arc<[u8]>,
+    partitions: Arc<[u8]>,
+    program: Decoded<Program>,
+    partition_table: Decoded<Partitions>,
+    parameters: Arc<[ParamDef]>,
     /// `endpoints.json` and the service's key there, parsed only for a call
     /// that needs it ([`Legacy`]): parsing the whole document costs about
     /// 6 ms, and a call with a region and neither FIPS nor dual-stack needs
@@ -154,10 +163,11 @@ impl EndpointData {
     /// A rule set without its parameters, or an `endpoints.json` that is
     /// not an object.
     pub fn from_documents(
-        rules: Vec<u8>,
-        partitions: Vec<u8>,
+        rules: impl Into<Arc<[u8]>>,
+        partitions: impl Into<Arc<[u8]>>,
         endpoints: Option<(&[u8], &str)>,
     ) -> Result<Self, DataError> {
+        let rules = rules.into();
         let parameters = parameter_defs(&rules)?;
         let legacy = endpoints.map(|(bytes, prefix)| {
             Arc::new(LegacyDocument {
@@ -168,13 +178,32 @@ impl EndpointData {
         });
         Ok(Self {
             rules,
-            partitions,
-            parameters,
+            partitions: partitions.into(),
+            program: Arc::default(),
+            partition_table: Arc::default(),
+            parameters: parameters.into(),
             legacy,
         })
     }
     pub fn parameters(&self) -> &[ParamDef] {
         &self.parameters
+    }
+    /// The decoded rule set and partitions, in the order the CRT engine
+    /// read them, so a rule set that fails reports before its partitions.
+    fn decoded(&self) -> Result<(&Program, &Partitions), &DecodeError> {
+        fn get<T>(
+            cell: &Decoded<T>,
+            decode: impl FnOnce() -> Result<T, DecodeError>,
+        ) -> Result<&T, &DecodeError> {
+            cell.get_or_init(|| decode().map(Arc::new))
+                .as_ref()
+                .map(|decoded| &**decoded)
+        }
+        let program = get(&self.program, || Program::decode(&self.rules))?;
+        let partitions = get(&self.partition_table, || {
+            Partitions::decode(&self.partitions)
+        })?;
+        Ok((program, partitions))
     }
 }
 
@@ -482,7 +511,7 @@ pub fn provider_params(
     account_id: Option<&str>,
 ) -> EndpointParams {
     let mut params = EndpointParams::default();
-    for def in &data.parameters {
+    for def in data.parameters.iter() {
         let value = static_param(operation, &def.name)
             .or_else(|| context_param(operation, input, &def.name))
             .or_else(|| match def.builtin.as_deref()? {
@@ -652,55 +681,50 @@ impl ResolvedEndpoint {
     }
 }
 
-/// Evaluates `data`'s rule set for `params` with the CRT's engine
-/// (`EndpointProvider.resolve_endpoint`).
+/// Evaluates `data`'s rule set for `params`
+/// (`EndpointProvider.resolve_endpoint`). A parameter the rule set does not
+/// declare is dropped.
 ///
 /// # Errors
 /// `EndpointResolutionError`, with the rule's message, for an error rule;
 /// botocore's `InvalidHostLabelError` for one that names an invalid region
-/// in an ARN (`ruleset_error_to_botocore_exception`).
+/// in an ARN (`ruleset_error_to_botocore_exception`); the engine's text for
+/// a document it cannot decode or a rule set it cannot evaluate.
 pub fn resolve(
     data: &EndpointData,
     params: &EndpointParams,
 ) -> Result<ResolvedEndpoint, CallError> {
-    use crt::endpoints::{Documents, ParamValue as Crt, Resolved};
-    let arrays: Vec<Vec<&str>> = params
-        .iter()
-        .map(|(_, value)| match value {
-            ParamValue::StringArray(items) => items.iter().map(String::as_str).collect(),
-            _ => Vec::new(),
-        })
-        .collect();
-    let list: Vec<(&str, Crt<'_>)> = params
-        .iter()
-        .zip(&arrays)
-        .map(|((name, value), array)| {
-            let value = match value {
-                ParamValue::String(text) => Crt::String(text),
-                ParamValue::Boolean(flag) => Crt::Boolean(*flag),
-                ParamValue::StringArray(_) => Crt::StringArray(array),
-            };
-            (name, value)
-        })
-        .collect();
-    let documents = Documents {
-        rules_json: &data.rules,
-        partitions_json: &data.partitions,
-    };
-    match crt::endpoints::resolve_with_headers(documents, &list) {
+    let (program, partitions) = data
+        .decoded()
+        .map_err(|error| CallError::Endpoint(error.to_string()))?;
+    let mut args = Params::new(program);
+    for (name, value) in params.iter() {
+        if let Some(def) = program.param(name) {
+            args.set(def.slot(), eval_value(value));
+        }
+    }
+    match program.evaluate(&args, &Library { partitions }) {
         // The client sends no endpoint headers (only s3control's rule set
         // returns any today), so a resolution with them is Python's.
-        Ok((Resolved::Endpoint { .. }, headers)) if headers > 0 => {
+        Ok(Outcome::Endpoint(endpoint)) if !endpoint.headers.is_empty() => {
             Err(CallError::Unsupported(Unsupported::EndpointHeaders))
         }
-        Ok((Resolved::Endpoint { url, properties }, _)) => Ok(ResolvedEndpoint {
-            url: String::from_utf8_lossy(&url).into_owned(),
-            auth_schemes: auth_schemes(&properties),
+        Ok(Outcome::Endpoint(endpoint)) => Ok(ResolvedEndpoint {
+            auth_schemes: schemes_of(&endpoint.properties),
+            url: endpoint.url,
         }),
-        Ok((Resolved::RuleError(message), _)) => Err(CallError::Endpoint(rule_error_text(
-            &String::from_utf8_lossy(&message),
-        ))),
+        Ok(Outcome::Error(message)) => Err(CallError::Endpoint(rule_error_text(&message))),
         Err(error) => Err(CallError::Endpoint(error.to_string())),
+    }
+}
+
+fn eval_value(value: &ParamValue) -> EvalValue {
+    match value {
+        ParamValue::String(text) => EvalValue::str(text),
+        ParamValue::Boolean(flag) => EvalValue::Bool(*flag),
+        ParamValue::StringArray(items) => {
+            EvalValue::Array(items.iter().map(|item| EvalValue::str(item)).collect())
+        }
     }
 }
 
@@ -717,17 +741,20 @@ fn rule_error_text(message: &str) -> String {
     }
 }
 
-/// The `authSchemes` of a resolved endpoint's properties.
+/// The `authSchemes` of a resolved endpoint's properties, as JSON text.
+#[cfg(test)]
 fn auth_schemes(properties: &[u8]) -> Vec<SchemeProps> {
-    let Ok(properties) = Value::from_json(properties) else {
+    serde_json::from_slice(properties).map_or_else(|_| Vec::new(), |value| schemes_of(&value))
+}
+
+/// The `authSchemes` of a resolved endpoint's properties: each entry's
+/// strings and flag, a member of another type left unset.
+fn schemes_of(properties: &serde_json::Value) -> Vec<SchemeProps> {
+    let Some(schemes) = properties.get("authSchemes").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
-    let Some(Value::List(schemes)) = &properties.get("authSchemes") else {
-        return Vec::new();
-    };
-    let text = |scheme: &Value, key| match scheme.get(key) {
-        Some(Value::String(text)) => Some(text.clone()),
-        _ => None,
+    let text = |scheme: &serde_json::Value, key| {
+        scheme.get(key).and_then(|v| v.as_str()).map(str::to_owned)
     };
     schemes
         .iter()
@@ -735,22 +762,18 @@ fn auth_schemes(properties: &[u8]) -> Vec<SchemeProps> {
             name: text(scheme, "name").unwrap_or_default(),
             signing_name: text(scheme, "signingName"),
             signing_region: text(scheme, "signingRegion"),
-            signing_region_set: match scheme.get("signingRegionSet") {
-                Some(Value::List(regions)) => Some(
+            signing_region_set: scheme
+                .get("signingRegionSet")
+                .and_then(|v| v.as_array())
+                .map(|regions| {
                     regions
                         .iter()
-                        .filter_map(|region| match region {
-                            Value::String(region) => Some(region.clone()),
-                            _ => None,
-                        })
-                        .collect(),
-                ),
-                _ => None,
-            },
-            disable_double_encoding: match scheme.get("disableDoubleEncoding") {
-                Some(Value::Bool(flag)) => Some(*flag),
-                _ => None,
-            },
+                        .filter_map(|region| region.as_str().map(str::to_owned))
+                        .collect()
+                }),
+            disable_double_encoding: scheme
+                .get("disableDoubleEncoding")
+                .and_then(|v| v.as_bool()),
         })
         .collect()
 }

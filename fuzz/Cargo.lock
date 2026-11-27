@@ -60,8 +60,10 @@ dependencies = [
  "cli-core",
  "credentials",
  "crt",
+ "endpoint-rules",
  "model",
  "pytext",
+ "serde_json",
  "sigv4",
  "timestamp",
 ]
