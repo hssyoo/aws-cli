@@ -27,6 +27,17 @@ use traits::C2jTraits;
 
 type Object = Map<String, Json>;
 
+/// `object.get(key)`. A short object, as a shape, reference or operation
+/// is, is scanned: comparing a few keys costs less than hashing one.
+pub(crate) fn get<'a>(object: &'a Object, key: &str) -> Option<&'a Json> {
+    if object.len() > 8 {
+        return object.get(key);
+    }
+    object
+        .iter()
+        .find_map(|(name, value)| (name == key).then_some(value))
+}
+
 static EMPTY: std::sync::LazyLock<Object> = std::sync::LazyLock::new(Object::new);
 
 /// The namespace of a C2J model's shape ids: `c2j.<service-dir>`.
@@ -94,7 +105,7 @@ impl<'a> Walk<'a> {
         for (name, definition) in self.definitions {
             let invalid = || ModelError::InvalidShape(name.as_str().into());
             let object = definition.as_object().ok_or_else(invalid)?;
-            let type_name = object.get("type").and_then(Json::as_str);
+            let type_name = get(object, "type").and_then(Json::as_str);
             let type_name = type_name.ok_or_else(invalid)?;
             let mut traits = C2jTraits::default();
             traits.apply(object, name, &mut self.builder)?;
@@ -143,7 +154,7 @@ impl<'a> Walk<'a> {
         name: &str,
         object: &'a Object,
     ) -> Result<(), ModelError> {
-        let definitions = match object.get("members") {
+        let definitions = match get(object, "members") {
             None => &*EMPTY,
             Some(members) => members
                 .as_object()
@@ -169,9 +180,7 @@ impl<'a> Walk<'a> {
         object: &Object,
         key: &str,
     ) -> Result<(DraftId, MemberTraits), ModelError> {
-        let reference = object
-            .get(key)
-            .ok_or_else(|| ModelError::InvalidShape(name.into()))?;
+        let reference = get(object, key).ok_or_else(|| ModelError::InvalidShape(name.into()))?;
         self.reference(name, reference, &|| {
             (Site::Shape(name.into()), format!("{key}."))
         })
@@ -233,12 +242,12 @@ impl<'a> Walk<'a> {
         keys::record_operation(name, object, &mut self.uninterpreted);
         let mut shapes = OperationShapes::default();
         for (key, slot) in [("input", &mut shapes.input), ("output", &mut shapes.output)] {
-            if let Some(reference) = object.get(key) {
+            if let Some(reference) = get(object, key) {
                 let at = || (Site::Operation(name.into()), format!("{key}."));
                 *slot = Some(self.root(name, reference, &at)?);
             }
         }
-        if let Some(errors) = object.get("errors") {
+        if let Some(errors) = get(object, "errors") {
             let errors = errors.as_array().ok_or_else(|| ModelError::InvalidTrait {
                 shape: name.into(),
                 name: "errors",

@@ -244,7 +244,7 @@ pub(crate) fn record_operation(name: &str, object: &Object, out: &mut Vec<Uninte
         out,
     );
     for (key, known, ignored) in OPERATION_NESTED {
-        if let Some(nested) = object.get(*key).and_then(Json::as_object) {
+        if let Some(nested) = super::get(object, key).and_then(Json::as_object) {
             record(nested, known, ignored, &|| (site(), format!("{key}.")), out);
         }
     }
@@ -253,8 +253,7 @@ pub(crate) fn record_operation(name: &str, object: &Object, out: &mut Vec<Uninte
         ("operationContextParams", "path"),
     ];
     for (key, known) in params {
-        let entries = object
-            .get(key)
+        let entries = super::get(object, key)
             .and_then(Json::as_object)
             .into_iter()
             .flatten();

@@ -44,12 +44,11 @@ impl Fields<'_> {
     }
 
     fn flag(&self, key: &str) -> bool {
-        self.object.get(key).is_some_and(truthy)
+        super::get(self.object, key).is_some_and(truthy)
     }
 
     fn text(&self, key: &'static str) -> Result<Option<Box<str>>, ModelError> {
-        self.object
-            .get(key)
+        super::get(self.object, key)
             .map(|value| {
                 value
                     .as_str()
@@ -60,14 +59,13 @@ impl Fields<'_> {
     }
 
     fn texts(&self, key: &'static str) -> Result<Texts, ModelError> {
-        self.object
-            .get(key)
+        super::get(self.object, key)
             .map(|value| strings(value).ok_or_else(|| self.invalid(key)))
             .transpose()
     }
 
     fn nested(&self, key: &'static str) -> Result<Option<Fields<'_>>, ModelError> {
-        let Some(value) = self.object.get(key) else {
+        let Some(value) = super::get(self.object, key) else {
             return Ok(None);
         };
         let object = value.as_object().ok_or_else(|| self.invalid(key))?;
