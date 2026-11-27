@@ -170,15 +170,16 @@ async def test_forced_native_refuses_a_python_command_line(
         # urllib3 rejects a negative connect timeout when the client is built.
         ({}, "", ["--cli-connect-timeout", "-5", "s3", "ls"],
          "python_only_global"),
-        # Model operations: s3's protocol (rest-xml) is not the native
-        # client's; DescribeStream's paginator reads its output token with a
+        # Model operations: the fake cbor service's protocol
+        # (smithy-rpc-v2-cbor) is not the native client's; DescribeStream's paginator reads its output token with a
         # JMESPath expression (`StreamDescription.Shards[-1].ShardId`), which
         # the native paginator does not evaluate; every
         # dynamodb operation meets the paginator fix, which no native
         # customization replaces; table is a format only Python writes;
         # client-side monitoring sends metrics over UDP; --cli-input-json is
         # an option only Python binds.
-        ({}, "", ["s3api", "list-buckets"], "unsupported_protocol"),
+        ({"AWS_DATA_PATH": str(MODELS)}, "", ["zcbor", "get-record", "--id", "a"],
+         "unsupported_protocol"),
         ({}, "", ["kinesis", "describe-stream", "--stream-name", "s"],
          "paginator"),
         ({}, "", ["dynamodb", "describe-table", "--table-name", "t"],
