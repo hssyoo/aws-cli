@@ -57,12 +57,11 @@ PYTHON_ROUTED: Final = {
     "forced-python": Case(
         LISTING, "env_override", environment={ROUTER: "python"}
     ),
-    # A model operation signed with a scheme the native client does not
-    # implement (S3's SigV4 variant), the one service the in-memory store
-    # answers.
-    "unsupported-auth": Case(
+    # A model operation whose service's customizations the native client
+    # has not ported (S3's), the one service the in-memory store answers.
+    "unported-customization": Case(
         ("s3api", "list-objects-v2", "--bucket", BUCKET),
-        "unsupported_auth",
+        "unported_customization",
     ),
     "plugins-listing": Case(LISTING, "plugins", config=PLUGINS),
     # Upstream's CRT client sends the download's GetObject, as it does for

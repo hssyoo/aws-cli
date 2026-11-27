@@ -1,8 +1,9 @@
 //! How a call is authenticated, chosen as botocore chooses it
 //! (`BaseClient._make_api_call`, `_resolve_endpoint_ruleset`,
 //! `RequestSigner._choose_signer`, `set_operation_specific_signer`), and
-//! SigV4 signing over the `sigv4` crate. SigV4 and none are implemented;
-//! every other auth type is an admission refusal.
+//! SigV4 signing over the `sigv4` crate. SigV4, S3's SigV4 variant
+//! (`S3SigV4Auth`) and none are implemented; every other auth type is an
+//! admission refusal.
 //!
 //! The SRA's auth components, as the orchestrator runs them: the client's
 //! [`AuthSchemeOptionResolver`] gives the call's options in `prepare` (it
@@ -25,7 +26,8 @@ use timestamp::Timestamp;
 mod schemes;
 
 pub use schemes::{
-    AUTH_SCHEMES, NO_AUTH, NoAuthScheme, NoAuthSigner, SIGV4, SigV4AuthScheme, SigV4Signer,
+    AUTH_SCHEMES, NO_AUTH, NoAuthScheme, NoAuthSigner, S3_SIGV4, S3SigV4AuthScheme, S3SigV4Signer,
+    SIGV4, SigV4AuthScheme, SigV4Signer,
 };
 
 /// An auth scheme's Smithy shape id.
@@ -37,6 +39,9 @@ impl AuthSchemeId {
     pub const SIGV4: Self = Self("aws.auth#sigv4");
     /// `smithy.api#noAuth`.
     pub const NO_AUTH: Self = Self("smithy.api#noAuth");
+    /// botocore's `s3v4` signer: S3's variant of `aws.auth#sigv4`, which
+    /// Smithy does not name apart, so the S3 scheme has an id of its own.
+    pub const S3_SIGV4: Self = Self("s3v4");
 
     /// The shape id.
     pub const fn as_str(self) -> &'static str {
@@ -51,6 +56,13 @@ pub struct SigningOverrides {
     pub region: Option<String>,
     /// The signing name: the endpoint's, else the model's.
     pub name: Option<String>,
+    /// The endpoint scheme's `disableDoubleEncoding`, when it gives one.
+    /// botocore's signers never read it: `S3SigV4Auth` never encodes the
+    /// path again, whatever it says, and `SigV4Auth` always does.
+    pub disable_double_encoding: Option<bool>,
+    /// The `s3` block's `payload_signing_enabled`, when configured, which
+    /// only S3's signer reads (`S3SigV4Auth._should_sha256_sign_payload`).
+    pub payload_signing: Option<bool>,
 }
 
 /// One way a call may be authenticated.
@@ -81,6 +93,8 @@ pub struct AuthSchemeOptionResolverParams<'a> {
     /// False for an unsigned client (`--no-sign-request`).
     pub signing_enabled: bool,
     pub client_region: Option<&'a str>,
+    /// The `s3` block's `payload_signing_enabled`, when configured.
+    pub payload_signing: Option<bool>,
 }
 
 /// The auth option resolver: botocore's choice ([`select`]). One
@@ -98,7 +112,7 @@ impl AuthSchemeOptionResolver {
         &self,
         p: &AuthSchemeOptionResolverParams<'_>,
     ) -> Result<Vec<AuthSchemeOption>, CallError> {
-        let option = select(
+        let mut option = select(
             p.model,
             p.service,
             p.operation,
@@ -106,6 +120,9 @@ impl AuthSchemeOptionResolver {
             p.signing_enabled,
             p.client_region,
         )?;
+        if option.scheme_id == AuthSchemeId::S3_SIGV4 {
+            option.signing.payload_signing = p.payload_signing;
+        }
         Ok(vec![option])
     }
 }
@@ -199,62 +216,117 @@ fn resolve_auth_type(first: &str) -> Result<String, Unsupported> {
         .ok_or_else(|| Unsupported::Auth(first.to_owned()))
 }
 
+/// The signing names botocore signs with S3's signer (`S3_SIGNING_NAMES`).
+const S3_SIGNING_NAMES: [&str; 4] = ["s3", "s3-outposts", "s3-object-lambda", "s3express"];
+
 /// What a client signs with unless an operation or its endpoint says
-/// otherwise: `signatureVersion`, else the service's `auth` trait, else
-/// SigV4; nothing for an unsigned client (`--no-sign-request`).
+/// otherwise (`ClientEndpointBridge._resolve_signature_version`): the
+/// service's `auth` trait, else its `signatureVersion`, else SigV4; nothing
+/// for an unsigned client (`--no-sign-request`). botocore also gives S3 by
+/// name `s3v4`; every S3 and S3 Control endpoint names its scheme, so that
+/// rule never picks the signer, and [`select`] refuses the one call it
+/// could (SigV4 with an S3 signing name and no endpoint scheme).
 fn client_signature_version(model: &Model, signing: bool) -> Result<Option<String>, Unsupported> {
     if !signing {
         return Ok(None);
     }
-    // `signatureVersion` is botocore metadata, outside the schemas.
-    if let Some(version) = model.metadata().signature_version.as_deref() {
-        return Ok(Some(version.to_owned()));
-    }
-    match model
+    if let Some(first) = model
         .schema()
         .service()
         .auth()
         .and_then(|mut traits| traits.next())
     {
-        Some(first) => resolve_auth_type(first).map(Some),
-        None => Ok(Some("v4".to_owned())),
+        return resolve_auth_type(first).map(Some);
+    }
+    // `signatureVersion` is botocore metadata, outside the schemas.
+    let version = model.metadata().signature_version.as_deref();
+    Ok(Some(version.unwrap_or("v4").to_owned()))
+}
+
+/// The signers the client implements.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Signer {
+    None,
+    SigV4,
+    S3SigV4,
+}
+
+/// `set_operation_specific_signer`, for the auth type an operation or its
+/// endpoint gives: SigV4 becomes S3's for an S3 signing name.
+fn operation_signer(
+    auth_type: &str,
+    signing_name: &str,
+    unsigned_payload: bool,
+) -> Result<Signer, Unsupported> {
+    match auth_type {
+        "v4" if unsigned_payload => Err(Unsupported::UnsignedPayload),
+        "v4" if S3_SIGNING_NAMES.contains(&signing_name) => Ok(Signer::S3SigV4),
+        other => client_signer(other, unsigned_payload),
     }
 }
 
+/// The signer of a signature version no handler rewrites
+/// (`AUTH_TYPE_MAPS`); an unsigned payload, which only a later handler
+/// would honour, stays refused.
+fn client_signer(version: &str, unsigned_payload: bool) -> Result<Signer, Unsupported> {
+    match version {
+        "none" => Ok(Signer::None),
+        "v4" | "s3v4" if unsigned_payload => Err(Unsupported::UnsignedPayload),
+        "v4" => Ok(Signer::SigV4),
+        "s3v4" => Ok(Signer::S3SigV4),
+        other => Err(Unsupported::Auth(other.to_owned())),
+    }
+}
+
+/// The model's signing name: `signingName`, else `endpointPrefix`, else
+/// the service.
+fn model_signing_name(model: &Model, service: &str) -> String {
+    let schema = model.schema().service();
+    let name = schema.sigv4_name().or(schema.endpoint_prefix());
+    name.unwrap_or(service).to_owned()
+}
+
 /// What the model alone says the client cannot sign: the operation's auth
-/// type (`auth`, else `authtype`), else the service's, when it is neither
-/// SigV4 nor none, or an unsigned payload under SigV4. An endpoint's
-/// `authSchemes` can still override the operation's type at resolution
-/// ([`select`]); refusing on the model's is the conservative reading.
-pub fn static_refusal(model: &Model, operation: OperationSchema<'_>) -> Option<Unsupported> {
-    let version = match operation_auth_type(operation) {
+/// type (`auth`, else `authtype`), else the client's, when it is neither
+/// SigV4, S3's SigV4 nor none, or an unsigned payload under either SigV4.
+/// An endpoint's `authSchemes` can still override the operation's type at
+/// resolution ([`select`]); refusing on the model's is the conservative
+/// reading.
+pub fn static_refusal(
+    model: &Model,
+    service: &str,
+    operation: OperationSchema<'_>,
+) -> Option<Unsupported> {
+    let unsigned = operation.unsigned_payload();
+    let signer = match operation_auth_type(operation) {
         Err(unsupported) => return Some(unsupported),
-        Ok(Some(version)) => version,
+        Ok(Some(auth_type)) => {
+            operation_signer(&auth_type, &model_signing_name(model, service), unsigned)
+        }
         Ok(None) => match client_signature_version(model, true) {
             Err(unsupported) => return Some(unsupported),
-            Ok(version) => version.unwrap_or_else(|| "v4".to_owned()),
+            Ok(version) => client_signer(version.as_deref().unwrap_or("v4"), unsigned),
         },
     };
-    match version.as_str() {
-        "none" => None,
-        "v4" if operation.unsigned_payload() => Some(Unsupported::UnsignedPayload),
-        "v4" => None,
-        other => Some(Unsupported::Auth(other.to_owned())),
-    }
+    signer.err()
 }
 
 /// The option of a call of `operation` that resolved to `endpoint`, and the
 /// signing region and name it signs with.
 ///
 /// The endpoint's `authSchemes`, when it has any, replace the operation's
-/// auth type and give the signing region and name; an unsigned client then
-/// signs with none. Otherwise the region is the client's and the name the
+/// auth type and give the signing region, name and `disableDoubleEncoding`;
+/// an unsigned client then signs with none. That auth type, if any, picks
+/// the signer as `set_operation_specific_signer` does (SigV4 is S3's for an
+/// S3 signing name); else the client's signature version does. The region
+/// is the endpoint's, else the client's; the name the endpoint's, else the
 /// model's `signingName`, else its `endpointPrefix`, else the service.
 ///
 /// # Errors
-/// [`CallError::Unsupported`] for an auth type other than SigV4 and none,
-/// or a payload the operation leaves unsigned; `UnknownSignatureVersionError`
-/// for an endpoint with no scheme botocore signs with.
+/// [`CallError::Unsupported`] for an auth type other than SigV4, S3's
+/// SigV4 and none, or a payload the operation leaves unsigned;
+/// `UnknownSignatureVersionError` for an endpoint with no scheme botocore
+/// signs with.
 pub fn select(
     model: &Model,
     service: &str,
@@ -273,37 +345,42 @@ pub fn select(
             auth_type = Some("none".to_owned());
         }
     }
-    let version = match auth_type {
-        Some(auth_type) => Some(auth_type),
-        None => client_signature_version(model, signing).map_err(CallError::Unsupported)?,
+    let name = context
+        .as_ref()
+        .and_then(|context| context.name.clone())
+        .unwrap_or_else(|| model_signing_name(model, service));
+    let unsigned = operation.unsigned_payload();
+    let signer = match auth_type {
+        Some(auth_type) => operation_signer(&auth_type, &name, unsigned),
+        None => match client_signature_version(model, signing) {
+            // botocore signs this with S3's signer for S3's own model and
+            // with SigV4 for any other, which only the service name tells.
+            Ok(Some(version)) if version == "v4" && S3_SIGNING_NAMES.contains(&name.as_str()) => {
+                Err(Unsupported::Auth(version))
+            }
+            Ok(Some(version)) => client_signer(&version, unsigned),
+            Ok(None) => Ok(Signer::None),
+            Err(unsupported) => Err(unsupported),
+        },
     };
-    match version.as_deref() {
-        None | Some("none") => return Ok(AuthSchemeOption::no_auth()),
-        Some("v4") if operation.unsigned_payload() => {
-            return Err(CallError::Unsupported(Unsupported::UnsignedPayload));
-        }
-        Some("v4") => {}
-        Some(other) => return Err(CallError::Unsupported(Unsupported::Auth(other.to_owned()))),
-    }
-    let service_schema = model.schema().service();
+    let scheme_id = match signer.map_err(CallError::Unsupported)? {
+        Signer::None => return Ok(AuthSchemeOption::no_auth()),
+        Signer::SigV4 => AuthSchemeId::SIGV4,
+        Signer::S3SigV4 => AuthSchemeId::S3_SIGV4,
+    };
     let region = context.as_ref().and_then(|context| context.region.clone());
-    let region = region.or_else(|| client_region.map(str::to_owned));
-    let name = context.and_then(|context| context.name).or_else(|| {
-        let default = service_schema
-            .sigv4_name()
-            .or(service_schema.endpoint_prefix());
-        Some(default.unwrap_or(service).to_owned())
-    });
-    match (region, name) {
-        (Some(region), Some(name)) => Ok(AuthSchemeOption {
-            scheme_id: AuthSchemeId::SIGV4,
-            signing: SigningOverrides {
-                region: Some(region),
-                name: Some(name),
-            },
-        }),
-        _ => Err(CallError::NoRegion),
-    }
+    let Some(region) = region.or_else(|| client_region.map(str::to_owned)) else {
+        return Err(CallError::NoRegion);
+    };
+    Ok(AuthSchemeOption {
+        scheme_id,
+        signing: SigningOverrides {
+            region: Some(region),
+            name: Some(name),
+            disable_double_encoding: context.and_then(|context| context.disable_double_encoding),
+            payload_signing: None,
+        },
+    })
 }
 
 /// Signs `request` as `SigV4Auth.add_auth` does: over the Host the
@@ -318,11 +395,72 @@ pub fn sign(
     now: Timestamp,
     request: &mut HttpRequest,
 ) {
+    sign_as(
+        Variant::SigV4,
+        sigv4::Scope {
+            region,
+            service: name,
+        },
+        credentials,
+        now,
+        request,
+    );
+}
+
+/// Signs `request` as `S3SigV4Auth.add_auth` does: as [`sign`], but over
+/// the path as sent (`_normalize_url_path` returns it unchanged), with
+/// `X-Amz-Content-SHA256` always sent, and the body's SHA-256 signed, or
+/// `UNSIGNED-PAYLOAD` when `sign_payload` is false.
+pub fn sign_s3(
+    scope: sigv4::Scope<'_>,
+    sign_payload: bool,
+    credentials: &SigningCredentials,
+    now: Timestamp,
+    request: &mut HttpRequest,
+) {
+    sign_as(
+        Variant::S3 { sign_payload },
+        scope,
+        credentials,
+        now,
+        request,
+    );
+}
+
+/// Which of botocore's header signers [`sign_as`] signs as.
+#[derive(Clone, Copy)]
+enum Variant {
+    SigV4,
+    S3 { sign_payload: bool },
+}
+
+fn sign_as(
+    variant: Variant,
+    scope: sigv4::Scope<'_>,
+    credentials: &SigningCredentials,
+    now: Timestamp,
+    request: &mut HttpRequest,
+) {
     let url = request.url.to_string();
     let host = credentials::Location::parse(&url, false).map_or_else(
         || request.url.authority.to_ascii_lowercase(),
         |location| location.host_header,
     );
+    let (payload, content_sha256, path_encoding) = match variant {
+        Variant::SigV4 => (
+            sigv4::Payload::Body(&request.body),
+            false,
+            sigv4::PathEncoding::Normalized,
+        ),
+        Variant::S3 { sign_payload } => (
+            match sign_payload {
+                true => sigv4::Payload::Body(&request.body),
+                false => sigv4::Payload::Unsigned,
+            },
+            true,
+            sigv4::PathEncoding::Raw,
+        ),
+    };
     let base: Vec<(&str, &str)> = request.headers.iter().collect();
     let signed = sigv4::sign(&sigv4::SignedRequest {
         credentials: sigv4::Credentials {
@@ -330,19 +468,16 @@ pub fn sign(
             secret_access_key: &credentials.secret_access_key,
             session_token: credentials.session_token.as_deref(),
         },
-        scope: sigv4::Scope {
-            region,
-            service: name,
-        },
+        scope,
         timestamp: now,
         method: request.method.as_str(),
         host: &host,
         path: &request.url.path,
         query: &request.url.query,
         headers: &base,
-        payload: sigv4::Payload::Body(&request.body),
-        content_sha256: false,
-        path_encoding: sigv4::PathEncoding::Normalized,
+        payload,
+        content_sha256,
+        path_encoding,
     });
     let headers = Headers::from_pairs(signed.apply(&base));
     request.headers = headers;
