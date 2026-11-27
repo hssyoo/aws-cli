@@ -697,3 +697,11 @@ fn the_decode_vector_check_tells_values_apart() -> Result<()> {
     assert!(!expected_value(&item("00")?, &expect(r#"{"null": {}}"#)?));
     Ok(())
 }
+
+/// The suite reaches rpcv2Cbor through the built handle, and admission's
+/// protocols hold it too.
+#[test]
+fn rpc_v2_cbor_is_built_and_admitted() {
+    assert!(built_protocol_named(PROTOCOL).is_some());
+    assert!(client::testing::facade::protocol_named(PROTOCOL).is_some());
+}

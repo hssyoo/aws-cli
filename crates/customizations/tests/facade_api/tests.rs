@@ -191,10 +191,10 @@ fn fake(service: &str) -> Result<Arc<Model>> {
 
 #[test]
 fn the_protocols_are_named_as_models_name_them() -> Result<()> {
-    for name in ["query", "json", "rest-json", "rest-xml", "ec2"] {
+    for name in ["query", "json", "rest-json", "rest-xml", "smithy-rpc-v2-cbor", "ec2"] {
         assert!(facade::protocol_named(name).is_some(), "{name}");
     }
-    assert!(facade::protocol_named("smithy-rpc-v2-cbor").is_none());
+    assert!(facade::protocol_named("zproto-wire").is_none());
     let model = fake("zquery")?;
     assert!(facade::protocol_for_model(&model).is_some());
     Ok(())

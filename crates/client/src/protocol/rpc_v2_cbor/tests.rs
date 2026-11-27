@@ -1,4 +1,4 @@
-//! rpcv2Cbor is built but switched off; and what the protocol suite
+//! rpcv2Cbor is admitted: admission and clients select it; and what the protocol suite
 //! leaves open: the headers' order, the error step's codes and hooks.
 use super::*;
 use crate::protocol::{IMPLEMENTED, SWITCHED_OFF, select};
@@ -35,12 +35,13 @@ fn response(status: u16, headers: &[(&str, &str)], body: &str) -> HttpResponse {
 }
 
 #[test]
-fn rpc_v2_cbor_is_built_but_not_admitted() -> Result<()> {
+fn rpc_v2_cbor_is_admitted() -> Result<()> {
     let model = Model::from_json(MODEL.as_bytes())?;
-    assert!(select(&model).is_err());
-    assert!(IMPLEMENTED.named("smithy-rpc-v2-cbor").is_none());
-    let named = SWITCHED_OFF.named("smithy-rpc-v2-cbor");
+    let selected = select(&model).map_err(|unsupported| format!("{unsupported:?}"))?;
+    assert_eq!(selected.protocol_id(), traits::RPC_V2_CBOR);
+    let named = IMPLEMENTED.named("smithy-rpc-v2-cbor");
     assert_eq!(named.map(|p| p.protocol_id()), Some(traits::RPC_V2_CBOR));
+    assert!(SWITCHED_OFF.named("smithy-rpc-v2-cbor").is_none());
     Ok(())
 }
 

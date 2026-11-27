@@ -3221,68 +3221,68 @@ cloudwatch	tag-resource	-	-	refused:unported_customization	-	2010-08-01
 cloudwatch	untag-resource	-	-	refused:unported_customization	-	2010-08-01
 cloudwatch	update-otel-enrichment	-	-	refused:unported_customization	-	2010-08-01
 cloudwatch	update-resource-metrics-configuration	-	-	refused:unported_customization	-	2010-08-01
-cloudwatchomni	create-access-grant	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	create-access-profile	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	create-alert	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	create-domain	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	create-domain-access-grant-for-organization	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	create-domain-for-organization	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	create-integration	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	create-omni-dashboard	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	create-one-time-deep-link-code	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	create-space	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	create-view	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	delete-access-grant	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	delete-access-profile	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	delete-alert	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	delete-domain	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	delete-domain-access-grant-for-organization	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	delete-domain-for-organization	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	delete-integration	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	delete-omni-dashboard	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	delete-space	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	delete-view	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-access-grant	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-access-profile	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-alert	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-context-graph	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=nodes keep=- limit=maxResults	2025-01-01
-cloudwatchomni	get-domain	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-domain-access-grant-for-organization	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-domain-for-organization	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-integration	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-intelligence-configuration	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-omni-dashboard	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-space	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-space-credentials-for-organization	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-space-data-access	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	get-telemetry-query-results	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=rows keep=statistics,status limit=maxResults	2025-01-01
-cloudwatchomni	get-view	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	list-access-grants	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
-cloudwatchomni	list-access-profiles	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
-cloudwatchomni	list-alerts	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
-cloudwatchomni	list-domain-access-grants-for-organization	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
-cloudwatchomni	list-domains	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
-cloudwatchomni	list-integrations	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
-cloudwatchomni	list-omni-dashboards	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
-cloudwatchomni	list-spaces	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
-cloudwatchomni	list-spaces-for-organization	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
-cloudwatchomni	list-telemetry-fields	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=fields keep=- limit=-	2025-01-01
-cloudwatchomni	list-telemetry-query-sessions	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=sessions keep=- limit=maxResults	2025-01-01
-cloudwatchomni	list-views	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
-cloudwatchomni	put-intelligence-configuration	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	search-principals	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=nextToken out=nextToken more=- result=results keep=- limit=maxResults	2025-01-01
-cloudwatchomni	start-telemetry-query	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	start-telemetry-query-session	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	stop-telemetry-query	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	stop-telemetry-query-session	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	update-access-profile	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	update-alert	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	update-domain	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	update-domain-for-organization	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	update-integration	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	update-omni-dashboard	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	update-space	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
-cloudwatchomni	update-view	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-01-01
+cloudwatchomni	create-access-grant	-	-	required_not_scalar	-	2025-01-01
+cloudwatchomni	create-access-profile	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	create-alert	-	-	required_not_scalar	-	2025-01-01
+cloudwatchomni	create-domain	-	-	required_not_scalar	-	2025-01-01
+cloudwatchomni	create-domain-access-grant-for-organization	-	-	required_not_scalar	-	2025-01-01
+cloudwatchomni	create-domain-for-organization	-	-	required_not_scalar	-	2025-01-01
+cloudwatchomni	create-integration	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	create-omni-dashboard	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	create-one-time-deep-link-code	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	create-space	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	create-view	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	delete-access-grant	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	delete-access-profile	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	delete-alert	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	delete-domain	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	delete-domain-access-grant-for-organization	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	delete-domain-for-organization	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	delete-integration	-	-	required_not_scalar	-	2025-01-01
+cloudwatchomni	delete-omni-dashboard	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	delete-space	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	delete-view	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	get-access-grant	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	get-access-profile	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	get-alert	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	get-context-graph	-	-	required_not_scalar	native in=nextToken out=nextToken more=- result=nodes keep=- limit=maxResults	2025-01-01
+cloudwatchomni	get-domain	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	get-domain-access-grant-for-organization	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	get-domain-for-organization	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	get-integration	-	-	required_not_scalar	-	2025-01-01
+cloudwatchomni	get-intelligence-configuration	-	-	no_arguments	-	2025-01-01
+cloudwatchomni	get-omni-dashboard	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	get-space	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	get-space-credentials-for-organization	-	-	required_not_scalar	-	2025-01-01
+cloudwatchomni	get-space-data-access	-	-	required_not_scalar	-	2025-01-01
+cloudwatchomni	get-telemetry-query-results	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=rows keep=statistics,status limit=maxResults	2025-01-01
+cloudwatchomni	get-view	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	list-access-grants	-	-	no_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
+cloudwatchomni	list-access-profiles	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
+cloudwatchomni	list-alerts	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
+cloudwatchomni	list-domain-access-grants-for-organization	-	-	no_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
+cloudwatchomni	list-domains	-	-	no_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
+cloudwatchomni	list-integrations	-	-	no_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
+cloudwatchomni	list-omni-dashboards	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
+cloudwatchomni	list-spaces	-	-	no_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
+cloudwatchomni	list-spaces-for-organization	-	-	no_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
+cloudwatchomni	list-telemetry-fields	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=fields keep=- limit=-	2025-01-01
+cloudwatchomni	list-telemetry-query-sessions	-	-	no_arguments	native in=nextToken out=nextToken more=- result=sessions keep=- limit=maxResults	2025-01-01
+cloudwatchomni	list-views	-	-	no_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2025-01-01
+cloudwatchomni	put-intelligence-configuration	-	-	no_arguments	-	2025-01-01
+cloudwatchomni	search-principals	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=results keep=- limit=maxResults	2025-01-01
+cloudwatchomni	start-telemetry-query	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	start-telemetry-query-session	-	-	no_arguments	-	2025-01-01
+cloudwatchomni	stop-telemetry-query	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	stop-telemetry-query-session	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	update-access-profile	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	update-alert	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	update-domain	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	update-domain-for-organization	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	update-integration	-	-	required_not_scalar	-	2025-01-01
+cloudwatchomni	update-omni-dashboard	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	update-space	-	-	scalar_arguments	-	2025-01-01
+cloudwatchomni	update-view	-	-	scalar_arguments	-	2025-01-01
 codeartifact	associate-external-connection	-	-	refused:unported_customization	-	2018-09-22
 codeartifact	copy-package-versions	-	-	refused:unported_customization	-	2018-09-22
 codeartifact	create-domain	-	-	refused:unported_customization	-	2018-09-22
@@ -7727,31 +7727,31 @@ events	update-archive	-	-	scalar_arguments	-	2015-10-07
 events	update-connection	-	-	scalar_arguments	-	2015-10-07
 events	update-endpoint	-	-	scalar_arguments	-	2015-10-07
 events	update-event-bus	-	-	no_arguments	-	2015-10-07
-eventsv2	create-event-bus	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	create-event-source	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	create-subscriber	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	delete-event-bus	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	delete-event-source	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	delete-resource-policy	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	delete-subscriber	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	describe-event-bus	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	describe-event-source	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	describe-subscriber	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	get-resource-policy	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	list-event-buses	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=NextToken out=NextToken more=- result=EventBuses keep=- limit=MaxResults	2025-05-15
-eventsv2	list-event-sources	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=NextToken out=NextToken more=- result=EventSources keep=- limit=MaxResults	2025-05-15
-eventsv2	list-resource-policies	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=NextToken out=NextToken more=- result=PolicySummaries keep=- limit=MaxResults	2025-05-15
-eventsv2	list-subscribers	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=NextToken out=NextToken more=- result=Subscribers keep=- limit=MaxResults	2025-05-15
-eventsv2	list-tags-for-resource	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	put-events	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	put-raw-events	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	put-resource-policy	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	revoke-resource	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	tag-resource	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	untag-resource	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	update-event-bus	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	update-event-source	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
-eventsv2	update-subscriber	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2025-05-15
+eventsv2	create-event-bus	-	-	scalar_arguments	-	2025-05-15
+eventsv2	create-event-source	-	-	required_not_scalar	-	2025-05-15
+eventsv2	create-subscriber	-	-	required_not_scalar	-	2025-05-15
+eventsv2	delete-event-bus	-	-	scalar_arguments	-	2025-05-15
+eventsv2	delete-event-source	-	-	scalar_arguments	-	2025-05-15
+eventsv2	delete-resource-policy	-	-	scalar_arguments	-	2025-05-15
+eventsv2	delete-subscriber	-	-	scalar_arguments	-	2025-05-15
+eventsv2	describe-event-bus	-	-	scalar_arguments	-	2025-05-15
+eventsv2	describe-event-source	-	-	scalar_arguments	-	2025-05-15
+eventsv2	describe-subscriber	-	-	scalar_arguments	-	2025-05-15
+eventsv2	get-resource-policy	-	-	scalar_arguments	-	2025-05-15
+eventsv2	list-event-buses	-	-	no_arguments	native in=NextToken out=NextToken more=- result=EventBuses keep=- limit=MaxResults	2025-05-15
+eventsv2	list-event-sources	-	-	no_arguments	native in=NextToken out=NextToken more=- result=EventSources keep=- limit=MaxResults	2025-05-15
+eventsv2	list-resource-policies	-	-	scalar_arguments	native in=NextToken out=NextToken more=- result=PolicySummaries keep=- limit=MaxResults	2025-05-15
+eventsv2	list-subscribers	-	-	no_arguments	native in=NextToken out=NextToken more=- result=Subscribers keep=- limit=MaxResults	2025-05-15
+eventsv2	list-tags-for-resource	-	-	scalar_arguments	-	2025-05-15
+eventsv2	put-events	-	-	required_not_scalar	-	2025-05-15
+eventsv2	put-raw-events	-	-	required_not_scalar	-	2025-05-15
+eventsv2	put-resource-policy	-	-	scalar_arguments	-	2025-05-15
+eventsv2	revoke-resource	-	-	scalar_arguments	-	2025-05-15
+eventsv2	tag-resource	-	-	required_not_scalar	-	2025-05-15
+eventsv2	untag-resource	-	-	required_not_scalar	-	2025-05-15
+eventsv2	update-event-bus	-	-	scalar_arguments	-	2025-05-15
+eventsv2	update-event-source	-	-	scalar_arguments	-	2025-05-15
+eventsv2	update-subscriber	-	-	scalar_arguments	-	2025-05-15
 evs	associate-eip-to-vlan	-	-	scalar_arguments	-	2023-07-27
 evs	create-entitlement	-	-	required_not_scalar	-	2023-07-27
 evs	create-environment	-	-	required_not_scalar	-	2023-07-27
@@ -13693,24 +13693,24 @@ partnercentral-channel	tag-resource	-	-	required_not_scalar	-	2024-03-18
 partnercentral-channel	untag-resource	-	-	required_not_scalar	-	2024-03-18
 partnercentral-channel	update-program-management-account	-	-	scalar_arguments	-	2024-03-18
 partnercentral-channel	update-relationship	-	-	scalar_arguments	-	2024-03-18
-partnercentral-revenue-measurement	create-marketplace-revenue-share	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	create-marketplace-revenue-share-allocation	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	create-revenue-attribution	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	get-marketplace-revenue-share	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	get-marketplace-revenue-share-allocation	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	get-revenue-attribution	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	get-revenue-attribution-allocation	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	get-revenue-attribution-allocations-task	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	list-marketplace-revenue-share-allocations	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=NextToken out=NextToken more=- result=MarketplaceRevenueShareAllocationSummaries keep=- limit=MaxResults	2022-07-26
-partnercentral-revenue-measurement	list-marketplace-revenue-shares	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=NextToken out=NextToken more=- result=MarketplaceRevenueShareSummaries keep=- limit=MaxResults	2022-07-26
-partnercentral-revenue-measurement	list-revenue-attribution-allocations	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=NextToken out=NextToken more=- result=RevenueAttributionAllocationSummaries keep=- limit=MaxResults	2022-07-26
-partnercentral-revenue-measurement	list-revenue-attributions	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	native in=NextToken out=NextToken more=- result=RevenueAttributionSummaries keep=- limit=MaxResults	2022-07-26
-partnercentral-revenue-measurement	list-tags-for-resource	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	start-revenue-attribution-allocations-task	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	tag-resource	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	untag-resource	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	update-marketplace-revenue-share-allocation	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
-partnercentral-revenue-measurement	update-revenue-attribution	unsupported_protocol	smithy-rpc-v2-cbor	refused:unsupported_protocol	-	2022-07-26
+partnercentral-revenue-measurement	create-marketplace-revenue-share	-	-	scalar_arguments	-	2022-07-26
+partnercentral-revenue-measurement	create-marketplace-revenue-share-allocation	-	-	scalar_arguments	-	2022-07-26
+partnercentral-revenue-measurement	create-revenue-attribution	-	-	scalar_arguments	-	2022-07-26
+partnercentral-revenue-measurement	get-marketplace-revenue-share	-	-	scalar_arguments	-	2022-07-26
+partnercentral-revenue-measurement	get-marketplace-revenue-share-allocation	-	-	scalar_arguments	-	2022-07-26
+partnercentral-revenue-measurement	get-revenue-attribution	-	-	scalar_arguments	-	2022-07-26
+partnercentral-revenue-measurement	get-revenue-attribution-allocation	-	-	scalar_arguments	-	2022-07-26
+partnercentral-revenue-measurement	get-revenue-attribution-allocations-task	-	-	scalar_arguments	-	2022-07-26
+partnercentral-revenue-measurement	list-marketplace-revenue-share-allocations	-	-	scalar_arguments	native in=NextToken out=NextToken more=- result=MarketplaceRevenueShareAllocationSummaries keep=- limit=MaxResults	2022-07-26
+partnercentral-revenue-measurement	list-marketplace-revenue-shares	-	-	scalar_arguments	native in=NextToken out=NextToken more=- result=MarketplaceRevenueShareSummaries keep=- limit=MaxResults	2022-07-26
+partnercentral-revenue-measurement	list-revenue-attribution-allocations	-	-	scalar_arguments	native in=NextToken out=NextToken more=- result=RevenueAttributionAllocationSummaries keep=- limit=MaxResults	2022-07-26
+partnercentral-revenue-measurement	list-revenue-attributions	-	-	scalar_arguments	native in=NextToken out=NextToken more=- result=RevenueAttributionSummaries keep=- limit=MaxResults	2022-07-26
+partnercentral-revenue-measurement	list-tags-for-resource	-	-	scalar_arguments	-	2022-07-26
+partnercentral-revenue-measurement	start-revenue-attribution-allocations-task	-	-	required_not_scalar	-	2022-07-26
+partnercentral-revenue-measurement	tag-resource	-	-	required_not_scalar	-	2022-07-26
+partnercentral-revenue-measurement	untag-resource	-	-	required_not_scalar	-	2022-07-26
+partnercentral-revenue-measurement	update-marketplace-revenue-share-allocation	-	-	scalar_arguments	-	2022-07-26
+partnercentral-revenue-measurement	update-revenue-attribution	-	-	scalar_arguments	-	2022-07-26
 partnercentral-selling	accept-engagement-invitation	-	-	scalar_arguments	-	2022-07-26
 partnercentral-selling	assign-opportunity	-	-	required_not_scalar	-	2022-07-26
 partnercentral-selling	associate-opportunity	-	-	scalar_arguments	-	2022-07-26

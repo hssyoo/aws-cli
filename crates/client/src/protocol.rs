@@ -3,9 +3,8 @@
 //! the interface, [`compat`] botocore's drivers over it, and [`registry`]
 //! botocore's choice of one. The implementations: [`query`] (awsQuery),
 //! [`json`] (awsJson 1.0 and 1.1, with the query-compatible mode) and
-//! [`rest_json`] (restJson1), [`rest_xml`] (restXml) and [`ec2`]
-//! (ec2Query), and, built but not yet admitted, [`rpc_v2_cbor`]
-//! (rpcv2Cbor).
+//! [`rest_json`] (restJson1), [`rest_xml`] (restXml), [`rpc_v2_cbor`]
+//! (rpcv2Cbor) and [`ec2`] (ec2Query).
 use crate::admission::Unsupported;
 use crate::error::{CallError, ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method, Url};
@@ -252,14 +251,15 @@ pub static IMPLEMENTED: ProtocolRegistry = ProtocolRegistry::new(&[
     ("json", &AWS_JSON_1_0),
     ("rest-json", &REST_JSON_1),
     ("rest-xml", &REST_XML),
+    ("smithy-rpc-v2-cbor", &RPC_V2_CBOR),
     ("ec2", &EC2_QUERY),
 ]);
 
 /// The protocols built but switched off: admission and clients read
 /// [`IMPLEMENTED`] alone, so these are reachable only from tests, through
-/// the test facade, until a later change moves each into it.
-pub static SWITCHED_OFF: ProtocolRegistry =
-    ProtocolRegistry::new(&[("smithy-rpc-v2-cbor", &RPC_V2_CBOR)]);
+/// the test facade, until a later change moves each into it. None is
+/// staged now.
+pub static SWITCHED_OFF: ProtocolRegistry = ProtocolRegistry::new(&[]);
 
 /// Whether `model`'s service sends a timestamp member with no
 /// `timestampFormat` as an epoch number; `None` when its protocol is not

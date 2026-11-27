@@ -10,7 +10,7 @@
 //! parser while it decodes, error bodies included, so the parse drivers run
 //! over [`WithHooks`], which carries the call's hooks to the error step.
 //!
-//! Switched off: [`RPC_V2_CBOR`] is in [`super::SWITCHED_OFF`].
+//! Admitted: [`RPC_V2_CBOR`] is in [`super::IMPLEMENTED`].
 use super::{BotocoreCompat, ClientProtocol, ParseOptions, Serialized, common, compat};
 use crate::codec::cbor::{CBOR, CborCodec, CborCursor, Item, decode};
 use crate::codec::value::write_value;

@@ -1,0 +1,40 @@
+{
+  "version": "2.0",
+  "metadata": {
+    "apiVersion": "2020-01-01",
+    "auth": [
+      "aws.auth#sigv4"
+    ],
+    "endpointPrefix": "zproto",
+    "protocol": "zproto-wire",
+    "serviceFullName": "Fake zproto",
+    "serviceId": "Zproto",
+    "signatureVersion": "v4",
+    "uid": "zproto-2020-01-01"
+  },
+  "operations": {
+    "GetThing": {
+      "name": "GetThing",
+      "http": {
+        "method": "POST",
+        "requestUri": "/"
+      },
+      "input": {
+        "shape": "GetThingInput"
+      }
+    }
+  },
+  "shapes": {
+    "GetThingInput": {
+      "type": "structure",
+      "members": {
+        "Id": {
+          "shape": "Text"
+        }
+      }
+    },
+    "Text": {
+      "type": "string"
+    }
+  }
+}
