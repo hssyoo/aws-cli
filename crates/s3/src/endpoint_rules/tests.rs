@@ -36,7 +36,7 @@ fn rule_loading_failures_keep_their_rules_errors() -> Result<(), Box<dyn std::er
     );
     Ok(())
 }
-use crt::endpoints::ParamValue;
+use endpoint_rules::Outcome;
 /// The S3 client's settings, as a plain client sets them.
 const SETTINGS: [(&str, ParamValue<'_>); 6] = [
     ("UseFIPS", ParamValue::Boolean(false)),
@@ -79,7 +79,7 @@ fn embedded_s3_bucket_partition_endpoint_variants() -> Result<(), Box<dyn std::e
         assert!(
             matches!(
                 &resolved,
-                crt::endpoints::Resolved::Endpoint { url: actual, .. } if actual == url.as_bytes()
+                Outcome::Endpoint(endpoint) if endpoint.url == url
             ),
             "{resolved:?}"
         );
@@ -101,12 +101,7 @@ fn resolutions_survive_runtime_libraries_released_around_them()
         let resolving: Vec<_> = (0..2)
             .map(|_| {
                 scope.spawn(|| {
-                    (0..50).all(|_| {
-                        matches!(
-                            rules.resolve(&parameters),
-                            Ok(crt::endpoints::Resolved::Endpoint { .. })
-                        )
-                    })
+                    (0..50).all(|_| matches!(rules.resolve(&parameters), Ok(Outcome::Endpoint(_))))
                 })
             })
             .collect();

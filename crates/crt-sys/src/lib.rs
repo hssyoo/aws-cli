@@ -329,7 +329,6 @@ c_functions! {
 
 #[cfg(feature = "testing")]
 pub mod cal;
-pub mod endpoints;
 pub mod native;
 #[cfg(all(feature = "testing", not(windows)))]
 pub mod testing;

@@ -233,7 +233,7 @@ mod native;
 #[doc(inline)]
 pub use bucket::BucketRuntime;
 #[doc(inline)]
-pub use native::{HttpRuntime, Library, Runtime, SdkutilsLibrary};
+pub use native::{HttpRuntime, Library, Runtime};
 pub fn platform() -> cli_core::client_config::Platform {
     static PLATFORM: std::sync::OnceLock<cli_core::client_config::Platform> =
         std::sync::OnceLock::new();

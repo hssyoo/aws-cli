@@ -478,8 +478,6 @@ fn each_trust_store_reaches_the_shim_as_one_source() -> Result<(), Box<dyn std::
 struct CountingLibraryOps {
     library_init: usize,
     library_clean_up: usize,
-    sdkutils_init: usize,
-    sdkutils_clean_up: usize,
 }
 impl LibraryOps for CountingLibraryOps {
     fn library_init(&mut self) {
@@ -487,12 +485,6 @@ impl LibraryOps for CountingLibraryOps {
     }
     fn library_clean_up(&mut self) {
         self.library_clean_up += 1;
-    }
-    fn sdkutils_init(&mut self) {
-        self.sdkutils_init += 1;
-    }
-    fn sdkutils_clean_up(&mut self) {
-        self.sdkutils_clean_up += 1;
     }
 }
 
@@ -507,41 +499,6 @@ fn s3_library_cleanup_waits_for_the_final_reference() {
     assert_eq!((state.full, ops.library_clean_up), (1, 0));
     state.release_full(&mut ops);
     assert_eq!((state.full, ops.library_clean_up), (0, 1));
-    assert_eq!((ops.sdkutils_init, ops.sdkutils_clean_up), (0, 0));
-}
-
-#[test]
-fn sdkutils_holders_share_the_s3_library_state() {
-    for full_first in [false, true] {
-        let mut ops = CountingLibraryOps::default();
-        let mut state = LibraryState::new();
-        state.acquire_full(&mut ops);
-        state.acquire_sdkutils(&mut ops);
-        assert_eq!((ops.library_init, ops.sdkutils_init), (1, 0));
-        if full_first {
-            state.release_full(&mut ops);
-        } else {
-            state.release_sdkutils(&mut ops);
-        }
-        assert_eq!((ops.library_clean_up, ops.sdkutils_clean_up), (0, 0));
-        if full_first {
-            state.release_sdkutils(&mut ops);
-        } else {
-            state.release_full(&mut ops);
-        }
-        assert_eq!((ops.library_clean_up, ops.sdkutils_clean_up), (1, 0));
-    }
-    let mut ops = CountingLibraryOps::default();
-    let mut state = LibraryState::new();
-    state.acquire_sdkutils(&mut ops);
-    state.acquire_sdkutils(&mut ops);
-    state.acquire_full(&mut ops);
-    assert_eq!((ops.sdkutils_init, ops.library_init), (1, 1));
-    state.release_sdkutils(&mut ops);
-    state.release_full(&mut ops);
-    assert_eq!((ops.library_clean_up, ops.sdkutils_clean_up), (0, 0));
-    state.release_sdkutils(&mut ops);
-    assert_eq!((ops.library_clean_up, ops.sdkutils_clean_up), (1, 1));
 }
 
 #[test]
