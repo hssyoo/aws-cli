@@ -276,3 +276,64 @@ fn a_reference_s_timestamp_format_decides_the_local_zone() -> Result<()> {
     assert!(!reaches_epoch_timestamp(&model, time));
     Ok(())
 }
+
+/// Whether `schema`, or a schema its target's members, list member, map
+/// key or value reach, is an epoch timestamp: the walk through each
+/// reference's target, which `reaches` takes through the reference.
+fn epoch_through_targets(
+    schema: Schema<'_>,
+    json: bool,
+    seen: &mut Vec<model::schema::SchemaId>,
+) -> bool {
+    let epoch = schema.shape_type() == ShapeType::Timestamp
+        && schema
+            .timestamp_format_text()
+            .map_or(json, |format| format == "unixTimestamp");
+    let index = schema.index();
+    if epoch {
+        return true;
+    }
+    if seen.contains(&index) {
+        return false;
+    }
+    seen.push(index);
+    let target = schema.target();
+    let children = (target.members())
+        .chain(target.list_member())
+        .chain(target.map_key())
+        .chain(target.map_value());
+    let children: Vec<Schema<'_>> = children.collect();
+    children
+        .into_iter()
+        .any(|child| epoch_through_targets(child, json, seen))
+}
+
+/// Every output of every shipped and fake model reaches an epoch
+/// timestamp exactly when the walk through each reference's target does:
+/// a reference's own schema carries its target's children.
+#[test]
+fn every_output_reaches_an_epoch_timestamp_as_its_targets_do() -> Result<()> {
+    use model::source::{DirSource, Kind, Source};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let (mut count, mut epochs) = (0, 0);
+    for dir in ["aws-cli/awscli/botocore/data", "tests/models"] {
+        let source = DirSource::new(root.join(dir));
+        for service in source.services(Kind::Service)? {
+            let model = Model::load(&source, &service).map_err(|e| format!("{service}: {e}"))?;
+            let json = client::protocol::epoch_timestamps(&model).unwrap_or(false);
+            for operation in model.schema().service().operations() {
+                let Some(output) = operation.output() else {
+                    continue;
+                };
+                let expected = epoch_through_targets(output, json, &mut Vec::new());
+                let label = format!("{service} {}", operation.name());
+                assert_eq!(reaches_epoch_timestamp(&model, output), expected, "{label}");
+                epochs += usize::from(expected);
+            }
+            count += 1;
+        }
+    }
+    assert!(count > 400, "only {count} models read");
+    assert!(epochs > 100, "only {epochs} outputs reach an epoch");
+    Ok(())
+}
