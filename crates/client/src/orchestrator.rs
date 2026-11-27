@@ -4,6 +4,13 @@
 //! phases those run. Positions that reach the wire, the error output or a
 //! verdict are botocore's.
 //!
+//! [`configure`], once per client in `Client::new`: the customizations in
+//! scope for the service, the one retry strategy (and so the one quota)
+//! all of the client's calls and pages share, the region (`NoRegionError`)
+//! and the timeouts, held as the client's [`crate::runtime_components`].
+//! Operation scope is a filter each phase applies, not a configuration
+//! of its own (decision D3).
+//!
 //! [`prepare`] (no identity, no transport; it may leave the call to the
 //! Python route):
 //! 1. `admit`: the static refusals and the endpoint configuration check;
@@ -33,9 +40,11 @@ use crate::hooks::HookError;
 use model::schema::OperationSchema;
 use model::shapes::Model;
 
+mod configure;
 mod prepare;
 mod send;
 
+pub(crate) use configure::configure;
 pub(crate) use prepare::prepare;
 pub(crate) use send::send;
 

@@ -22,10 +22,9 @@ pub(crate) fn prepare(
     input: Value,
     extra: Features,
 ) -> Result<Prepared, CallError> {
-    let parts = &client.parts;
-    let operation = find(&parts.model, operation)?;
+    let operation = find(&client.model, operation)?;
     admit(client, operation)?;
-    let mut cx = CallContext::new(&parts.service, &parts.model, operation);
+    let mut cx = CallContext::new(&client.service, &client.model, operation);
     let mut input = input;
     modify_before_serialization(client, &mut cx, &mut input)?;
     client.fill_idempotency_tokens(operation, &mut input);
@@ -50,19 +49,19 @@ pub(crate) fn prepare(
 /// The static refusals ([`crate::admission::static_refusal`]), then what
 /// botocore's client creation raises once a region resolves.
 fn admit(client: &Client, operation: OperationSchema<'_>) -> Result<(), CallError> {
-    let parts = &client.parts;
     if let Some(unsupported) = crate::admission::static_refusal(
-        &parts.model,
+        &client.model,
         operation,
-        &parts.endpoints,
-        &parts.service,
-        parts.customizations,
+        &client.components.endpoint_resolver.data,
+        &client.service,
+        client.customizations,
         // The paginator's entry was judged where the call was admitted.
         None,
     ) {
         return Err(CallError::Unsupported(unsupported));
     }
-    parts.endpoint.check(&parts.endpoints)?;
+    let resolver = &client.components.endpoint_resolver;
+    resolver.config.check(&resolver.data)?;
     Ok(())
 }
 
@@ -88,15 +87,14 @@ pub(super) fn resolve_endpoint(
     input: &Value,
     account_id: Option<&str>,
 ) -> Result<(ResolvedEndpoint, Features), CallError> {
-    let (parts, operation) = (&client.parts, cx.operation);
-    let mut builtins = parts.endpoint.builtins(&parts.endpoints)?;
+    let (resolver, operation) = (&client.components.endpoint_resolver, cx.operation);
+    let mut builtins = resolver.config.builtins(&resolver.data)?;
     for hook in client.hooks.interceptors(operation.name()) {
         hook.endpoint_builtins(cx, &mut builtins)
             .map_err(prepare_hook_error)?;
     }
-    let params =
-        endpoint::provider_params(&parts.endpoints, operation, input, &builtins, account_id);
-    let resolved = endpoint::resolve(&parts.endpoints, &params)?;
+    let params = endpoint::provider_params(&resolver.data, operation, input, &builtins, account_id);
+    let resolved = resolver.resolve(&params)?;
     Ok((resolved, crate::useragent::endpoint_features(&params)))
 }
 
@@ -114,9 +112,8 @@ fn serialize(
             return Err(CallError::Unsupported(Unsupported::Validation(undecided)));
         }
     }
-    client
-        .protocol
-        .serialize_request(operation, input, &client.parts.model)
+    (client.components.protocol)
+        .serialize_request(operation, input, &client.model)
         .map_err(CallError::Serialize)
 }
 
@@ -128,11 +125,8 @@ pub(super) fn apply_endpoint(
     url: &str,
     features: Features,
 ) -> Result<HttpRequest, CallError> {
-    let parts = &client.parts;
-    let user_agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
-    client
-        .protocol
-        .update_endpoint(serialized, url, &user_agent)
+    let user_agent = crate::useragent::header(&client.settings, &client.user_agent, features);
+    (client.components.protocol).update_endpoint(serialized, url, &user_agent)
 }
 
 /// The `after_serialize` stage, once per call (and again when the
@@ -156,13 +150,13 @@ pub(super) fn resolve_auth_scheme(
     cx: &mut CallContext<'_>,
     endpoint: &ResolvedEndpoint,
 ) -> Result<AuthScheme, CallError> {
-    let (parts, operation) = (&client.parts, cx.operation);
+    let operation = cx.operation;
     let resolved = auth::select(
-        &parts.model,
-        &parts.service,
+        &client.model,
+        &client.service,
         operation,
         endpoint,
-        parts.settings.signing.value,
+        client.settings.signing.value,
         client.region.as_deref(),
     )?;
     let chosen = client

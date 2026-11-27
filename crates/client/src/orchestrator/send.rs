@@ -75,12 +75,11 @@ impl Received {
 
 /// [`Client::send`]: the send phases in order.
 pub(crate) fn send(client: &Client, mut prepared: Prepared) -> Result<Output, CallError> {
-    let parts = &client.parts;
-    let operation = find(&parts.model, &prepared.operation)?;
+    let operation = find(&client.model, &prepared.operation)?;
     let slots = std::mem::take(&mut prepared.slots);
-    let mut cx = CallContext::resume(&parts.service, &parts.model, operation, slots);
+    let mut cx = CallContext::resume(&client.service, &client.model, operation, slots);
     refresh_for_identity(client, &mut cx, &mut prepared)?;
-    let invocation = parts.runtime.uuid4();
+    let invocation = client.components.runtime.uuid4();
     let mut ttl: Option<String> = None;
     let mut last_cost = None;
     let mut attempt = 1;
@@ -94,8 +93,7 @@ pub(crate) fn send(client: &Client, mut prepared: Prepared) -> Result<Output, Ca
                 if let Some(date) = date {
                     ttl = Some(self::ttl(client, date));
                 }
-                parts
-                    .runtime
+                (client.components.runtime)
                     .sleep(delay)
                     .map_err(|_| CallError::Interrupted)?;
                 last_cost = cost;
@@ -136,12 +134,12 @@ fn refresh_for_identity(
 /// rule set reads it and the client signs: the credentials' own, which
 /// loads them as botocore's deferred property does.
 fn deferred_account_id(client: &Client) -> Result<Option<String>, CallError> {
-    let parts = &client.parts;
-    if !parts.settings.signing.value || !endpoint::reads_account_id(&parts.endpoints) {
+    if !client.settings.signing.value
+        || !endpoint::reads_account_id(&client.components.endpoint_resolver.data)
+    {
         return Ok(None);
     }
-    let credentials = parts
-        .credentials
+    let credentials = (client.components.identity_resolver)
         .credentials()
         .map_err(|error| CallError::Credentials(error.0))?;
     Ok(credentials.and_then(|credentials| credentials.account_id))
@@ -191,26 +189,24 @@ fn sign(
     else {
         return Ok(());
     };
-    let parts = &client.parts;
-    let credentials = parts
-        .credentials
+    let credentials = (client.components.identity_resolver)
         .credentials()
         .map_err(|error| CallError::Credentials(error.0))?
         .ok_or(CallError::NoCredentials)?;
     // The provider registers its feature ids as it answers, and
     // `rebuild_and_replace_user_agent_handler` rebuilds the header after
     // the signer, which does not sign `User-Agent`.
-    if let Some(method) = parts.credentials.method() {
+    if let Some(method) = client.components.identity_resolver.method() {
         let mut features = features;
         features.extend(
             cli_core::client_config::user_agent::credential_features(method)
                 .iter()
                 .copied(),
         );
-        let agent = crate::useragent::header(&parts.settings, &parts.user_agent, features);
+        let agent = crate::useragent::header(&client.settings, &client.user_agent, features);
         request.headers.set("User-Agent", agent);
     }
-    let now = parts.runtime.now();
+    let now = client.components.runtime.now();
     auth::sign(signing_region, signing_name, &credentials, now, request);
     Ok(())
 }
@@ -229,13 +225,13 @@ fn transmit(
             return Ok(Ok(response));
         }
     }
-    Ok(client.parts.transport.send(request, client.timeouts))
+    Ok(client.components.http_client.send(request, client.timeouts))
 }
 
 /// `_update_retries_context`'s `ttl` (`Endpoint._calculate_ttl`): now,
 /// plus the read timeout, plus the server's clock skew.
 fn ttl(client: &Client, date: timestamp::Timestamp) -> String {
-    let now = client.parts.runtime.now();
+    let now = client.components.runtime.now();
     let read = i64::try_from(client.timeouts.read.as_micros()).unwrap_or(i64::MAX);
     let skew = date.unix_micros() - now.unix_micros();
     let micros = now.unix_micros().saturating_add(read).saturating_add(skew);
@@ -261,8 +257,9 @@ fn evaluate(
         Ok(kind) => kind,
         Err(failure) => return Step::Done(Err(failure)),
     };
-    let random = client.parts.runtime.random();
-    let verdict = (client.retry).needs_retry(attempt, kind, received.retry_after(), random);
+    let random = client.components.runtime.random();
+    let retry = &client.components.retry_strategy;
+    let verdict = retry.needs_retry(attempt, kind, received.retry_after(), random);
     if let Err(error) = long_poll_wait(client, cx, &verdict) {
         return Step::Done(Err(error));
     }
@@ -310,14 +307,18 @@ fn deserialize(
         hook.after_receive(cx, &mut response)
             .map_err(|error| CallError::Hook(error.after_prepare()))?;
     }
-    let (model, options) = (&client.parts.model, &client.parts.parse.options());
+    let (model, options) = (&client.model, &client.parse.options());
     if response.status >= 300 {
-        let error = (client.protocol)
+        let error = (client.components.protocol)
             .parse_error(cx.operation, &response, options, model.schema().registry())
             .map_err(CallError::Parse)?;
         return Ok(Received::Error { response, error });
     }
-    match client.protocol.parse(cx.operation, &response, options) {
+    match client
+        .components
+        .protocol
+        .parse(cx.operation, &response, options)
+    {
         Err(error) => Err(CallError::Parse(error)),
         // `parsed_response.update(customized_response_dict)` in
         // `Endpoint._do_get_response`: a parse to `None` raises there.
@@ -342,7 +343,7 @@ fn classify(
         .hooks
         .interceptors(cx.operation.name())
         .find_map(|hook| hook.classify_retry(cx, attempt));
-    let model = &client.parts.model;
+    let model = &client.model;
     Ok(match decided {
         Some(RetryDecision::Stop) => None,
         Some(RetryDecision::Retry) => {
@@ -365,7 +366,7 @@ fn long_poll_wait(
     if let (None, Some(delay)) = (verdict.delay, verdict.exhausted_delay)
         && client.hooks.long_polls(cx.operation.name())
     {
-        (client.parts.runtime)
+        (client.components.runtime)
             .sleep(delay)
             .map_err(|_| CallError::Interrupted)?;
     }
