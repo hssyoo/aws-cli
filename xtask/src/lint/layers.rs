@@ -31,6 +31,9 @@ const ALLOWED: &[(&str, &[&str])] = &[
     // The endpoint rules engine: a rule set's decoder and evaluator, and
     // the partitions it reads, over `serde_json` only.
     ("endpoint-rules", &[]),
+    // The JMESPath engine: a parser and an evaluator over any object
+    // model that implements its runtime trait.
+    ("jmespath", &[]),
     ("numa", &[]),
     ("pyload", &["sha256"]),
     // CPython's text primitives, one implementation each.
