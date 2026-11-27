@@ -1,5 +1,4 @@
 use super::*;
-use crate::admission::Unsupported;
 use crate::protocol::{IMPLEMENTED, SWITCHED_OFF, compat, select};
 use model::schema::TypeRegistry;
 
@@ -229,19 +228,20 @@ fn request_id_spellings_and_generic_errors() -> Result<()> {
     Ok(())
 }
 
-/// Switched off: admission and clients still refuse `ec2`; only the
-/// switched-off registry holds it, with iso8601 timestamps.
+/// Admitted: admission and clients select `ec2` from the implemented
+/// registry, with iso8601 timestamps; the switched-off one no longer holds it.
 #[test]
-fn ec2_is_built_but_not_admitted() -> Result<()> {
+fn ec2_is_admitted() -> Result<()> {
     let model = model()?;
-    assert!(matches!(select(&model), Err(Unsupported::Protocol(name)) if name == "ec2"));
-    assert!(IMPLEMENTED.named("ec2").is_none());
-    assert!(IMPLEMENTED.get(traits::EC2_QUERY).is_none());
-    let built = SWITCHED_OFF
-        .resolve(model.metadata())
-        .map_err(|unsupported| format!("{unsupported:?}"))?;
-    assert_eq!(built.protocol_id(), traits::EC2_QUERY);
-    assert!(!compat::timestamps_epoch(built));
+    let selected = select(&model).map_err(|unsupported| format!("{unsupported:?}"))?;
+    assert_eq!(selected.protocol_id(), traits::EC2_QUERY);
+    let named = IMPLEMENTED
+        .named("ec2")
+        .map(|protocol| protocol.protocol_id());
+    assert_eq!(named, Some(traits::EC2_QUERY));
+    assert!(IMPLEMENTED.get(traits::EC2_QUERY).is_some());
+    assert!(SWITCHED_OFF.named("ec2").is_none());
+    assert!(!compat::timestamps_epoch(selected));
     assert!(EC2_QUERY.payload_codec().is_none());
     Ok(())
 }

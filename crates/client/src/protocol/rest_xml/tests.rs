@@ -1,7 +1,6 @@
-//! rest-xml is built but switched off: reachable from tests, refused by
-//! admission; and the request quirks the protocol suite leaves open.
+//! rest-xml is admitted: admission and clients select it; and the request
+//! quirks the protocol suite leaves open.
 use super::*;
-use crate::admission::Unsupported;
 use crate::protocol::{IMPLEMENTED, SWITCHED_OFF, select};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -21,18 +20,16 @@ const MODEL: &str = r#"{
 }"#;
 
 #[test]
-fn rest_xml_is_built_but_not_admitted() -> Result<()> {
+fn rest_xml_is_admitted() -> Result<()> {
     let model = Model::from_json(MODEL.as_bytes())?;
-    assert_eq!(
-        select(&model).err(),
-        Some(Unsupported::Protocol("rest-xml".into()))
-    );
-    assert!(IMPLEMENTED.named("rest-xml").is_none());
-    let built = SWITCHED_OFF
-        .resolve(model.metadata())
-        .map_err(|unsupported| format!("{unsupported:?}"))?;
-    assert_eq!(built.protocol_id(), traits::REST_XML);
-    assert!(IMPLEMENTED.get(traits::REST_XML).is_none());
+    let selected = select(&model).map_err(|unsupported| format!("{unsupported:?}"))?;
+    assert_eq!(selected.protocol_id(), traits::REST_XML);
+    let named = IMPLEMENTED
+        .named("rest-xml")
+        .map(|protocol| protocol.protocol_id());
+    assert_eq!(named, Some(traits::REST_XML));
+    assert!(IMPLEMENTED.get(traits::REST_XML).is_some());
+    assert!(SWITCHED_OFF.named("rest-xml").is_none());
     Ok(())
 }
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::error::{ParseError, SerializeError};
 use crate::http::HttpResponse;
-use crate::protocol::{IMPLEMENTED, ParseOptions, Serialized, compat, for_model};
+use crate::protocol::{IMPLEMENTED, ParseOptions, SWITCHED_OFF, Serialized, compat, for_model};
 use model::schema::{OperationSchema, Schema};
 use model::shapes::Model;
 use model::source::{DirSource, Kind, Source};
@@ -152,13 +152,16 @@ fn the_json_version_tells_the_aws_json_instances_apart() {
 }
 
 /// Each implementation answers to its botocore name and its protocol
-/// trait, and only the JSON ones send epoch timestamps.
+/// trait, and only the JSON ones send epoch timestamps; nothing is left
+/// switched off.
 #[test]
 fn the_registry_holds_each_protocol_once_by_trait() {
     for (name, id, epoch) in [
         ("query", traits::AWS_QUERY, false),
         ("json", traits::AWS_JSON_1_1, true),
         ("rest-json", traits::REST_JSON_1, true),
+        ("rest-xml", traits::REST_XML, false),
+        ("ec2", traits::EC2_QUERY, false),
     ] {
         let named = IMPLEMENTED
             .named(name)
@@ -169,16 +172,17 @@ fn the_registry_holds_each_protocol_once_by_trait() {
     }
     let json_1_0 = IMPLEMENTED.get(traits::AWS_JSON_1_0);
     assert_eq!(json_1_0.map(compat::timestamps_epoch), Some(true));
-    assert!(IMPLEMENTED.named("rest-xml").is_none());
-    assert!(IMPLEMENTED.get(traits::REST_XML).is_none());
+    for name in ["rest-xml", "ec2"] {
+        assert!(SWITCHED_OFF.named(name).is_none(), "{name}");
+    }
 }
 
 /// Every model in the repository's botocore data resolves to a protocol,
-/// and exactly those resolving to `query`, `json` or `rest-json` have an
-/// implementation.
+/// and exactly those resolving to `query`, `json`, `rest-json`, `rest-xml`
+/// or `ec2` have an implementation.
 #[test]
 #[cfg_attr(miri, ignore = "reads the data directory, which Miri cannot")]
-fn query_json_and_rest_json_models_have_an_implementation() -> TestResult {
+fn every_model_but_cbor_has_an_implementation() -> TestResult {
     let data =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../aws-cli/awscli/botocore/data");
     let source = DirSource::new(data);
@@ -189,7 +193,10 @@ fn query_json_and_rest_json_models_have_an_implementation() -> TestResult {
         let model = Model::load(&source, &service)?;
         let resolved = resolved_protocol(model.metadata());
         assert!(resolved.is_ok(), "{service}: {resolved:?}");
-        let expected = matches!(resolved, Ok("query" | "json" | "rest-json"));
+        let expected = matches!(
+            resolved,
+            Ok("query" | "json" | "rest-json" | "rest-xml" | "ec2")
+        );
         assert_eq!(for_model(&model).is_some(), expected, "{service}");
         implemented += usize::from(expected);
     }

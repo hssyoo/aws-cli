@@ -3,8 +3,8 @@
 //! `EC2QueryParser` (the query parser with the request id in `requestId`,
 //! errors in `<Response><Errors><Error>` and `RequestID`).
 //!
-//! Built but not admitted: it is registered in [`super::SWITCHED_OFF`]
-//! only, so admission still refuses `ec2` and only tests reach it.
+//!
+//! Admitted: it is in [`super::IMPLEMENTED`].
 use super::query::{self, body_shape};
 use super::{AWS_QUERY, BotocoreCompat, ClientProtocol, ParseOptions, Serialized, common};
 use crate::codec::form::{Dialect, EC2_FORM, FormSerializer};
