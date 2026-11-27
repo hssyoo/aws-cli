@@ -6,10 +6,11 @@ use super::prepare::{
 use super::{after_prepare, find};
 use crate::auth::{self, AuthScheme};
 use crate::call::{Client, Output, Prepared};
+use crate::credentials::SigningCredentials;
 use crate::endpoint;
 use crate::error::{CallError, ParseError, ServiceError};
 use crate::hooks::CallContext;
-use crate::http::{HttpRequest, HttpResponse};
+use crate::http::{HttpRequest, HttpResponse, Method};
 use crate::retry::{self, Attempt, ErrorKind, RetryDecision};
 use crate::transport::TransportError;
 use cli_core::client_config::user_agent::Features;
@@ -145,8 +146,8 @@ fn deferred_account_id(client: &Client) -> Result<Option<String>, CallError> {
     Ok(credentials.and_then(|credentials| credentials.account_id))
 }
 
-/// One attempt's request: `modify_before_signing`, the identity and
-/// signature, then `modify_before_transmit`'s unsigned headers.
+/// One attempt's request: `modify_before_signing`, then for a SigV4
+/// scheme the identity and the signature, then `modify_before_transmit`.
 fn attempt_request(
     client: &Client,
     cx: &mut CallContext<'_>,
@@ -156,12 +157,25 @@ fn attempt_request(
 ) -> Result<HttpRequest, CallError> {
     let mut request = prepared.request.clone();
     modify_before_signing(client, cx, &mut request)?;
-    sign(client, &prepared.scheme, prepared.features, &mut request)?;
-    client.attempt_request(&mut request, cx.attempt, invocation, ttl);
+    if let AuthScheme::SigV4 {
+        signing_region,
+        signing_name,
+    } = &prepared.scheme
+    {
+        let credentials = resolve_identity(client)?;
+        let signer = Signer {
+            region: signing_region,
+            name: signing_name,
+            credentials: &credentials,
+        };
+        sign(client, &signer, prepared.features, &mut request);
+    }
+    modify_before_transmit(client, &mut request, cx.attempt, invocation, ttl);
     Ok(request)
 }
 
-/// The `before_sign` stage. An error ends the call without a retry.
+/// The `before_sign` stage. An error ends the call without a retry, and
+/// wins over a credentials error: the identity comes after it.
 fn modify_before_signing(
     client: &Client,
     cx: &mut CallContext<'_>,
@@ -174,28 +188,28 @@ fn modify_before_signing(
     Ok(())
 }
 
-/// The credentials, loaded on every attempt, and the signature, for a
-/// SigV4 scheme.
-fn sign(
-    client: &Client,
-    scheme: &AuthScheme,
-    features: Features,
-    request: &mut HttpRequest,
-) -> Result<(), CallError> {
-    let AuthScheme::SigV4 {
-        signing_region,
-        signing_name,
-    } = scheme
-    else {
-        return Ok(());
-    };
-    let credentials = (client.components.identity_resolver)
+/// The credentials, asked of the source on every attempt: the source
+/// refreshes what is due (during a backoff too), and nothing here caches.
+/// An error, or none, ends the call without a retry.
+fn resolve_identity(client: &Client) -> Result<SigningCredentials, CallError> {
+    (client.components.identity_resolver)
         .credentials()
         .map_err(|error| CallError::Credentials(error.0))?
-        .ok_or(CallError::NoCredentials)?;
-    // The provider registers its feature ids as it answers, and
-    // `rebuild_and_replace_user_agent_handler` rebuilds the header after
-    // the signer, which does not sign `User-Agent`.
+        .ok_or(CallError::NoCredentials)
+}
+
+/// What one SigV4 signature is made with.
+struct Signer<'a> {
+    region: &'a str,
+    name: &'a str,
+    credentials: &'a SigningCredentials,
+}
+
+/// The `User-Agent` with the credential source's feature ids, then the
+/// signature. The provider registers its feature ids as it answers, and
+/// `rebuild_and_replace_user_agent_handler` rebuilds the header after the
+/// signer, which does not sign `User-Agent`.
+fn sign(client: &Client, signer: &Signer<'_>, features: Features, request: &mut HttpRequest) {
     if let Some(method) = client.components.identity_resolver.method() {
         let mut features = features;
         features.extend(
@@ -207,23 +221,61 @@ fn sign(
         request.headers.set("User-Agent", agent);
     }
     let now = client.components.runtime.now();
-    auth::sign(signing_region, signing_name, &credentials, now, request);
-    Ok(())
+    auth::sign(signer.region, signer.name, signer.credentials, now, request);
 }
 
-/// The `before_transmit` stage's response, else the transport's.
+/// The core's `modify_before_transmit`: the unsigned headers, after the
+/// signature (`add_retry_headers`, with `max` as `seed_max_attempts`
+/// seeds it, then `_prepare_headers`'s `Content-Length`).
+fn modify_before_transmit(
+    client: &Client,
+    request: &mut HttpRequest,
+    attempt: u32,
+    invocation: &str,
+    ttl: Option<&str>,
+) {
+    request.headers.set("amz-sdk-invocation-id", invocation);
+    let ttl = ttl.map(|ttl| format!("ttl={ttl}; ")).unwrap_or_default();
+    let max = client.components.retry_strategy.max_attempts();
+    request.headers.set(
+        "amz-sdk-request",
+        format!("{ttl}attempt={attempt}; max={max}"),
+    );
+    let framed = !matches!(request.method, Method::Get | Method::Head | Method::Options);
+    if framed && !request.headers.contains("Content-Length") {
+        request
+            .headers
+            .set("Content-Length", request.body.len().to_string());
+    }
+}
+
+/// The `before_transmit` stage (botocore's `before-send`): the first
+/// hook's response is the attempt's, and nothing is sent. A hook error
+/// ends the call without a retry.
+fn short_circuit_transmit(
+    client: &Client,
+    cx: &mut CallContext<'_>,
+    request: &HttpRequest,
+) -> Result<Option<HttpResponse>, CallError> {
+    for hook in client.hooks.interceptors(cx.operation.name()) {
+        let answered = hook
+            .before_transmit(cx, request)
+            .map_err(|error| CallError::Hook(error.after_prepare()))?;
+        if answered.is_some() {
+            return Ok(answered);
+        }
+    }
+    Ok(None)
+}
+
+/// [`short_circuit_transmit`]'s response, else the transport's.
 fn transmit(
     client: &Client,
     cx: &mut CallContext<'_>,
     request: &HttpRequest,
 ) -> Result<Result<HttpResponse, TransportError>, CallError> {
-    for hook in client.hooks.interceptors(cx.operation.name()) {
-        if let Some(response) = hook
-            .before_transmit(cx, request)
-            .map_err(|error| CallError::Hook(error.after_prepare()))?
-        {
-            return Ok(Ok(response));
-        }
+    if let Some(response) = short_circuit_transmit(client, cx, request)? {
+        return Ok(Ok(response));
     }
     Ok(client.components.http_client.send(request, client.timeouts))
 }
@@ -241,6 +293,13 @@ fn ttl(client: &Client, date: timestamp::Timestamp) -> String {
 
 /// What one attempt's result decides: `deserialize`, `classify`, then
 /// botocore's `needs-retry`, or the call's result.
+///
+/// The classify rule: only a transport error other than an interruption,
+/// a parsed service error or a parsed response is classified, and only a
+/// classified attempt can be retried or wait. An interruption, an
+/// `after_receive` hook error and a parse error end the call here, as a
+/// `before_sign` or `before_transmit` hook error, a credentials error and
+/// `NoCredentials` ended it before the attempt was sent.
 fn evaluate(
     client: &Client,
     cx: &mut CallContext<'_>,

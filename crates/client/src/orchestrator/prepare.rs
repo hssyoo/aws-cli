@@ -10,9 +10,9 @@ use crate::hooks::CallContext;
 use crate::http::HttpRequest;
 use crate::protocol::Serialized;
 use cli_core::client_config::user_agent::Features;
-use model::schema::OperationSchema;
+use model::schema::{Flag, OperationSchema};
 use model::validate::{Validation, validate_input};
-use model::value::Value;
+use model::value::{Map, Value};
 
 /// [`Client::prepare`] with `extra` among the call's feature ids: the
 /// prepare phases in order, checkpointed into a [`Prepared`].
@@ -27,7 +27,7 @@ pub(crate) fn prepare(
     let mut cx = CallContext::new(&client.service, &client.model, operation);
     let mut input = input;
     modify_before_serialization(client, &mut cx, &mut input)?;
-    client.fill_idempotency_tokens(operation, &mut input);
+    fill_idempotency_tokens(client, operation, &mut input);
     let (endpoint, mut features) = resolve_endpoint(client, &mut cx, &input, None)?;
     features.extend(extra.iter());
     let serialized = serialize(client, operation, &input)?;
@@ -76,6 +76,35 @@ fn modify_before_serialization(
         hook.modify_input(cx, input).map_err(prepare_hook_error)?;
     }
     Ok(())
+}
+
+/// `generate_idempotent_uuid`: each input member marked
+/// `idempotencyToken` and left out gets `str(uuid.uuid4())`.
+fn fill_idempotency_tokens(client: &Client, operation: OperationSchema<'_>, input: &mut Value) {
+    let Some(shape) = operation.input() else {
+        return;
+    };
+    let tokens: Vec<&str> = shape
+        .members()
+        .filter(|member| member.flag(Flag::IdempotencyToken))
+        .filter_map(|member| member.member_name())
+        .collect();
+    if tokens.is_empty() {
+        return;
+    }
+    if *input == Value::Null {
+        *input = Value::Map(Map::new());
+    }
+    if let Value::Map(map) = input {
+        for name in tokens {
+            if !map.contains_key(name) {
+                map.insert(
+                    name.to_owned(),
+                    Value::String(client.components.runtime.uuid4()),
+                );
+            }
+        }
+    }
 }
 
 /// The endpoint of a call with `input` (`_resolve_endpoint_ruleset`), the

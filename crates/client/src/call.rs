@@ -26,7 +26,7 @@ use crate::credentials::CredentialSource;
 use crate::endpoint::{EndpointConfig, EndpointData};
 use crate::error::CallError;
 use crate::hooks::{CallContext, Customization, Hooks, Slots};
-use crate::http::{Headers, HttpRequest, HttpResponse, Method};
+use crate::http::{Headers, HttpRequest, HttpResponse};
 use crate::protocol::{self, ClientProtocol, ParseHooks, Serialized};
 use crate::runtime::Runtime;
 use crate::runtime_components::RuntimeComponents;
@@ -34,9 +34,8 @@ use crate::transport::{Timeouts, Transport};
 pub use crate::useragent::UserAgentContext;
 use cli_core::client_config::ClientSettings;
 use cli_core::client_config::user_agent::Features;
-use model::schema::{Flag, OperationSchema};
 use model::shapes::Model;
-use model::value::{Map, Value};
+use model::value::Value;
 use std::sync::Arc;
 
 /// Everything a client is built from, one per service.
@@ -189,38 +188,6 @@ impl Client {
     ) -> Result<Prepared, CallError> {
         crate::orchestrator::prepare(self, operation, input, extra)
     }
-    /// `generate_idempotent_uuid`: each input member marked
-    /// `idempotencyToken` and left out gets `str(uuid.uuid4())`.
-    pub(crate) fn fill_idempotency_tokens(
-        &self,
-        operation: OperationSchema<'_>,
-        input: &mut Value,
-    ) {
-        let Some(shape) = operation.input() else {
-            return;
-        };
-        let tokens: Vec<&str> = shape
-            .members()
-            .filter(|member| member.flag(Flag::IdempotencyToken))
-            .filter_map(|member| member.member_name())
-            .collect();
-        if tokens.is_empty() {
-            return;
-        }
-        if *input == Value::Null {
-            *input = Value::Map(Map::new());
-        }
-        if let Value::Map(map) = input {
-            for name in tokens {
-                if !map.contains_key(name) {
-                    map.insert(
-                        name.to_owned(),
-                        Value::String(self.components.runtime.uuid4()),
-                    );
-                }
-            }
-        }
-    }
 }
 
 impl Client {
@@ -232,33 +199,10 @@ impl Client {
     pub fn send(&self, prepared: Prepared) -> Result<Output, CallError> {
         crate::orchestrator::send(self, prepared)
     }
-    /// The core's part of an attempt's `modify_before_transmit`: the
-    /// unsigned headers, after the signature (`add_retry_headers`, with
-    /// `max` as `seed_max_attempts` seeds it, then `_prepare_headers`).
-    pub(crate) fn attempt_request(
-        &self,
-        request: &mut HttpRequest,
-        attempt: u32,
-        invocation: &str,
-        ttl: Option<&str>,
-    ) {
-        request.headers.set("amz-sdk-invocation-id", invocation);
-        let ttl = ttl.map(|ttl| format!("ttl={ttl}; ")).unwrap_or_default();
-        let max = self.components.retry_strategy.max_attempts();
-        request.headers.set(
-            "amz-sdk-request",
-            format!("{ttl}attempt={attempt}; max={max}"),
-        );
-        let framed = !matches!(request.method, Method::Get | Method::Head | Method::Options);
-        if framed && !request.headers.contains("Content-Length") {
-            request
-                .headers
-                .set("Content-Length", request.body.len().to_string());
-        }
-    }
     /// A parsed response no retry was decided for: the quota's refund
     /// (`release_retry_quota`), then `modify_before_completion`, the
-    /// `modify_output` stage.
+    /// `modify_output` stage. It stays a method here, where the source
+    /// path tests of `testing::defines` name it.
     pub(crate) fn succeeded(
         &self,
         cx: &mut CallContext<'_>,
