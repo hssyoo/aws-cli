@@ -1,6 +1,23 @@
 //! Loads the lexicographically latest service endpoint model from a payload,
-//! through `model::payload`.
+//! through `model::payload`, and evaluates it with the native rules engine.
+use endpoint_rules::{
+    DecodeError, EvalError, EvalValue, Library, Outcome, Params, Partitions, Program,
+};
 use pyload::View;
+use std::sync::Arc;
+/// A rule parameter's value, of one of the kinds the S3 client gives
+/// (`String`, `Boolean`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamValue<'a> {
+    String(&'a str),
+    Boolean(bool),
+}
+/// The parameters of one resolution, each by the name the rule set gives
+/// it, as botocore's `EndpointRulesetResolver` hands the provider its
+/// parameter dict. A parameter left out is unset, which a rule set's
+/// default then fills; a name given twice takes its last value; a name the
+/// rule set does not declare is dropped.
+pub type Parameters<'a> = &'a [(&'a str, ParamValue<'a>)];
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum RulesError {
@@ -13,7 +30,10 @@ pub enum RulesError {
     /// A resource's bytes or its decoder scratch could not be reserved.
     OutOfMemory,
     Payload(pyload::Error),
-    Resolve(crt::endpoints::ResolveError),
+    /// The rule set or the partitions the engine refuses.
+    Rules(DecodeError),
+    /// An evaluation that reaches neither an endpoint nor a rule's error.
+    Evaluate(EvalError),
 }
 impl std::fmt::Display for RulesError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -24,7 +44,8 @@ impl std::fmt::Display for RulesError {
             Self::Decode(error) => error.fmt(f),
             Self::OutOfMemory => f.write_str("out of memory"),
             Self::Payload(error) => write!(f, "invalid endpoint payload: {error}"),
-            Self::Resolve(error) => error.fmt(f),
+            Self::Rules(error) => error.fmt(f),
+            Self::Evaluate(error) => error.fmt(f),
         }
     }
 }
@@ -54,23 +75,24 @@ impl From<model::payload::ResourceError> for RulesError {
         }
     }
 }
-/// A service's decompressed rule set and the partitions it reads, shared by
+/// A service's decoded rule set and the partitions it reads, shared by
 /// every evaluation for a command.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Rules {
-    pub rules: std::sync::Arc<[u8]>,
-    pub partitions: std::sync::Arc<[u8]>,
+    program: Arc<Program>,
+    partitions: Arc<Partitions>,
 }
 impl std::fmt::Debug for Rules {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Rules")
-            .field("rules", &self.rules.len())
-            .field("partitions", &self.partitions.len())
-            .finish()
+            .field("parameters", &self.program.params().len())
+            .finish_non_exhaustive()
     }
 }
 impl Rules {
-    /// Loads the service's latest rule set and the partitions from a payload.
+    /// Loads and decodes the service's latest rule set and the partitions
+    /// from a payload; the rule set reports before the partitions, as the
+    /// CRT engine read them.
     pub fn load(view: View<'_>, service: &str) -> Result<Self, RulesError> {
         let rules_name =
             model::payload::versioned_resource_name(view, service, "endpoint-rule-set-1")?;
@@ -78,26 +100,37 @@ impl Rules {
         let partitions =
             model::payload::load_resource(view, b"awscli/botocore/data/partitions.json")?;
         Ok(Self {
-            rules: rules.into(),
-            partitions: partitions.into(),
+            program: Arc::new(Program::decode(&rules).map_err(RulesError::Rules)?),
+            partitions: Arc::new(Partitions::decode(&partitions).map_err(RulesError::Rules)?),
         })
     }
-    pub fn resolve(
-        &self,
-        parameters: crt::endpoints::Parameters<'_>,
-    ) -> Result<crt::endpoints::Resolved, RulesError> {
-        let documents = crt::endpoints::Documents {
-            rules_json: &self.rules,
-            partitions_json: &self.partitions,
+    /// Evaluates the rule set for `parameters`.
+    pub fn resolve(&self, parameters: Parameters<'_>) -> Result<Outcome, RulesError> {
+        let mut args = Params::new(&self.program);
+        for &(name, value) in parameters {
+            if let Some(def) = self.program.param(name) {
+                args.set(
+                    def.slot(),
+                    match value {
+                        ParamValue::String(text) => EvalValue::str(text),
+                        ParamValue::Boolean(flag) => EvalValue::Bool(flag),
+                    },
+                );
+            }
+        }
+        let library = Library {
+            partitions: &self.partitions,
         };
-        crt::endpoints::resolve(documents, parameters).map_err(RulesError::Resolve)
+        self.program
+            .evaluate(&args, &library)
+            .map_err(RulesError::Evaluate)
     }
 }
 pub fn resolve(
     view: View<'_>,
     service: &str,
-    parameters: crt::endpoints::Parameters<'_>,
-) -> Result<crt::endpoints::Resolved, RulesError> {
+    parameters: Parameters<'_>,
+) -> Result<Outcome, RulesError> {
     Rules::load(view, service)?.resolve(parameters)
 }
 #[cfg(test)]

@@ -14,6 +14,7 @@ testing = ["dep:arbitrary"]
 libc.workspace = true
 numa = { path = "../numa" }
 crt = { path = "../crt" }
+endpoint-rules = { path = "../endpoint-rules" }
 credentials = { path = "../credentials" }
 pyload = { path = "../pyload" }
 pytext = { path = "../pytext" }

@@ -119,6 +119,7 @@ const S3: &[&str] = &[
     "cli-core",
     "credentials",
     "crt",
+    "endpoint-rules",
     "model",
     "numa",
     "pyload",

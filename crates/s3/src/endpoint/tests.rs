@@ -25,9 +25,9 @@ fn first_signing_scheme_and_optional_region() {
 }
 /// The value `parameters` gives the rule parameter `name`, if any.
 fn parameter<'a>(
-    parameters: &[(&str, crt::endpoints::ParamValue<'a>)],
+    parameters: &[(&str, crate::endpoint_rules::ParamValue<'a>)],
     name: &str,
-) -> Option<crt::endpoints::ParamValue<'a>> {
+) -> Option<crate::endpoint_rules::ParamValue<'a>> {
     parameters
         .iter()
         .find(|(given, _)| *given == name)
@@ -35,7 +35,7 @@ fn parameter<'a>(
 }
 #[test]
 fn explicit_endpoint_presence_alone_forces_path_style() {
-    use crt::endpoints::ParamValue::{Boolean, String};
+    use crate::endpoint_rules::ParamValue::{Boolean, String};
     assert_eq!(
         parameter(
             &parameters("us-east-1", Some("b"), Options::default()),
@@ -62,7 +62,7 @@ fn explicit_endpoint_presence_alone_forces_path_style() {
 /// the client leaves unset, such as `UseArnRegion`, are absent.
 #[test]
 fn the_s3_rule_parameters_are_a_named_list() {
-    use crt::endpoints::ParamValue::{Boolean, String};
+    use crate::endpoint_rules::ParamValue::{Boolean, String};
     assert_eq!(
         parameters("us-east-1", None, Options::default()),
         [

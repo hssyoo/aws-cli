@@ -11,21 +11,16 @@ use std::ffi::{CString, c_int, c_void};
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
 
-/// Holders of the CRT libraries. aws-c-common records its initialization in
-/// one flag that aws-c-io's clean-up clears, so no clean-up may run while any
-/// holder of either kind remains.
+/// Holders of the CRT libraries: the first initializes them and the last
+/// cleans them up.
 #[derive(Debug)]
 struct LibraryState {
     full: usize,
-    sdkutils: usize,
     full_live: bool,
-    sdkutils_live: bool,
 }
 trait LibraryOps {
     fn library_init(&mut self);
     fn library_clean_up(&mut self);
-    fn sdkutils_init(&mut self);
-    fn sdkutils_clean_up(&mut self);
 }
 #[derive(Debug)]
 struct CrtLibraryOps;
@@ -40,24 +35,12 @@ impl LibraryOps for CrtLibraryOps {
         // resources before releasing.
         unsafe { ffi::rust_crt_library_clean_up() };
     }
-    fn sdkutils_init(&mut self) {
-        // SAFETY: the state lock serializes every CRT library counter; the
-        // allocator is process-lifetime.
-        unsafe { crt_sys::endpoints::aws_sdkutils_library_init(ffi::rust_crt_allocator()) };
-    }
-    fn sdkutils_clean_up(&mut self) {
-        // SAFETY: pairs with the sdkutils-only initialization; no holder
-        // remains.
-        unsafe { crt_sys::endpoints::aws_sdkutils_library_clean_up() };
-    }
 }
 impl LibraryState {
     const fn new() -> Self {
         Self {
             full: 0,
-            sdkutils: 0,
             full_live: false,
-            sdkutils_live: false,
         }
     }
     fn acquire_full(&mut self, ops: &mut impl LibraryOps) {
@@ -67,32 +50,16 @@ impl LibraryState {
         }
         self.full += 1;
     }
-    /// Initializes sdkutils alone unless a live S3 library, which
-    /// initializes it through aws-c-auth, or an earlier holder already has.
-    fn acquire_sdkutils(&mut self, ops: &mut impl LibraryOps) {
-        if !self.full_live && !self.sdkutils_live {
-            ops.sdkutils_init();
-            self.sdkutils_live = true;
-        }
-        self.sdkutils += 1;
-    }
     fn release_full(&mut self, ops: &mut impl LibraryOps) {
         self.full -= 1;
         self.settle(ops);
     }
-    fn release_sdkutils(&mut self, ops: &mut impl LibraryOps) {
-        self.sdkutils -= 1;
-        self.settle(ops);
-    }
     fn settle(&mut self, ops: &mut impl LibraryOps) {
-        if self.full != 0 || self.sdkutils != 0 {
+        if self.full != 0 {
             return;
         }
         if std::mem::take(&mut self.full_live) {
             ops.library_clean_up();
-        }
-        if std::mem::take(&mut self.sdkutils_live) {
-            ops.sdkutils_clean_up();
         }
     }
 }
@@ -128,25 +95,6 @@ impl Library {
 impl Drop for Library {
     fn drop(&mut self) {
         lock(&LIBRARY_STATE).release_full(&mut CrtLibraryOps);
-    }
-}
-/// aws-c-sdkutils alone, for endpoint rule evaluation, which needs no I/O,
-/// TLS, or S3 library. It shares [`Library`]'s state: a live S3 library
-/// already holds sdkutils, and neither kind cleans up while the other is
-/// held.
-#[derive(Debug)]
-pub struct SdkutilsLibrary {
-    _private: (),
-}
-impl SdkutilsLibrary {
-    pub fn acquire() -> Self {
-        lock(&LIBRARY_STATE).acquire_sdkutils(&mut CrtLibraryOps);
-        Self { _private: () }
-    }
-}
-impl Drop for SdkutilsLibrary {
-    fn drop(&mut self) {
-        lock(&LIBRARY_STATE).release_sdkutils(&mut CrtLibraryOps);
     }
 }
 #[derive(Debug)]

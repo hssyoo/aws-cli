@@ -1,4 +1,4 @@
-//! S3-specific endpoint parameters evaluated by the shared CRT rules engine.
+//! S3-specific endpoint parameters evaluated by the native rules engine.
 //! The endpoint settings `endpoint_config` reads and the `s3` block's inputs
 //! the record resolved become the rules' parameters as botocore's S3 client
 //! computes them (`compute_endpoint_resolver_builtin_defaults`,
@@ -206,8 +206,8 @@ pub fn parameters<'a>(
     region: &'a str,
     bucket: Option<&'a str>,
     options: Options<'a>,
-) -> Vec<(&'static str, crt::endpoints::ParamValue<'a>)> {
-    use crt::endpoints::ParamValue::{Boolean, String};
+) -> Vec<(&'static str, crate::endpoint_rules::ParamValue<'a>)> {
+    use crate::endpoint_rules::ParamValue::{Boolean, String};
     let mut parameters = vec![("Region", String(region))];
     parameters.extend(bucket.map(|bucket| ("Bucket", String(bucket))));
     parameters.extend([
@@ -310,19 +310,18 @@ fn resolve_rules(
         .resolve(&parameters(region, bucket, options))
         .map_err(EndpointError::Rules)?;
     match resolved {
-        crt::endpoints::Resolved::Endpoint { url, properties } => {
+        endpoint_rules::Outcome::Endpoint(endpoint) => {
+            let properties = endpoint.properties.to_string().into_bytes();
             let signing_region = parse_signing_region(&properties)?;
             Ok(Resolved::Endpoint(Endpoint {
-                url,
+                url: endpoint.url.into_bytes(),
                 properties,
                 signing_region,
                 client_netloc: None,
                 recipe: None,
             }))
         }
-        crt::endpoints::Resolved::RuleError(message) => Ok(Resolved::RuleError(rule_error(
-            &String::from_utf8_lossy(&message),
-        )?)),
+        endpoint_rules::Outcome::Error(message) => Ok(Resolved::RuleError(rule_error(&message)?)),
     }
 }
 /// Resolves configuration while preserving the missing-services diagnostic bytes.
