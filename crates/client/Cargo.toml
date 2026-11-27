@@ -22,6 +22,8 @@ timestamp = { path = "../timestamp" }
 [dev-dependencies]
 awscli-argparse = { path = "../awscli-argparse", features = ["testing"] }
 crt = { path = "../crt", features = ["loopback"] }
+# The native engine, which `endpoint::differential` compares with the CRT.
+endpoint-rules = { path = "../endpoint-rules" }
 model = { path = "../model", features = ["testing"] }
 sigv4 = { path = "../sigv4", features = ["testing"] }
 timestamp = { path = "../timestamp", features = ["testing"] }
