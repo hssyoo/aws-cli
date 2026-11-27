@@ -194,3 +194,47 @@ fn a_lone_surrogate_in_a_detail_prints_backslash_escaped() {
         )
     );
 }
+
+/// `modeled_fields` keeps `Code`, `Message` and the members, compared
+/// without case, of the last error shape in model order whose code
+/// (`error.code` when non-empty, else its name) is the error's; a shape
+/// that is no exception, or that the code does not name, models nothing.
+#[test]
+fn only_the_coded_error_shape_s_members_are_modeled() -> Result<(), Box<dyn std::error::Error>> {
+    let model = Model::from_json(
+        br#"{"metadata": {}, "operations": {}, "shapes": {
+            "S": {"type": "string"},
+            "Coded": {"type": "structure", "exception": true,
+                      "members": {"Earlier": {"shape": "S"}}},
+            "Thrown": {"type": "structure", "exception": true, "error": {"code": "Coded"},
+                       "members": {"Reason": {"shape": "S"}}},
+            "Blank": {"type": "structure", "exception": true, "error": {"code": ""},
+                      "members": {"Zed": {"shape": "S"}}},
+            "Choice": {"type": "structure", "exception": true, "union": true,
+                       "members": {"Pick": {"shape": "S"}}},
+            "Plain": {"type": "structure", "members": {"Kept": {"shape": "S"}}}
+        }}"#,
+    )?;
+    let fields = |code: &str| {
+        let mut error = ServiceError::new("Op", 400);
+        error
+            .error
+            .insert("Code".into(), Value::String(code.into()));
+        error
+            .error
+            .insert("message".into(), Value::String("m".into()));
+        for name in ["reason", "Earlier", "Zed", "Pick", "Kept"] {
+            error.members.insert(name.into(), Value::Integer(1));
+        }
+        let info = error_info(&error, &model);
+        info.iter()
+            .map(|(key, _)| key.text().into_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(fields("Coded"), ["Code", "message", "reason"]);
+    assert_eq!(fields("Blank"), ["Code", "message", "Zed"]);
+    assert_eq!(fields("Choice"), ["Code", "message", "Pick"]);
+    assert_eq!(fields("Plain"), ["Code", "message"]);
+    assert_eq!(fields("Thrown"), ["Code", "message"]);
+    Ok(())
+}
