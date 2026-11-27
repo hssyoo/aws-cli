@@ -471,4 +471,5 @@ fn python_equality_is_strict_where_python_is() -> Result<()> {
     Ok(())
 }
 
+#[path = "fakes/tests.rs"]
 mod fakes;
