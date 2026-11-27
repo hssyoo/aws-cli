@@ -3,8 +3,9 @@
 //! the interface, [`compat`] botocore's drivers over it, and [`registry`]
 //! botocore's choice of one. The implementations: [`query`] (awsQuery),
 //! [`json`] (awsJson 1.0 and 1.1, with the query-compatible mode) and
-//! [`rest_json`] (restJson1), and, built but not yet admitted, [`ec2`]
-//! (ec2Query) and [`rest_xml`] (restXml).
+//! [`rest_json`] (restJson1), [`rest_xml`] (restXml) and [`ec2`]
+//! (ec2Query), and, built but not yet admitted, [`rpc_v2_cbor`]
+//! (rpcv2Cbor).
 use crate::admission::Unsupported;
 use crate::error::{CallError, ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpRequest, HttpResponse, Method, Url};
@@ -215,6 +216,7 @@ pub mod query;
 pub mod registry;
 pub mod rest_json;
 pub mod rest_xml;
+pub mod rpc_v2_cbor;
 
 pub use compat::BotocoreCompat;
 pub use ec2::{EC2_QUERY, Ec2QueryProtocol};
@@ -223,6 +225,7 @@ pub use query::{AWS_QUERY, AwsQueryProtocol};
 pub use registry::{ProtocolRegistry, Unresolved, resolved_protocol};
 pub use rest_json::{HttpBindingProtocol, REST_JSON_1};
 pub use rest_xml::REST_XML;
+pub use rpc_v2_cbor::{RPC_V2_CBOR, RpcV2Protocol};
 
 /// What the codecs share with the protocols: botocore's serializer
 /// conversions, wire names and body decoding.
@@ -254,9 +257,9 @@ pub static IMPLEMENTED: ProtocolRegistry = ProtocolRegistry::new(&[
 
 /// The protocols built but switched off: admission and clients read
 /// [`IMPLEMENTED`] alone, so these are reachable only from tests, through
-/// the test facade, until a later change moves each into it. None is
-/// staged now.
-pub static SWITCHED_OFF: ProtocolRegistry = ProtocolRegistry::new(&[]);
+/// the test facade, until a later change moves each into it.
+pub static SWITCHED_OFF: ProtocolRegistry =
+    ProtocolRegistry::new(&[("smithy-rpc-v2-cbor", &RPC_V2_CBOR)]);
 
 /// Whether `model`'s service sends a timestamp member with no
 /// `timestampFormat` as an epoch number; `None` when its protocol is not

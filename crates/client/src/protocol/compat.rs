@@ -48,11 +48,12 @@ impl BotocoreCompat {
 /// as an epoch number (`JSONSerializer.TIMESTAMP_FORMAT`, `unixtimestamp`)
 /// rather than ISO 8601 text (`QuerySerializer`'s and the XML protocols'
 /// `iso8601`). `RestJSONSerializer` keeps `JSONSerializer`'s body format; a
-/// header timestamp is RFC 822 text, which carries its own offset.
+/// header timestamp is RFC 822 text, which carries its own offset. CBOR
+/// sends every timestamp as tag 1 over epoch seconds.
 pub fn timestamps_epoch(protocol: &dyn ClientProtocol) -> bool {
     matches!(
         protocol.protocol_id(),
-        traits::AWS_JSON_1_0 | traits::AWS_JSON_1_1 | traits::REST_JSON_1
+        traits::AWS_JSON_1_0 | traits::AWS_JSON_1_1 | traits::REST_JSON_1 | traits::RPC_V2_CBOR
     )
 }
 
