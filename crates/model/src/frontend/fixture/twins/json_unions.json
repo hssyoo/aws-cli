@@ -1,0 +1,77 @@
+{
+  "smithy": "2.0",
+  "shapes": {
+    "aws.protocoltests.json#JsonProtocol": {
+      "type": "service",
+      "version": "2018-01-01",
+      "operations": [{ "target": "aws.protocoltests.json#JsonUnions" }],
+      "traits": {
+        "aws.api#service": { "sdkId": "Json Protocol", "endpointPrefix": "jsonprotocol" },
+        "aws.auth#sigv4": { "name": "JsonProtocol" },
+        "aws.protocols#awsJson1_1": {},
+        "smithy.api#title": "JsonProtocol"
+      }
+    },
+    "aws.protocoltests.json#JsonUnions": {
+      "type": "operation",
+      "input": { "target": "aws.protocoltests.json#UnionInputOutput" },
+      "output": { "target": "smithy.api#Unit" },
+      "traits": {
+        "smithy.api#documentation": "This operation uses unions for inputs and outputs.",
+        "smithy.api#idempotent": {}
+      }
+    },
+    "aws.protocoltests.json#Blob": { "type": "blob" },
+    "aws.protocoltests.json#Boolean": { "type": "boolean" },
+    "aws.protocoltests.json#FooEnum": {
+      "type": "enum",
+      "members": {
+        "FOO": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": "Foo" } },
+        "BAZ": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": "Baz" } },
+        "BAR": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": "Bar" } },
+        "ONE": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": "1" } },
+        "ZERO": { "target": "smithy.api#Unit", "traits": { "smithy.api#enumValue": "0" } }
+      }
+    },
+    "aws.protocoltests.json#GreetingStruct": {
+      "type": "structure",
+      "members": { "hi": { "target": "aws.protocoltests.json#String" } }
+    },
+    "aws.protocoltests.json#Integer": { "type": "integer" },
+    "aws.protocoltests.json#MyUnion": {
+      "type": "union",
+      "members": {
+        "stringValue": { "target": "aws.protocoltests.json#String" },
+        "booleanValue": { "target": "aws.protocoltests.json#Boolean" },
+        "numberValue": { "target": "aws.protocoltests.json#Integer" },
+        "blobValue": { "target": "aws.protocoltests.json#Blob" },
+        "timestampValue": { "target": "aws.protocoltests.json#Timestamp" },
+        "enumValue": { "target": "aws.protocoltests.json#FooEnum" },
+        "listValue": { "target": "aws.protocoltests.json#StringList" },
+        "mapValue": { "target": "aws.protocoltests.json#StringMap" },
+        "structureValue": { "target": "aws.protocoltests.json#GreetingStruct" }
+      },
+      "traits": {
+        "smithy.api#documentation": "A union with a representative set of types for members."
+      }
+    },
+    "aws.protocoltests.json#String": { "type": "string" },
+    "aws.protocoltests.json#StringList": {
+      "type": "list",
+      "member": { "target": "aws.protocoltests.json#String" }
+    },
+    "aws.protocoltests.json#StringMap": {
+      "type": "map",
+      "key": { "target": "aws.protocoltests.json#String" },
+      "value": { "target": "aws.protocoltests.json#String" }
+    },
+    "aws.protocoltests.json#Timestamp": { "type": "timestamp" },
+    "aws.protocoltests.json#UnionInputOutput": {
+      "type": "structure",
+      "members": { "contents": { "target": "aws.protocoltests.json#MyUnion" } },
+      "traits": {
+        "smithy.api#documentation": "A shared structure that contains a single union member."
+      }
+    }
+  }
+}
