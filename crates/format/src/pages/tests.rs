@@ -72,10 +72,15 @@ impl Pages for Listed {
 
 fn written(pages: &mut Listed) -> (String, Option<String>) {
     let mut bytes = Vec::new();
-    let result = text(pages, pytext::codec::Errors::SurrogateEscape, &mut |text| {
-        bytes.extend_from_slice(text);
-        Ok(())
-    });
+    let result = text(
+        pages,
+        pytext::codec::Errors::SurrogateEscape,
+        None,
+        &mut |text| {
+            bytes.extend_from_slice(text);
+            Ok(())
+        },
+    );
     let out = String::from_utf8_lossy(&bytes).into_owned();
     let error = match result {
         Ok(()) => None,
@@ -189,6 +194,7 @@ fn pages_with_no_rows_write_nothing() {
     let result = text(
         &mut pages,
         pytext::codec::Errors::SurrogateEscape,
+        None,
         &mut |_| {
             writes += 1;
             Ok(())
@@ -201,11 +207,60 @@ fn pages_with_no_rows_write_nothing() {
     let result = text(
         &mut failing,
         pytext::codec::Errors::SurrogateEscape,
+        None,
         &mut |_| {
             writes += 1;
             Ok(())
         },
     );
     assert!(matches!(result, Err(Stopped::Format(_))));
+    assert_eq!(writes, 0);
+}
+
+/// `TextFormatter._format_response` searches each value it formats with
+/// `--query`: each page's, and the resume token's, which a query of the
+/// pages finds nothing in, so Python prints `None` for it.
+#[test]
+fn the_query_searches_each_page_and_the_resume_token() {
+    let mut pages = Listed::new(
+        vec![
+            value(r#"{"Keys": ["a", "b"]}"#),
+            value(r#"{"Keys": ["c"]}"#),
+        ],
+        &["Keys"],
+    );
+    pages.resume_token = Some("t".into());
+    let query = crate::tests::stub("Keys[0]");
+    let mut bytes = Vec::new();
+    let result = text(
+        &mut pages,
+        pytext::codec::Errors::SurrogateEscape,
+        Some(&query),
+        &mut |text| {
+            bytes.extend_from_slice(text);
+            Ok(())
+        },
+    );
+    assert!(result.is_ok());
+    assert_eq!(String::from_utf8_lossy(&bytes), "a\nc\nNone\n");
+}
+
+/// A search that raises stops the pages after the text already written.
+#[test]
+fn a_raising_search_stops_the_pages() {
+    let mut pages = Listed::new(vec![value(r#"{"Keys": ["a"]}"#)], &["Keys"]);
+    let mut writes = 0;
+    let result = text(
+        &mut pages,
+        pytext::codec::Errors::SurrogateEscape,
+        Some(&crate::tests::Stub(None)),
+        &mut |_| {
+            writes += 1;
+            Ok(())
+        },
+    );
+    assert!(
+        matches!(result, Err(Stopped::Format(error)) if error.message.starts_with("In function"))
+    );
     assert_eq!(writes, 0);
 }

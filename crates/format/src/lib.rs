@@ -4,6 +4,10 @@
 //! paginated response's text is written page by page ([`pages`]); its JSON
 //! is the full result's, which the paginator builds.
 //!
+//! `--query` is applied as `Formatter` applies it ([`Query`]): to the
+//! response after its `ResponseMetadata` is dropped, to the full result of a
+//! paginated one, and by `TextFormatter` to each page it writes.
+//!
 //! `table`, `yaml` and `yaml-stream` stay on the Python route
 //! ([`OutputFormat::from_name`] knows only the three here).
 #![forbid(unsafe_code)]
@@ -47,6 +51,27 @@ impl OutputFormat {
     }
 }
 
+/// `--query`, compiled: what `ParsedResult.search` gives for a value.
+pub trait Query {
+    /// The expression's result for `value`.
+    ///
+    /// # Errors
+    /// The exception the search raises, as `str()` gives it.
+    fn search(&self, value: &Value) -> Result<Value, PythonError>;
+}
+
+/// `Formatter._apply_query_if_needed`: `value` searched with `query`, if
+/// there is one.
+///
+/// # Errors
+/// The exception the search raised.
+pub fn apply_query(value: Value, query: Option<&dyn Query>) -> Result<Value, PythonError> {
+    match query {
+        Some(query) => query.search(&value),
+        None => Ok(value),
+    }
+}
+
 /// Output the formatter wrote before raising.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Partial {
@@ -63,9 +88,26 @@ pub struct Partial {
 /// # Errors
 /// What the formatter raised, after the output it wrote before.
 pub fn render(
+    response: Value,
+    format: OutputFormat,
+    errors: pytext::codec::Errors,
+) -> Result<Vec<u8>, Partial> {
+    render_with(response, format, errors, None)
+}
+
+/// [`render`], with the response then searched with `query`
+/// (`_get_transformed_response_for_output`), as every formatter but
+/// `OffFormatter` searches it. The search writes nothing, so its exception
+/// starts no pager.
+///
+/// # Errors
+/// What the search or the formatter raised, after the output the formatter
+/// wrote before.
+pub fn render_with(
     mut response: Value,
     format: OutputFormat,
     errors: pytext::codec::Errors,
+    query: Option<&dyn Query>,
 ) -> Result<Vec<u8>, Partial> {
     if format != OutputFormat::Off
         && let Some(class) = not_iterable(&response)
@@ -83,6 +125,13 @@ pub fn render(
     // `_remove_request_id` pops it from the dict, which no one reads after.
     if let Value::Map(map) = &mut response {
         map.remove("ResponseMetadata");
+    }
+    if format != OutputFormat::Off {
+        response = apply_query(response, query).map_err(|error| Partial {
+            written: Vec::new(),
+            started: false,
+            error,
+        })?;
     }
     let response = &response;
     let mut out = stream::Encoded::new(errors);
