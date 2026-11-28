@@ -1,6 +1,7 @@
-"""Generate the ec2 rows of the differential corpus, mechanically.
+"""Generate corpus files of the differential corpus, mechanically.
 
-`corpus/ec2.jsonl` holds, in the model's operation order:
+Each corpus (`CORPORA`) is over a list of services. `ec2` writes
+`corpus/ec2.jsonl`, which holds, in the model's operation order:
 
 - one row per ec2 operation the native route admits, which is every ec2
   row of `crates/model-tools/tests/verdicts/verdicts.tsv` (read, never
@@ -26,6 +27,29 @@ declares `"requests": 0` where botocore's validator rejects the filled
 parameters (with any idempotency token filled, as botocore fills it) or
 the row raises before the call.
 
+`command-adders` writes `corpus/command-adders.jsonl`: for each service
+whose table a command adder edits (`ADDERS`: the awscli initializers that
+set hand-written commands on a root table, which the native route covers
+for the service's other operations), in that list's order,
+
+- up to three operations the native route admits (none for emr, whose
+  parser hook acts on every operation), filled as above, the
+  most structurally varied (`varied`): in turn, the one whose filled
+  required arguments bring the most value kinds not yet chosen (a string,
+  an enum, a number, a boolean, a timestamp, a blob, a list, a map, a
+  structure, nothing required), the first in model order on a tie;
+- one row per command of the service's table, as the in-tree CLI builds it
+  (`create_clidriver`), that is no model operation of its own name: each
+  a command adder sets, adds or puts in place of an operation, which the
+  native route leaves to Python (`unsupported_subcommand`). `wait` and
+  `wizard` are the cross-cutting ones, and not listed. Each is given an
+  option no command has, which Python's parser refuses before any
+  request, so the row declares none.
+
+Each reply is the protocol's empty answer: ec2's and query's empty
+`<{Operation}Response>` document in the service's namespace, json's and
+rest-json's `{}`, rest-xml's empty body, and rpc-v2-cbor's empty map.
+
 `--out FILE` writes the corpus; `--check FILE` fails unless FILE is what
 the generator writes. Either first attacks the check with drifts it must
 refuse (a row dropped, added or swapped, an argument added, a request
@@ -33,10 +57,14 @@ declaration dropped, a reply changed, the last newline dropped) and
 checks the rows' shape (`self_test`). Run it in the differential harness's venv, which
 `cargo xtask diff` provisions, so it reads the in-tree botocore:
 
-    target/diff/venv/bin/python -B tests/diff/gen_ec2_corpus.py \\
+    target/diff/venv/bin/python -B tests/diff/gen_corpus.py ec2 \\
         --aws-cli-source aws-cli \\
         --verdicts crates/model-tools/tests/verdicts/verdicts.tsv \\
         --check tests/diff/corpus/ec2.jsonl
+    target/diff/venv/bin/python -B tests/diff/gen_corpus.py command-adders \\
+        --aws-cli-source aws-cli \\
+        --verdicts crates/model-tools/tests/verdicts/verdicts.tsv \\
+        --check tests/diff/corpus/command-adders.jsonl
 """
 
 from __future__ import annotations
@@ -52,9 +80,45 @@ API_VERSION: Final = "2016-11-15"
 MODEL: Final = f"aws-cli/awscli/botocore/data/ec2/{API_VERSION}/service-2.json"
 XMLNS: Final = f"http://ec2.amazonaws.com/doc/{API_VERSION}/"
 
+# The root commands whose tables the command adders edit, by CLI name.
+ADDERS: Final = [
+    "cloudformation",
+    "cloudfront",
+    "cloudtrail",
+    "codeartifact",
+    "codecommit",
+    "configservice",
+    "datapipeline",
+    "deploy",
+    "dlm",
+    "dsql",
+    "ec2-instance-connect",
+    "ecr",
+    "ecr-public",
+    "ecs",
+    "eks",
+    "emr",
+    "emr-containers",
+    "gamelift",
+    "lambda-web",
+    "lightsail",
+    "logs",
+    "rds",
+    "servicecatalog",
+    "ssm",
+    "sso",
+]
+# The cross-cutting commands a service's table may hold that are no
+# operation: `add_waiters`' and the wizards'.
+CROSS_CUTTING: Final = {"wait", "wizard"}
+# An option no command defines.
+NO_SUCH_OPTION: Final = "--no-such-option"
+SAMPLED: Final = 3
 
-def admitted(verdicts: Path) -> set[str]:
-    """The ec2 operations, by CLI name, whose standing is not a refusal."""
+
+def admitted(verdicts: Path, command_name: str = "ec2") -> set[str]:
+    """The operations of `command_name`, by CLI name, whose standing is
+    not a refusal."""
     found = set()
     lines = verdicts.read_text(encoding="utf-8").splitlines()
     header = lines[0].split("\t")
@@ -65,7 +129,7 @@ def admitted(verdicts: Path) -> set[str]:
     )
     for line in lines[1:]:
         fields = line.split("\t")
-        if fields[command] == "ec2" and not fields[standing].startswith("refused"):
+        if fields[command] == command_name and not fields[standing].startswith("refused"):
             found.add(fields[operation])
     return found
 
@@ -184,6 +248,45 @@ def valid(operation: Any, params: dict[str, Any]) -> bool:
     return True
 
 
+def reply(operation: Any) -> dict[str, Any]:
+    """The protocol's empty answer to `operation`."""
+    model = operation.service_model
+    protocol = model.protocol
+    if protocol in ("ec2", "query"):
+        namespace = XMLNS if protocol == "ec2" else model.metadata["xmlNamespace"]
+        return {
+            "status": 200,
+            "headers": [["Content-Type", "text/xml;charset=UTF-8"]],
+            "body": f'<{operation.name}Response xmlns="{namespace}"/>',
+        }
+    if protocol == "json":
+        version = model.metadata.get("jsonVersion", "1.0")
+        return {
+            "status": 200,
+            "headers": [["Content-Type", f"application/x-amz-json-{version}"]],
+            "body": "{}",
+        }
+    if protocol == "rest-json":
+        return {"status": 200, "headers": [["Content-Type", "application/json"]], "body": "{}"}
+    if protocol == "rest-xml":
+        return {"status": 200, "headers": [], "body": ""}
+    if protocol == "smithy-rpc-v2-cbor":
+        return {
+            "status": 200,
+            "headers": [["Content-Type", "application/cbor"], ["smithy-protocol", "rpc-v2-cbor"]],
+            "body_base64": "oA==",
+        }
+    raise SystemExit(f"{model.service_name}: no empty answer for {protocol}")
+
+
+def model_path(operation: Any) -> str:
+    model = operation.service_model
+    return (
+        f"aws-cli/awscli/botocore/data/{model.service_name}/{model.api_version}"
+        f"/service-2.json"
+    )
+
+
 def row(
     operation: Any,
     cli_name: str,
@@ -192,22 +295,17 @@ def row(
     extra_params: dict[str, Any],
     sends: bool,
     xform_name: Any,
+    command_name: str = "ec2",
 ) -> dict[str, Any]:
     """One row; the member `extra_params` binds is given by `extra` alone."""
     skip = next(iter(extra_params), None)
     argv, params = arguments(operation, xform_name, skip)
     params.update(extra_params)
     built: dict[str, Any] = {
-        "id": f"ec2-{cli_name}{suffix}",
-        "source": f"{MODEL}#{operation.name}",
-        "argv": ["ec2", cli_name, *argv, *extra],
-        "responses": [
-            {
-                "status": 200,
-                "headers": [["Content-Type", "text/xml;charset=UTF-8"]],
-                "body": f'<{operation.name}Response xmlns="{XMLNS}"/>',
-            }
-        ],
+        "id": f"{command_name}-{cli_name}{suffix}",
+        "source": f"{model_path(operation)}#{operation.name}",
+        "argv": [command_name, cli_name, *argv, *extra],
+        "responses": [reply(operation)],
     }
     if not (sends and valid(operation, params)):
         built["requests"] = 0
@@ -247,7 +345,7 @@ def hand_rows(operation: Any, cli_name: str, rows: list[tuple[str, str, str]], x
                 yield row(operation, cli_name, f"-{new}", [f"--{new}", text(value)], {name: value}, True, xform_name)
 
 
-def corpus(source: Path, verdicts: Path) -> str:
+def ec2_corpus(source: Path, verdicts: Path) -> str:
     sys.path.insert(0, str(source))
     import awscli  # noqa: F401  (aliases botocore to the in-tree copy)
     from botocore import xform_name
@@ -269,6 +367,106 @@ def corpus(source: Path, verdicts: Path) -> str:
     missing = wanted - {built["argv"][1] for built in rows}
     if missing:
         raise SystemExit(f"admitted operations the model lacks: {sorted(missing)}")
+    return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+
+
+def kinds(shape: Any, seen: set[str] | None = None) -> set[str]:
+    """The value kinds a filled `shape` holds, nested members' too."""
+    seen = set() if seen is None else seen
+    kind = shape.type_name
+    if kind == "string" and shape.metadata.get("enum"):
+        seen.add("enum")
+    elif kind in ("integer", "long", "float", "double"):
+        seen.add("number")
+    else:
+        seen.add(kind)
+    if kind == "list":
+        kinds(shape.member, seen)
+    elif kind == "structure":
+        for name in shape.required_members:
+            kinds(shape.members[name], seen)
+    return seen
+
+
+def operation_kinds(operation: Any) -> set[str]:
+    """The value kinds `operation`'s filled required arguments hold, or
+    `nothing` for none."""
+    names = required(operation)
+    if not names:
+        return {"nothing"}
+    found: set[str] = set()
+    for name in names:
+        kinds(operation.input_shape.members[name], found)
+    return found
+
+
+def varied(operations: list[Any], count: int) -> list[Any]:
+    """Up to `count` of `operations`, in turn the one that brings the most
+    kinds not yet chosen, the first on a tie; in their own order."""
+    chosen: list[Any] = []
+    covered: set[str] = set()
+    pending = list(operations)
+    while pending and len(chosen) < count:
+        best = max(pending, key=lambda op: len(operation_kinds(op) - covered))
+        chosen.append(best)
+        covered |= operation_kinds(best)
+        pending.remove(best)
+    return [op for op in operations if op in chosen]
+
+
+def python_commands(driver: Any, command_name: str, model: Any, xform_name: Any) -> list[str]:
+    """The names of `command_name`'s table, as the CLI builds it, that are
+    no model operation of their own name, but the cross-cutting ones."""
+    from awscli.clidriver import ServiceOperation
+
+    table = driver._get_command_table()[command_name].subcommand_table
+    names = []
+    for name, command in table.items():
+        if name in CROSS_CUTTING:
+            continue
+        own = (
+            type(command) is ServiceOperation
+            and xform_name(command._operation_model.name, "-") == name
+            and command._operation_model.service_model.service_name == model.service_name
+        )
+        if not own:
+            names.append(name)
+    return names
+
+
+def adders_corpus(source: Path, verdicts: Path) -> str:
+    sys.path.insert(0, str(source))
+    import awscli  # noqa: F401  (aliases botocore to the in-tree copy)
+    from awscli.clidriver import create_clidriver
+    from botocore import xform_name
+
+    driver = create_clidriver()
+    rows = []
+    for command_name in ADDERS:
+        service = driver._get_command_table()[command_name]
+        model = service._get_service_model()
+        wanted = admitted(verdicts, command_name)
+        operations = [
+            model.operation_model(name)
+            for name in model.operation_names
+            if xform_name(name, "-") in wanted
+        ]
+        for operation in varied(operations, SAMPLED):
+            cli_name = xform_name(operation.name, "-")
+            rows.append(row(operation, cli_name, "", [], {}, True, xform_name, command_name))
+        kept = python_commands(driver, command_name, model, xform_name)
+        if not kept:
+            raise SystemExit(f"{command_name}: no command kept on Python")
+        for name in kept:
+            rows.append(
+                {
+                    "id": f"{command_name}-{name}-python",
+                    "source": f"awscli command table of {command_name}",
+                    "argv": [command_name, name, NO_SUCH_OPTION],
+                    "responses": [{"status": 200, "headers": [], "body": ""}],
+                    "requests": 0,
+                }
+            )
     return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
 
 
@@ -298,13 +496,51 @@ def evasions(written: str) -> list[tuple[str, str]]:
     ]
 
 
+def attack(written: str) -> None:
+    """Attack `--check` with each evasion."""
+    for name, evasion in evasions(written):
+        if matches(written, evasion):
+            raise SystemExit(f"--check accepts {name}")
+
+
+def adders_self_test(written: str, verdicts: Path) -> None:
+    """Attack `--check`, then check the rows' shape: each service of
+    `ADDERS` has three rows of admitted operations, or one per operation
+    the verdicts admit where they admit fewer, each of an
+    operation the verdicts admit, and at least one row kept on Python,
+    which declares no request and gives the unknown option."""
+    attack(written)
+    rows = [json.loads(line) for line in written.splitlines()]
+    ids = [row["id"] for row in rows]
+    if len(ids) != len(set(ids)):
+        raise SystemExit("row ids repeat")
+    for command_name in ADDERS:
+        mine = [row for row in rows if row["argv"][0] == command_name]
+        native = [row for row in mine if not row["id"].endswith("-python")]
+        python = [row for row in mine if row["id"].endswith("-python")]
+        wanted = admitted(verdicts, command_name)
+        if len(native) != min(SAMPLED, len(wanted)):
+            raise SystemExit(f"{command_name}: {len(native)} admitted rows")
+        for row in native:
+            if row["argv"][1] not in wanted:
+                raise SystemExit(f"{row['id']} is not admitted")
+        if not python:
+            raise SystemExit(f"{command_name}: no row kept on Python")
+        for row in python:
+            if row["argv"][1] in wanted or row.get("requests") != 0:
+                raise SystemExit(f"{row['id']} must be no admitted operation and send nothing")
+            if row["argv"][2:] != [NO_SUCH_OPTION]:
+                raise SystemExit(f"{row['id']} must give only {NO_SUCH_OPTION}")
+    if {row["argv"][0] for row in rows} != set(ADDERS):
+        raise SystemExit("rows of a service outside ADDERS")
+    print(f"self-test: {len(evasions(written))} evasions refused, {len(rows)} rows well-formed")
+
+
 def self_test(written: str, wanted: set[str]) -> None:
     """Attack `--check` with each evasion, then check the rows' shape:
     one base row per admitted operation, four per pulled-up pair, and a
     request declared absent on every `-both` row."""
-    for name, evasion in evasions(written):
-        if matches(written, evasion):
-            raise SystemExit(f"--check accepts {name}")
+    attack(written)
     rows = [json.loads(line) for line in written.splitlines()]
     base = {row["argv"][1] for row in rows if row["id"] == f"ec2-{row['argv'][1]}"}
     if base != wanted:
@@ -319,21 +555,29 @@ def self_test(written: str, wanted: set[str]) -> None:
     print(f"self-test: {len(evasions(written))} evasions refused, {len(rows)} rows well-formed")
 
 
+CORPORA: Final = {
+    "ec2": (ec2_corpus, lambda written, verdicts: self_test(written, admitted(verdicts))),
+    "command-adders": (adders_corpus, adders_self_test),
+}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("corpus", choices=sorted(CORPORA))
     parser.add_argument("--aws-cli-source", type=Path, required=True)
     parser.add_argument("--verdicts", type=Path, required=True)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--out", type=Path)
     group.add_argument("--check", type=Path)
     args = parser.parse_args()
-    written = corpus(args.aws_cli_source.resolve(), args.verdicts)
-    self_test(written, admitted(args.verdicts))
+    generate, check = CORPORA[args.corpus]
+    written = generate(args.aws_cli_source.resolve(), args.verdicts)
+    check(written, args.verdicts)
     if args.out is not None:
         args.out.write_text(written, encoding="utf-8")
         return
     if not matches(written, args.check.read_text(encoding="utf-8")):
-        raise SystemExit(f"{args.check} is not what gen_ec2_corpus.py writes")
+        raise SystemExit(f"{args.check} is not what gen_corpus.py {args.corpus} writes")
     print(f"{args.check}: {written.count(chr(10))} rows, as generated")
 
 
