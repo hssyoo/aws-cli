@@ -138,9 +138,10 @@ impl Invocation for ServiceInvocation {
             CallError::Unsupported(unsupported) => Err(crate::admit::reason(&unsupported)),
             other => Ok(service_errors::call_failure(&other, &self.model)),
         };
+        let input = self.input(cx)?;
         let credentials = credentials(cx)?;
         let call = match self.client(cx, Arc::clone(&credentials))? {
-            Ok(client) => match self.prepare(client) {
+            Ok(client) => match self.prepare(client, input) {
                 Ok(call) => Ok(call),
                 Err(error) => Err(failure(error)?),
             },
@@ -200,10 +201,131 @@ impl Invocation for ServiceInvocation {
         };
         scope.leave();
         match called {
-            Ok(output) => self.print(cx, ready, output.value),
+            Ok(output) => {
+                let value = self.save_file(cx, output.value)?;
+                self.print(cx, ready, value)
+            }
             Err(error) => self.call_failed(cx, error),
         }
     }
+}
+
+/// The most of a streaming blob member's file the native route reads into
+/// its request, which holds the body whole where botocore streams it from
+/// the open file; a larger file is Python's.
+pub const INPUT_FILE_BYTES_MAX: u64 = 64 * 1024 * 1024;
+
+impl ServiceInvocation {
+    /// The admitted input with each streaming blob member's file read in,
+    /// as `unpack_scalar_cli_arg` opens it and botocore sends it: the path
+    /// through `os.path.expandvars`, then `expanduser`, relative to the
+    /// working directory. A path that names no regular file raises
+    /// `ParamError` in Python, one it cannot open an `OSError`; both, and
+    /// a path native does not expand or a file beyond
+    /// [`INPUT_FILE_BYTES_MAX`], are Python's to run.
+    fn input(&self, cx: &Preflight<'_>) -> Result<Value, PythonReason> {
+        let mut input = self.admitted.input.clone();
+        if self.admitted.files.is_empty() {
+            return Ok(input);
+        }
+        let Value::Map(members) = &mut input else {
+            return Err(PythonReason::UnsupportedValue);
+        };
+        for file in &self.admitted.files {
+            let bytes = read_input_file(&file.path, cx.variables, cx.directory)
+                .ok_or(PythonReason::UnsupportedValue)?;
+            members.insert(file.member.to_string(), Value::Blob(bytes));
+        }
+        Ok(input)
+    }
+
+    /// `StreamingOutputArgument.save_file` on `after-call`: the streamed
+    /// member written to `outfile`, created or truncated, then removed
+    /// from the response the formatter prints. An `OSError` opening or
+    /// writing the file reaches the general handler, the response
+    /// unprinted.
+    fn save_file(&self, cx: &Context<'_>, response: Value) -> Result<Value, CommandFailure> {
+        let Some(outfile) = &self.admitted.outfile else {
+            return Ok(response);
+        };
+        let Value::Map(mut parsed) = response else {
+            return Ok(response);
+        };
+        let Some(body) = parsed.remove(&outfile.response_key) else {
+            return Ok(Value::Map(parsed));
+        };
+        let Value::Blob(bytes) = &body else {
+            return Err(general(b"the streamed member is not bytes".to_vec()));
+        };
+        write_outfile(&outfile.path, cx.directory, bytes)?;
+        Ok(Value::Map(parsed))
+    }
+}
+
+/// The file `path` names, expanded as `unpack_scalar_cli_arg` expands it,
+/// when it is a regular file native reads whole.
+fn read_input_file(
+    path: &str,
+    variables: &std::collections::HashMap<String, OsString>,
+    directory: &std::path::Path,
+) -> Option<Vec<u8>> {
+    use awscli_argparse::unpack::{expand_user, expand_vars};
+    // Windows expands `%VAR%` and `USERPROFILE` too; Python runs it there.
+    if !cfg!(unix) {
+        return None;
+    }
+    let expanded = expand_user(&expand_vars(path.as_bytes(), variables)?, variables)?;
+    let full = directory.join(String::from_utf8(expanded).ok()?);
+    let metadata = std::fs::metadata(&full).ok()?;
+    if !metadata.is_file() || metadata.len() > INPUT_FILE_BYTES_MAX {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    let file = std::fs::File::open(&full).ok()?;
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(file, INPUT_FILE_BYTES_MAX + 1),
+        &mut bytes,
+    )
+    .ok()?;
+    (bytes.len() as u64 <= INPUT_FILE_BYTES_MAX).then_some(bytes)
+}
+
+/// `open(path, 'wb')` and its writes: `str()` of the `OSError` either
+/// raises, the path named for the open's.
+fn write_outfile(
+    path: &str,
+    directory: &std::path::Path,
+    bytes: &[u8],
+) -> Result<(), CommandFailure> {
+    use std::io::Write as _;
+    let named = |error: std::io::Error| {
+        let text = os_error(&error);
+        let repr = awscli_argparse::pyrepr::os(std::ffi::OsStr::new(path));
+        general(format!("{text}: {repr}").into_bytes())
+    };
+    // `open('')` names no file, where joining it would name the directory.
+    let full = if path.is_empty() {
+        std::path::PathBuf::new()
+    } else {
+        directory.join(path)
+    };
+    let mut file = std::fs::File::create(full).map_err(named)?;
+    file.write_all(bytes)
+        .and_then(|()| file.flush())
+        .map_err(|error| general(os_error(&error).into_bytes()))
+}
+
+/// `[Errno N] strerror` of an `OSError`, the text the C library gives the
+/// error number, which `std::io::Error` writes before ` (os error N)`.
+fn os_error(error: &std::io::Error) -> String {
+    let Some(errno) = error.raw_os_error() else {
+        return error.to_string();
+    };
+    let shown = error.to_string();
+    let text = shown
+        .strip_suffix(&format!(" (os error {errno})"))
+        .unwrap_or(&shown);
+    format!("[Errno {errno}] {text}")
 }
 
 impl ServiceInvocation {
@@ -216,16 +338,16 @@ impl ServiceInvocation {
     /// first request (a bad starting token, a `MaxItems` or `PageSize` it
     /// refuses); [`CallError::Unsupported`] for a call, or a starting
     /// token, only the Python route takes.
-    fn prepare(&self, client: Client) -> Result<Call, CallError> {
+    fn prepare(&self, client: Client, input: Value) -> Result<Call, CallError> {
         let admitted = &self.admitted;
         let Some(paginated) = &admitted.paginated else {
-            let prepared = client.prepare(&admitted.operation, admitted.input.clone())?;
+            let prepared = client.prepare(&admitted.operation, input)?;
             return Ok(Call::Single { client, prepared });
         };
         let mut pages = PageIterator::new(
             client,
             &admitted.operation,
-            admitted.input.clone(),
+            input,
             paginated.config.clone(),
             paginated.pagination.clone(),
         )?;
