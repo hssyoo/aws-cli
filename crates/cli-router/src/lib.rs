@@ -230,7 +230,10 @@ pub fn route_with_process_lock<E: EnvMap>(
         Outcome::UnsupportedOsValue => Verdict::Python(PythonReason::UnsupportedValue),
         Outcome::Help => Verdict::Python(PythonReason::HelpRequested),
         Outcome::Unresolved { .. } => Verdict::Python(config.registry.unknown_command_reason()),
-        Outcome::Failure(failure) => route_failure(result, failure.clone(), config),
+        Outcome::Failure(failure) => match globals::query_precedes_failure(result) {
+            Some(reason) => Verdict::Python(reason),
+            None => route_failure(result, failure.clone(), config),
+        },
         Outcome::Parsed => route_parsed(result, unpack, config, probe, acquire_process_lock),
     }
 }

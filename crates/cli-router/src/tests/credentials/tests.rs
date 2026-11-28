@@ -619,39 +619,33 @@ fn the_session_s_start_follows_the_top_level_arguments() {
     }
 }
 
-// The AWS CLI compiles `--query` as it handles the top-level arguments,
-// ahead of its session's start (`resolve_types`), and
-// nearly every expression compiles. The native chain does not compile
-// JMESPath, so the session's start comes ahead of a command that fails in
-// its own parse whatever the expression is: also for one that does not
-// compile, which is what Python reports. A command that parses is
-// Python's, which compiles the expression.
+// The AWS CLI compiles `--query` as it handles the top-level arguments
+// (`resolve_types`), ahead of its session's start and of the command's own
+// parse, so an expression that does not compile is the failure it reports.
+// Only a model operation's binding compiles the expression natively, so a
+// failing command with a query is Python's, as is an `s3` command with one,
+// whatever the expression is.
 #[test]
-fn the_session_s_start_precedes_a_failing_command_with_any_query() {
+fn a_failing_command_with_a_query_is_python_s() {
     let files = shared_files("", "");
     let unset = BTreeMap::new();
     let env = BTreeMap::from([("AWS_METADATA_SERVICE_TIMEOUT".to_owned(), "1.5".to_owned())]);
     for query in ["[", "Contents"] {
-        for command in [&["s3", "cp"][..], &["s3", "bogus"], &["s3", "cp", "x"]] {
+        for command in [
+            &["s3", "cp"][..],
+            &["s3", "bogus"],
+            &["s3", "cp", "x"],
+            &["s3", "ls"],
+            &["s3", "ls", "--bogus"],
+        ] {
             let args = [&["--query", query], command].concat();
-            match evaluate(&args, &env, &files) {
-                Verdict::Failure(failure) => {
-                    assert_eq!(failure.kind, "session_initialized", "{args:?}");
-                }
-                other => panic!("{args:?}: {other:?}"),
+            for env in [&env, &unset] {
+                assert_eq!(
+                    evaluate(&args, env, &files),
+                    Verdict::Python(PythonReason::PythonOnlyGlobal),
+                    "{args:?}"
+                );
             }
-            match evaluate(&args, &unset, &files) {
-                Verdict::Failure(failure) => assert_eq!(failure.kind, "parse", "{args:?}"),
-                other => panic!("{args:?}: {other:?}"),
-            }
-        }
-        for command in [&["s3", "ls"][..], &["s3", "ls", "--bogus"]] {
-            let args = [&["--query", query], command].concat();
-            assert_eq!(
-                evaluate(&args, &env, &files),
-                Verdict::Python(PythonReason::PythonOnlyGlobal),
-                "{args:?}"
-            );
         }
     }
 }

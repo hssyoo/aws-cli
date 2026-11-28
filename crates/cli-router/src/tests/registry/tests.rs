@@ -302,6 +302,19 @@ fn no_paginate_binds_a_model_operation_natively() {
     }
 }
 
+/// `--query` reaches a model operation's binding, which compiles it, at
+/// either position; the router judges no expression.
+#[test]
+fn query_reaches_a_model_operation_s_binding() {
+    for args in [
+        &["--query", "Account", "sts", "get-caller-identity"][..],
+        &["sts", "get-caller-identity", "--query", "length(@)"],
+    ] {
+        let verdict = evaluate_with(args, &BTreeMap::new(), &files(""));
+        assert!(matches!(verdict, Verdict::Run(_)), "{args:?}: {verdict:?}");
+    }
+}
+
 /// One refusal: argv, the environment, the config file, and the reason.
 type Refusal<'a> = (
     &'a [&'a str],
@@ -346,7 +359,13 @@ fn the_prologue_and_the_command_line_refuse_before_run() {
             PythonReason::HelpRequested,
         ),
         (
-            &["--query", "Account", "sts", "get-caller-identity"],
+            &[
+                "--query",
+                "Account",
+                "sts",
+                "get-caller-identity",
+                "--bogus",
+            ],
             &[],
             "",
             PythonReason::PythonOnlyGlobal,

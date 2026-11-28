@@ -25,6 +25,13 @@ enum GlobalSupport {
     /// CRT S3 client has no such setting, so the s3 commands leave it to
     /// Python.
     ReadTimeout,
+    /// `--query`: a model operation's binding compiles it, as
+    /// `resolve_types` does, and its formatter searches the response with
+    /// it; the binding hands an expression it does not evaluate to Python.
+    /// The s3 commands' handlers write their own output, which the
+    /// expression never reaches, so they leave it to Python, which compiles
+    /// it.
+    Query,
     PythonOnly,
 }
 /// What the command a parse reached is, as far as the globals it honors
@@ -70,10 +77,7 @@ const GLOBAL_CLASSES: &[GlobalClass] = &[
     GlobalClass::new("no-verify-ssl", GlobalSupport::PythonOnly),
     GlobalClass::new("no-paginate", GlobalSupport::Pagination),
     GlobalClass::new("output", GlobalSupport::Output),
-    // Upstream compiles the expression before it ignores it, so an invalid one
-    // fails ahead of the command and of any later parse failure; native does
-    // not compile JMESPath.
-    GlobalClass::new("query", GlobalSupport::PythonOnly),
+    GlobalClass::new("query", GlobalSupport::Query),
     GlobalClass::new("profile", GlobalSupport::Native),
     GlobalClass::new("region", GlobalSupport::Native),
     GlobalClass::new("color", GlobalSupport::Presentation),
@@ -171,6 +175,22 @@ fn is_native_global(support: GlobalSupport, target: Target, level: &Level<'_>) -
             let timeout = bind_timeout(&level.namespace, "read_timeout");
             operation && client_config::timeout_milliseconds(timeout).is_some()
         }
+        GlobalSupport::Query => operation,
         GlobalSupport::PythonOnly => false,
     }
+}
+
+/// Python's, for a parse that failed once the top-level arguments were
+/// parsed, if `--query` was given: `resolve_types` compiles it before it
+/// resolves the endpoint URL and the timeouts, and before the command
+/// parses its own arguments, so an expression that does not compile is the
+/// failure Python reports. Only a command's binding compiles it natively.
+pub(super) fn query_precedes_failure(result: &ParseResult<'_>) -> Option<PythonReason> {
+    use awscli_argparse::chain::Stage;
+    let resolved = matches!(
+        result.stage,
+        Stage::TopLevel | Stage::Probe | Stage::Table | Stage::Unpack | Stage::Leftover
+    );
+    (resolved && result.globals.namespace.is_explicit("query"))
+        .then_some(PythonReason::PythonOnlyGlobal)
 }
