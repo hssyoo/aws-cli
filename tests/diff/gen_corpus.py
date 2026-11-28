@@ -107,7 +107,6 @@ ADDERS: Final = [
     "rds",
     "servicecatalog",
     "ssm",
-    "sso",
 ]
 # The cross-cutting commands a service's table may hold that are no
 # operation: `add_waiters`' and the wizards'.
