@@ -3,10 +3,9 @@
 //! feature ids they register, for operations with `httpChecksum` or
 //! `httpChecksumRequired`.
 //!
-//! Built but switched off: admission refuses both traits, and the
-//! orchestrator runs these phases only for a client whose
-//! `http_checksum` switch a test has set, until a later change sets it
-//! for every client. The phases, in botocore's order:
+//! The orchestrator runs these phases for every call, as botocore's
+//! client does, and they act only on what the operation and the input
+//! hold. The phases, in botocore's order:
 //!
 //! 1. [`default_validation_mode`], `_handle_request_validation_mode_member`
 //!    (`before-parameter-build`, after the idempotency tokens);

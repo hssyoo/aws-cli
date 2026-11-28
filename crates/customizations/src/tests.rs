@@ -173,7 +173,6 @@ fn replaced_handlers_exist_in_botocore() -> TestResult {
 /// claim against the client's refusal.
 fn operation_with(key: &str) -> Option<&'static str> {
     Some(match key {
-        "httpChecksum" => r#""httpChecksum": {"requestChecksumRequired": true}"#,
         "endpointoperation" => r#""endpointoperation": true"#,
         "endpointdiscovery" => r#""endpointdiscovery": {"required": true}"#,
         _ => return None,

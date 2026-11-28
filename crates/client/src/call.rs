@@ -87,10 +87,6 @@ pub struct Client {
     pub(crate) components: RuntimeComponents,
     pub(crate) region: Option<String>,
     pub(crate) timeouts: Timeouts,
-    /// Whether the call runs botocore's flexible checksums
-    /// ([`crate::checksum`]) and admission lets the checksum traits
-    /// through: built but switched off, so only a test sets it.
-    pub(crate) http_checksum: bool,
 }
 
 /// A call ready to send: [`Client::prepare`]'s result, which owns all it

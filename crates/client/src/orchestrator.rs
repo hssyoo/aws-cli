@@ -27,9 +27,6 @@
 //!    (`apply_request_checksum`);
 //! 8. `resolve_auth_scheme`: auth selection, a component.
 //!
-//! The checksum steps ([`crate::checksum`]) run only for a client whose
-//! `http_checksum` switch is on, which no production client's is yet.
-//!
 //! [`send`]:
 //! 1. `refresh_for_identity`: the deferred account id, which reruns
 //!    phases 4, 6, 7 (with the request checksum) and 8 when it changes the

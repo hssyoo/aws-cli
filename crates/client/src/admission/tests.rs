@@ -4,7 +4,8 @@ use model::shapes::Model;
 /// An operation with a trait the client does not implement is refused,
 /// whichever trait it is; a plain one is not, nor one whose endpoint
 /// discovery is optional, which botocore's default `auto` mode does not
-/// discover for (`_requires_endpoint_discovery`).
+/// discover for (`_requires_endpoint_discovery`), nor one with a request
+/// checksum trait, which [`crate::checksum`] implements.
 #[test]
 fn operations_with_unimplemented_traits_are_refused() -> Result<(), Box<dyn std::error::Error>> {
     let model = Model::from_json(
@@ -26,8 +27,8 @@ fn operations_with_unimplemented_traits_are_refused() -> Result<(), Box<dyn std:
     )?;
     for (name, refused) in [
         ("Plain", None),
-        ("Checked", Some("httpChecksum")),
-        ("Required", Some("httpChecksumRequired")),
+        ("Checked", None),
+        ("Required", None),
         ("Discovered", Some("endpointdiscovery")),
         ("Optional", None),
         ("Endpoints", Some("endpointoperation")),

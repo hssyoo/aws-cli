@@ -127,14 +127,12 @@ fn refresh_for_identity(
     let (endpoint, mut features) =
         resolve_endpoint(client, ctx, &prepared.input, Some(&account_id)).map_err(after_prepare)?;
     features.extend(client.components.protocol.user_agent_features().iter());
-    if client.http_checksum {
-        features.extend(ctx.state::<ChecksumFeatures>().0.iter());
-    }
+    features.extend(ctx.state::<ChecksumFeatures>().0.iter());
     if endpoint.url != prepared.endpoint_url || features != prepared.features {
         let mut request = apply_endpoint(client, &prepared.serialized, &endpoint.url, features)
             .map_err(after_prepare)?;
         modify_before_retry_loop(client, ctx, &mut request).map_err(after_prepare)?;
-        apply_checksums(client, ctx, &mut request);
+        apply_checksums(ctx, &mut request);
         prepared.request = request;
         prepared.auth =
             resolve_auth_scheme(client, ctx.operation, &endpoint).map_err(after_prepare)?;
@@ -364,10 +362,8 @@ fn deserialize(
         Err(error) => return Ok(Received::Failed(error)),
     };
     // `handle_checksum_body`, whose error ends the call without a retry.
-    if client.http_checksum {
-        (ctx.state::<CallChecksums>().validate(&response))
-            .map_err(|error| CallError::Hook(error.after_prepare()))?;
-    }
+    (ctx.state::<CallChecksums>().validate(&response))
+        .map_err(|error| CallError::Hook(error.after_prepare()))?;
     for hook in client.components.plugins.interceptors(ctx.operation.name()) {
         hook.modify_before_deserialization(ctx, &mut response)
             .map_err(|error| CallError::Hook(error.after_prepare()))?;

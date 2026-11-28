@@ -5,6 +5,7 @@
 //! what that route sent for its row, in order, but `Host`,
 //! `Accept-Encoding` and the signature, and fails or returns as it did.
 use super::*;
+use crate::admission::static_refusal;
 use crate::call::{Client, ClientParts, Output};
 use crate::credentials::{CredentialError, CredentialSource, SigningCredentials};
 use crate::endpoint::{EndpointConfig, EndpointData, EndpointInputs};
@@ -342,9 +343,8 @@ impl CredentialSource for Keys {
     }
 }
 
-/// A zchecksum client in us-west-2 with checksums switched on as `on`
-/// says, and its transport.
-fn client(settings: ClientSettings, on: bool) -> TestResult<(Client, Arc<InMemoryTransport>)> {
+/// A zchecksum client in us-west-2, and its transport.
+fn client(settings: ClientSettings) -> TestResult<(Client, Arc<InMemoryTransport>)> {
     let data = |path: &str| std::fs::read(repo().join(path));
     let endpoints = EndpointData::from_documents(
         data("tests/models/zchecksum/2020-01-01/endpoint-rule-set-1.json")?,
@@ -353,7 +353,7 @@ fn client(settings: ClientSettings, on: bool) -> TestResult<(Client, Arc<InMemor
     )?;
     let transport = Arc::new(InMemoryTransport::new());
     let now = timestamp::Timestamp::from_unix_seconds(1_440_938_160).ok_or("clock")?;
-    let mut client = Client::with_protocol(
+    let client = Client::with_protocol(
         ClientParts {
             service: "zchecksum".into(),
             model: Arc::new(zchecksum()?),
@@ -386,7 +386,6 @@ fn client(settings: ClientSettings, on: bool) -> TestResult<(Client, Arc<InMemor
         },
         &crate::protocol::rest_json::REST_JSON_1,
     )?;
-    client.http_checksum = on;
     Ok((client, transport))
 }
 
@@ -613,7 +612,7 @@ fn check(id: &str, requests: &[HttpRequest], outcome: Result<Output, CallError>)
     }
 }
 
-/// Every zchecksum row, through a client with checksums switched on: each
+/// Every zchecksum row, through a production client: each
 /// row native sends sends what the Python route sent and returns as it
 /// did, each it refuses sends nothing, and the one botocore fails before
 /// a request fails with its text. Every row is one of the three.
@@ -624,7 +623,7 @@ fn every_row_does_what_the_python_route_did() -> TestResult {
     assert_eq!(rows.len(), classified, "a row is unclassified");
     for (id, row) in &rows {
         let (operation, input, settings, response) = call_of(row)?;
-        let (client, transport) = client(settings, true)?;
+        let (client, transport) = client(settings)?;
         transport.respond(response);
         let outcome = client.call(&operation, input);
         let requests: Vec<HttpRequest> = (transport.sent().into_iter())
@@ -635,19 +634,25 @@ fn every_row_does_what_the_python_route_did() -> TestResult {
     Ok(())
 }
 
-/// Switched off, as every production client is, admission refuses both
-/// traits before a request.
+/// Admission lets both traits through, statically and in prepare: each
+/// operation's call is prepared with its checksum.
 #[test]
-fn switched_off_every_checksum_operation_is_refused() -> TestResult {
-    let (client, transport) = client(settings(), false)?;
+fn every_checksum_operation_is_admitted() -> TestResult {
+    let (client, transport) = client(settings())?;
     let operations = [
-        ("PutRequired", "httpChecksum"),
-        ("GetValidated", "httpChecksum"),
-        ("PutLegacy", "httpChecksumRequired"),
+        ("PutRequired", Some("x-amz-checksum-crc64nvme")),
+        ("GetValidated", None),
+        ("PutLegacy", Some("x-amz-checksum-crc64nvme")),
     ];
-    for (operation, key) in operations {
-        let outcome = client.prepare(operation, params(&[("Id", "a")]));
-        assert!(refused_as(&outcome, key), "{operation}: {outcome:?}");
+    let model = zchecksum()?;
+    let data = &client.components.endpoint_resolver.data;
+    for (operation, header) in operations {
+        let schema = op(&model, operation)?;
+        let refused = static_refusal(&model, schema, data, "zchecksum", &[], None);
+        assert_eq!(refused, None, "{operation}");
+        let prepared = client.prepare(operation, params(&[("Id", "a")]))?;
+        let found = header.filter(|name| prepared.request.headers.contains(name));
+        assert_eq!(found, header, "{operation}");
     }
     assert!(transport.sent().is_empty());
     Ok(())
