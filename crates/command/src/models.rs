@@ -8,7 +8,9 @@
 //! cross-cutting arguments (`table`). A service's table then takes the
 //! edits the pack recorded its table editors making
 //! (`Patterns::table_edits`), and `wait`.
-use crate::patterns::{Match, Patterns, Subject, TableEdit, TableOp};
+use crate::patterns::{
+    self, Match, Patterns, Subject, TableEdit, TableOp, pattern_matches, root_table_event,
+};
 use crate::registry::OperationSource;
 use awscli_argparse::tables::RequiredOverride;
 use awscli_argparse::{Argument, CliType, DefaultValue};
@@ -268,12 +270,27 @@ impl<'a> ModelSource<'a> {
     }
 
     /// Whether a registry entry the derivation does not reproduce matches
-    /// one of `events`.
+    /// one of `events` through some pattern. A table editor's are only its
+    /// edits of root tables, so one met through any other pattern (an
+    /// argument table's, say, where it also registers) is not reproduced
+    /// there.
     fn edits(&self, events: &[String]) -> bool {
         self.patterns
-            .registry_entries(events)
+            .registry
             .iter()
-            .any(|entry| !self.reproduced.contains(&entry.as_str()))
+            .filter(|(pattern, _)| events.iter().any(|event| pattern_matches(pattern, event)))
+            .any(|(pattern, entries)| entries.iter().any(|entry| !self.reproduces(entry, pattern)))
+    }
+
+    /// Whether the derivation reproduces what `entry`, met through
+    /// `pattern`, does to the tables.
+    fn reproduces(&self, entry: &patterns::Entry, pattern: &str) -> bool {
+        let editor = self
+            .patterns
+            .table_editors
+            .iter()
+            .any(|editor| editor.entry == *entry);
+        self.reproduced.contains(&entry.name().as_str()) && (!editor || root_table_event(pattern))
     }
 
     /// The table of `[command, operation]`, derived once.

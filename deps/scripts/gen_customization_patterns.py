@@ -42,10 +42,11 @@ document is:
 in the tables' own order. A handler is named `module.qualname`; a bound
 method by its class and method name, and a callable object by its class.
 
-`command_table_edits` holds the registry initializers whose handlers do
-nothing but edit command tables (`TABLE_EDITORS`): the handlers each
-registers, by event and each event's in the order it registered them,
-and what each does to the table of its event, which is code, not data.
+`command_table_edits` holds the registry initializers whose handlers on
+root command tables do nothing but edit them (`TABLE_EDITORS`): the
+handlers each registers there, by event and each event's in the order it
+registered them, and what each does to the table of its event, which is
+code, not data.
 Only the order within an event decides a table; the order across events
 is the filesystem's where an editor lists a directory
 (`WizardLoader.list_commands_with_wizards`), so it is not kept, and the
@@ -54,8 +55,11 @@ registry that records what it registers, then runs each handler against
 a table that records the names it sets (`command_table[name] = ...`) and
 deletes (`del command_table[name]`), in its order. The pack refuses an
 initializer that registers anywhere else than a root command's own table
-event, or is listed under any other pattern, and a handler that reads its
-table, so what is recorded is all each does.
+event, or is listed under any other pattern, unless it is one of `MIXED`,
+whose other handlers are on the other patterns it is listed under and are
+not recorded; and it refuses a handler that reads its table, or uses its
+session for anything but a service's model, so what is recorded is all
+each does to a table.
 
 A client row's pattern spells the client's own service segment (its
 hyphenized service id, the second chunk) as `{service_id}`. The rows
@@ -229,15 +233,54 @@ def client_handlers() -> dict[str, Any]:
     }
 
 
-# The initializers whose handlers only edit a root command's table:
+# The initializers whose handlers on root command tables only edit them:
 # `register_removals` deletes deprecated or unsupported operations
-# (`CommandRemover`), and `register_wizard_commands` sets `wizard` on each
+# (`CommandRemover`), `register_wizard_commands` sets `wizard` on each
 # command with wizards (`_register_wizards_for_commands`) and `wizard-dev`
-# on `cli-dev` (`wizard.devcommands.register_dev_commands`).
+# on `cli-dev` (`wizard.devcommands.register_dev_commands`), and the rest
+# set (or replace, or for rds delete and set) the hand-written commands of
+# one service's table. Some also register handlers on other events
+# (`MIXED`); those are not recorded, and the native side leaves each to the
+# pattern it is listed under.
 TABLE_EDITORS = [
     ("awscli.customizations.removals", "register_removals"),
     ("awscli.customizations.wizard.commands", "register_wizard_commands"),
+    ("awscli.customizations.cloudformation", "initialize"),
+    ("awscli.customizations.cloudfront", "register"),
+    ("awscli.customizations.cloudtrail", "initialize"),
+    ("awscli.customizations.codeartifact", "register_codeartifact_commands"),
+    ("awscli.customizations.codecommit", "initialize"),
+    ("awscli.customizations.codedeploy.codedeploy", "register_codedeploy"),
+    ("awscli.customizations.configservice.getstatus", "register_get_status"),
+    ("awscli.customizations.configservice.subscribe", "register_subscribe"),
+    ("awscli.customizations.datapipeline", "register_customizations"),
+    ("awscli.customizations.dlm.dlm", "dlm_initialize"),
+    ("awscli.customizations.dsql", "register_dsql_customizations"),
+    ("awscli.customizations.ec2instanceconnect", "register_ec2_instance_connect_commands"),
+    ("awscli.customizations.ecr", "register_ecr_commands"),
+    ("awscli.customizations.ecr_public", "register_ecr_public_commands"),
+    ("awscli.customizations.ecs", "initialize"),
+    ("awscli.customizations.eks", "initialize"),
+    ("awscli.customizations.emr.emr", "emr_initialize"),
+    ("awscli.customizations.emrcontainers", "initialize"),
+    ("awscli.customizations.gamelift", "register_gamelift_commands"),
+    ("awscli.customizations.lambdaweb", "register_lambda_web_commands"),
+    ("awscli.customizations.lightsail", "initialize"),
+    ("awscli.customizations.logs", "register_logs_commands"),
+    ("awscli.customizations.rds", "register_add_generate_db_auth_token"),
+    ("awscli.customizations.rds", "register_rds_modify_split"),
+    ("awscli.customizations.servicecatalog", "register_servicecatalog_commands"),
+    ("awscli.customizations.sessionmanager", "register_ssm_session"),
 ]
+# The editors above that also register on events other than a root's
+# table event, each on patterns the registry lists it under.
+MIXED = {
+    ("awscli.customizations.cloudfront", "register"),
+    ("awscli.customizations.codedeploy.codedeploy", "register_codedeploy"),
+    ("awscli.customizations.datapipeline", "register_customizations"),
+    ("awscli.customizations.emr.emr", "emr_initialize"),
+    ("awscli.customizations.rds", "register_rds_modify_split"),
+}
 TABLE_EVENT = "building-command-table"
 
 
@@ -257,15 +300,20 @@ def root_table_event(event: str) -> bool:
 
 class RecordingRegistry:
     """The emitter an initializer is given (`LazyInitEmitter` calls it with
-    itself), keeping each `(event, handler)` it registers, in order."""
+    itself), keeping each `(event, handler, options)` it registers, in
+    order, with `register_first` and `register_last` as options."""
 
     def __init__(self) -> None:
-        self.registered: list[tuple[str, Any]] = []
+        self.registered: list[tuple[str, Any, dict[str, Any]]] = []
 
     def register(self, event_name: str, handler: Any, **kwargs: Any) -> None:
-        if kwargs:
-            raise SystemExit(f"unexpected registration options: {kwargs!r}")
-        self.registered.append((event_name, handler))
+        self.registered.append((event_name, handler, kwargs))
+
+    def register_first(self, event_name: str, handler: Any, **kwargs: Any) -> None:
+        self.registered.append((event_name, handler, {**kwargs, "section": "first"}))
+
+    def register_last(self, event_name: str, handler: Any, **kwargs: Any) -> None:
+        self.registered.append((event_name, handler, {**kwargs, "section": "last"}))
 
     def __getattr__(self, name: str) -> Any:
         raise SystemExit(f"a table editor uses the emitter's {name}")
@@ -302,30 +350,75 @@ class StandIn:
         self.name = name
 
 
+class StandInSession:
+    """The session a table handler is given: it may look up a service's
+    model, from botocore's own data, to build the command it sets
+    (`ssm start-session`, `ecs execute-command`, rds's option-group
+    commands), and nothing else."""
+
+    def __init__(self, models: Any) -> None:
+        self._models = models
+
+    def get_service_model(self, name: str) -> Any:
+        return self._models.get_service_model(name)
+
+    def __getattr__(self, name: str) -> Any:
+        raise SystemExit(f"a table editor uses the session's {name}")
+
+
+def own_pattern(pattern: str, commands: set[str]) -> bool:
+    """Whether `pattern` is an event of one of `commands`' own operations
+    (`<event>.<command>.<operation>`), which is emitted after the command's
+    table is built."""
+    parts = pattern.split(".")
+    return len(parts) == 3 and parts[1] in commands
+
+
 def command_table_edits(registry: Any) -> list[Any]:
-    """Each of `TABLE_EDITORS`: the handlers it registers, by event, and
-    the names each sets and deletes in its event's table, run as
-    `ServiceCommand._create_command_table` emits the event (clidriver.py),
-    with no session."""
+    """Each of `TABLE_EDITORS`: the handlers it registers on root table
+    events, by event, and the names each sets and deletes in its event's
+    table, run as `ServiceCommand._create_command_table` emits the event
+    (clidriver.py), with a session that only gives models.
+
+    An editor in `MIXED` may also register on the other patterns the
+    registry lists it under, which are not recorded. One listed under a
+    pattern that is no event of its own commands' operations is initialized
+    before its commands' tables are built, so it registers its table
+    handlers before any other entry listed under those tables' events; it
+    must be the only one, or the recorded order (the registry's) would not
+    be the order they run in."""
+    session = StandInSession(isolated_session())
     rows = []
     for module, function in TABLE_EDITORS:
+        mixed = (module, function) in MIXED
         patterns = [
             pattern
             for pattern, entries in registry.PLUGIN_REGISTRY.items()
             if (module, function) in [tuple(entry) for entry in entries]
         ]
-        if not patterns or not all(root_table_event(pattern) for pattern in patterns):
+        roots = [pattern for pattern in patterns if root_table_event(pattern)]
+        others = [pattern for pattern in patterns if not root_table_event(pattern)]
+        if not roots or (others and not mixed) or (mixed and not others):
             raise SystemExit(f"{module}.{function} is listed under {patterns!r}")
+        commands = {pattern.split(".")[1] for pattern in roots}
+        if any(not own_pattern(pattern, commands) for pattern in others):
+            for root in roots:
+                if len(registry.PLUGIN_REGISTRY[root]) != 1:
+                    raise SystemExit(f"{module}.{function} is initialized before {root}")
         recorder = RecordingRegistry()
         getattr(importlib.import_module(module), function)(recorder)
         handlers = []
-        for event, handler in recorder.registered:
+        for event, handler, options in recorder.registered:
             if not root_table_event(event):
-                raise SystemExit(f"{module}.{function} registers on {event}")
+                if event not in others:
+                    raise SystemExit(f"{module}.{function} registers on {event}")
+                continue
+            if options or (mixed and event not in roots):
+                raise SystemExit(f"{module}.{function} registers on {event} with {options!r}")
             table = RecordingTable()
             handler(
                 command_table=table,
-                session=None,
+                session=session,
                 command_object=StandIn(event.split(".")[1]),
             )
             handlers.append([event, handler_name(handler), table.edits])
