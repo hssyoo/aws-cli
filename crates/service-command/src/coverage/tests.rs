@@ -32,21 +32,55 @@ fn every_row_is_a_registry_entry_under_its_pattern() -> Result<()> {
     })
 }
 
+/// An operation of each service a command adder edits the table of, which
+/// meets no other uncovered initializer: emr's meet its parser hook, so
+/// emr's row is met through [`EMR`] alone.
+const ADDED_TO: &[(&str, &str)] = &[
+    ("cloudformation", "list-stacks"),
+    ("cloudfront", "list-distributions"),
+    ("cloudtrail", "describe-trails"),
+    ("codeartifact", "list-domains"),
+    ("codecommit", "list-repositories"),
+    ("deploy", "list-applications"),
+    ("configservice", "describe-config-rules"),
+    ("datapipeline", "list-pipelines"),
+    ("dlm", "get-lifecycle-policies"),
+    ("dsql", "list-clusters"),
+    ("ec2-instance-connect", "send-ssh-public-key"),
+    ("ecr", "describe-repositories"),
+    ("ecr-public", "describe-registries"),
+    ("ecs", "list-clusters"),
+    ("eks", "list-clusters"),
+    ("emr-containers", "list-virtual-clusters"),
+    ("gamelift", "list-builds"),
+    ("lambda-web", "list-web-functions"),
+    ("lightsail", "get-regions"),
+    ("logs", "describe-log-groups"),
+    ("rds", "describe-db-instances"),
+    ("servicecatalog", "list-portfolios"),
+    ("ssm", "describe-parameters"),
+    ("sso", "list-accounts"),
+];
+const EMR: (&str, &str) = ("emr", "list-instances");
+const EMR_PARSER: &str = "before-building-argument-table-parser.emr.*";
+
 /// sts, lambda (whose table both editors edit), ec2 (argrename and
-/// toplevelbool) and the fake models meet
-/// only covered initializers, and every row is met by one of them: the
-/// table is the cross-cutting set, no more.
+/// toplevelbool), the fake models and an operation of each command adder's
+/// service meet only covered initializers, and every row is met by one of
+/// them or by [`EMR`]: the table is the cross-cutting set and the command
+/// adders, no more.
 #[test]
 fn the_cross_cutting_initializers_are_covered_and_all_are_met() -> Result<()> {
     with_models(|models| {
         let mut met = Vec::new();
-        for (command, operation) in [
+        let shared = [
             ("sts", "get-caller-identity"),
             ("lambda", "get-account-settings"),
             ("zquery", "get-thing"),
             ("zjson", "measure"),
             ("ec2", "describe-regions"),
-        ] {
+        ];
+        for (command, operation) in shared.into_iter().chain(ADDED_TO.iter().copied()) {
             let found = matches(&models, command, operation);
             let everything = replacing_all(&models, command, operation);
             assert_eq!(
@@ -60,6 +94,17 @@ fn the_cross_cutting_initializers_are_covered_and_all_are_met() -> Result<()> {
                     .filter(|found| found.kind == MatchKind::Registry),
             );
         }
+        let (command, operation) = EMR;
+        let found = matches(&models, command, operation);
+        let everything = replacing_all(&models, command, operation);
+        let missing = uncovered(&found, everything, command, "ListInstances")
+            .unwrap_or_else(|| panic!("emr is covered"));
+        assert_eq!(missing.pattern, EMR_PARSER);
+        met.extend(
+            found
+                .into_iter()
+                .filter(|found| found.kind == MatchKind::Registry && found.pattern != EMR_PARSER),
+        );
         for row in CLI {
             let reached = met
                 .iter()
@@ -140,10 +185,65 @@ fn dynamodb_is_uncovered_only_by_its_cli_customizations() -> Result<()> {
 const REMOVALS: &str = "awscli.customizations.removals.register_removals";
 const WIZARDS: &str = "awscli.customizations.wizard.commands.register_wizard_commands";
 
+/// The editors the registry also lists under patterns other than root
+/// table events, with exactly those patterns: what each registers there is
+/// not recorded, and no row reaches it through them.
+const MIXED: &[(&str, &[&str])] = &[
+    (
+        "awscli.customizations.cloudfront.register",
+        &[
+            "building-argument-table.cloudfront.create-distribution",
+            "building-argument-table.cloudfront.create-invalidation",
+            "building-argument-table.cloudfront.update-distribution",
+            "operation-args-parsed.cloudfront.create-distribution",
+            "operation-args-parsed.cloudfront.create-invalidation",
+            "operation-args-parsed.cloudfront.update-distribution",
+            "top-level-args-parsed",
+        ],
+    ),
+    (
+        "awscli.customizations.codedeploy.codedeploy.register_codedeploy",
+        &[
+            "building-argument-table.deploy.create-deployment",
+            "building-argument-table.deploy.get-application-revision",
+            "building-argument-table.deploy.register-application-revision",
+        ],
+    ),
+    (
+        "awscli.customizations.datapipeline.register_customizations",
+        &[
+            "after-call.data-pipeline.GetPipelineDefinition",
+            "building-argument-table.datapipeline.activate-pipeline",
+            "building-argument-table.datapipeline.put-pipeline-definition",
+            "doc-output.datapipeline.get-pipeline-definition",
+        ],
+    ),
+    (
+        "awscli.customizations.emr.emr.emr_initialize",
+        &[
+            EMR_PARSER,
+            "building-argument-table.emr.add-tags",
+            "building-argument-table.emr.list-clusters",
+        ],
+    ),
+    (
+        "awscli.customizations.rds.register_rds_modify_split",
+        &[
+            "building-argument-table.rds.add-option-to-option-group",
+            "building-argument-table.rds.remove-option-from-option-group",
+        ],
+    ),
+    (
+        "awscli.customizations.sso.register_sso_commands",
+        &["session-initialized"],
+    ),
+];
+
 /// The rows reached through root table events are the initializers the
-/// pack recorded as table editors, each listed under root table events
-/// alone: the rows describe the AWS CLI the fallback runs, and the pack's
-/// list of editors and the table's cannot drift apart.
+/// pack recorded as table editors, each listed under root table events and,
+/// for [`MIXED`], exactly its other patterns: the rows describe the AWS CLI
+/// the fallback runs, and the pack's list of editors and the table's cannot
+/// drift apart.
 #[test]
 fn the_editor_rows_are_the_recorded_editors_listed_under_root_tables() -> Result<()> {
     with_models(|models| {
@@ -173,12 +273,26 @@ fn the_editor_rows_are_the_recorded_editors_listed_under_root_tables() -> Result
                 .filter(|(_, entries)| entries.iter().any(|entry| entry.name() == row.entry))
                 .map(|(pattern, _)| &**pattern)
                 .collect();
-            assert!(!listed.is_empty(), "{}", row.entry);
             assert!(
-                listed.iter().all(|pattern| root_table_event(pattern)),
+                listed.iter().any(|pattern| root_table_event(pattern)),
                 "{}: {listed:?}",
                 row.entry
             );
+            let mut others: Vec<&str> = listed
+                .into_iter()
+                .filter(|pattern| !root_table_event(pattern))
+                .collect();
+            others.sort_unstable();
+            let expected = MIXED
+                .iter()
+                .find(|(entry, _)| *entry == row.entry)
+                .map_or(&[][..], |(_, patterns)| patterns);
+            let mut expected = expected.to_vec();
+            expected.sort_unstable();
+            assert_eq!(others, expected, "{}", row.entry);
+            for pattern in others {
+                assert!(!row.reached.by(pattern), "{} through {pattern}", row.entry);
+            }
         }
     })
 }
@@ -382,13 +496,42 @@ fn the_table_s_edits_leave_only_other_customized_tables_to_python() -> Result<()
             assert!(models.reproduces_failures(command, None), "{command}");
         }
         assert!(models.reproduces_failures("lambda", Some("get-account-settings")));
-        assert!(
-            !models.reproduces_failures("logs", None),
-            "register_logs_commands adds logs' hand-written commands"
-        );
+    })
+}
+
+/// The command adders' tables reproduce their failures, but for the
+/// tables they also edit through other patterns.
+#[test]
+fn the_command_adders_leave_only_their_other_tables_to_python() -> Result<()> {
+    with_models(|models| {
+        for (command, operation) in ADDED_TO {
+            assert!(models.reproduces_failures(command, None), "{command}");
+            assert!(
+                models.reproduces_failures(command, Some(operation)),
+                "{command} {operation}"
+            );
+        }
         assert!(
             !models.reproduces_failures("emr", Some("list-clusters")),
-            "emr_initialize edits emr's table"
+            "emr_initialize edits emr's list-clusters table"
+        );
+        assert!(
+            !models.reproduces_failures("emr", Some("list-instances")),
+            "emr_initialize's parser hook acts on every emr table"
+        );
+        for operation in [
+            "create-distribution",
+            "create-invalidation",
+            "update-distribution",
+        ] {
+            assert!(
+                !models.reproduces_failures("cloudfront", Some(operation)),
+                "cloudfront.register edits {operation}'s table"
+            );
+        }
+        assert!(
+            !models.reproduces_failures("agent-toolkit", None),
+            "register_agent_toolkit_commands reads its table, so is no recorded editor"
         );
     })
 }
@@ -496,7 +639,42 @@ const CASES: &[(&str, Case)] = &[
     ),
     (
         "cloudfront.register",
-        with_argv(IDENTITY, &["cloudfront", "list-distributions"]),
+        with_argv(
+            &["cloudfront", "list-distributions"],
+            &[
+                "cloudfront",
+                "update-distribution",
+                "--id",
+                "a",
+                "--if-match",
+                "b",
+                "--default-root-object",
+                "index.html",
+            ],
+        ),
+    ),
+    (
+        ".add_generate_db_auth_token",
+        with_argv(
+            &["rds", "describe-db-instances"],
+            &[
+                "rds",
+                "generate-db-auth-token",
+                "--hostname",
+                "h",
+                "--port",
+                "5432",
+                "--username",
+                "u",
+            ],
+        ),
+    ),
+    (
+        ".add_dsql_generate_db_auth_token_methods",
+        with_argv(
+            &["dsql", "list-clusters"],
+            &["dsql", "generate-db-connect-auth-token", "--hostname", "h"],
+        ),
     ),
     (
         ".register_param_shorthand_parser",
@@ -580,8 +758,86 @@ fn an_editor_through_any_other_pattern_is_uncovered() {
         );
     }
     let other = [registry(
-        "building-command-table.logs",
-        "awscli.customizations.logs.register_logs_commands",
+        "building-command-table.agent-toolkit",
+        "awscli.customizations.agenttoolkit.register_agent_toolkit_commands",
     )];
-    assert!(uncovered(&other, &[], "logs", "Op").is_some());
+    assert!(uncovered(&other, &[], "agent-toolkit", "Op").is_some());
+    for (entry, patterns) in MIXED {
+        for pattern in *patterns {
+            let found = [registry(pattern, entry)];
+            let covered = CLI
+                .iter()
+                .any(|row| row.entry == *entry && row.reached.by(pattern));
+            assert_eq!(
+                uncovered(&found, &[], "svc", "Op").is_none(),
+                covered,
+                "{entry} through {pattern}"
+            );
+        }
+    }
+    let shared = [registry(
+        "top-level-args-parsed",
+        "awscli.customizations.cloudfront.register",
+    )];
+    assert_eq!(uncovered(&shared, &[], "cloudfront", "Op"), None);
+}
+
+/// A command adder's names are no operations of the source, so invoking
+/// one is Python's, as a command the parse resolves to no operation
+/// (`UnsupportedCommand`, as `wizard` is): each it adds, each model
+/// operation it replaces, and
+/// rds's modify-option-group, which it deletes; the service's other
+/// operations are its operations still.
+#[test]
+fn a_command_adder_s_names_are_python_s() -> Result<()> {
+    let replaced = [
+        ("ssm", "start-session"),
+        ("ecs", "execute-command"),
+        ("logs", "start-live-tail"),
+        ("sso", "logout"),
+        ("emr", "describe-cluster"),
+        ("emr", "add-instance-groups"),
+    ];
+    let added = [
+        ("logs", "tail"),
+        ("eks", "get-token"),
+        ("ecs", "deploy"),
+        ("cloudfront", "sign"),
+        ("rds", "add-option-to-option-group"),
+    ];
+    with_models(|models| {
+        for (command, name) in replaced.iter().chain(&added) {
+            let service = models
+                .service(command)
+                .unwrap_or_else(|| panic!("{command}"));
+            assert!(
+                service.choices.iter().any(|choice| choice == name),
+                "{command} {name}"
+            );
+            assert!(service.operation(name).is_none(), "{command} {name}");
+        }
+        let rds = models.service("rds").unwrap_or_else(|| panic!("rds"));
+        assert!(
+            !rds.choices
+                .iter()
+                .any(|choice| choice == "modify-option-group")
+        );
+        for (command, operation) in ADDED_TO {
+            let service = models
+                .service(command)
+                .unwrap_or_else(|| panic!("{command}"));
+            assert!(
+                service.operation(operation).is_some(),
+                "{command} {operation}"
+            );
+        }
+    })?;
+    for (command, name) in replaced.iter().chain(&added) {
+        let verdict = verdict(&[command, name], "", "")?;
+        assert!(
+            matches!(verdict, Verdict::Python(PythonReason::UnsupportedCommand)),
+            "{command} {name}: {verdict:?}"
+        );
+    }
+    Ok(())
 }

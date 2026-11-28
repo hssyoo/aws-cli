@@ -32,7 +32,7 @@
 //! `context.update` on the shared event.
 use cli_core::cli_error::PythonReason;
 use client::hooks::{Basis, Customization, Refusal};
-use command::patterns::{Match, MatchKind};
+use command::patterns::{Match, MatchKind, root_table_event};
 
 /// Whether the derived tables reproduce what an initializer does to them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +109,26 @@ const fn main_table(entry: &'static str) -> Row {
         table: TableEdit::None,
         basis: Basis::Implemented {
             at: "command::models::ModelSource::roots",
+        },
+    }
+}
+
+/// A table editor that sets hand-written commands on one service's table
+/// (`command_table[name] = ...`), as the pack recorded it: `how` names
+/// each. The derivation sets each where the handler does, so a name it
+/// adds is no operation of the source and a model operation it replaces
+/// is one no longer; invoking either is Python's (the parse resolves it to
+/// no operation: `UnsupportedCommand`, as for `wizard`), and the service's
+/// other operations are untouched. What else the
+/// initializer registers is on the other patterns it is listed under,
+/// which this row does not reach.
+const fn sets_commands(entry: &'static str, how: &'static str) -> Row {
+    Row {
+        reached: Reached::RootTable,
+        entry,
+        table: TableEdit::Reproduced { how },
+        basis: Basis::Implemented {
+            at: "command::models::edit_table",
         },
     }
 }
@@ -282,7 +302,8 @@ pub static CLI: &[Row] = &[
         entry: "awscli.customizations.sso.register_sso_commands",
         table: TableEdit::None,
         // inject_json_file_cache sets the SSO provider's cache
-        // (sso/__init__.py:38); its other handler builds `sso`'s table.
+        // (sso/__init__.py:38); its other handler sets `sso`'s login and
+        // logout, which a RootTable row covers.
         basis: Basis::Inert {
             acts_when: "the credential chain reaches the SSO provider",
             refused_as: Refusal::Router(PythonReason::CredentialForm),
@@ -303,14 +324,15 @@ pub static CLI: &[Row] = &[
         entry: "awscli.customizations.cloudfront.register",
         table: TableEdit::None,
         // Its only handler on this event is `context.update`, recording the
-        // parsed globals for one of that service's arguments
-        // (cloudfront/__init__.py:63); the service's operations, which its
-        // other handlers act on, speak rest-xml, so they reach the
-        // initializer through their own patterns, which no row covers, and
-        // are refused as an unported customization.
+        // parsed globals, which only update-distribution's
+        // --default-root-object reads (cloudfront/__init__.py:61-78,
+        // arguments.py:135-153). The argument is the initializer's own, set
+        // through update-distribution's argument-table pattern, which no row
+        // covers: the derived table lacks it and is customized, so giving it
+        // is a parse failure Python reproduces.
         basis: Basis::Inert {
-            acts_when: "the operation is one of that service's",
-            refused_as: Refusal::Router(PythonReason::UnportedCustomization),
+            acts_when: "cloudfront update-distribution is given --default-root-object",
+            refused_as: Refusal::Router(PythonReason::UnsupportedSubcommand),
         },
     },
     Row {
@@ -382,6 +404,124 @@ pub static CLI: &[Row] = &[
             at: "command::models::edit_table",
         },
     },
+    // The command adders: each sets one service's hand-written commands,
+    // and nothing else on a root table. Those also listed under other
+    // patterns (cloudfront, codedeploy, datapipeline, emr, rds's split, sso)
+    // register handlers there that act on the operations those patterns
+    // name, which stay uncovered (emr's parser hook names every emr
+    // operation).
+    sets_commands(
+        "awscli.customizations.cloudformation.initialize",
+        "cloudformation's package and deploy",
+    ),
+    sets_commands(
+        "awscli.customizations.cloudfront.register",
+        "cloudfront's sign and sign-cookies",
+    ),
+    sets_commands(
+        "awscli.customizations.cloudtrail.initialize",
+        "cloudtrail's validate-logs and verify-query-results",
+    ),
+    sets_commands(
+        "awscli.customizations.codeartifact.register_codeartifact_commands",
+        "codeartifact's login",
+    ),
+    sets_commands(
+        "awscli.customizations.codecommit.initialize",
+        "codecommit's credential-helper",
+    ),
+    sets_commands(
+        "awscli.customizations.codedeploy.codedeploy.register_codedeploy",
+        "deploy's push, register, deregister, install and uninstall",
+    ),
+    sets_commands(
+        "awscli.customizations.configservice.getstatus.register_get_status",
+        "configservice's get-status",
+    ),
+    sets_commands(
+        "awscli.customizations.configservice.subscribe.register_subscribe",
+        "configservice's subscribe",
+    ),
+    sets_commands(
+        "awscli.customizations.datapipeline.register_customizations",
+        "datapipeline's list-runs and create-default-roles",
+    ),
+    sets_commands(
+        "awscli.customizations.dlm.dlm.dlm_initialize",
+        "dlm's create-default-role",
+    ),
+    sets_commands(
+        "awscli.customizations.dsql.register_dsql_customizations",
+        "dsql's generate-db-connect-auth-token and generate-db-connect-admin-auth-token",
+    ),
+    sets_commands(
+        "awscli.customizations.ec2instanceconnect.register_ec2_instance_connect_commands",
+        "ec2-instance-connect's open-tunnel and ssh",
+    ),
+    sets_commands(
+        "awscli.customizations.ecr.register_ecr_commands",
+        "ecr's get-login-password",
+    ),
+    sets_commands(
+        "awscli.customizations.ecr_public.register_ecr_public_commands",
+        "ecr-public's get-login-password",
+    ),
+    sets_commands(
+        "awscli.customizations.ecs.initialize",
+        "ecs's deploy and monitor-express-gateway-service, and execute-command in place of \
+         the operation",
+    ),
+    sets_commands(
+        "awscli.customizations.eks.initialize",
+        "eks's update-kubeconfig and get-token",
+    ),
+    sets_commands(
+        "awscli.customizations.emr.emr.emr_initialize",
+        "emr's sixteen high-level commands, describe-cluster and add-instance-groups in \
+         place of the operations",
+    ),
+    sets_commands(
+        "awscli.customizations.emrcontainers.initialize",
+        "emr-containers' update-role-trust-policy, create-role-associations and \
+         delete-role-associations",
+    ),
+    sets_commands(
+        "awscli.customizations.gamelift.register_gamelift_commands",
+        "gamelift's upload-build and get-game-session-log",
+    ),
+    sets_commands(
+        "awscli.customizations.lambdaweb.register_lambda_web_commands",
+        "lambda-web's deploy",
+    ),
+    sets_commands(
+        "awscli.customizations.lightsail.initialize",
+        "lightsail's push-container-image",
+    ),
+    sets_commands(
+        "awscli.customizations.logs.register_logs_commands",
+        "logs' tail, and start-live-tail in place of the operation",
+    ),
+    sets_commands(
+        "awscli.customizations.rds.register_add_generate_db_auth_token",
+        "rds's generate-db-auth-token",
+    ),
+    sets_commands(
+        "awscli.customizations.rds.register_rds_modify_split",
+        "rds's modify-option-group deleted, and add-option-to-option-group and \
+         remove-option-from-option-group",
+    ),
+    sets_commands(
+        "awscli.customizations.servicecatalog.register_servicecatalog_commands",
+        "servicecatalog's generate",
+    ),
+    sets_commands(
+        "awscli.customizations.sessionmanager.register_ssm_session",
+        "ssm's start-session in place of the operation",
+    ),
+    sets_commands(
+        "awscli.customizations.sso.register_sso_commands",
+        "sso's login, and logout in place of the operation",
+    ),
 ];
 
 /// The initializers whose table edits the derived tables reproduce, which
@@ -391,18 +531,6 @@ pub fn table_edits() -> Vec<&'static str> {
         .filter(|row| matches!(row.table, TableEdit::Reproduced { .. }))
         .map(|row| row.entry)
         .collect()
-}
-
-const TABLE_EVENT: &str = "building-command-table.";
-
-/// Whether `pattern` is one root command's table event: one command, not
-/// the main table's (whose initializers the main table's ops replace) and
-/// no subcommand's, whose lineage is `_`-joined
-/// (`ServiceOperation._build_subcommand_table`, clidriver.py:891).
-fn root_table_event(pattern: &str) -> bool {
-    pattern.strip_prefix(TABLE_EVENT).is_some_and(|command| {
-        !command.is_empty() && command != "main" && command != "*" && !command.contains(['.', '_'])
-    })
 }
 
 /// The first match nothing covers: no [`CLI`] row for a registry

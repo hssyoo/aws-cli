@@ -49,8 +49,11 @@ pub static TABLE: [&Customization; 9] = [
 ///   discovery operations, which the client refuses;
 /// - `handle_service_name_alias`: the command layer names the service by
 ///   its model directory, so no alias reaches a client;
-/// - `add_generate_presigned_url`: adds a method the CLI's service
-///   commands never call.
+/// - `add_generate_presigned_url`, and rds's and dsql's
+///   `add_generate_db_auth_token` and
+///   `add_dsql_generate_db_auth_token_methods` (on their services'
+///   `creating-client-class`): add methods the CLI's service commands
+///   never call.
 ///
 /// and the handlers botocore registers on every client as it creates it
 /// (`BaseClient._register_handlers`, `ClientCreator._register_retries`):
@@ -116,7 +119,23 @@ pub static CORE: Customization = Customization {
             Basis::Inert {
                 acts_when: "a hand-written command calls generate_presigned_url (s3 presign, \
                             eks get-token, ec2-instance-connect, cloudfront sign)",
-                refused_as: Refusal::Router(PythonReason::UnsupportedSubcommand),
+                refused_as: Refusal::Router(PythonReason::UnsupportedCommand),
+            },
+        ),
+        (
+            "botocore.signers.add_generate_db_auth_token",
+            Basis::Inert {
+                acts_when: "rds generate-db-auth-token, a hand-written command, calls the method",
+                refused_as: Refusal::Router(PythonReason::UnsupportedCommand),
+            },
+        ),
+        (
+            "botocore.signers.add_dsql_generate_db_auth_token_methods",
+            Basis::Inert {
+                acts_when: "dsql's generate-db-connect-auth-token or \
+                            generate-db-connect-admin-auth-token, hand-written commands, \
+                            call the methods",
+                refused_as: Refusal::Router(PythonReason::UnsupportedCommand),
             },
         ),
         (

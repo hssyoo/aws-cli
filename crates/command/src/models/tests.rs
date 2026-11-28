@@ -495,3 +495,68 @@ fn ec2_tables_take_the_renames_and_pulled_up_pairs() -> Result<()> {
         assert_eq!(renamed.dest.as_deref(), Some("disable_api_termination"));
     })
 }
+
+/// A table editor's reproduction is its root tables' edits alone: with
+/// every initializer cloudfront's tables meet reproduced, cloudfront's own
+/// table and list-distributions' render their failures natively, but the
+/// tables `cloudfront.register` also edits through their argument-table
+/// patterns stay customized.
+#[test]
+fn an_editor_is_reproduced_only_on_root_tables() -> Result<()> {
+    let met = met(
+        None,
+        &[
+            ("cloudfront", "list-distributions"),
+            ("cloudfront", "create-distribution"),
+        ],
+    )?;
+    assert!(met.contains(&"awscli.customizations.cloudfront.register"));
+    with_reproduced(None, &met, |source| {
+        assert!(source.reproduces_failures("cloudfront", None));
+        assert!(source.reproduces_failures("cloudfront", Some("list-distributions")));
+        for operation in [
+            "create-distribution",
+            "create-invalidation",
+            "update-distribution",
+        ] {
+            assert!(
+                !source.reproduces_failures("cloudfront", Some(operation)),
+                "{operation}"
+            );
+        }
+        let cloudfront = source
+            .service("cloudfront")
+            .unwrap_or_else(|| panic!("cloudfront"));
+        let tail = &cloudfront.choices[cloudfront.choices.len() - 3..];
+        assert_eq!(tail, ["sign", "sign-cookies", "wait"]);
+    })
+}
+
+/// A set name that was a model operation stays in its place and is no
+/// operation; a deleted one leaves: ssm's start-session, and rds's
+/// modify-option-group, whose two replacements come last before `wait`.
+#[test]
+fn a_replaced_operation_keeps_its_place_and_is_no_operation() -> Result<()> {
+    with_source(None, |source| {
+        let ssm = source.service("ssm").unwrap_or_else(|| panic!("ssm"));
+        let position =
+            |names: &[String], wanted: &str| names.iter().position(|name| name == wanted);
+        let at = position(&ssm.choices, "start-session").unwrap_or_else(|| panic!("start-session"));
+        assert_eq!(ssm.choices.last().map(String::as_str), Some("wait"));
+        assert!(at + 2 < ssm.choices.len(), "start-session moved to the end");
+        assert!(ssm.operation("start-session").is_none());
+        assert!(source.table("ssm", "start-session").is_none());
+        let rds = source.service("rds").unwrap_or_else(|| panic!("rds"));
+        assert_eq!(position(&rds.choices, "modify-option-group"), None);
+        let tail = &rds.choices[rds.choices.len() - 4..];
+        assert_eq!(
+            tail,
+            [
+                "add-option-to-option-group",
+                "remove-option-from-option-group",
+                "generate-db-auth-token",
+                "wait"
+            ]
+        );
+    })
+}
