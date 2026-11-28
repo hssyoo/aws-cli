@@ -35,6 +35,7 @@ pub(crate) fn prepare(
     let (endpoint, mut features) = resolve_endpoint(client, &mut ctx, &input, None)?;
     features.extend(extra.iter());
     let serialized = serialize(client, operation, &input)?;
+    features.extend(client.components.protocol.user_agent_features().iter());
     features.extend(resolve_checksums(client, &mut ctx, &input, &serialized, &endpoint)?.iter());
     let mut request = apply_endpoint(client, &serialized, &endpoint.url, features)?;
     modify_before_retry_loop(client, &mut ctx, &mut request)?;

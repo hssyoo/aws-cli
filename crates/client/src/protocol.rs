@@ -168,6 +168,11 @@ pub trait ClientProtocol: Sync + std::fmt::Debug {
         response: &HttpResponse,
         options: &ParseOptions<'_>,
     ) -> Result<Map, ParseError>;
+    /// The feature ids botocore's serializer registers for every request
+    /// it writes (`register_feature_id`), for the `User-Agent`.
+    fn user_agent_features(&self) -> cli_core::client_config::user_agent::Features {
+        cli_core::client_config::user_agent::Features::default()
+    }
     /// A streamed output, read from the response as it arrives. Reserved:
     /// no protocol streams yet.
     fn deserialize_streaming(

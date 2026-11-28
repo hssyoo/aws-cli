@@ -151,3 +151,13 @@ fn the_call_s_hooks_reach_every_tag() -> Result<()> {
     assert_eq!(output, expected);
     Ok(())
 }
+
+/// Every request botocore's serializer writes registers
+/// `PROTOCOL_RPC_V2_CBOR`; the JSON protocol registers none.
+#[test]
+fn requests_register_the_protocol_s_feature_id() {
+    let codes: Vec<&str> = RPC_V2_CBOR.user_agent_features().codes().collect();
+    assert_eq!(codes, ["M"]);
+    let json = crate::protocol::AWS_JSON_1_1.user_agent_features();
+    assert_eq!(json.codes().count(), 0);
+}

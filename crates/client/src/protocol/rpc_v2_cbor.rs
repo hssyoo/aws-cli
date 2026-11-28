@@ -16,6 +16,7 @@ use crate::codec::cbor::{CBOR, CborCodec, CborCursor, Item, decode};
 use crate::codec::value::write_value;
 use crate::error::{ParseError, SerializeError, ServiceError};
 use crate::http::{Headers, HttpResponse, Method};
+use cli_core::client_config::user_agent::{Feature, Features};
 use model::schema::{Flag, OperationSchema, Schema, ShapeType, TraitId, TypeRegistry, traits};
 use model::serde::{Codec, ShapeDeserializer};
 use model::shapes::Model;
@@ -246,6 +247,12 @@ impl ClientProtocol for RpcV2Protocol<CborCodec> {
             body,
             host_prefix,
         })
+    }
+
+    /// `PROTOCOL_RPC_V2_CBOR`, which `RpcV2CBORSerializer.
+    /// serialize_to_request` registers.
+    fn user_agent_features(&self) -> Features {
+        Features::from_iter([Feature::ProtocolRpcV2Cbor])
     }
 
     /// `BaseRpcV2Parser._do_parse`: the payload, then `ResponseMetadata`

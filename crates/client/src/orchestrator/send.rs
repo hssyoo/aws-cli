@@ -123,6 +123,7 @@ fn refresh_for_identity(
     // a defect, not a reason to leave the call to Python.
     let (endpoint, mut features) =
         resolve_endpoint(client, ctx, &prepared.input, Some(&account_id)).map_err(after_prepare)?;
+    features.extend(client.components.protocol.user_agent_features().iter());
     if client.http_checksum {
         features.extend(ctx.state::<ChecksumFeatures>().0.iter());
     }
