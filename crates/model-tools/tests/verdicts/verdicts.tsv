@@ -152,7 +152,7 @@ agent-registry-control	update-registry-record	-	-	scalar_arguments	-	2025-12-01
 agent-registry-control	update-registry-record-status	-	-	scalar_arguments	-	2025-12-01
 agent-toolkit	get-latest-skill-version	-	-	refused:unported_customization	-	2026-04-22
 agent-toolkit	get-skill	-	-	refused:unported_customization	-	2026-04-22
-agent-toolkit	get-skill-file	unsupported_trait	streaming	refused:unsupported_trait	-	2026-04-22
+agent-toolkit	get-skill-file	-	-	refused:unported_customization	-	2026-04-22
 agent-toolkit	get-skill-file-checksum	-	-	refused:unported_customization	-	2026-04-22
 agent-toolkit	list-skills	-	-	refused:unported_customization	native in=nextToken out=nextToken more=- result=skills keep=- limit=maxResults	2026-04-22
 agent-toolkit	search-skills	-	-	refused:unported_customization	native in=nextToken out=nextToken more=- result=skills keep=- limit=maxResults	2026-04-22
@@ -366,7 +366,7 @@ apigateway	get-documentation-versions	-	-	refused:unported_customization	native 
 apigateway	get-domain-name	-	-	refused:unported_customization	-	2015-07-09
 apigateway	get-domain-name-access-associations	-	-	refused:unported_customization	-	2015-07-09
 apigateway	get-domain-names	-	-	refused:unported_customization	native in=position out=position more=- result=items keep=- limit=limit	2015-07-09
-apigateway	get-export	unsupported_trait	streaming	refused:unsupported_trait	-	2015-07-09
+apigateway	get-export	-	-	refused:unported_customization	-	2015-07-09
 apigateway	get-gateway-response	-	-	refused:unported_customization	-	2015-07-09
 apigateway	get-gateway-responses	-	-	refused:unported_customization	native in=position out=position more=- result=items keep=- limit=limit	2015-07-09
 apigateway	get-integration	-	-	refused:unported_customization	-	2015-07-09
@@ -382,7 +382,7 @@ apigateway	get-resource	-	-	refused:unported_customization	-	2015-07-09
 apigateway	get-resources	-	-	refused:unported_customization	native in=position out=position more=- result=items keep=- limit=limit	2015-07-09
 apigateway	get-rest-api	-	-	refused:unported_customization	-	2015-07-09
 apigateway	get-rest-apis	-	-	refused:unported_customization	native in=position out=position more=- result=items keep=- limit=limit	2015-07-09
-apigateway	get-sdk	unsupported_trait	streaming	refused:unsupported_trait	-	2015-07-09
+apigateway	get-sdk	-	-	refused:unported_customization	-	2015-07-09
 apigateway	get-sdk-type	-	-	refused:unported_customization	-	2015-07-09
 apigateway	get-sdk-types	-	-	refused:unported_customization	native in=position out=position more=- result=items keep=- limit=limit	2015-07-09
 apigateway	get-stage	-	-	refused:unported_customization	-	2015-07-09
@@ -395,15 +395,15 @@ apigateway	get-usage-plan-keys	-	-	refused:unported_customization	native in=posi
 apigateway	get-usage-plans	-	-	refused:unported_customization	native in=position out=position more=- result=items keep=- limit=limit	2015-07-09
 apigateway	get-vpc-link	-	-	refused:unported_customization	-	2015-07-09
 apigateway	get-vpc-links	-	-	refused:unported_customization	native in=position out=position more=- result=items keep=- limit=limit	2015-07-09
-apigateway	import-api-keys	unsupported_trait	streaming	refused:unsupported_trait	-	2015-07-09
-apigateway	import-documentation-parts	unsupported_trait	streaming	refused:unsupported_trait	-	2015-07-09
-apigateway	import-rest-api	unsupported_trait	streaming	refused:unsupported_trait	-	2015-07-09
+apigateway	import-api-keys	-	-	refused:unported_customization	-	2015-07-09
+apigateway	import-documentation-parts	-	-	refused:unported_customization	-	2015-07-09
+apigateway	import-rest-api	-	-	refused:unported_customization	-	2015-07-09
 apigateway	put-gateway-response	-	-	refused:unported_customization	-	2015-07-09
 apigateway	put-integration	-	-	refused:unported_customization	-	2015-07-09
 apigateway	put-integration-response	-	-	refused:unported_customization	-	2015-07-09
 apigateway	put-method	-	-	refused:unported_customization	-	2015-07-09
 apigateway	put-method-response	-	-	refused:unported_customization	-	2015-07-09
-apigateway	put-rest-api	unsupported_trait	streaming	refused:unsupported_trait	-	2015-07-09
+apigateway	put-rest-api	-	-	refused:unported_customization	-	2015-07-09
 apigateway	reject-domain-name-access-association	-	-	refused:unported_customization	-	2015-07-09
 apigateway	tag-resource	-	-	refused:unported_customization	-	2015-07-09
 apigateway	test-invoke-authorizer	-	-	refused:unported_customization	-	2015-07-09
@@ -433,7 +433,7 @@ apigateway	update-usage-plan	-	-	refused:unported_customization	-	2015-07-09
 apigateway	update-vpc-link	-	-	refused:unported_customization	-	2015-07-09
 apigatewaymanagementapi	delete-connection	-	-	scalar_arguments	-	2018-11-29
 apigatewaymanagementapi	get-connection	-	-	scalar_arguments	-	2018-11-29
-apigatewaymanagementapi	post-to-connection	unsupported_trait	streaming	refused:unsupported_trait	-	2018-11-29
+apigatewaymanagementapi	post-to-connection	-	-	required_not_scalar	-	2018-11-29
 apigatewayv2	create-api	-	-	scalar_arguments	-	2018-11-29
 apigatewayv2	create-api-mapping	-	-	scalar_arguments	-	2018-11-29
 apigatewayv2	create-authorizer	-	-	required_not_scalar	-	2018-11-29
@@ -473,7 +473,7 @@ apigatewayv2	delete-route-settings	-	-	scalar_arguments	-	2018-11-29
 apigatewayv2	delete-routing-rule	-	-	scalar_arguments	-	2018-11-29
 apigatewayv2	delete-stage	-	-	scalar_arguments	-	2018-11-29
 apigatewayv2	delete-vpc-link	-	-	scalar_arguments	-	2018-11-29
-apigatewayv2	export-api	unsupported_trait	streaming	refused:unsupported_trait	-	2018-11-29
+apigatewayv2	export-api	-	-	scalar_arguments	-	2018-11-29
 apigatewayv2	disable-portal	-	-	scalar_arguments	-	2018-11-29
 apigatewayv2	reset-authorizers-cache	-	-	scalar_arguments	-	2018-11-29
 apigatewayv2	get-api	-	-	scalar_arguments	-	2018-11-29
@@ -544,7 +544,7 @@ appconfig	create-environment	-	-	scalar_arguments	-	2019-10-09
 appconfig	create-experiment-definition	-	-	required_not_scalar	-	2019-10-09
 appconfig	create-extension	-	-	required_not_scalar	-	2019-10-09
 appconfig	create-extension-association	-	-	scalar_arguments	-	2019-10-09
-appconfig	create-hosted-configuration-version	unsupported_trait	streaming	refused:unsupported_trait	-	2019-10-09
+appconfig	create-hosted-configuration-version	-	-	required_not_scalar	-	2019-10-09
 appconfig	delete-application	-	-	scalar_arguments	-	2019-10-09
 appconfig	delete-configuration-profile	-	-	scalar_arguments	-	2019-10-09
 appconfig	delete-deployment-strategy	-	-	scalar_arguments	-	2019-10-09
@@ -555,7 +555,7 @@ appconfig	delete-extension-association	-	-	scalar_arguments	-	2019-10-09
 appconfig	delete-hosted-configuration-version	-	-	scalar_arguments	-	2019-10-09
 appconfig	get-account-settings	-	-	no_arguments	-	2019-10-09
 appconfig	get-application	-	-	scalar_arguments	-	2019-10-09
-appconfig	get-configuration	unsupported_trait	streaming	refused:unsupported_trait	-	2019-10-09
+appconfig	get-configuration	-	-	scalar_arguments	-	2019-10-09
 appconfig	get-configuration-profile	-	-	scalar_arguments	-	2019-10-09
 appconfig	get-deployment	-	-	scalar_arguments	-	2019-10-09
 appconfig	get-deployment-strategy	-	-	scalar_arguments	-	2019-10-09
@@ -564,7 +564,7 @@ appconfig	get-experiment-definition	-	-	scalar_arguments	-	2019-10-09
 appconfig	get-experiment-run	-	-	scalar_arguments	-	2019-10-09
 appconfig	get-extension	-	-	scalar_arguments	-	2019-10-09
 appconfig	get-extension-association	-	-	scalar_arguments	-	2019-10-09
-appconfig	get-hosted-configuration-version	unsupported_trait	streaming	refused:unsupported_trait	-	2019-10-09
+appconfig	get-hosted-configuration-version	-	-	scalar_arguments	-	2019-10-09
 appconfig	list-applications	-	-	no_arguments	native in=NextToken out=NextToken more=- result=Items keep=- limit=MaxResults	2019-10-09
 appconfig	list-configuration-profiles	-	-	scalar_arguments	native in=NextToken out=NextToken more=- result=Items keep=- limit=MaxResults	2019-10-09
 appconfig	list-deployment-strategies	-	-	no_arguments	native in=NextToken out=NextToken more=- result=Items keep=- limit=MaxResults	2019-10-09
@@ -593,7 +593,7 @@ appconfig	update-experiment-run	-	-	scalar_arguments	-	2019-10-09
 appconfig	update-extension	-	-	scalar_arguments	-	2019-10-09
 appconfig	update-extension-association	-	-	scalar_arguments	-	2019-10-09
 appconfig	validate-configuration	-	-	scalar_arguments	-	2019-10-09
-appconfigdata	get-latest-configuration	unsupported_trait	streaming	refused:unsupported_trait	-	2021-11-11
+appconfigdata	get-latest-configuration	-	-	scalar_arguments	-	2021-11-11
 appconfigdata	start-configuration-session	-	-	scalar_arguments	-	2021-11-11
 appfabric	batch-get-user-access-tasks	-	-	required_not_scalar	-	2023-05-19
 appfabric	connect-app-authorization	-	-	scalar_arguments	-	2023-05-19
@@ -955,7 +955,7 @@ appsync	get-domain-name	-	-	scalar_arguments	-	2017-07-25
 appsync	get-function	-	-	scalar_arguments	-	2017-07-25
 appsync	get-graphql-api	-	-	scalar_arguments	-	2017-07-25
 appsync	get-graphql-api-environment-variables	-	-	scalar_arguments	-	2017-07-25
-appsync	get-introspection-schema	unsupported_trait	streaming	refused:unsupported_trait	-	2017-07-25
+appsync	get-introspection-schema	-	-	scalar_arguments	-	2017-07-25
 appsync	get-resolver	-	-	scalar_arguments	-	2017-07-25
 appsync	get-schema-creation-status	-	-	scalar_arguments	-	2017-07-25
 appsync	get-source-api-association	-	-	scalar_arguments	-	2017-07-25
@@ -1807,7 +1807,7 @@ bedrock-agentcore	get-workload-access-token	-	-	scalar_arguments	-	2024-02-28
 bedrock-agentcore	get-workload-access-token-for-jwt	-	-	scalar_arguments	-	2024-02-28
 bedrock-agentcore	get-workload-access-token-for-user-id	-	-	scalar_arguments	-	2024-02-28
 bedrock-agentcore	ingest-data	-	-	required_not_scalar	-	2024-02-28
-bedrock-agentcore	invoke-agent-runtime	unsupported_trait	streaming	refused:unsupported_trait	-	2024-02-28
+bedrock-agentcore	invoke-agent-runtime	-	-	required_not_scalar	-	2024-02-28
 bedrock-agentcore	invoke-browser	-	-	required_not_scalar	-	2024-02-28
 bedrock-agentcore	invoke-web-search	-	-	scalar_arguments	-	2024-02-28
 bedrock-agentcore	list-ab-tests	-	-	no_arguments	native in=nextToken out=nextToken more=- result=abTests keep=- limit=maxResults	2024-02-28
@@ -2047,7 +2047,7 @@ bedrock-runtime	converse	-	-	refused:unported_customization	-	2023-09-30
 bedrock-runtime	count-tokens	-	-	refused:unported_customization	-	2023-09-30
 bedrock-runtime	get-async-invoke	-	-	refused:unported_customization	-	2023-09-30
 bedrock-runtime	invoke-guardrail-checks	-	-	refused:unported_customization	-	2023-09-30
-bedrock-runtime	invoke-model	unsupported_trait	streaming	refused:unsupported_trait	-	2023-09-30
+bedrock-runtime	invoke-model	-	-	refused:unported_customization	-	2023-09-30
 bedrock-runtime	list-async-invokes	-	-	refused:unported_customization	native in=nextToken out=nextToken more=- result=asyncInvokeSummaries keep=- limit=maxResults	2023-09-30
 bedrock-runtime	start-async-invoke	-	-	refused:unported_customization	-	2023-09-30
 billing	associate-contract	-	-	scalar_arguments	-	2023-09-07
@@ -2928,7 +2928,7 @@ cloudfront	get-cache-policy	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-cache-policy-config	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-cloud-front-origin-access-identity	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-cloud-front-origin-access-identity-config	-	-	scalar_arguments	-	2020-05-31
-cloudfront	get-connection-function	unsupported_trait	streaming	refused:unsupported_trait	-	2020-05-31
+cloudfront	get-connection-function	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-connection-group	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-connection-group-by-routing-endpoint	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-continuous-deployment-policy	-	-	scalar_arguments	-	2020-05-31
@@ -2941,7 +2941,7 @@ cloudfront	get-field-level-encryption	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-field-level-encryption-config	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-field-level-encryption-profile	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-field-level-encryption-profile-config	-	-	scalar_arguments	-	2020-05-31
-cloudfront	get-function	unsupported_trait	streaming	refused:unsupported_trait	-	2020-05-31
+cloudfront	get-function	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-invalidation	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-invalidation-for-distribution-tenant	-	-	scalar_arguments	-	2020-05-31
 cloudfront	get-key-group	-	-	scalar_arguments	-	2020-05-31
@@ -3104,7 +3104,7 @@ cloudsearch	update-scaling-parameters	-	-	required_not_scalar	-	2013-01-01
 cloudsearch	update-service-access-policies	-	-	scalar_arguments	-	2013-01-01
 cloudsearchdomain	search	-	-	refused:unported_customization	-	2013-01-01
 cloudsearchdomain	suggest	-	-	refused:unported_customization	-	2013-01-01
-cloudsearchdomain	upload-documents	unsupported_trait	streaming	refused:unsupported_trait	-	2013-01-01
+cloudsearchdomain	upload-documents	-	-	refused:unported_customization	-	2013-01-01
 cloudtrail	add-tags	-	-	required_not_scalar	-	2013-11-01
 cloudtrail	cancel-query	-	-	scalar_arguments	-	2013-11-01
 cloudtrail	create-channel	-	-	required_not_scalar	-	2013-11-01
@@ -3305,7 +3305,7 @@ codeartifact	dispose-package-versions	-	-	required_not_scalar	-	2018-09-22
 codeartifact	get-associated-package-group	-	-	scalar_arguments	-	2018-09-22
 codeartifact	get-authorization-token	-	-	scalar_arguments	-	2018-09-22
 codeartifact	get-domain-permissions-policy	-	-	scalar_arguments	-	2018-09-22
-codeartifact	get-package-version-asset	unsupported_trait	streaming	refused:unsupported_trait	-	2018-09-22
+codeartifact	get-package-version-asset	-	-	scalar_arguments	-	2018-09-22
 codeartifact	get-package-version-readme	-	-	scalar_arguments	-	2018-09-22
 codeartifact	get-repository-endpoint	-	-	scalar_arguments	-	2018-09-22
 codeartifact	get-repository-permissions-policy	-	-	scalar_arguments	-	2018-09-22
@@ -3321,7 +3321,7 @@ codeartifact	list-repositories	-	-	no_arguments	native in=nextToken out=nextToke
 codeartifact	list-repositories-in-domain	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=repositories keep=- limit=maxResults	2018-09-22
 codeartifact	list-sub-package-groups	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=packageGroups keep=- limit=maxResults	2018-09-22
 codeartifact	list-tags-for-resource	-	-	scalar_arguments	-	2018-09-22
-codeartifact	publish-package-version	unsupported_trait	streaming	refused:unsupported_trait	-	2018-09-22
+codeartifact	publish-package-version	-	-	scalar_arguments	-	2018-09-22
 codeartifact	put-domain-permissions-policy	-	-	scalar_arguments	-	2018-09-22
 codeartifact	put-package-origin-configuration	-	-	required_not_scalar	-	2018-09-22
 codeartifact	put-repository-permissions-policy	-	-	scalar_arguments	-	2018-09-22
@@ -3571,13 +3571,13 @@ codeguruprofiler	describe-profiling-group	-	-	scalar_arguments	-	2019-07-18
 codeguruprofiler	get-findings-report-account-summary	-	-	no_arguments	-	2019-07-18
 codeguruprofiler	get-notification-configuration	-	-	scalar_arguments	-	2019-07-18
 codeguruprofiler	get-policy	-	-	scalar_arguments	-	2019-07-18
-codeguruprofiler	get-profile	unsupported_trait	streaming	refused:unsupported_trait	-	2019-07-18
+codeguruprofiler	get-profile	-	-	scalar_arguments	-	2019-07-18
 codeguruprofiler	get-recommendations	-	-	required_not_scalar	-	2019-07-18
 codeguruprofiler	list-findings-reports	-	-	required_not_scalar	-	2019-07-18
 codeguruprofiler	list-profile-times	-	-	required_not_scalar	native in=nextToken out=nextToken more=- result=profileTimes keep=- limit=maxResults	2019-07-18
 codeguruprofiler	list-profiling-groups	-	-	no_arguments	-	2019-07-18
 codeguruprofiler	list-tags-for-resource	-	-	scalar_arguments	-	2019-07-18
-codeguruprofiler	post-agent-profile	unsupported_trait	streaming	refused:unsupported_trait	-	2019-07-18
+codeguruprofiler	post-agent-profile	-	-	required_not_scalar	-	2019-07-18
 codeguruprofiler	put-permission	-	-	required_not_scalar	-	2019-07-18
 codeguruprofiler	remove-notification-channel	-	-	scalar_arguments	-	2019-07-18
 codeguruprofiler	remove-permission	-	-	scalar_arguments	-	2019-07-18
@@ -5086,7 +5086,7 @@ datazone	get-glossary-term	-	-	scalar_arguments	-	2018-05-10
 datazone	get-group-profile	-	-	scalar_arguments	-	2018-05-10
 datazone	get-iam-portal-login-url	-	-	scalar_arguments	-	2018-05-10
 datazone	get-job-run	-	-	scalar_arguments	-	2018-05-10
-datazone	get-lineage-event	unsupported_trait	streaming	refused:unsupported_trait	-	2018-05-10
+datazone	get-lineage-event	-	-	scalar_arguments	-	2018-05-10
 datazone	get-lineage-node	-	-	scalar_arguments	-	2018-05-10
 datazone	get-listing	-	-	scalar_arguments	-	2018-05-10
 datazone	get-metadata-generation-run	-	-	scalar_arguments	-	2018-05-10
@@ -5138,7 +5138,7 @@ datazone	list-subscription-targets	-	-	scalar_arguments	native in=nextToken out=
 datazone	list-subscriptions	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2018-05-10
 datazone	list-tags-for-resource	-	-	scalar_arguments	-	2018-05-10
 datazone	list-time-series-data-points	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=items keep=- limit=maxResults	2018-05-10
-datazone	post-lineage-event	unsupported_trait	streaming	refused:unsupported_trait	-	2018-05-10
+datazone	post-lineage-event	-	-	required_not_scalar	-	2018-05-10
 datazone	post-time-series-data-points	-	-	required_not_scalar	-	2018-05-10
 datazone	put-data-export-configuration	-	-	scalar_arguments	-	2018-05-10
 datazone	put-environment-blueprint-configuration	-	-	required_not_scalar	-	2018-05-10
@@ -6132,10 +6132,10 @@ dynamodbstreams	get-records	-	-	scalar_arguments	-	2012-08-10
 dynamodbstreams	get-shard-iterator	-	-	scalar_arguments	-	2012-08-10
 dynamodbstreams	list-streams	-	-	no_arguments	-	2012-08-10
 ebs	complete-snapshot	-	-	scalar_arguments	-	2019-11-02
-ebs	get-snapshot-block	unsupported_trait	streaming	refused:unsupported_trait	-	2019-11-02
+ebs	get-snapshot-block	-	-	scalar_arguments	-	2019-11-02
 ebs	list-changed-blocks	-	-	scalar_arguments	-	2019-11-02
 ebs	list-snapshot-blocks	-	-	scalar_arguments	-	2019-11-02
-ebs	put-snapshot-block	unsupported_trait	streaming	refused:unsupported_trait	-	2019-11-02
+ebs	put-snapshot-block	unsupported_auth	v4-unsigned-body	refused:unsupported_auth	-	2019-11-02
 ebs	start-snapshot	-	-	scalar_arguments	-	2019-11-02
 ec2	accept-address-transfer	-	-	scalar_arguments	-	2016-11-15
 ec2	accept-capacity-reservation-billing-ownership	-	-	scalar_arguments	-	2016-11-15
@@ -8194,11 +8194,11 @@ gameliftstreams	terminate-stream-session	-	-	scalar_arguments	-	2018-05-10
 gameliftstreams	untag-resource	-	-	required_not_scalar	-	2018-05-10
 gameliftstreams	update-application	-	-	scalar_arguments	-	2018-05-10
 gameliftstreams	update-stream-group	-	-	scalar_arguments	-	2018-05-10
-geo-maps	get-glyphs	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-19
-geo-maps	get-sprites	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-19
-geo-maps	get-static-map	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-19
-geo-maps	get-style-descriptor	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-19
-geo-maps	get-tile	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-19
+geo-maps	get-glyphs	-	-	scalar_arguments	-	2020-11-19
+geo-maps	get-sprites	-	-	scalar_arguments	-	2020-11-19
+geo-maps	get-static-map	-	-	scalar_arguments	-	2020-11-19
+geo-maps	get-style-descriptor	-	-	scalar_arguments	-	2020-11-19
+geo-maps	get-tile	-	-	scalar_arguments	-	2020-11-19
 geo-places	autocomplete	-	-	scalar_arguments	-	2020-11-19
 geo-places	geocode	-	-	no_arguments	-	2020-11-19
 geo-places	get-place	-	-	scalar_arguments	-	2020-11-19
@@ -8224,7 +8224,7 @@ glacier	delete-vault-notifications	-	-	refused:unported_customization	-	2012-06-
 glacier	describe-job	-	-	refused:unported_customization	-	2012-06-01
 glacier	describe-vault	-	-	refused:unported_customization	-	2012-06-01
 glacier	get-data-retrieval-policy	-	-	refused:unported_customization	-	2012-06-01
-glacier	get-job-output	unsupported_trait	streaming	refused:unsupported_trait	-	2012-06-01
+glacier	get-job-output	-	-	refused:unported_customization	-	2012-06-01
 glacier	get-vault-access-policy	-	-	refused:unported_customization	-	2012-06-01
 glacier	get-vault-lock	-	-	refused:unported_customization	-	2012-06-01
 glacier	get-vault-notifications	-	-	refused:unported_customization	-	2012-06-01
@@ -8242,8 +8242,8 @@ glacier	remove-tags-from-vault	-	-	refused:unported_customization	-	2012-06-01
 glacier	set-data-retrieval-policy	-	-	refused:unported_customization	-	2012-06-01
 glacier	set-vault-access-policy	-	-	refused:unported_customization	-	2012-06-01
 glacier	set-vault-notifications	-	-	refused:unported_customization	-	2012-06-01
-glacier	upload-archive	unsupported_trait	streaming	refused:unsupported_trait	-	2012-06-01
-glacier	upload-multipart-part	unsupported_trait	streaming	refused:unsupported_trait	-	2012-06-01
+glacier	upload-archive	-	-	refused:unported_customization	-	2012-06-01
+glacier	upload-multipart-part	-	-	refused:unported_customization	-	2012-06-01
 globalaccelerator	add-custom-routing-endpoints	-	-	required_not_scalar	-	2018-08-08
 globalaccelerator	add-endpoints	-	-	required_not_scalar	-	2018-08-08
 globalaccelerator	advertise-byoip-cidr	-	-	scalar_arguments	-	2018-08-08
@@ -9673,16 +9673,16 @@ iot	update-thing-type	-	-	scalar_arguments	-	2015-05-28
 iot	update-topic-rule-destination	-	-	scalar_arguments	-	2015-05-28
 iot	validate-security-profile-behaviors	-	-	required_not_scalar	-	2015-05-28
 iot-data	delete-connection	-	-	refused:unported_customization	-	2015-05-28
-iot-data	delete-thing-shadow	unsupported_trait	streaming	refused:unsupported_trait	-	2015-05-28
+iot-data	delete-thing-shadow	-	-	refused:unported_customization	-	2015-05-28
 iot-data	get-connection	-	-	refused:unported_customization	-	2015-05-28
 iot-data	get-retained-message	-	-	refused:unported_customization	-	2015-05-28
-iot-data	get-thing-shadow	unsupported_trait	streaming	refused:unsupported_trait	-	2015-05-28
+iot-data	get-thing-shadow	-	-	refused:unported_customization	-	2015-05-28
 iot-data	list-named-shadows-for-thing	-	-	refused:unported_customization	-	2015-05-28
 iot-data	list-retained-messages	-	-	refused:unported_customization	native in=nextToken out=nextToken more=- result=retainedTopics keep=- limit=maxResults	2015-05-28
 iot-data	list-subscriptions	-	-	refused:unported_customization	native in=nextToken out=nextToken more=- result=subscriptions keep=- limit=maxResults	2015-05-28
-iot-data	publish	unsupported_trait	streaming	refused:unsupported_trait	-	2015-05-28
-iot-data	send-direct-message	unsupported_trait	streaming	refused:unsupported_trait	-	2015-05-28
-iot-data	update-thing-shadow	unsupported_trait	streaming	refused:unsupported_trait	-	2015-05-28
+iot-data	publish	-	-	refused:unported_customization	-	2015-05-28
+iot-data	send-direct-message	-	-	refused:unported_customization	-	2015-05-28
+iot-data	update-thing-shadow	-	-	refused:unported_customization	-	2015-05-28
 iot-jobs-data	describe-job-execution	-	-	scalar_arguments	-	2017-09-29
 iot-jobs-data	get-pending-job-executions	-	-	scalar_arguments	-	2017-09-29
 iot-jobs-data	start-command-execution	-	-	scalar_arguments	-	2017-09-29
@@ -10124,10 +10124,10 @@ iotwireless	get-network-analyzer-configuration	-	-	scalar_arguments	-	2020-11-22
 iotwireless	get-partner-account	-	-	scalar_arguments	-	2020-11-22
 iotwireless	get-position	-	-	scalar_arguments	-	2020-11-22
 iotwireless	get-position-configuration	-	-	scalar_arguments	-	2020-11-22
-iotwireless	get-position-estimate	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-22
+iotwireless	get-position-estimate	-	-	no_arguments	-	2020-11-22
 iotwireless	get-resource-event-configuration	-	-	scalar_arguments	-	2020-11-22
 iotwireless	get-resource-log-level	-	-	scalar_arguments	-	2020-11-22
-iotwireless	get-resource-position	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-22
+iotwireless	get-resource-position	-	-	scalar_arguments	-	2020-11-22
 iotwireless	get-service-endpoint	-	-	no_arguments	-	2020-11-22
 iotwireless	get-service-profile	-	-	scalar_arguments	-	2020-11-22
 iotwireless	get-wireless-device	-	-	scalar_arguments	-	2020-11-22
@@ -10181,7 +10181,7 @@ iotwireless	update-network-analyzer-configuration	-	-	scalar_arguments	-	2020-11
 iotwireless	update-partner-account	-	-	required_not_scalar	-	2020-11-22
 iotwireless	update-position	-	-	required_not_scalar	-	2020-11-22
 iotwireless	update-resource-event-configuration	-	-	scalar_arguments	-	2020-11-22
-iotwireless	update-resource-position	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-22
+iotwireless	update-resource-position	-	-	scalar_arguments	-	2020-11-22
 iotwireless	update-wireless-device	-	-	scalar_arguments	-	2020-11-22
 iotwireless	update-wireless-device-import-task	-	-	required_not_scalar	-	2020-11-22
 iotwireless	update-wireless-gateway	-	-	scalar_arguments	-	2020-11-22
@@ -10515,13 +10515,13 @@ kinesis	update-shard-count	-	-	scalar_arguments	-	2013-12-02
 kinesis	update-stream-mode	-	-	required_not_scalar	-	2013-12-02
 kinesis	update-stream-record-distribution-strategy	-	-	scalar_arguments	-	2013-12-02
 kinesis	update-stream-warm-throughput	-	-	scalar_arguments	-	2013-12-02
-kinesis-video-archived-media	get-clip	unsupported_trait	streaming	refused:unsupported_trait	-	2017-09-30
+kinesis-video-archived-media	get-clip	-	-	required_not_scalar	-	2017-09-30
 kinesis-video-archived-media	get-dash-streaming-session-url	-	-	no_arguments	-	2017-09-30
 kinesis-video-archived-media	get-hls-streaming-session-url	-	-	no_arguments	-	2017-09-30
 kinesis-video-archived-media	get-images	-	-	required_not_scalar	native in=NextToken out=NextToken more=- result=Images keep=- limit=MaxResults	2017-09-30
-kinesis-video-archived-media	get-media-for-fragment-list	unsupported_trait	streaming	refused:unsupported_trait	-	2017-09-30
+kinesis-video-archived-media	get-media-for-fragment-list	-	-	required_not_scalar	-	2017-09-30
 kinesis-video-archived-media	list-fragments	-	-	no_arguments	native in=NextToken out=NextToken more=- result=Fragments keep=- limit=MaxResults	2017-09-30
-kinesis-video-media	get-media	unsupported_trait	streaming	refused:unsupported_trait	-	2017-09-30
+kinesis-video-media	get-media	-	-	required_not_scalar	-	2017-09-30
 kinesis-video-signaling	get-ice-server-config	-	-	scalar_arguments	-	2019-12-04
 kinesis-video-signaling	send-alexa-offer-to-master	-	-	scalar_arguments	-	2019-12-04
 kinesis-video-webrtc-storage	join-storage-session	-	-	scalar_arguments	-	2018-05-10
@@ -10709,7 +10709,7 @@ lakeformation	get-temporary-data-location-credentials	-	-	no_arguments	-	2017-03
 lakeformation	get-temporary-glue-function-credentials	-	-	scalar_arguments	-	2017-03-31
 lakeformation	get-temporary-glue-partition-credentials	-	-	required_not_scalar	-	2017-03-31
 lakeformation	get-temporary-glue-table-credentials	-	-	scalar_arguments	-	2017-03-31
-lakeformation	get-work-unit-results	unsupported_trait	streaming	refused:unsupported_trait	-	2017-03-31
+lakeformation	get-work-unit-results	-	-	scalar_arguments	-	2017-03-31
 lakeformation	get-work-units	-	-	scalar_arguments	native in=NextToken out=NextToken more=- result=WorkUnitRanges keep=QueryId limit=PageSize	2017-03-31
 lakeformation	grant-permissions	-	-	required_not_scalar	-	2017-03-31
 lakeformation	list-data-cells-filter	-	-	no_arguments	native in=NextToken out=NextToken more=- result=DataCellsFilters keep=- limit=MaxResults	2017-03-31
@@ -10782,8 +10782,8 @@ lambda	get-policy	-	-	scalar_arguments	-	2015-03-31
 lambda	get-provisioned-concurrency-config	-	-	scalar_arguments	-	2015-03-31
 lambda	get-resource-policy	-	-	scalar_arguments	-	2015-03-31
 lambda	get-runtime-management-config	-	-	scalar_arguments	-	2015-03-31
-lambda	invoke	unsupported_trait	streaming	refused:unsupported_trait	-	2015-03-31
-lambda	invoke-async	unsupported_trait	streaming	refused:unsupported_trait	-	2015-03-31
+lambda	invoke	-	-	scalar_arguments	-	2015-03-31
+lambda	invoke-async	-	-	scalar_arguments	-	2015-03-31
 lambda	list-aliases	-	-	scalar_arguments	native in=Marker out=NextMarker more=- result=Aliases keep=- limit=MaxItems	2015-03-31
 lambda	list-capacity-providers	-	-	no_arguments	native in=Marker out=NextMarker more=- result=CapacityProviders keep=- limit=MaxItems	2015-03-31
 lambda	list-code-signing-configs	-	-	no_arguments	native in=Marker out=NextMarker more=- result=CodeSigningConfigs keep=- limit=MaxItems	2015-03-31
@@ -10813,7 +10813,7 @@ lambda	remove-layer-version-permission	-	-	scalar_arguments	-	2015-03-31
 lambda	remove-permission	-	-	scalar_arguments	-	2015-03-31
 lambda	send-durable-execution-callback-failure	-	-	scalar_arguments	-	2015-03-31
 lambda	send-durable-execution-callback-heartbeat	-	-	scalar_arguments	-	2015-03-31
-lambda	send-durable-execution-callback-success	unsupported_trait	streaming	refused:unsupported_trait	-	2015-03-31
+lambda	send-durable-execution-callback-success	-	-	scalar_arguments	-	2015-03-31
 lambda	stop-durable-execution	-	-	scalar_arguments	-	2015-03-31
 lambda	tag-resource	-	-	required_not_scalar	-	2015-03-31
 lambda	untag-resource	-	-	required_not_scalar	-	2015-03-31
@@ -10934,9 +10934,9 @@ lex-models	tag-resource	-	-	required_not_scalar	-	2017-04-19
 lex-models	untag-resource	-	-	required_not_scalar	-	2017-04-19
 lex-runtime	delete-session	-	-	scalar_arguments	-	2016-11-28
 lex-runtime	get-session	-	-	scalar_arguments	-	2016-11-28
-lex-runtime	post-content	unsupported_trait	streaming	refused:unsupported_trait	-	2016-11-28
+lex-runtime	post-content	unsupported_auth	v4-unsigned-body	refused:unsupported_auth	-	2016-11-28
 lex-runtime	post-text	-	-	scalar_arguments	-	2016-11-28
-lex-runtime	put-session	unsupported_trait	streaming	refused:unsupported_trait	-	2016-11-28
+lex-runtime	put-session	-	-	scalar_arguments	-	2016-11-28
 lexv2-models	batch-create-custom-vocabulary-item	-	-	required_not_scalar	-	2020-08-07
 lexv2-models	batch-delete-custom-vocabulary-item	-	-	required_not_scalar	-	2020-08-07
 lexv2-models	batch-update-custom-vocabulary-item	-	-	required_not_scalar	-	2020-08-07
@@ -11046,9 +11046,9 @@ lexv2-models	update-slot-type	-	-	scalar_arguments	-	2020-08-07
 lexv2-models	update-test-set	-	-	scalar_arguments	-	2020-08-07
 lexv2-runtime	delete-session	-	-	refused:unported_customization	-	2020-08-07
 lexv2-runtime	get-session	-	-	refused:unported_customization	-	2020-08-07
-lexv2-runtime	put-session	unsupported_trait	streaming	refused:unsupported_trait	-	2020-08-07
+lexv2-runtime	put-session	-	-	refused:unported_customization	-	2020-08-07
 lexv2-runtime	recognize-text	-	-	refused:unported_customization	-	2020-08-07
-lexv2-runtime	recognize-utterance	unsupported_trait	streaming	refused:unsupported_trait	-	2020-08-07
+lexv2-runtime	recognize-utterance	unsupported_auth	v4-unsigned-body	refused:unsupported_auth	-	2020-08-07
 license-manager	accept-grant	-	-	scalar_arguments	-	2018-08-01
 license-manager	check-in-license	-	-	scalar_arguments	-	2018-08-01
 license-manager	checkout-borrow-license	-	-	required_not_scalar	-	2018-08-01
@@ -11335,10 +11335,10 @@ location	get-device-position	-	-	scalar_arguments	-	2020-11-19
 location	get-device-position-history	-	-	scalar_arguments	native in=NextToken out=NextToken more=- result=DevicePositions keep=- limit=MaxResults	2020-11-19
 location	get-geofence	-	-	scalar_arguments	-	2020-11-19
 location	get-job	-	-	scalar_arguments	-	2020-11-19
-location	get-map-glyphs	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-19
-location	get-map-sprites	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-19
-location	get-map-style-descriptor	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-19
-location	get-map-tile	unsupported_trait	streaming	refused:unsupported_trait	-	2020-11-19
+location	get-map-glyphs	-	-	scalar_arguments	-	2020-11-19
+location	get-map-sprites	-	-	scalar_arguments	-	2020-11-19
+location	get-map-style-descriptor	-	-	scalar_arguments	-	2020-11-19
+location	get-map-tile	-	-	scalar_arguments	-	2020-11-19
 location	get-place	-	-	scalar_arguments	-	2020-11-19
 location	list-device-positions	-	-	scalar_arguments	native in=NextToken out=NextToken more=- result=Entries keep=- limit=MaxResults	2020-11-19
 location	list-geofence-collections	-	-	no_arguments	native in=NextToken out=NextToken more=- result=Entries keep=- limit=MaxResults	2020-11-19
@@ -11985,7 +11985,7 @@ medialive	describe-account-configuration	-	-	no_arguments	-	2017-10-14
 medialive	describe-channel	-	-	scalar_arguments	-	2017-10-14
 medialive	describe-input	-	-	scalar_arguments	-	2017-10-14
 medialive	describe-input-device	-	-	scalar_arguments	-	2017-10-14
-medialive	describe-input-device-thumbnail	unsupported_trait	streaming	refused:unsupported_trait	-	2017-10-14
+medialive	describe-input-device-thumbnail	-	-	scalar_arguments	-	2017-10-14
 medialive	describe-input-security-group	-	-	scalar_arguments	-	2017-10-14
 medialive	describe-multiplex	-	-	scalar_arguments	-	2017-10-14
 medialive	describe-multiplex-program	-	-	scalar_arguments	-	2017-10-14
@@ -12171,9 +12171,9 @@ mediastore	tag-resource	-	-	required_not_scalar	-	2017-09-01
 mediastore	untag-resource	-	-	required_not_scalar	-	2017-09-01
 mediastore-data	delete-object	-	-	scalar_arguments	-	2017-09-01
 mediastore-data	describe-object	-	-	scalar_arguments	-	2017-09-01
-mediastore-data	get-object	unsupported_trait	streaming	refused:unsupported_trait	-	2017-09-01
+mediastore-data	get-object	-	-	scalar_arguments	-	2017-09-01
 mediastore-data	list-items	-	-	no_arguments	native in=NextToken out=NextToken more=- result=Items keep=- limit=MaxResults	2017-09-01
-mediastore-data	put-object	unsupported_trait	streaming	refused:unsupported_trait	-	2017-09-01
+mediastore-data	put-object	unsupported_auth	v4-unsigned-body	refused:unsupported_auth	-	2017-09-01
 mediatailor	configure-logs-for-channel	-	-	required_not_scalar	-	2018-04-23
 mediatailor	configure-logs-for-playback-configuration	-	-	scalar_arguments	-	2018-04-23
 mediatailor	create-channel	-	-	required_not_scalar	-	2018-04-23
@@ -12228,9 +12228,9 @@ medical-imaging	delete-datastore	-	-	scalar_arguments	-	2023-07-19
 medical-imaging	delete-image-set	-	-	scalar_arguments	-	2023-07-19
 medical-imaging	get-dicom-import-job	-	-	scalar_arguments	-	2023-07-19
 medical-imaging	get-datastore	-	-	scalar_arguments	-	2023-07-19
-medical-imaging	get-image-frame	unsupported_trait	streaming	refused:unsupported_trait	-	2023-07-19
+medical-imaging	get-image-frame	-	-	required_not_scalar	-	2023-07-19
 medical-imaging	get-image-set	-	-	scalar_arguments	-	2023-07-19
-medical-imaging	get-image-set-metadata	unsupported_trait	streaming	refused:unsupported_trait	-	2023-07-19
+medical-imaging	get-image-set-metadata	-	-	scalar_arguments	-	2023-07-19
 medical-imaging	list-dicom-import-jobs	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=jobSummaries keep=- limit=maxResults	2023-07-19
 medical-imaging	list-datastores	-	-	no_arguments	native in=nextToken out=nextToken more=- result=datastoreSummaries keep=- limit=maxResults	2023-07-19
 medical-imaging	list-image-set-versions	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=imageSetPropertiesList keep=- limit=maxResults	2023-07-19
@@ -12679,7 +12679,7 @@ neptune-graph	create-private-graph-endpoint	-	-	scalar_arguments	-	2023-11-29
 neptune-graph	delete-graph	-	-	scalar_arguments	-	2023-11-29
 neptune-graph	delete-graph-snapshot	-	-	scalar_arguments	-	2023-11-29
 neptune-graph	delete-private-graph-endpoint	-	-	scalar_arguments	-	2023-11-29
-neptune-graph	execute-query	unsupported_trait	streaming	refused:unsupported_trait	-	2023-11-29
+neptune-graph	execute-query	-	-	scalar_arguments	-	2023-11-29
 neptune-graph	get-export-task	-	-	scalar_arguments	-	2023-11-29
 neptune-graph	get-graph	-	-	scalar_arguments	-	2023-11-29
 neptune-graph	get-graph-snapshot	-	-	scalar_arguments	-	2023-11-29
@@ -12715,10 +12715,10 @@ neptunedata	delete-ml-endpoint	-	-	scalar_arguments	-	2023-08-01
 neptunedata	delete-propertygraph-statistics	-	-	no_arguments	-	2023-08-01
 neptunedata	delete-sparql-statistics	-	-	no_arguments	-	2023-08-01
 neptunedata	execute-fast-reset	-	-	scalar_arguments	-	2023-08-01
-neptunedata	execute-gremlin-explain-query	unsupported_trait	streaming	refused:unsupported_trait	-	2023-08-01
-neptunedata	execute-gremlin-profile-query	unsupported_trait	streaming	refused:unsupported_trait	-	2023-08-01
+neptunedata	execute-gremlin-explain-query	-	-	scalar_arguments	-	2023-08-01
+neptunedata	execute-gremlin-profile-query	-	-	scalar_arguments	-	2023-08-01
 neptunedata	execute-gremlin-query	-	-	scalar_arguments	-	2023-08-01
-neptunedata	execute-open-cypher-explain-query	unsupported_trait	streaming	refused:unsupported_trait	-	2023-08-01
+neptunedata	execute-open-cypher-explain-query	-	-	scalar_arguments	-	2023-08-01
 neptunedata	execute-open-cypher-query	-	-	scalar_arguments	-	2023-08-01
 neptunedata	get-engine-status	-	-	no_arguments	-	2023-08-01
 neptunedata	get-gremlin-query-status	-	-	scalar_arguments	-	2023-08-01
@@ -13268,12 +13268,12 @@ omics	get-annotation-store	-	-	scalar_arguments	-	2022-11-28
 omics	get-annotation-store-version	-	-	scalar_arguments	-	2022-11-28
 omics	get-batch	-	-	scalar_arguments	-	2022-11-28
 omics	get-configuration	-	-	scalar_arguments	-	2022-11-28
-omics	get-read-set	unsupported_trait	streaming	refused:unsupported_trait	-	2022-11-28
+omics	get-read-set	-	-	scalar_arguments	-	2022-11-28
 omics	get-read-set-activation-job	-	-	scalar_arguments	-	2022-11-28
 omics	get-read-set-export-job	-	-	scalar_arguments	-	2022-11-28
 omics	get-read-set-import-job	-	-	scalar_arguments	-	2022-11-28
 omics	get-read-set-metadata	-	-	scalar_arguments	-	2022-11-28
-omics	get-reference	unsupported_trait	streaming	refused:unsupported_trait	-	2022-11-28
+omics	get-reference	-	-	scalar_arguments	-	2022-11-28
 omics	get-reference-import-job	-	-	scalar_arguments	-	2022-11-28
 omics	get-reference-metadata	-	-	scalar_arguments	-	2022-11-28
 omics	get-reference-store	-	-	scalar_arguments	-	2022-11-28
@@ -13333,7 +13333,7 @@ omics	update-sequence-store	-	-	scalar_arguments	-	2022-11-28
 omics	update-variant-store	-	-	scalar_arguments	-	2022-11-28
 omics	update-workflow	-	-	scalar_arguments	-	2022-11-28
 omics	update-workflow-version	-	-	scalar_arguments	-	2022-11-28
-omics	upload-read-set-part	unsupported_trait	streaming	refused:unsupported_trait	-	2022-11-28
+omics	upload-read-set-part	unsupported_auth	v4-unsigned-body	refused:unsupported_auth	-	2022-11-28
 opensearch	accept-inbound-connection	-	-	scalar_arguments	-	2021-01-01
 opensearch	add-data-source	-	-	required_not_scalar	-	2021-01-01
 opensearch	add-direct-query-data-source	-	-	required_not_scalar	-	2021-01-01
@@ -14249,7 +14249,7 @@ polly	list-speech-synthesis-tasks	-	-	refused:unported_customization	native in=N
 polly	list-tags-for-resource	-	-	refused:unported_customization	-	2016-06-10
 polly	put-lexicon	-	-	refused:unported_customization	-	2016-06-10
 polly	start-speech-synthesis-task	-	-	refused:unported_customization	-	2016-06-10
-polly	synthesize-speech	unsupported_trait	streaming	refused:unsupported_trait	-	2016-06-10
+polly	synthesize-speech	-	-	refused:unported_customization	-	2016-06-10
 polly	tag-resource	-	-	refused:unported_customization	-	2016-06-10
 polly	untag-resource	-	-	refused:unported_customization	-	2016-06-10
 pricing	describe-services	-	-	no_arguments	native in=NextToken out=NextToken more=- result=Services keep=FormatVersion limit=MaxResults	2017-10-15
@@ -16054,7 +16054,7 @@ s3api	get-object-legal-hold	-	-	refused:unported_customization	-	2006-03-01
 s3api	get-object-lock-configuration	-	-	refused:unported_customization	-	2006-03-01
 s3api	get-object-retention	-	-	refused:unported_customization	-	2006-03-01
 s3api	get-object-tagging	-	-	refused:unported_customization	-	2006-03-01
-s3api	get-object-torrent	unsupported_trait	streaming	refused:unsupported_trait	-	2006-03-01
+s3api	get-object-torrent	-	-	refused:unported_customization	-	2006-03-01
 s3api	get-public-access-block	-	-	refused:unported_customization	-	2006-03-01
 s3api	head-bucket	-	-	refused:unported_customization	-	2006-03-01
 s3api	head-object	-	-	refused:unported_customization	-	2006-03-01
@@ -16108,7 +16108,7 @@ s3api	update-bucket-metadata-journal-table-configuration	unsupported_trait	httpC
 s3api	update-object-encryption	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	upload-part	unsupported_trait	httpChecksum	refused:unsupported_trait	-	2006-03-01
 s3api	upload-part-copy	-	-	refused:unported_customization	-	2006-03-01
-s3api	write-get-object-response	unsupported_trait	streaming	refused:unsupported_trait	-	2006-03-01
+s3api	write-get-object-response	unsupported_auth	v4-unsigned-body	refused:unsupported_auth	-	2006-03-01
 s3control	associate-access-grants-identity-center	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	create-access-grant	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
 s3control	create-access-grants-instance	unsupported_trait	httpChecksumRequired	refused:unsupported_trait	-	2018-08-20
@@ -16745,7 +16745,7 @@ sagemaker-geospatial	export-earth-observation-job	-	-	required_not_scalar	-	2020
 sagemaker-geospatial	export-vector-enrichment-job	-	-	required_not_scalar	-	2020-05-27
 sagemaker-geospatial	get-earth-observation-job	-	-	scalar_arguments	-	2020-05-27
 sagemaker-geospatial	get-raster-data-collection	-	-	scalar_arguments	-	2020-05-27
-sagemaker-geospatial	get-tile	unsupported_trait	streaming	refused:unsupported_trait	-	2020-05-27
+sagemaker-geospatial	get-tile	-	-	required_not_scalar	-	2020-05-27
 sagemaker-geospatial	get-vector-enrichment-job	-	-	scalar_arguments	-	2020-05-27
 sagemaker-geospatial	list-earth-observation-jobs	-	-	no_arguments	native in=NextToken out=NextToken more=- result=EarthObservationJobSummaries keep=- limit=MaxResults	2020-05-27
 sagemaker-geospatial	list-raster-data-collections	-	-	no_arguments	native in=NextToken out=NextToken more=- result=RasterDataCollectionSummaries keep=- limit=MaxResults	2020-05-27
@@ -16760,18 +16760,18 @@ sagemaker-geospatial	tag-resource	-	-	required_not_scalar	-	2020-05-27
 sagemaker-geospatial	untag-resource	-	-	required_not_scalar	-	2020-05-27
 sagemaker-metrics	batch-get-metrics	-	-	required_not_scalar	-	2022-09-30
 sagemaker-metrics	batch-put-metrics	-	-	required_not_scalar	-	2022-09-30
-sagemaker-runtime	invoke-endpoint	unsupported_trait	streaming	refused:unsupported_trait	-	2017-05-13
-sagemaker-runtime	invoke-endpoint-async	unsupported_trait	streaming	refused:unsupported_trait	-	2017-05-13
+sagemaker-runtime	invoke-endpoint	-	-	required_not_scalar	-	2017-05-13
+sagemaker-runtime	invoke-endpoint-async	-	-	scalar_arguments	-	2017-05-13
 sagemakerjobruntime	complete-rollout	-	-	scalar_arguments	-	2026-02-01
-sagemakerjobruntime	sample	unsupported_trait	streaming	refused:unsupported_trait	-	2026-02-01
-sagemakerjobruntime	sample-with-response-stream	unsupported_trait	streaming	refused:unsupported_trait	-	2026-02-01
+sagemakerjobruntime	sample	-	-	required_not_scalar	-	2026-02-01
+sagemakerjobruntime	sample-with-response-stream	-	-	required_not_scalar	-	2026-02-01
 sagemakerjobruntime	update-reward	-	-	required_not_scalar	-	2026-02-01
 sagemakertrainingsessionruntime	execute-sampling-operation	-	-	required_not_scalar	-	2025-02-10
 sagemakertrainingsessionruntime	execute-training-operation	-	-	required_not_scalar	-	2025-02-10
 sagemakertrainingsessionruntime	get-sampling-operation-result	-	-	scalar_arguments	-	2025-02-10
 sagemakertrainingsessionruntime	get-training-operation-result	-	-	scalar_arguments	-	2025-02-10
-sagemakertrainingsessionruntime	sample-training-session	unsupported_trait	streaming	refused:unsupported_trait	-	2025-02-10
-sagemakertrainingsessionruntime	sample-training-session-with-response-stream	unsupported_trait	streaming	refused:unsupported_trait	-	2025-02-10
+sagemakertrainingsessionruntime	sample-training-session	-	-	scalar_arguments	-	2025-02-10
+sagemakertrainingsessionruntime	sample-training-session-with-response-stream	-	-	scalar_arguments	-	2025-02-10
 savingsplans	create-savings-plan	-	-	scalar_arguments	-	2019-06-28
 savingsplans	delete-queued-savings-plan	-	-	scalar_arguments	-	2019-06-28
 savingsplans	describe-savings-plan-rates	-	-	scalar_arguments	-	2019-06-28
@@ -16807,7 +16807,7 @@ schemas	describe-discoverer	-	-	scalar_arguments	-	2019-12-02
 schemas	describe-registry	-	-	scalar_arguments	-	2019-12-02
 schemas	describe-schema	-	-	scalar_arguments	-	2019-12-02
 schemas	export-schema	-	-	scalar_arguments	-	2019-12-02
-schemas	get-code-binding-source	unsupported_trait	streaming	refused:unsupported_trait	-	2019-12-02
+schemas	get-code-binding-source	-	-	scalar_arguments	-	2019-12-02
 schemas	get-discovered-schema	-	-	required_not_scalar	-	2019-12-02
 schemas	get-resource-policy	-	-	no_arguments	-	2019-12-02
 schemas	list-discoverers	-	-	no_arguments	native in=NextToken out=NextToken more=- result=Discoverers keep=- limit=Limit	2019-12-02
@@ -19269,7 +19269,7 @@ workmail	update-mobile-device-access-rule	-	-	scalar_arguments	-	2017-10-01
 workmail	update-primary-email-address	-	-	scalar_arguments	-	2017-10-01
 workmail	update-resource	-	-	scalar_arguments	-	2017-10-01
 workmail	update-user	-	-	scalar_arguments	-	2017-10-01
-workmailmessageflow	get-raw-message-content	unsupported_trait	streaming	refused:unsupported_trait	-	2019-05-01
+workmailmessageflow	get-raw-message-content	-	-	scalar_arguments	-	2019-05-01
 workmailmessageflow	put-raw-message-content	-	-	required_not_scalar	-	2019-05-01
 workspaces	accept-account-link-invitation	-	-	scalar_arguments	-	2015-04-08
 workspaces	associate-connection-alias	-	-	scalar_arguments	-	2015-04-08

@@ -556,6 +556,7 @@ shape/rest-json/in/timestamp/timestampFormat fakes-zrestjson2-put-gadget
 shape/rest-json/in/timestamp/timestampFormat/iso8601 fakes-zrestjson2-put-gadget
 shape/rest-json/in/timestamp/timestampFormat/unixTimestamp fakes-zrestjson2-put-gadget
 shape/rest-json/out/blob fakes-zrestjson2-get-gadget
+shape/rest-json/out/blob/streaming fakes-zrestjson2-get-gadget-data
 shape/rest-json/out/float fakes-zrestjson2-get-gadget
 shape/rest-json/out/structure/error fakes-zrestjson2-get-gadget
 shape/rest-json/out/structure/error/httpStatusCode fakes-zrestjson2-get-gadget

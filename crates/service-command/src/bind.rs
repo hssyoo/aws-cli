@@ -13,8 +13,9 @@
 //! parameters` after it, which turns paging off for a token in the request.
 //!
 //! The unpack loop already ran (`awscli_argparse::complete`): every value
-//! here is a string, an integer or a boolean member's, as the derived table
-//! says (`command::models::Unpack`), because any other supplied argument
+//! here is a string, an integer or a boolean member's, a streaming blob
+//! member's path or `outfile`'s, as the derived table says
+//! (`command::models::Unpack`), because any other supplied argument
 //! stopped it at its destination.
 use awscli_argparse::ParseResult;
 use awscli_argparse::namespace::{Namespace, Value as Parsed};
@@ -44,6 +45,30 @@ pub struct Call {
     /// `PageArgument.add_to_params` warned that `--max-items` is not
     /// positive.
     pub warned: bool,
+    /// The streaming blob members given, whose files the invocation reads
+    /// into `input` in place of the empty blob held there.
+    pub files: Vec<InputFile>,
+    /// `outfile`, when the output streams.
+    pub outfile: Option<Outfile>,
+}
+
+/// A streaming blob member's value: the path `unpack_scalar_cli_arg`
+/// expands and opens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputFile {
+    pub member: Box<str>,
+    /// As the unpack loop left it, `load-cli-arg` applied.
+    pub path: String,
+}
+
+/// `StreamingOutputArgument`'s value: where `save_file` writes the
+/// response's streamed member.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outfile {
+    /// As the unpack loop left it, `load-cli-arg` applied.
+    pub path: String,
+    /// The output's payload member, which `save_file` writes and removes.
+    pub response_key: Box<str>,
 }
 
 /// `PageArgument._emit_non_positive_max_items_warning`'s text.
@@ -70,6 +95,8 @@ pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Binding, PythonRe
         .map_or(&[][..], |paging| &paging.shadowed[..]);
     let mut input = Map::new();
     let mut warned = false;
+    let mut files = Vec::new();
+    let mut outfile = None;
     for argument in table
         .arguments
         .iter()
@@ -87,6 +114,15 @@ pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Binding, PythonRe
             continue;
         };
         match (&argument.origin, argument.unpack) {
+            (Origin::Member { member, .. }, Unpack::File) => {
+                input.insert(member.to_string(), Value::Blob(Vec::new()));
+                let (member, path) = (member.clone(), text(value)?);
+                files.push(InputFile { member, path });
+            }
+            (Origin::Outfile { response_key }, _) => {
+                let (path, response_key) = (text(value)?, response_key.clone());
+                outfile = Some(Outfile { path, response_key });
+            }
             (Origin::Member { member, .. }, unpack) if unpack != Unpack::Deferred => {
                 input.insert(member.to_string(), scalar(value)?);
             }
@@ -106,7 +142,17 @@ pub fn bind(table: &Table, parsed: &ParseResult<'_>) -> Result<Binding, PythonRe
         input: Value::Map(input),
         pagination,
         warned,
+        files,
+        outfile,
     }))
+}
+
+/// The text of a streaming blob member's path or of `outfile`.
+fn text(value: &Parsed) -> Result<String, PythonReason> {
+    match value {
+        Parsed::String(text) => Ok(text.clone()),
+        _ => Err(PythonReason::UnsupportedValue),
+    }
 }
 
 const PAGINATION_CONFIG: &str = "PaginationConfig";
@@ -308,7 +354,7 @@ fn scalar(value: &Parsed) -> Result<Value, PythonReason> {
 /// the failing argument in the table.
 pub fn precedes_unpack_failure(table: &Table, parsed: &ParseResult<'_>) -> bool {
     let raw = &parsed.args.namespace;
-    if bool_conflict(table, raw).is_some() {
+    if bool_conflict(table, raw).is_some() || streamed_first(table, parsed) {
         return true;
     }
     let Some(paging) = table.paging.as_ref() else {
@@ -328,6 +374,23 @@ pub fn precedes_unpack_failure(table: &Table, parsed: &ParseResult<'_>) -> bool 
         .stopped_dest
         .as_deref()
         .is_some_and(|failed| before(table, "max-items", failed))
+}
+
+/// Whether the unpack loop stopped after a streaming blob member was
+/// given, whose file `unpack_scalar_cli_arg` checks before the failing
+/// argument: what fails first is then Python's to report.
+fn streamed_first(table: &Table, parsed: &ParseResult<'_>) -> bool {
+    let Some(failed) = parsed.stopped_dest.as_deref() else {
+        return false;
+    };
+    let raw = &parsed.args.namespace;
+    table.arguments.iter().any(|argument| {
+        argument.unpack == Unpack::File
+            && raw
+                .value(&dest_of(argument))
+                .is_some_and(|value| !value.is_null())
+            && before(table, &argument.name, failed)
+    })
 }
 
 /// Whether the argument named `name` comes before the one whose dest is

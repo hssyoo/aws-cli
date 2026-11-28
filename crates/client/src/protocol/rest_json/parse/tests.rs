@@ -498,15 +498,24 @@ fn empty_and_null_bodies_are_botocore_s() -> TestResult {
     Ok(())
 }
 
-/// `_parse_payload`: a blob or string payload is the decoded body, an empty
-/// one `''`.
+/// `_parse_payload`: a string payload is the decoded body; a blob payload
+/// of a successful response is the `StreamingBody` botocore makes of it
+/// (`has_streaming_output`), here its bytes as they arrived, undecoded and
+/// empty for an empty body.
 #[test]
 fn text_payloads_are_the_decoded_body() -> TestResult {
     assert_eq!(
         output("Blob", &[], b"hi\n")?.get("Data"),
-        Some(&text("hi\n"))
+        Some(&Value::Blob(b"hi\n".to_vec()))
     );
-    assert_eq!(output("Blob", &[], b"")?.get("Data"), Some(&text("")));
+    assert_eq!(
+        output("Blob", &[], b"\xe4\xb8")?.get("Data"),
+        Some(&Value::Blob(b"\xe4\xb8".to_vec()))
+    );
+    assert_eq!(
+        output("Blob", &[], b"")?.get("Data"),
+        Some(&Value::Blob(Vec::new()))
+    );
     assert_eq!(
         output("Text", &[], b"{\"a\":1}")?.get("Text"),
         Some(&text("{\"a\":1}"))

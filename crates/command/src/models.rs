@@ -396,7 +396,7 @@ fn argparse(argument: &DerivedArgument) -> Argument<'_> {
         hidden: argument.hidden,
         value_type: argument.value_type,
         cli_type: match argument.unpack {
-            Unpack::AsIs => None,
+            Unpack::AsIs | Unpack::File => None,
             Unpack::Integer => Some(CliType::UnboundedInteger),
             Unpack::Deferred => Some(CliType::Deferred),
         },

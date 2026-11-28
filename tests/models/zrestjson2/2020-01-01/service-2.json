@@ -103,6 +103,50 @@
       "endpoint": {
         "hostPrefix": "{AccountId}."
       }
+    },
+    "PutGadgetData": {
+      "name": "PutGadgetData",
+      "http": {
+        "method": "PUT",
+        "requestUri": "/gadgets/{GadgetId}/blob"
+      },
+      "input": {
+        "shape": "PutGadgetDataRequest"
+      },
+      "output": {
+        "shape": "PutGadgetDataResponse"
+      }
+    },
+    "GetGadgetData": {
+      "name": "GetGadgetData",
+      "http": {
+        "method": "GET",
+        "requestUri": "/gadgets/{GadgetId}/blob"
+      },
+      "input": {
+        "shape": "GetGadgetRequest"
+      },
+      "output": {
+        "shape": "GetGadgetDataResponse"
+      },
+      "errors": [
+        {
+          "shape": "GadgetMissing"
+        }
+      ]
+    },
+    "ExportGadget": {
+      "name": "ExportGadget",
+      "http": {
+        "method": "GET",
+        "requestUri": "/gadgets/{GadgetId}/export"
+      },
+      "input": {
+        "shape": "GetGadgetRequest"
+      },
+      "output": {
+        "shape": "ExportGadgetResponse"
+      }
     }
   },
   "shapes": {
@@ -189,6 +233,20 @@
       "type": "structure",
       "members": {},
       "document": true
+    },
+    "ExportGadgetResponse": {
+      "type": "structure",
+      "payload": "Body",
+      "members": {
+        "Body": {
+          "shape": "Bytes"
+        },
+        "Disposition": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "Content-Disposition"
+        }
+      }
     },
     "Flag": {
       "type": "boolean"
@@ -287,6 +345,25 @@
         },
         "Choice": {
           "shape": "Choice"
+        }
+      }
+    },
+    "GetGadgetDataResponse": {
+      "type": "structure",
+      "payload": "Body",
+      "members": {
+        "Body": {
+          "shape": "Stream"
+        },
+        "Kind": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "Content-Type"
+        },
+        "Size": {
+          "shape": "Big",
+          "location": "header",
+          "locationName": "Content-Length"
         }
       }
     },
@@ -583,6 +660,42 @@
         }
       }
     },
+    "PutGadgetDataRequest": {
+      "type": "structure",
+      "required": [
+        "GadgetId"
+      ],
+      "payload": "Body",
+      "members": {
+        "GadgetId": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "GadgetId"
+        },
+        "Kind": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "Content-Type"
+        },
+        "Body": {
+          "shape": "Stream"
+        }
+      }
+    },
+    "PutGadgetDataResponse": {
+      "type": "structure",
+      "members": {
+        "Etag": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "ETag"
+        },
+        "Size": {
+          "shape": "Big",
+          "locationName": "size"
+        }
+      }
+    },
     "PutGadgetRequest": {
       "type": "structure",
       "required": [
@@ -833,6 +946,10 @@
       "value": {
         "shape": "Ratio"
       }
+    },
+    "Stream": {
+      "type": "blob",
+      "streaming": true
     },
     "Text": {
       "type": "string"

@@ -25,8 +25,6 @@ shape/json/out/structure/eventstream
 shape/rest-json/in/structure/event
 # event stream: the CLI prints no generic event stream (only s3api select-object-content), so no row can run one
 shape/rest-json/in/structure/eventstream
-# streaming output: the body goes to the outfile, which the diff harness does not capture
-shape/rest-json/out/blob/streaming
 # event stream: the CLI prints no generic event stream (only s3api select-object-content), so no row can run one
 shape/rest-json/out/structure/event
 # event stream: the CLI prints no generic event stream (only s3api select-object-content), so no row can run one
