@@ -370,7 +370,7 @@ fn feature_codes_are_unique_alphanumeric_tokens_in_table_order() {
     let codes: Vec<&str> = Feature::ALL.into_iter().map(Feature::code).collect();
     assert_eq!(
         codes.join(","),
-        "C,E,F,G,N,P,Q,T,W,Z,a,b,c,g,v,w,n,z,AN,AO,AP,AQ,AR,AS,AT,AU,AV,AW,Ae,Ag"
+        "C,E,F,G,M,N,P,Q,T,W,Z,a,b,c,g,v,w,n,z,AN,AO,AP,AQ,AR,AS,AT,AU,AV,AW,Ae,Ag"
     );
     for (index, code) in codes.iter().enumerate() {
         assert!(!code.is_empty());
