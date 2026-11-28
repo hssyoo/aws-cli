@@ -47,7 +47,7 @@ fn a_covered_operation_is_admitted_with_its_request() -> Result<()> {
 /// Each stage refuses with its own reason: an uncovered customization, a
 /// paginator whose expression the native paginator does not run (zpages's
 /// ListCompared reads `more_results` with a comparator), an unimplemented
-/// protocol (zcbor's smithy-rpc-v2-cbor).
+/// protocol (zproto's made-up `zproto-wire`).
 #[test]
 fn each_stage_names_its_refusal() -> Result<()> {
     with_models(|models| {
@@ -65,7 +65,7 @@ fn each_stage_names_its_refusal() -> Result<()> {
             Some(PythonReason::Paginator)
         );
         assert_eq!(
-            refused(&[], &["zcbor", "get-record", "--id", "a"]),
+            refused(&[], &["zproto", "get-thing", "--id", "a"]),
             Some(PythonReason::UnsupportedProtocol)
         );
     })

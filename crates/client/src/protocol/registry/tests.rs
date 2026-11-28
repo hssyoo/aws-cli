@@ -152,8 +152,8 @@ fn the_json_version_tells_the_aws_json_instances_apart() {
 }
 
 /// Each implementation answers to its botocore name and its protocol
-/// trait, and only the JSON ones send epoch timestamps; nothing is left
-/// switched off.
+/// trait, and only the JSON ones and CBOR send epoch timestamps; nothing
+/// is left switched off.
 #[test]
 fn the_registry_holds_each_protocol_once_by_trait() {
     for (name, id, epoch) in [
@@ -161,6 +161,7 @@ fn the_registry_holds_each_protocol_once_by_trait() {
         ("json", traits::AWS_JSON_1_1, true),
         ("rest-json", traits::REST_JSON_1, true),
         ("rest-xml", traits::REST_XML, false),
+        ("smithy-rpc-v2-cbor", traits::RPC_V2_CBOR, true),
         ("ec2", traits::EC2_QUERY, false),
     ] {
         let named = IMPLEMENTED
@@ -172,17 +173,16 @@ fn the_registry_holds_each_protocol_once_by_trait() {
     }
     let json_1_0 = IMPLEMENTED.get(traits::AWS_JSON_1_0);
     assert_eq!(json_1_0.map(compat::timestamps_epoch), Some(true));
-    for name in ["rest-xml", "ec2"] {
+    for name in ["rest-xml", "ec2", "smithy-rpc-v2-cbor"] {
         assert!(SWITCHED_OFF.named(name).is_none(), "{name}");
     }
 }
 
 /// Every model in the repository's botocore data resolves to a protocol,
-/// and exactly those resolving to `query`, `json`, `rest-json`, `rest-xml`
-/// or `ec2` have an implementation.
+/// and every one of them has an implementation.
 #[test]
 #[cfg_attr(miri, ignore = "reads the data directory, which Miri cannot")]
-fn every_model_but_cbor_has_an_implementation() -> TestResult {
+fn every_model_has_an_implementation() -> TestResult {
     let data =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../aws-cli/awscli/botocore/data");
     let source = DirSource::new(data);
@@ -193,13 +193,9 @@ fn every_model_but_cbor_has_an_implementation() -> TestResult {
         let model = Model::load(&source, &service)?;
         let resolved = resolved_protocol(model.metadata());
         assert!(resolved.is_ok(), "{service}: {resolved:?}");
-        let expected = matches!(
-            resolved,
-            Ok("query" | "json" | "rest-json" | "rest-xml" | "ec2")
-        );
-        assert_eq!(for_model(&model).is_some(), expected, "{service}");
-        implemented += usize::from(expected);
+        assert!(for_model(&model).is_some(), "{service}: {resolved:?}");
+        implemented += 1;
     }
-    assert!(implemented > 100, "{implemented} implemented");
+    assert!(implemented > 400, "{implemented} implemented");
     Ok(())
 }

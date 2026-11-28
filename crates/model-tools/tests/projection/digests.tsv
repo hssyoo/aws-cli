@@ -437,6 +437,7 @@ workspaces-web	f31e66aa0f248ebf	1536
 xray	b97683790e6af1c2	1007
 zbearer	9f827368dd134dbf	10
 zcbor	6770c8d2cba36d30	81
+zcborqc	ba88e14bb9ca37a2	45
 zchecksum	8bf8cb5969d0e46a	52
 zec2	64aa18058823ab6c	81
 zglobal	7fe65e24adb94db9	7
@@ -444,6 +445,7 @@ zjson	b8cde3a8fe49038c	220
 zjson11	c41a1a595a6357a7	165
 zjson2	0cc409a285d15755	200
 zpages	db6e0ee8104cce39	52
+zproto	16ceb2cf43e57293	7
 zquery	6c05b4e27891159b	217
 zquery2	15266a00eb8d43c4	53
 zrestjson	42b5e0c02e8db116	138

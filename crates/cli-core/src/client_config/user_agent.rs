@@ -63,6 +63,9 @@ pub enum Feature {
     /// `S3_TRANSFER` (G): a transfer command (`S3TransferCommand._run_main`
     /// and both transfer managers' `_submit_transfer`).
     S3Transfer,
+    /// `PROTOCOL_RPC_V2_CBOR` (M): a request `RpcV2CBORSerializer` wrote
+    /// (`serialize_to_request`).
+    ProtocolRpcV2Cbor,
     /// `ENDPOINT_OVERRIDE` (N): a configured endpoint URL (`compute_client_args`).
     EndpointOverride,
     /// `ACCOUNT_ID_MODE_PREFERRED` (P): the rules' `AccountIdEndpointMode`
@@ -132,11 +135,12 @@ pub enum Feature {
 }
 impl Feature {
     /// Every feature in declaration order, which is the `m/` order.
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 31] = [
         Self::Paginator,
         Self::RetryModeStandard,
         Self::RetryModeAdaptive,
         Self::S3Transfer,
+        Self::ProtocolRpcV2Cbor,
         Self::EndpointOverride,
         Self::AccountIdModePreferred,
         Self::AccountIdModeDisabled,
@@ -171,6 +175,7 @@ impl Feature {
             Self::RetryModeStandard => "E",
             Self::RetryModeAdaptive => "F",
             Self::S3Transfer => "G",
+            Self::ProtocolRpcV2Cbor => "M",
             Self::EndpointOverride => "N",
             Self::AccountIdModePreferred => "P",
             Self::AccountIdModeDisabled => "Q",
