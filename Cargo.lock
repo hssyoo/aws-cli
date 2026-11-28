@@ -269,6 +269,7 @@ name = "model"
 version = "0.1.0"
 dependencies = [
  "awscli-argparse",
+ "jmespath",
  "pyload",
  "pytext",
  "serde_json",

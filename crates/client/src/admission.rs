@@ -137,7 +137,7 @@ pub(crate) fn refusal(
     if operation.operation_context_params().next().is_some() {
         return Some(Unsupported::OperationContextParams);
     }
-    if let Some(unsupported) = crate::auth::static_refusal(model, operation) {
+    if let Some(unsupported) = crate::auth::static_refusal(model, service, operation) {
         return Some(unsupported);
     }
     if let Some(name) = crate::endpoint::missing_builtin(endpoints, service, customizations) {

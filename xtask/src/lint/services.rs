@@ -42,6 +42,12 @@ const EXEMPT: &[(&str, &str, &str)] = &[
         "the XML entity for `&`, which the reader decodes",
     ),
     (
+        "crates/client/src/auth.rs",
+        "s3",
+        "a signing name in botocore's `S3_SIGNING_NAMES` (`set_operation_specific_signer`), \
+         not the service",
+    ),
+    (
         "crates/model/src/shapes/traits.rs",
         "location",
         "a model trait key, not the Location service",

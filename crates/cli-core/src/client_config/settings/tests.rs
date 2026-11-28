@@ -232,3 +232,20 @@ fn an_endpoint_for_the_client_s_service_is_an_override() -> Result<(), PythonRea
     assert!(!other.endpoint_override);
     Ok(())
 }
+
+/// The `s3` block's `payload_signing_enabled`, as `ensure_boolean` reads
+/// it, for S3's signer; unset when the block does not give it.
+#[test]
+fn the_s3_block_s_payload_signing_is_read_as_botocore_converts_it() -> Result<(), PythonReason> {
+    assert_eq!(settings("", &[])?.payload_signing, None);
+    let source = Source::S3("payload_signing_enabled");
+    for (value, on) in [("TRUE", true), ("false", false), ("yes", false)] {
+        let config = format!("[default]\ns3 =\n  payload_signing_enabled = {value}\n");
+        assert_eq!(
+            settings(&config, &[])?.payload_signing,
+            Some(Resolved::new(on, source)),
+            "{value}"
+        );
+    }
+    Ok(())
+}
