@@ -125,15 +125,13 @@ REMOVED: Final = {
 async def test_a_removed_operation_is_an_invalid_choice(
     api: ApiSession, case: str
 ) -> None:
-    if FORCED_NATIVE and case.startswith("emr-"):
-        pytest.skip("forced native refuses emr's (unsupported_subcommand), as checked below")
     command, stderr = REMOVED[case]
     run = await api.run(command, expected_rc=252)
     assert failed(run) == ("", stderr, 0), run.describe()
 
 
-# Where a removed operation's failure renders: natively for a table the
-# editors alone touch, under Python for emr's.
+# A removed operation's failure renders natively: each table here is
+# edited by table editors alone, emr's by removals and its command adder.
 @pytest.mark.native_only
 @pytest.mark.parametrize("case", REMOVED)
 async def test_a_removed_operation_s_failure_renders_natively(
@@ -141,11 +139,7 @@ async def test_a_removed_operation_s_failure_renders_natively(
 ) -> None:
     command, stderr = REMOVED[case]
     api.env[ROUTER] = "native"
-    if case.startswith("emr-"):
-        run = await api.run(command, expected_rc=255)
-        stderr = refusal("unsupported_subcommand")
-    else:
-        run = await api.run(command, expected_rc=252)
+    run = await api.run(command, expected_rc=252)
     assert failed(run) == ("", stderr, 0), run.describe()
 
 
