@@ -5,7 +5,8 @@
 use super::*;
 
 /// One service whose operations cover what the table builder decides:
-/// typed members, a streaming output, and paging with each limit type.
+/// typed members, a streaming output and input, and paging with each limit
+/// type.
 const MODEL: &str = r#"{
   "metadata": {"protocol": "rest-json", "apiVersion": "2020-01-01",
                "endpointPrefix": "zsvc", "serviceId": "Zsvc"},
@@ -17,7 +18,9 @@ const MODEL: &str = r#"{
     "ListThings": {"name": "ListThings", "http": {"method": "GET", "requestUri": "/"},
                    "input": {"shape": "ListRequest"}},
     "ListShadowed": {"name": "ListShadowed", "http": {"method": "GET", "requestUri": "/"},
-                     "input": {"shape": "ShadowedRequest"}}
+                     "input": {"shape": "ShadowedRequest"}},
+    "Upload": {"name": "Upload", "http": {"method": "PUT", "requestUri": "/"},
+               "input": {"shape": "UploadRequest"}}
   },
   "shapes": {
     "Long": {"type": "long"}, "Double": {"type": "double"}, "Float": {"type": "float"},
@@ -33,7 +36,11 @@ const MODEL: &str = r#"{
       "StartingToken": {"shape": "String"}, "MaxItems": {"shape": "Integer"},
       "Filter": {"shape": "String"}}},
     "DownloadResult": {"type": "structure", "payload": "Body",
-                       "members": {"Body": {"shape": "Body"}}}
+                       "members": {"Body": {"shape": "Body"}}},
+    "Bytes": {"type": "blob"},
+    "UploadRequest": {"type": "structure", "payload": "Body", "members": {
+      "Body": {"shape": "Body"}, "Digest": {"shape": "Bytes", "location": "header",
+      "locationName": "x-digest"}}}
   }
 }"#;
 
@@ -213,4 +220,16 @@ fn each_argument_says_how_its_value_unpacks() {
     }
     let table = self::table("ListThings", None);
     assert_eq!(find(&table, "next-token").unpack, Unpack::AsIs);
+}
+
+/// A streaming blob member's value is a path `unpack_scalar_cli_arg`
+/// opens, and `outfile`'s the name `add_to_params` keeps, each after
+/// `load-cli-arg`; a blob that does not stream is Python's to decode.
+#[test]
+fn streaming_arguments_unpack_as_paths() {
+    let upload = table("Upload", None);
+    assert_eq!(find(&upload, "body").unpack, Unpack::File);
+    assert_eq!(find(&upload, "digest").unpack, Unpack::Deferred);
+    let download = table("Download", None);
+    assert_eq!(find(&download, "outfile").unpack, Unpack::AsIs);
 }

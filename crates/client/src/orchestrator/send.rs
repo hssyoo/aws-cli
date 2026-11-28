@@ -93,6 +93,9 @@ pub(crate) fn send(client: &Client, mut prepared: Prepared) -> Result<Output, Ca
         match evaluate(client, &mut ctx, attempt, &sent, result, last_cost) {
             Step::Done(outcome) => return outcome,
             Step::Retry { delay, cost, date } => {
+                // `_set_ttl` reads `has_streaming_input` from the retries
+                // context, where botocore never puts it (it is the request
+                // context's), so a streaming input's retry has a ttl too.
                 if let Some(date) = date {
                     ttl = Some(self::ttl(client, date));
                 }

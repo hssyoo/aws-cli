@@ -22,6 +22,11 @@ pub enum Unpack {
     /// An integer member, which argparse stores as text:
     /// `unpack_scalar_cli_arg`'s `int()`.
     Integer,
+    /// A `streaming` blob member, which argparse stores as text:
+    /// `unpack_scalar_cli_arg` expands it as a path (`expandvars`, then
+    /// `expanduser`) and opens the file it names, or raises that blob
+    /// values must be a path to a file.
+    File,
     /// Only Python unpacks or binds it: a list, map, structure, blob,
     /// timestamp, float or double member, a JSON-value header or document,
     /// or a customization's option.
@@ -225,13 +230,14 @@ fn member_arguments(
 
 /// How `_unpack_cli_arg` treats a member of `shape`: a JSON-value header
 /// (`is_json_value_header`) goes through `json.loads`, the scalars through
-/// `unpack_scalar_cli_arg`.
+/// `unpack_scalar_cli_arg`, a streaming blob among them.
 fn unpack(shape: Schema<'_>) -> Unpack {
     let json_header = shape.flag(Flag::JsonValue) && shape.location() == Some("header");
     match shape.shape_type() {
         ShapeType::String if !json_header => Unpack::AsIs,
         ShapeType::Long | ShapeType::Boolean => Unpack::AsIs,
         ShapeType::Integer => Unpack::Integer,
+        ShapeType::Blob if shape.flag(Flag::Streaming) => Unpack::File,
         _ => Unpack::Deferred,
     }
 }
@@ -279,6 +285,9 @@ fn streaming(table: &mut Table, operation: OperationSchema<'_>) {
     if let Some(response_key) = streaming_output(operation) {
         let mut outfile = plain("outfile", "string", Origin::Outfile { response_key });
         outfile.positional = true;
+        // `StreamingOutputArgument.add_to_params` keeps the text, after
+        // `load-cli-arg`, as the path to write.
+        outfile.unpack = Unpack::AsIs;
         table.insert(outfile);
     }
 }

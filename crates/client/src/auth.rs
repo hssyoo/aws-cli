@@ -308,7 +308,20 @@ pub fn static_refusal(
             Ok(version) => client_signer(version.as_deref().unwrap_or("v4"), unsigned),
         },
     };
-    signer.err()
+    signer
+        .and_then(|signer| streams_to_s3(signer, operation))
+        .err()
+}
+
+/// A streaming input under S3's signer, which botocore sends unsigned over
+/// https beside a checksum header (`S3SigV4Auth._should_sha256_sign_payload`
+/// with `has_streaming_input`): the S3 signer signs every payload, so the
+/// call is refused as streaming.
+fn streams_to_s3(signer: Signer, operation: OperationSchema<'_>) -> Result<Signer, Unsupported> {
+    if signer == Signer::S3SigV4 && crate::checksum::streaming_input(operation) {
+        return Err(Unsupported::Trait("streaming".to_owned()));
+    }
+    Ok(signer)
 }
 
 /// The option of a call of `operation` that resolved to `endpoint`, and the
@@ -363,6 +376,7 @@ pub fn select(
             Err(unsupported) => Err(unsupported),
         },
     };
+    let signer = signer.and_then(|signer| streams_to_s3(signer, operation));
     let scheme_id = match signer.map_err(CallError::Unsupported)? {
         Signer::None => return Ok(AuthSchemeOption::no_auth()),
         Signer::SigV4 => AuthSchemeId::SIGV4,

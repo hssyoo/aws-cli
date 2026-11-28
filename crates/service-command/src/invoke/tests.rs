@@ -227,3 +227,112 @@ fn each_client_s_hooks_keep_their_own_timestamp_parser() {
     assert_ne!(first, second);
     assert_eq!((iso.timestamp)(&wire), first);
 }
+
+/// A scratch directory, removed when dropped.
+struct Scratch(std::path::PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> crate::testing::Result<Self> {
+        let directory = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory)?;
+        Ok(Self(directory))
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A streaming blob member's path is expanded as `unpack_scalar_cli_arg`
+/// expands it (variables, then `~`) and read relative to the working
+/// directory; anything but a regular file native reads whole is Python's:
+/// a missing path, a directory, a file beyond the cap, a `~user` path.
+#[test]
+#[cfg(unix)]
+fn an_input_file_is_read_as_unpack_scalar_cli_arg_opens_it() -> crate::testing::Result<()> {
+    let scratch = Scratch::new("input-file")?;
+    let directory = &scratch.0;
+    std::fs::write(directory.join("body.bin"), b"\x00body\xff")?;
+    std::fs::write(directory.join("empty"), b"")?;
+    std::fs::create_dir(directory.join("sub"))?;
+    let large = std::fs::File::create(directory.join("large"))?;
+    large.set_len(INPUT_FILE_BYTES_MAX + 1)?;
+    let variables = std::collections::HashMap::from([
+        ("NAME".to_owned(), OsString::from("body.bin")),
+        ("HOME".to_owned(), directory.clone().into_os_string()),
+        // expandvars runs first, so a `~` it yields is the home's.
+        ("TILDE".to_owned(), OsString::from("~/body.bin")),
+    ]);
+    let read = |path: &str| read_input_file(path, &variables, directory);
+    assert_eq!(read("body.bin").as_deref(), Some(&b"\x00body\xff"[..]));
+    assert_eq!(read("$NAME").as_deref(), Some(&b"\x00body\xff"[..]));
+    assert_eq!(read("${NAME}").as_deref(), Some(&b"\x00body\xff"[..]));
+    assert_eq!(read("~/body.bin").as_deref(), Some(&b"\x00body\xff"[..]));
+    assert_eq!(read("$TILDE").as_deref(), Some(&b"\x00body\xff"[..]));
+    let absolute = directory.join("body.bin");
+    let absolute = absolute.to_str().ok_or("path")?;
+    assert_eq!(read(absolute).as_deref(), Some(&b"\x00body\xff"[..]));
+    assert_eq!(read("empty").as_deref(), Some(&b""[..]));
+    for refused in [
+        "missing",
+        "sub",
+        "large",
+        "$UNSET/body.bin",
+        "~nobody/body.bin",
+        "",
+    ] {
+        assert_eq!(read(refused), None, "{refused}");
+    }
+    Ok(())
+}
+
+/// `save_file`'s `open(path, 'wb')`: the bytes replace whatever the file
+/// held; an open that fails is `str()` of its `OSError`, the path as given.
+#[test]
+#[cfg(unix)]
+fn the_outfile_is_written_or_fails_as_open_raises() -> crate::testing::Result<()> {
+    let scratch = Scratch::new("outfile")?;
+    let directory = &scratch.0;
+    std::fs::write(directory.join("out.bin"), b"a longer old body")?;
+    write_outfile("out.bin", directory, b"\x00new").map_err(|failure| format!("{failure:?}"))?;
+    assert_eq!(std::fs::read(directory.join("out.bin"))?, b"\x00new");
+    let failed = |path: &str| {
+        let failure = write_outfile(path, directory, b"x").err();
+        failure.map(|failure| {
+            assert_eq!(failure.category, cli_core::cli_error::Category::General);
+            String::from_utf8_lossy(&failure.message).into_owned()
+        })
+    };
+    assert_eq!(
+        failed("no-dir/out.bin").as_deref(),
+        Some("[Errno 2] No such file or directory: 'no-dir/out.bin'")
+    );
+    assert_eq!(
+        failed(".").as_deref(),
+        Some("[Errno 21] Is a directory: '.'")
+    );
+    assert_eq!(
+        failed("").as_deref(),
+        Some("[Errno 2] No such file or directory: ''")
+    );
+    assert_eq!(
+        failed("it's/x").as_deref(),
+        Some("[Errno 2] No such file or directory: \"it's/x\"")
+    );
+    Ok(())
+}
+
+/// `str()` of an `OSError` without a file name: the number and the C
+/// library's text, without Rust's ` (os error N)`.
+#[test]
+fn an_os_error_reads_as_python_s() {
+    assert_eq!(
+        os_error(&std::io::Error::from_raw_os_error(28)),
+        "[Errno 28] No space left on device"
+    );
+    let other = std::io::Error::other("custom");
+    assert_eq!(os_error(&other), "custom");
+}
