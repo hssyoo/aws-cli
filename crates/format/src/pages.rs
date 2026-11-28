@@ -3,6 +3,9 @@
 //! token to resume from. The paginator's expressions are the paginators
 //! file's ([`Expression`]): member names and dotted paths of them, read as
 //! `jmespath` searches them and written as `set_value_from_jmespath` does.
+//! `--query` searches each value `format_text` is given
+//! (`TextFormatter._format_response`): each page's, and the resume token's.
+use crate::Query;
 use crate::stream::Encoded;
 use crate::text::{PythonError, format_text};
 use model::paginators::Expression;
@@ -41,13 +44,14 @@ pub enum Stopped<E> {
 /// stream encoding with `errors` ([`crate::Destination::errors`]). A page
 /// with no rows is no write, as `format_text` makes none for it, so it
 /// starts no pager (`LazyStdin`); a page whose first write fails to encode
-/// made one.
+/// made one. Each value is searched with `query` before it is formatted.
 ///
 /// # Errors
 /// See [`Stopped`].
 pub fn text<P: Pages>(
     pages: &mut P,
     errors: Errors,
+    query: Option<&dyn Query>,
     write: &mut dyn FnMut(&[u8]) -> std::io::Result<()>,
 ) -> Result<(), Stopped<P::Error>> {
     let mut first = true;
@@ -60,7 +64,7 @@ pub fn text<P: Pages>(
         };
         first = false;
         let mut out = Encoded::new(errors);
-        let failed = text_page(current, &page, pages.result_keys(), &mut out);
+        let failed = text_page(current, &page, pages.result_keys(), query, &mut out);
         written_then(write, out, failed)?;
     }
     if let Some(token) = pages.resume_token().filter(|token| !token.is_empty()) {
@@ -69,7 +73,7 @@ pub fn text<P: Pages>(
         let mut outer = Map::new();
         outer.insert("NextToken".into(), Value::Map(resume));
         let mut out = Encoded::new(errors);
-        let failed = format_text(&Value::Map(outer), &mut out).err();
+        let failed = queried_text(Value::Map(outer), query, &mut out);
         written_then(write, out, failed)?;
     }
     Ok(())
@@ -95,6 +99,7 @@ fn text_page(
     current: Map,
     page: &Value,
     result_keys: &[Expression],
+    query: Option<&dyn Query>,
     out: &mut Encoded,
 ) -> Option<PythonError> {
     let mut current = Value::Map(current);
@@ -104,7 +109,16 @@ fn text_page(
             return Some(PythonError { message });
         }
     }
-    format_text(&current, out).err()
+    queried_text(current, query, out)
+}
+
+/// `_format_response`: `value` searched with `query`, then `format_text`
+/// of the result; the error that stopped either.
+fn queried_text(value: Value, query: Option<&dyn Query>, out: &mut Encoded) -> Option<PythonError> {
+    match crate::apply_query(value, query) {
+        Ok(value) => format_text(&value, out).err(),
+        Err(error) => Some(error),
+    }
 }
 
 #[cfg(test)]

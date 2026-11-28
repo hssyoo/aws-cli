@@ -59,6 +59,15 @@ impl Binder for ServiceSource<'_> {
     /// output is the same, or, on a run forcing the native route, to a
     /// refusal.
     fn bind(&self, parsed: &ParseResult<'_>) -> Result<Bound, Admission> {
+        // `resolve_types` compiles `--query` on `top-level-args-parsed`,
+        // before the command parses its own arguments.
+        let query = parsed
+            .globals
+            .namespace
+            .string("query")
+            .map(crate::query::Query::compile)
+            .transpose()
+            .map_err(Admission::Python)?;
         let outcome = crate::admit::admit(&self.models, self.customizations, parsed)
             .map_err(Admission::Python)?;
         let command = match &outcome {
@@ -97,7 +106,8 @@ impl Binder for ServiceSource<'_> {
             needs.service.clone().into_owned(),
             self.embedded_trust,
             self.versions,
-        );
+        )
+        .with_query(query);
         Ok(Bound {
             invocation: Box::new(invocation),
             needs,

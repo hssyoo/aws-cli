@@ -114,6 +114,7 @@ const SERVICE_COMMAND: &[&str] = &[
     "command",
     "credentials",
     "format",
+    "jmespath",
     "model",
     "service-errors",
 ];

@@ -32,6 +32,9 @@ pub(super) fn route<E: EnvMap>(
         return Verdict::Python(deferred_reason(result));
     }
     if let Outcome::Failure(failure) = &result.outcome {
+        if let Some(reason) = globals::query_precedes_failure(result) {
+            return Verdict::Python(reason);
+        }
         // The leftover check and the unpack loop are the parse's last
         // stages; a table the derivation does not reproduce leaves their
         // failures to Python too.

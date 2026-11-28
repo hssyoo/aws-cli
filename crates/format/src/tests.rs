@@ -257,6 +257,7 @@ fn rust_pages(mut listed: crate::pages::tests::Listed) -> serde_json::Value {
     let result = crate::pages::text(
         &mut listed,
         pytext::codec::Errors::SurrogateEscape,
+        None,
         &mut |text| {
             bytes.extend_from_slice(text);
             Ok(())
@@ -350,5 +351,71 @@ fn a_response_at_the_reader_s_limit_renders_on_a_default_thread() -> Result<()> 
     .join()
     .map_err(|_| "rendering overflowed its stack")?;
     assert_eq!(rendered, (true, true));
+    Ok(())
+}
+
+/// A `--query` stub: a paginator expression's search, or a failure.
+pub(crate) struct Stub(pub Option<model::paginators::Expression>);
+
+impl Query for Stub {
+    fn search(&self, value: &Value) -> std::result::Result<Value, PythonError> {
+        match &self.0 {
+            Some(expression) => Ok(expression.find(value)),
+            None => Err(PythonError {
+                message: "In function length(), invalid type".into(),
+            }),
+        }
+    }
+}
+
+pub(crate) fn stub(text: &str) -> Stub {
+    Stub(model::paginators::Expression::parse(text))
+}
+
+/// `_get_transformed_response_for_output`: the query searches the response
+/// without its `ResponseMetadata`, and the formatter prints the result,
+/// `null` included and an empty dict not; `OffFormatter` never searches.
+#[test]
+fn the_formatters_print_the_query_s_result() -> Result<()> {
+    let response = Value::from_json(
+        br#"{"ResponseMetadata": {"RequestId": "r"}, "Ids": ["a", "b"], "N": 1}"#,
+    )?;
+    let errors = pytext::codec::Errors::Strict;
+    for (text, format, printed) in [
+        ("N", OutputFormat::Json, "1\n"),
+        ("Missing", OutputFormat::Json, "null\n"),
+        ("Missing", OutputFormat::Text, "None\n"),
+        ("`{}`", OutputFormat::Json, ""),
+        ("ResponseMetadata", OutputFormat::Json, "null\n"),
+        ("Ids", OutputFormat::Json, "[\n    \"a\",\n    \"b\"\n]\n"),
+        ("[Ids, [N]]", OutputFormat::Text, "a\tb\n1\n"),
+        ("Ids", OutputFormat::Off, ""),
+    ] {
+        let rendered = render_with(response.clone(), format, errors, Some(&stub(text)));
+        assert_eq!(
+            rendered,
+            Ok(printed.as_bytes().to_vec()),
+            "{text} {format:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A search that raises writes nothing, so it starts no pager, and the
+/// formatter reports it; `OffFormatter` does not search.
+#[test]
+fn a_raising_search_writes_nothing() -> Result<()> {
+    let response = Value::from_json(br#"{"N": 1}"#)?;
+    let errors = pytext::codec::Errors::Strict;
+    for format in [OutputFormat::Json, OutputFormat::Text] {
+        let Err(partial) = render_with(response.clone(), format, errors, Some(&Stub(None))) else {
+            return Err(format!("{format:?} did not raise").into());
+        };
+        assert_eq!(partial.written, b"");
+        assert!(!partial.started);
+        assert_eq!(partial.error.message, "In function length(), invalid type");
+    }
+    let off = render_with(response, OutputFormat::Off, errors, Some(&Stub(None)));
+    assert_eq!(off, Ok(Vec::new()));
     Ok(())
 }

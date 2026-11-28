@@ -17,6 +17,7 @@ client = { path = "../client" }
 command = { path = "../command" }
 credentials = { path = "../credentials" }
 format = { path = "../format" }
+jmespath = { path = "../jmespath" }
 model = { path = "../model" }
 service-errors = { path = "../service-errors" }
 

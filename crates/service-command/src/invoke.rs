@@ -48,6 +48,8 @@ pub struct ServiceInvocation {
     /// The payload's CA bundle, trusted when nothing configures another.
     pub embedded_trust: Option<&'static [u8]>,
     pub versions: cli_core::client_config::user_agent::Versions<'static>,
+    /// `--query`, which the formatter searches the response with.
+    pub query: Option<crate::query::Query>,
     ready: OnceCell<Ready>,
 }
 
@@ -99,8 +101,20 @@ impl ServiceInvocation {
             output_epochs,
             embedded_trust,
             versions,
+            query: None,
             ready: OnceCell::new(),
         }
+    }
+
+    /// This invocation, its response searched with `query`.
+    #[must_use]
+    pub fn with_query(self, query: Option<crate::query::Query>) -> Self {
+        Self { query, ..self }
+    }
+
+    /// `--query`, as the formatter takes it.
+    fn query(&self) -> Option<&dyn format::Query> {
+        self.query.as_ref().map(|query| query as &dyn format::Query)
     }
 }
 
@@ -350,7 +364,7 @@ impl ServiceInvocation {
         response: Value,
     ) -> Result<u8, CommandFailure> {
         let errors = ready.destination.errors();
-        let text = match format::render(response, ready.format, errors) {
+        let text = match format::render_with(response, ready.format, errors, self.query()) {
             Ok(text) => text,
             Err(partial) => return self.partial(cx, ready, partial),
         };
