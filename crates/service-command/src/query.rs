@@ -170,6 +170,64 @@ enum Level<'a> {
     Other,
 }
 
+/// What [`exprefs_are_arguments`] reads of the text: the tokens that open
+/// and close levels, separate arguments, name a call, or are an `&`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Token<'a> {
+    /// An unquoted identifier.
+    Name(&'a str),
+    /// A lone `&`.
+    Expref,
+    /// `(`.
+    Paren,
+    /// `[` or `{`.
+    Open,
+    /// `)`, `]` or `}`.
+    Close,
+    Comma,
+    /// Anything else: `&&`, an operator, a literal, a raw string, a
+    /// quoted identifier, a number.
+    Other,
+}
+
+/// The tokens of `text`, whitespace skipped.
+fn tokens(text: &str) -> Vec<Token<'_>> {
+    let bytes = text.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let (token, next) = token_at(text, i);
+        tokens.extend(token);
+        i = next;
+    }
+    tokens
+}
+
+/// The token that starts at `i`, if it is not whitespace, and the index
+/// past it.
+fn token_at(text: &str, i: usize) -> (Option<Token<'_>>, usize) {
+    let bytes = text.as_bytes();
+    let token = match bytes[i] {
+        b'\'' | b'`' | b'"' => return (Some(Token::Other), skip_delimited(bytes, i)),
+        b' ' | b'\t' | b'\n' | b'\r' => return (None, i + 1),
+        b'&' if bytes.get(i + 1) == Some(&b'&') => return (Some(Token::Other), i + 2),
+        b'&' => Token::Expref,
+        b'(' => Token::Paren,
+        b'[' | b'{' => Token::Open,
+        b')' | b']' | b'}' => Token::Close,
+        b',' => Token::Comma,
+        byte if byte.is_ascii_alphabetic() || byte == b'_' => {
+            let end = bytes[i..]
+                .iter()
+                .position(|byte| !(byte.is_ascii_alphanumeric() || *byte == b'_'))
+                .map_or(bytes.len(), |length| i + length);
+            return (text.get(i..end).map(Token::Name), end);
+        }
+        _ => Token::Other,
+    };
+    (Some(token), i + 1)
+}
+
 /// Whether every expression reference in `text` is a whole argument that
 /// a function evaluates as one ([`EXPREF_ARGUMENTS`]): an `&` that is not
 /// `&&`, right after the call's `(` or a `,` of its own, the call named by
@@ -178,68 +236,37 @@ enum Level<'a> {
 /// argument's end (its binding power is 0), so a reference so placed is
 /// the argument.
 fn exprefs_are_arguments(text: &str) -> bool {
-    let bytes = text.as_bytes();
     let mut levels: Vec<Level<'_>> = Vec::new();
-    // The last significant byte, and the identifier that ended there.
-    let mut previous = 0u8;
-    let mut identifier: Option<&str> = None;
-    let mut i = 0;
-    while i < bytes.len() {
-        let byte = bytes[i];
-        match byte {
-            b'\'' | b'`' | b'"' => {
-                i = skip_delimited(bytes, i);
-                previous = byte;
-                identifier = None;
-                continue;
-            }
-            b' ' | b'\t' | b'\n' | b'\r' => {
-                i += 1;
-                continue;
-            }
-            b'&' if bytes.get(i + 1) == Some(&b'&') => {
-                i += 2;
-                previous = b'&';
-                identifier = None;
-                continue;
-            }
-            b'&' => {
-                let placed = matches!(previous, b'(' | b',')
-                    && matches!(levels.last(), Some(Level::Call(name, index))
-                        if EXPREF_ARGUMENTS.contains(&(*name, *index)));
-                if !placed {
-                    return false;
-                }
-            }
-            b'(' => levels.push(match identifier {
-                Some(name) => Level::Call(name, 0),
-                None => Level::Other,
+    let mut previous = Token::Other;
+    for token in tokens(text) {
+        match token {
+            Token::Expref if !placed(previous, levels.last()) => return false,
+            Token::Paren => levels.push(match previous {
+                Token::Name(name) => Level::Call(name, 0),
+                _ => Level::Other,
             }),
-            b'[' | b'{' => levels.push(Level::Other),
-            b')' | b']' | b'}' => {
+            Token::Open => levels.push(Level::Other),
+            Token::Close => {
                 levels.pop();
             }
-            b',' => {
+            Token::Comma => {
                 if let Some(Level::Call(_, index)) = levels.last_mut() {
                     *index += 1;
                 }
             }
-            _ if byte.is_ascii_alphabetic() || byte == b'_' => {
-                let start = i;
-                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                    i += 1;
-                }
-                identifier = text.get(start..i);
-                previous = b'a';
-                continue;
-            }
             _ => {}
         }
-        previous = byte;
-        identifier = None;
-        i += 1;
+        previous = token;
     }
     true
+}
+
+/// Whether an `&` after `previous`, in `level`, is an argument its
+/// function evaluates.
+fn placed(previous: Token<'_>, level: Option<&Level<'_>>) -> bool {
+    matches!(previous, Token::Paren | Token::Comma)
+        && matches!(level, Some(Level::Call(name, index))
+            if EXPREF_ARGUMENTS.contains(&(*name, *index)))
 }
 
 /// The index past the literal, raw string or quoted identifier that starts
