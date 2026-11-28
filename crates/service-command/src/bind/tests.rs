@@ -461,3 +461,84 @@ fn a_pair_s_value_and_its_conflict_route_to_python() -> Result<()> {
     );
     Ok(())
 }
+
+/// A streaming blob member binds the path `unpack_scalar_cli_arg` opens,
+/// an empty blob held in its place for validation, and `outfile` the name
+/// `save_file` writes the response's payload member to.
+#[test]
+fn a_streaming_blob_binds_its_path_and_outfile_its_name() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let argv = [
+            "zrestjson2",
+            "put-gadget-data",
+            "--gadget-id",
+            "g1",
+            "--body",
+            "$DIR/some file",
+        ];
+        let put = call(&source, &argv);
+        assert_eq!(
+            put.files,
+            [InputFile {
+                member: "Body".into(),
+                path: "$DIR/some file".into(),
+            }]
+        );
+        assert_eq!(
+            put.input.as_map().and_then(|input| input.get("Body")),
+            Some(&Value::Blob(Vec::new()))
+        );
+        assert_eq!(put.outfile, None);
+        let unset = call(&source, &argv[..4]);
+        assert!(unset.files.is_empty(), "{unset:?}");
+        assert_eq!(keys(&unset.input), ["GadgetId"]);
+        let get = call(
+            &source,
+            &[
+                "zrestjson2",
+                "get-gadget-data",
+                "--gadget-id",
+                "g1",
+                "out.bin",
+            ],
+        );
+        assert_eq!(
+            get.outfile,
+            Some(Outfile {
+                path: "out.bin".into(),
+                response_key: "Body".into(),
+            })
+        );
+        assert_eq!(keys(&get.input), ["GadgetId"]);
+    })
+}
+
+/// A streaming blob member given ahead of the argument the unpack loop
+/// stopped at is checked first in Python, which reports whichever fails
+/// first; one after it, or none given, leaves the failure native's.
+#[test]
+fn a_given_streaming_blob_precedes_a_later_argument_s_failure() -> Result<()> {
+    with_models(|models| {
+        let source = crate::testing::source(models, &[]);
+        let table = source
+            .models()
+            .table("zrestjson2", "put-gadget-data")
+            .unwrap_or_else(|| panic!("no table"));
+        let precedes = |extra: &[&str], failed: &str| {
+            let argv = [
+                &["zrestjson2", "put-gadget-data", "--gadget-id", "g1"][..],
+                extra,
+            ]
+            .concat();
+            let mut result = parsed(&source, &argv);
+            result.stopped_dest = Some(failed.to_owned());
+            precedes_unpack_failure(table, &result)
+        };
+        let body = ["--body", "missing"];
+        assert!(precedes(&body, "generate_cli_skeleton"));
+        assert!(!precedes(&[], "generate_cli_skeleton"));
+        assert!(!precedes(&body, "gadget_id"));
+        assert!(!precedes(&body, "body"));
+    })
+}

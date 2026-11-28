@@ -41,6 +41,11 @@ pub struct Admitted {
     /// `PageArgument.add_to_params` warns that `--max-items` is not
     /// positive, before the call.
     pub warned: bool,
+    /// The streaming blob members' files, which the invocation reads into
+    /// `input` ([`crate::bind::Call::files`]).
+    pub files: Vec<crate::bind::InputFile>,
+    /// Where the streamed output is written.
+    pub outfile: Option<crate::bind::Outfile>,
 }
 
 /// What admission comes to for a parse it does not leave to Python.
@@ -104,6 +109,11 @@ pub fn admit(
         .paginator
         .zip(call.pagination)
         .map(|(config, pagination)| Paginated { config, pagination });
+    // `save_file` runs on each page's `after-call`, which native paging
+    // does not write.
+    if paginated.is_some() && call.outfile.is_some() {
+        return Err(PythonReason::Paginator);
+    }
     Ok(Outcome::Call(Box::new(Admitted {
         command: command.to_owned(),
         service: service.name.clone(),
@@ -113,6 +123,8 @@ pub fn admit(
         endpoints: decided.endpoints,
         paginated,
         warned: call.warned,
+        files: call.files,
+        outfile: call.outfile,
     })))
 }
 

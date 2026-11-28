@@ -182,11 +182,11 @@ pub static CLI: &[Row] = &[
         table: TableEdit::Reproduced {
             how: "outfile for a streaming output",
         },
-        // add_streaming_output_arg adds `outfile` only for a streaming
-        // output (streamingoutputarg.py:25-36).
-        basis: Basis::Inert {
-            acts_when: "the output is streaming",
-            refused_as: Refusal::Trait("streaming"),
+        // add_streaming_output_arg adds `outfile` for a streaming output
+        // (streamingoutputarg.py:25-36), whose save_file writes the
+        // streamed member and removes it from the response (:105-120).
+        basis: Basis::Implemented {
+            at: "service_command::invoke::ServiceInvocation::save_file",
         },
     },
     Row {

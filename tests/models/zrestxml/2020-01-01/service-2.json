@@ -142,6 +142,19 @@
       "output": {
         "shape": "GetWidgetDataOutput"
       }
+    },
+    "PutWidgetBlob": {
+      "name": "PutWidgetBlob",
+      "http": {
+        "method": "PUT",
+        "requestUri": "/widgets/{WidgetName}/blob"
+      },
+      "input": {
+        "shape": "PutWidgetBlobRequest"
+      },
+      "output": {
+        "shape": "PutWidgetBlobOutput"
+      }
     }
   },
   "shapes": {
@@ -605,6 +618,39 @@
       "type": "list",
       "member": {
         "shape": "Text"
+      }
+    },
+    "PutWidgetBlobOutput": {
+      "type": "structure",
+      "members": {
+        "Etag": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "ETag"
+        }
+      }
+    },
+    "PutWidgetBlobRequest": {
+      "type": "structure",
+      "required": [
+        "WidgetName",
+        "Body"
+      ],
+      "payload": "Body",
+      "members": {
+        "WidgetName": {
+          "shape": "Text",
+          "location": "uri",
+          "locationName": "WidgetName"
+        },
+        "Kind": {
+          "shape": "Text",
+          "location": "header",
+          "locationName": "Content-Type"
+        },
+        "Body": {
+          "shape": "Stream"
+        }
       }
     },
     "PutWidgetOutput": {

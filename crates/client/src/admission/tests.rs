@@ -164,3 +164,74 @@ fn a_paginator_entry_the_engine_does_not_run_is_refused() -> Result<(), Box<dyn 
     ));
     Ok(())
 }
+
+/// One operation for each way an end can stream, under `protocol`.
+fn streaming_model(protocol: &str) -> Result<Model, Box<dyn std::error::Error>> {
+    let text = r#"{"metadata": {"protocol": "PROTOCOL", "jsonVersion": "1.0",
+        "signatureVersion": "v4", "targetPrefix": "Z"},
+        "operations": {
+            "Download": {"name": "Download", "http": {"method": "GET", "requestUri": "/d"},
+                "output": {"shape": "StreamedOut"}},
+            "Export": {"name": "Export", "http": {"method": "GET", "requestUri": "/e"},
+                "output": {"shape": "BlobOut"}},
+            "Upload": {"name": "Upload", "http": {"method": "PUT", "requestUri": "/u"},
+                "input": {"shape": "StreamedIn"}},
+            "Loose": {"name": "Loose", "http": {"method": "POST", "requestUri": "/l"},
+                "output": {"shape": "LooseOut"}},
+            "Events": {"name": "Events", "http": {"method": "POST", "requestUri": "/v"},
+                "output": {"shape": "EventsOut"}}
+        },
+        "shapes": {
+            "StreamedOut": {"type": "structure", "payload": "Body",
+                "members": {"Body": {"shape": "Stream"}, "Kind": {"shape": "Text",
+                    "location": "header", "locationName": "Content-Type"}}},
+            "BlobOut": {"type": "structure", "payload": "Body",
+                "members": {"Body": {"shape": "Bytes"}}},
+            "StreamedIn": {"type": "structure", "payload": "Body",
+                "members": {"Body": {"shape": "Stream"}}},
+            "LooseOut": {"type": "structure", "members": {"Body": {"shape": "Stream"}}},
+            "EventsOut": {"type": "structure", "payload": "Events",
+                "members": {"Events": {"shape": "Events"}}},
+            "Events": {"type": "structure", "eventstream": true,
+                "members": {"Tick": {"shape": "Tick"}}},
+            "Tick": {"type": "structure", "event": true, "members": {}},
+            "Stream": {"type": "blob", "streaming": true},
+            "Bytes": {"type": "blob"},
+            "Text": {"type": "string"}
+        }
+    }"#;
+    Ok(Model::from_json(
+        text.replace("PROTOCOL", protocol).as_bytes(),
+    )?)
+}
+
+/// A blob payload, marked `streaming` or not, is carried at either end
+/// under the REST protocols, which bind a payload; a `streaming` member
+/// that is no payload, a blob payload under another protocol, and an event
+/// stream are refused.
+#[test]
+fn a_blob_payload_streams_only_where_a_protocol_binds_it() -> Result<(), Box<dyn std::error::Error>>
+{
+    let rules = br#"{"version": "1.0", "parameters": {}, "rules": []}"#.to_vec();
+    let data = EndpointData::from_documents(rules, b"{}".to_vec(), None)?;
+    let streaming = Some(Unsupported::Trait("streaming".into()));
+    let events = Some(Unsupported::Trait("eventstream".into()));
+    for (protocol, carried) in [("rest-json", true), ("rest-xml", true), ("json", false)] {
+        let model = streaming_model(protocol)?;
+        for (name, refused) in [
+            ("Download", if carried { None } else { streaming.clone() }),
+            ("Export", if carried { None } else { streaming.clone() }),
+            ("Upload", if carried { None } else { streaming.clone() }),
+            ("Loose", streaming.clone()),
+            ("Events", events.clone()),
+        ] {
+            let operation = model.schema().service().operation(name).ok_or(name)?;
+            assert_eq!(
+                static_refusal(&model, operation, &data, "zjson", &[], None),
+                refused,
+                "{protocol} {name}"
+            );
+        }
+    }
+    Ok(())
+}

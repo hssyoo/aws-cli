@@ -265,7 +265,7 @@ fn algorithm_member_header(operation: OperationSchema<'_>, member: &str) -> Opti
 }
 
 /// `OperationModel.has_streaming_input`: a blob payload.
-fn streaming_input(operation: OperationSchema<'_>) -> bool {
+pub(crate) fn streaming_input(operation: OperationSchema<'_>) -> bool {
     operation.input().is_some_and(|input| {
         input
             .payload()
