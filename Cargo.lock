@@ -430,6 +430,7 @@ dependencies = [
  "credentials",
  "customizations",
  "format",
+ "jmespath",
  "model",
  "pyload",
  "service-errors",
