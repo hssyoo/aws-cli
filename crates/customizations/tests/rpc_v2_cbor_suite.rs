@@ -22,5 +22,7 @@ use format as _;
 use pytext as _;
 use timestamp as _;
 
+// The tests live beside the crate file, as the crate's other suites keep
+// theirs (`rest_xml_suite/tests.rs`), with their data (`fakes.json`).
 #[path = "rpc_v2_cbor_suite/tests.rs"]
 mod tests;
