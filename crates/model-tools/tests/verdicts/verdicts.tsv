@@ -17986,9 +17986,10 @@ ssm-sap	stop-application	-	-	scalar_arguments	-	2018-05-10
 ssm-sap	tag-resource	-	-	required_not_scalar	-	2018-05-10
 ssm-sap	untag-resource	-	-	required_not_scalar	-	2018-05-10
 ssm-sap	update-application-settings	-	-	scalar_arguments	-	2018-05-10
-sso	get-role-credentials	-	-	scalar_arguments	-	2019-06-10
-sso	list-account-roles	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=roleList keep=- limit=maxResults	2019-06-10
-sso	list-accounts	-	-	scalar_arguments	native in=nextToken out=nextToken more=- result=accountList keep=- limit=maxResults	2019-06-10
+sso	get-role-credentials	-	-	refused:unported_customization	-	2019-06-10
+sso	list-account-roles	-	-	refused:unported_customization	native in=nextToken out=nextToken more=- result=roleList keep=- limit=maxResults	2019-06-10
+sso	list-accounts	-	-	refused:unported_customization	native in=nextToken out=nextToken more=- result=accountList keep=- limit=maxResults	2019-06-10
+sso	logout	-	-	refused:unported_customization	-	2019-06-10
 sso-admin	add-region	-	-	scalar_arguments	-	2020-07-20
 sso-admin	attach-customer-managed-policy-reference-to-permission-set	-	-	required_not_scalar	-	2020-07-20
 sso-admin	attach-managed-policy-to-permission-set	-	-	scalar_arguments	-	2020-07-20

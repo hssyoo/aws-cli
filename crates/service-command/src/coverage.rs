@@ -303,7 +303,9 @@ pub static CLI: &[Row] = &[
         table: TableEdit::None,
         // inject_json_file_cache sets the SSO provider's cache
         // (sso/__init__.py:38); its other handler sets `sso`'s login and
-        // logout, which a RootTable row covers.
+        // logout, which no row covers: sso's operations are unsigned, and
+        // the native User-Agent lacks the feature id botocore records for
+        // them (`g`), so they stay Python's.
         basis: Basis::Inert {
             acts_when: "the credential chain reaches the SSO provider",
             refused_as: Refusal::Router(PythonReason::CredentialForm),
@@ -406,7 +408,7 @@ pub static CLI: &[Row] = &[
     },
     // The command adders: each sets one service's hand-written commands,
     // and nothing else on a root table. Those also listed under other
-    // patterns (cloudfront, codedeploy, datapipeline, emr, rds's split, sso)
+    // patterns (cloudfront, codedeploy, datapipeline, emr, rds's split)
     // register handlers there that act on the operations those patterns
     // name, which stay uncovered (emr's parser hook names every emr
     // operation).
@@ -517,10 +519,6 @@ pub static CLI: &[Row] = &[
     sets_commands(
         "awscli.customizations.sessionmanager.register_ssm_session",
         "ssm's start-session in place of the operation",
-    ),
-    sets_commands(
-        "awscli.customizations.sso.register_sso_commands",
-        "sso's login, and logout in place of the operation",
     ),
 ];
 

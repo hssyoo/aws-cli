@@ -271,7 +271,6 @@ TABLE_EDITORS = [
     ("awscli.customizations.rds", "register_rds_modify_split"),
     ("awscli.customizations.servicecatalog", "register_servicecatalog_commands"),
     ("awscli.customizations.sessionmanager", "register_ssm_session"),
-    ("awscli.customizations.sso", "register_sso_commands"),
 ]
 # The editors above that also register on events other than a root's
 # table event, each on patterns the registry lists it under.
@@ -281,7 +280,6 @@ MIXED = {
     ("awscli.customizations.datapipeline", "register_customizations"),
     ("awscli.customizations.emr.emr", "emr_initialize"),
     ("awscli.customizations.rds", "register_rds_modify_split"),
-    ("awscli.customizations.sso", "register_sso_commands"),
 }
 TABLE_EVENT = "building-command-table"
 

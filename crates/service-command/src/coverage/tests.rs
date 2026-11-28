@@ -59,7 +59,6 @@ const ADDED_TO: &[(&str, &str)] = &[
     ("rds", "describe-db-instances"),
     ("servicecatalog", "list-portfolios"),
     ("ssm", "describe-parameters"),
-    ("sso", "list-accounts"),
 ];
 const EMR: (&str, &str) = ("emr", "list-instances");
 const EMR_PARSER: &str = "before-building-argument-table-parser.emr.*";
@@ -232,10 +231,6 @@ const MIXED: &[(&str, &[&str])] = &[
             "building-argument-table.rds.add-option-to-option-group",
             "building-argument-table.rds.remove-option-from-option-group",
         ],
-    ),
-    (
-        "awscli.customizations.sso.register_sso_commands",
-        &["session-initialized"],
     ),
 ];
 
@@ -794,7 +789,6 @@ fn a_command_adder_s_names_are_python_s() -> Result<()> {
         ("ssm", "start-session"),
         ("ecs", "execute-command"),
         ("logs", "start-live-tail"),
-        ("sso", "logout"),
         ("emr", "describe-cluster"),
         ("emr", "add-instance-groups"),
     ];
