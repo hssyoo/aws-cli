@@ -24,8 +24,9 @@ not a scalar is compact JSON. A toplevelbool member is given as `--flag`.
 Every row answers each request with the operation's empty response
 document (`<{Operation}Response xmlns=".../"/>`, ec2's `text/xml`), and
 declares `"requests": 0` where botocore's validator rejects the filled
-parameters (with any idempotency token filled, as botocore fills it) or
-the row raises before the call.
+parameters (with any idempotency token filled, as botocore fills it), a
+filled member is a streaming blob (whose value must name a file), or the
+row raises before the call.
 
 `command-adders` writes `corpus/command-adders.jsonl`: for each service
 whose table a command adder edits (`ADDERS`: the awscli initializers that
@@ -287,6 +288,20 @@ def model_path(operation: Any) -> str:
     )
 
 
+def streams_input(operation: Any, params: dict[str, Any]) -> bool:
+    """Whether a filled member is a streaming blob, which the CLI reads
+    from the file its value names: `AAAA` names none, so the parse refuses
+    it before any request."""
+    shape = operation.input_shape
+    if shape is None:
+        return False
+    return any(
+        shape.members[name].type_name == "blob"
+        and shape.members[name].serialization.get("streaming", False)
+        for name in params
+    )
+
+
 def row(
     operation: Any,
     cli_name: str,
@@ -307,7 +322,7 @@ def row(
         "argv": [command_name, cli_name, *argv, *extra],
         "responses": [reply(operation)],
     }
-    if not (sends and valid(operation, params)):
+    if not (sends and valid(operation, params)) or streams_input(operation, params):
         built["requests"] = 0
     return built
 
