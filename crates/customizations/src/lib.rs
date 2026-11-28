@@ -43,8 +43,8 @@ pub static TABLE: [&Customization; 9] = [
 /// - `set_operation_specific_signer`: auth selection;
 /// - `_set_auth_scheme_preference_signer`: does nothing without
 ///   `auth_scheme_preference`, which the router sends to Python;
-/// - `_handle_request_validation_mode_member`: acts only on `httpChecksum`
-///   operations, which the client refuses;
+/// - `_handle_request_validation_mode_member`: the call loop defaults the
+///   checksum validation mode;
 /// - `inject_api_version_header_if_needed`: acts only on endpoint
 ///   discovery operations, which the client refuses;
 /// - `handle_service_name_alias`: the command layer names the service by
@@ -95,10 +95,7 @@ pub static CORE: Customization = Customization {
         ),
         (
             "botocore.handlers._handle_request_validation_mode_member",
-            Basis::Inert {
-                acts_when: "the operation has httpChecksum",
-                refused_as: Refusal::Trait("httpChecksum"),
-            },
+            implemented("client::checksum::default_validation_mode"),
         ),
         (
             "botocore.handlers.inject_api_version_header_if_needed",

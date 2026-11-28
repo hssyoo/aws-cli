@@ -55,7 +55,6 @@ pub(crate) fn configure(
         components,
         region,
         timeouts,
-        http_checksum: false,
     })
 }
 

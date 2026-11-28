@@ -18,7 +18,8 @@ pub enum Unsupported {
     /// A protocol not implemented, as botocore resolves it for the model.
     Protocol(String),
     /// An operation trait the client does not implement, by its model key:
-    /// a request checksum, required endpoint discovery, the discovery
+    /// a request checksum [`crate::checksum`] leaves to Python, required
+    /// endpoint discovery, the discovery
     /// operation, request compression, an event stream, a streaming member
     /// or blob payload, or a key the model loader does not interpret.
     Trait(String),
@@ -95,29 +96,6 @@ pub fn static_refusal(
     customizations: &[&'static Customization],
     paginator: Option<&Result<Config, Refused>>,
 ) -> Option<Unsupported> {
-    refusal(
-        model,
-        operation,
-        endpoints,
-        service,
-        customizations,
-        paginator,
-        false,
-    )
-}
-
-/// [`static_refusal`], which with `checksums` admits the request checksum
-/// traits ([`crate::checksum`], built but switched off: only a client a
-/// test switches on passes `true`).
-pub(crate) fn refusal(
-    model: &Model,
-    operation: OperationSchema<'_>,
-    endpoints: &EndpointData,
-    service: &str,
-    customizations: &[&'static Customization],
-    paginator: Option<&Result<Config, Refused>>,
-    checksums: bool,
-) -> Option<Unsupported> {
     if let Err(unsupported) = crate::protocol::select(model) {
         return Some(unsupported);
     }
@@ -126,12 +104,7 @@ pub(crate) fn refusal(
     if let Some(uninterpreted) = model.schema().uninterpreted_reached(operation).first() {
         return Some(Unsupported::Trait(uninterpreted.key.to_string()));
     }
-    let traits = if checksums {
-        unimplemented_trait_but_checksums(operation)
-    } else {
-        unimplemented_trait(operation)
-    };
-    if let Some(unsupported) = traits.or_else(|| streams(operation)) {
+    if let Some(unsupported) = unimplemented_trait(operation).or_else(|| streams(operation)) {
         return Some(unsupported);
     }
     if operation.operation_context_params().next().is_some() {
@@ -184,27 +157,16 @@ fn blob_payload(end: Schema<'_>) -> bool {
         .is_some_and(|member| member.shape_type() == ShapeType::Blob)
 }
 
-/// The first operation trait the client does not implement: request
-/// checksums (`httpChecksum`, `httpChecksumRequired`), required endpoint
-/// discovery, the discovery operation itself (which botocore sends with
-/// `x-amz-api-version`, `inject_api_version_header_if_needed`), and request
-/// compression. Optional discovery is no refusal: botocore's default
-/// `auto` mode discovers only for required operations
+/// The first operation trait the client does not implement: required
+/// endpoint discovery, the discovery operation itself (which botocore
+/// sends with `x-amz-api-version`, `inject_api_version_header_if_needed`),
+/// and request compression. Optional discovery is no refusal: botocore's
+/// default `auto` mode discovers only for required operations
 /// (`_requires_endpoint_discovery`, `EndpointDiscoveryManager.
-/// describe_endpoint`).
+/// describe_endpoint`). The request checksum traits (`httpChecksum`,
+/// `httpChecksumRequired`) are [`crate::checksum`]'s, which refuses, in
+/// prepare, only what it leaves to Python.
 pub(crate) fn unimplemented_trait(operation: OperationSchema<'_>) -> Option<Unsupported> {
-    let found = if operation.http_checksum().is_some() {
-        "httpChecksum"
-    } else if operation.http_checksum_required() {
-        "httpChecksumRequired"
-    } else {
-        return unimplemented_trait_but_checksums(operation);
-    };
-    Some(Unsupported::Trait(found.to_owned()))
-}
-
-/// [`unimplemented_trait`] past the request checksum traits.
-fn unimplemented_trait_but_checksums(operation: OperationSchema<'_>) -> Option<Unsupported> {
     let found = if operation
         .endpoint_discovery()
         .is_some_and(|discovery| discovery.required)

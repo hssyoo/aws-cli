@@ -29,16 +29,14 @@ pub(crate) fn prepare(
     let mut input = input;
     modify_before_serialization(client, &mut ctx, &mut input)?;
     fill_idempotency_tokens(client, operation, &mut input);
-    if client.http_checksum {
-        checksum::default_validation_mode(operation, &client.settings, &mut input);
-    }
+    checksum::default_validation_mode(operation, &client.settings, &mut input);
     let (endpoint, mut features) = resolve_endpoint(client, &mut ctx, &input, None)?;
     features.extend(extra.iter());
     let serialized = serialize(client, operation, &input)?;
     features.extend(resolve_checksums(client, &mut ctx, &input, &serialized, &endpoint)?.iter());
     let mut request = apply_endpoint(client, &serialized, &endpoint.url, features)?;
     modify_before_retry_loop(client, &mut ctx, &mut request)?;
-    apply_checksums(client, &mut ctx, &mut request);
+    apply_checksums(&mut ctx, &mut request);
     let auth = resolve_auth_scheme(client, operation, &endpoint)?;
     Ok(Prepared {
         operation: operation.name().to_owned(),
@@ -55,7 +53,7 @@ pub(crate) fn prepare(
 /// The static refusals ([`crate::admission::static_refusal`]), then what
 /// botocore's client creation raises once a region resolves.
 fn admit(client: &Client, operation: OperationSchema<'_>) -> Result<(), CallError> {
-    if let Some(unsupported) = crate::admission::refusal(
+    if let Some(unsupported) = crate::admission::static_refusal(
         &client.model,
         operation,
         &client.components.endpoint_resolver.data,
@@ -63,7 +61,6 @@ fn admit(client: &Client, operation: OperationSchema<'_>) -> Result<(), CallErro
         client.customizations,
         // The paginator's entry was judged where the call was admitted.
         None,
-        client.http_checksum,
     ) {
         return Err(CallError::Unsupported(unsupported));
     }
@@ -181,9 +178,9 @@ pub(super) fn modify_before_retry_loop(
     Ok(())
 }
 
-/// `resolve_checksum_context` for a client with checksums switched on:
-/// the call's checksums, kept for [`apply_checksums`] and the responses,
-/// and the request feature ids they register.
+/// `resolve_checksum_context`: the call's checksums, kept for
+/// [`apply_checksums`] and the responses, and the request feature ids they
+/// register.
 fn resolve_checksums(
     client: &Client,
     ctx: &mut InterceptorContext<'_>,
@@ -191,9 +188,6 @@ fn resolve_checksums(
     serialized: &Serialized,
     endpoint: &ResolvedEndpoint,
 ) -> Result<Features, CallError> {
-    if !client.http_checksum {
-        return Ok(Features::default());
-    }
     let (checksums, features) = checksum::resolve(
         ctx.operation,
         &client.settings,
@@ -212,15 +206,9 @@ fn resolve_checksums(
 pub(super) struct ChecksumFeatures(pub(super) Features);
 
 /// `apply_request_checksum`, after the `modify_before_retry_loop` hooks
-/// (botocore's `before-call`), for a client with checksums switched on.
-pub(super) fn apply_checksums(
-    client: &Client,
-    ctx: &mut InterceptorContext<'_>,
-    request: &mut HttpRequest,
-) {
-    if client.http_checksum {
-        ctx.state::<CallChecksums>().apply(request);
-    }
+/// (botocore's `before-call`).
+pub(super) fn apply_checksums(ctx: &mut InterceptorContext<'_>, request: &mut HttpRequest) {
+    ctx.state::<CallChecksums>().apply(request);
 }
 
 /// The auth option botocore's selection gives (`choose-signer`), from the
