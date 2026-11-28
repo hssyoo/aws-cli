@@ -101,7 +101,7 @@ fn text_to_stdout(
 ) -> Result<u8, CommandFailure> {
     let stdout = &mut *cx.stdout;
     let errors = Destination::Stdout.errors();
-    let written = format::pages::text(fetched, errors, &mut |text| {
+    let written = format::pages::text(fetched, errors, invocation.query(), &mut |text| {
         format::write_stdout(stdout, text, line_buffered)
     });
     // TextFormatter flushes the stream however the pages ended, passing
@@ -131,14 +131,20 @@ fn text_to_pager(
     let mut pager = format::pager::Stream::new(argv, &ready.pager_env);
     let mut unstarted = None;
     let errors = ready.destination.errors();
-    let written = format::pages::text(fetched, errors, &mut |text| match pager.write(text) {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(std::io::ErrorKind::BrokenPipe.into()),
-        Err(error) => {
-            unstarted = Some(error);
-            Err(std::io::ErrorKind::NotFound.into())
-        }
-    });
+    let query = invocation.query();
+    let written = format::pages::text(
+        fetched,
+        errors,
+        query,
+        &mut |text| match pager.write(text) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(std::io::ErrorKind::BrokenPipe.into()),
+            Err(error) => {
+                unstarted = Some(error);
+                Err(std::io::ErrorKind::NotFound.into())
+            }
+        },
+    );
     let interrupted_fetch = fetched.interrupt.is_requested();
     scope.leave();
     // The Ctrl-C that ended the pages is being handled while Python's

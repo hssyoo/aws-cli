@@ -15,6 +15,7 @@ pub mod bind;
 pub mod coverage;
 pub mod credentials;
 pub mod invoke;
+pub mod query;
 pub mod source;
 
 pub use source::ServiceSource;
