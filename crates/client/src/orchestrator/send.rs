@@ -126,6 +126,7 @@ fn refresh_for_identity(
     // a defect, not a reason to leave the call to Python.
     let (endpoint, mut features) =
         resolve_endpoint(client, ctx, &prepared.input, Some(&account_id)).map_err(after_prepare)?;
+    features.extend(client.components.protocol.user_agent_features().iter());
     features.extend(ctx.state::<ChecksumFeatures>().0.iter());
     if endpoint.url != prepared.endpoint_url || features != prepared.features {
         let mut request = apply_endpoint(client, &prepared.serialized, &endpoint.url, features)

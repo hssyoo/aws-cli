@@ -1,0 +1,2625 @@
+{
+ "requests": [
+  {
+   "id": "fakes-zcbor-put-record",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Flag": true,
+    "Ratio": 1.5,
+    "Count": 3,
+    "When": "2015-08-30T12:36:00Z",
+    "Items": [
+     "a",
+     "b"
+    ],
+    "Grid": [
+     [
+      "a",
+      "b"
+     ],
+     [
+      "c"
+     ]
+    ],
+    "Groups": {
+     "g": [
+      "x",
+      "y"
+     ]
+    },
+    "Labels": {
+     "k": "v"
+    },
+    "Parts": [
+     {
+      "Name": "p",
+      "Size": 1
+     }
+    ],
+    "Index": {
+     "i": {
+      "Name": "q",
+      "Size": 2
+     }
+    },
+    "Part": {
+     "Name": "r",
+     "Size": 3
+    },
+    "Choice": {
+     "Word": "w"
+    },
+    "Note": "n",
+    "Name": "n1",
+    "Token": "tok-1",
+    "Data": {
+     "$blob": "AAFi"
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "sGRGbGFn9WVSYXRpb/s/+AAAAAAAAGVDb3VudANkV2hlbsEaVeL4sGVJdGVtc4JhYWFiZEdyaWSCgmFhYWKBYWNmR3JvdXBzoWFngmF4YXlmTGFiZWxzoWFrYXZlUGFydHOBomROYW1lYXBkU2l6ZQFlSW5kZXihYWmiZE5hbWVhcWRTaXplAmRQYXJ0omROYW1lYXJkU2l6ZQNmQ2hvaWNloWRXb3JkYXdkTm90ZWFuZE5hbWVibjFlVG9rZW5ldG9rLTFkRGF0YUMAAWI=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "fakes-zcbor-put-record-token-filled",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Note": "n"
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWROb3RlYW4=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "fakes-zcbor-get-record",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "params": {
+    "Id": "r-1"
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/GetRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWJJZGNyLTE=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "empty",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {},
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oA==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "none-member-dropped",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Note": null,
+    "Count": 1
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWVDb3VudAE=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "none-items-kept",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Items": [
+     "a",
+     null
+    ],
+    "Labels": {
+     "k": null
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "omVJdGVtc4JhYfZmTGFiZWxzoWFr9g==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "ints",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Count": -1,
+    "Parts": [
+     {
+      "Size": 23
+     },
+     {
+      "Size": 24
+     },
+     {
+      "Size": 255
+     },
+     {
+      "Size": 256
+     },
+     {
+      "Size": -25
+     },
+     {
+      "Size": 65536
+     },
+     {
+      "Size": -2147483648
+     }
+    ]
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "omVDb3VudCBlUGFydHOHoWRTaXplF6FkU2l6ZRgYoWRTaXplGP+hZFNpemUZAQChZFNpemU4GKFkU2l6ZRoAAQAAoWRTaXplOn////8=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "long-text",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Note": "ééééééééééééééééééééééééééééééxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWROb3RleQFow6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpeHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "many-items",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Items": [
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x",
+     "x"
+    ]
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWVJdGVtc5kBLGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheGF4YXhheA==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "timestamp-fraction",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "When": "2015-08-30T12:36:00.5Z"
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWRXaGVuwftB1Xi+LCAAAA==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "timestamp-number",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "When": 1440938160
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWRXaGVuwRpV4viw",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "timestamp-micros",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "When": "1970-01-01T00:00:01.003691Z"
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWRXaGVuwfs/8A8eS0Sh8Q==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "blob-from-text",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Data": "text é"
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWREYXRhR3RleHQgw6k=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "doubles",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Ratio": 5e-324
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWVSYXRpb/sAAAAAAAAAAQ==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "double-nan",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Ratio": {
+     "$float": "nan"
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWVSYXRpb/l+AA==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "double-inf",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Ratio": {
+     "$float": "inf"
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWVSYXRpb/l8AA==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "double-neg-inf",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Ratio": {
+     "$float": "-inf"
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWVSYXRpb/n8AA==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "double-from-int",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Ratio": 3
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWVSYXRpb/tACAAAAAAAAA==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "union-number",
+   "service": "zcbor",
+   "operation": "PutRecord",
+   "params": {
+    "Choice": {
+     "Number": 7
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborService/operation/PutRecord",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "oWZDaG9pY2WhZk51bWJlcgc=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "fakes-zcborqc-send-metric",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "params": {
+    "Name": "m",
+    "Value": 0.1,
+    "Values": [
+     1.5,
+     2.0
+    ],
+    "Count": 24,
+    "Total": 1099511627776,
+    "Stamp": "2015-08-30T12:36:00Z",
+    "Payload": {
+     "$blob": "AAFi"
+    },
+    "Enabled": false
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborqcService/operation/SendMetric",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "x-amzn-query-mode",
+      "true"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "qGROYW1lYW1lVmFsdWX6PczMzWZWYWx1ZXOC+z/4AAAAAAAA+0AAAAAAAAAAZUNvdW50GBhlVG90YWwbAAABAAAAAABlU3RhbXDBGlXi+LBnUGF5bG9hZEMAAWJnRW5hYmxlZPQ=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "float-specials",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "params": {
+    "Name": "m",
+    "Value": {
+     "$float": "inf"
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborqcService/operation/SendMetric",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "x-amzn-query-mode",
+      "true"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "omROYW1lYW1lVmFsdWX5fAA=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "float-nan",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "params": {
+    "Name": "m",
+    "Value": {
+     "$float": "nan"
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborqcService/operation/SendMetric",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "x-amzn-query-mode",
+      "true"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "omROYW1lYW1lVmFsdWX5fgA=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "float-tiny",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "params": {
+    "Name": "m",
+    "Value": 1e-50
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborqcService/operation/SendMetric",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "x-amzn-query-mode",
+      "true"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "omROYW1lYW1lVmFsdWX6AAAAAA==",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "float-too-large",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "params": {
+    "Name": "m",
+    "Value": 1e+39
+   },
+   "error": "float too large to pack with f format"
+  },
+  {
+   "id": "long-min",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "params": {
+    "Name": "m",
+    "Total": {
+     "$int": "-18446744073709551616"
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborqcService/operation/SendMetric",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "x-amzn-query-mode",
+      "true"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "omROYW1lYW1lVG90YWw7//////////8=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "long-max",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "params": {
+    "Name": "m",
+    "Total": {
+     "$int": "18446744073709551615"
+    }
+   },
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborqcService/operation/SendMetric",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "x-amzn-query-mode",
+      "true"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ],
+     [
+      "Content-Type",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "omROYW1lYW1lVG90YWwb//////////8=",
+    "host_prefix": null
+   }
+  },
+  {
+   "id": "long-too-big",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "params": {
+    "Name": "m",
+    "Total": {
+     "$int": "18446744073709551616"
+    }
+   },
+   "error": "int too big to convert"
+  },
+  {
+   "id": "fakes-zcborqc-ping",
+   "service": "zcborqc",
+   "operation": "Ping",
+   "params": {},
+   "serialized": {
+    "method": "POST",
+    "url_path": "/service/ZcborqcService/operation/Ping",
+    "query": "",
+    "headers": [
+     [
+      "smithy-protocol",
+      "rpc-v2-cbor"
+     ],
+     [
+      "x-amzn-query-mode",
+      "true"
+     ],
+     [
+      "Accept",
+      "application/cbor"
+     ]
+    ],
+    "body_base64": "",
+    "host_prefix": null
+   }
+  }
+ ],
+ "responses": [
+  {
+   "id": "fakes-zcbor-get-record",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "r2RGbGFn9WVSYXRpb/s/+AAAAAAAAGVDb3VudANlVG90YWwbACAAAAAAAAFkV2hlbsH7QdV4viwgAABlSXRlbXOCYWFhYmRHcmlkgoFhYYJhYmFjZkdyb3Vwc6FhZ4FheGZMYWJlbHOhYWthdmVQYXJ0c4GiZE5hbWVhcGRTaXplAWVJbmRleKFhaaJkTmFtZWFxZFNpemUCZFBhcnSiZE5hbWVhcmRTaXplA2ZDaG9pY2WhZk51bWJlcgdkTm90ZWFuZE1hcHOCoWFhYWKg",
+   "parsed": {
+    "Flag": true,
+    "Ratio": 1.5,
+    "Count": 3,
+    "When": 1440938160.5,
+    "Items": [
+     "a",
+     "b"
+    ],
+    "Grid": [
+     [
+      "a"
+     ],
+     [
+      "b",
+      "c"
+     ]
+    ],
+    "Groups": {
+     "g": [
+      "x"
+     ]
+    },
+    "Labels": {
+     "k": "v"
+    },
+    "Parts": [
+     {
+      "Name": "p",
+      "Size": 1
+     }
+    ],
+    "Index": {
+     "i": {
+      "Name": "q",
+      "Size": 2
+     }
+    },
+    "Part": {
+     "Name": "r",
+     "Size": 3
+    },
+    "Choice": {
+     "Number": 7
+    },
+    "Note": "n",
+    "Total": 9007199254740993,
+    "Maps": [
+     {
+      "a": "b"
+     },
+     {}
+    ],
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "fakes-zcbor-get-record-not-found",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 404,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "pWZfX3R5cGV4IGNvbS5leGFtcGxlLnpjYm9yI1JlY29yZE5vdEZvdW5kZ01lc3NhZ2Vpbm8gcmVjb3JkaEF0dGVtcHRzAmdSZWFzb25zgWRnb25lZVBhcnRzgaJkTmFtZWFwZFNpemUB",
+   "parsed": {
+    "Error": {
+     "Message": "no record",
+     "Code": "RecordNotFound"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 404,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    },
+    "Message": "no record",
+    "Attempts": 2,
+    "Reasons": [
+     "gone"
+    ],
+    "Parts": [
+     {
+      "Name": "p",
+      "Size": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "unmodeled-error",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "omZfX3R5cGV4JGF3cy5wcm90b2NvbHRlc3RzI1Rocm90dGxlZDpodHRwOi8veGdtZXNzYWdlZHNsb3c=",
+   "parsed": {
+    "Error": {
+     "Message": "slow",
+     "Code": "Throttled"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 400,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "message-none",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWdtZXNzYWdl9g==",
+   "parsed": {
+    "Error": {
+     "Message": null,
+     "Code": "400"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 400,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "error-status-code",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 418,
+   "headers": [],
+   "body_base64": "oA==",
+   "parsed": {
+    "Error": {
+     "Message": "",
+     "Code": "418"
+    },
+    "ResponseMetadata": {
+     "HTTPStatusCode": 418,
+     "HTTPHeaders": {}
+    }
+   }
+  },
+  {
+   "id": "server-error-empty",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 503,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "",
+   "parsed": {
+    "Error": {
+     "Code": "503",
+     "Message": "Service Unavailable"
+    },
+    "ResponseMetadata": {
+     "HTTPStatusCode": 503,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "client-error-empty",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "",
+   "error": "'bytes' object has no attribute 'get'"
+  },
+  {
+   "id": "error-not-a-map",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "gQE=",
+   "error": "'list' object has no attribute 'get'"
+  },
+  {
+   "id": "error-int-code",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 400,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWZfX3R5cGUH",
+   "error": "argument of type 'int' is not iterable"
+  },
+  {
+   "id": "output-empty",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "",
+   "error": "'bytes' object has no attribute 'get'"
+  },
+  {
+   "id": "output-not-a-map",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "Bw==",
+   "error": "'int' object has no attribute 'get'"
+  },
+  {
+   "id": "output-nulls-and-extras",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "pGROb3Rl9mVFeHRyYQFlQ291bnQBZE5vdGX3",
+   "parsed": {
+    "Count": 1,
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-duplicates",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "o2ZMYWJlbHOjYWFhMWFiYTJhYWEzZUNvdW50BWVDb3VudAY=",
+   "parsed": {
+    "Count": 6,
+    "Labels": {
+     "a": "3",
+     "b": "2"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-raw-maps",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "omVJbmRleKFhaaNkU2l6ZcEBZU90aGVy9mROYW1lQf9mR3JvdXBzomFngGFo9g==",
+   "parsed": {
+    "Groups": {
+     "g": [],
+     "h": null
+    },
+    "Index": {
+     "i": {
+      "Size": 1,
+      "Other": null,
+      "Name": {
+       "$blob": "/w=="
+      }
+     }
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-list-of-text",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "omVJdGVtc2JhYmRHcmlkgvaB9g==",
+   "parsed": {
+    "Items": [
+     "a",
+     "b"
+    ],
+    "Grid": [
+     null,
+     [
+      null
+     ]
+    ],
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-list-of-bytes",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWVJdGVtc0IBAg==",
+   "parsed": {
+    "Items": [
+     1,
+     2
+    ],
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-list-of-map",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWVJdGVtc6FhawE=",
+   "parsed": {
+    "Items": [
+     "k"
+    ],
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-list-not-iterable",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWVJdGVtcwE=",
+   "error": "'int' object is not iterable"
+  },
+  {
+   "id": "output-union-two",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWZDaG9pY2WiZFdvcmRhd2ZOdW1iZXIB",
+   "error": "Invalid service response: Choice must have one and only one member set."
+  },
+  {
+   "id": "output-union-unknown",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWZDaG9pY2WiZU90aGVyYXdmX190eXBlYXQ=",
+   "parsed": {
+    "Choice": {},
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-union-none",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWZDaG9pY2WhZFdvcmT2",
+   "error": "Invalid service response: Choice must have one and only one member set."
+  },
+  {
+   "id": "output-union-list",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWZDaG9pY2WA",
+   "error": "pop expected at most 1 argument, got 2"
+  },
+  {
+   "id": "output-struct-text",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWRQYXJ0YXg=",
+   "error": "'str' object has no attribute 'get'"
+  },
+  {
+   "id": "output-numbers",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "pGVUb3RhbBv//////////2VDb3VudDv//////////2VSYXRpb/k+AGRGbGFn9A==",
+   "parsed": {
+    "Flag": false,
+    "Ratio": 1.5,
+    "Count": {
+     "$int": "-18446744073709551616"
+    },
+    "Total": {
+     "$int": "18446744073709551615"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-half-specials",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "pGVSYXRpb/l+AGVDb3VudPl8AGVUb3RhbPn8AGROb3Rl+QAB",
+   "parsed": {
+    "Ratio": {
+     "$float": "nan"
+    },
+    "Count": {
+     "$float": "inf"
+    },
+    "Note": 5.960464477539063e-08,
+    "Total": {
+     "$float": "-inf"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-single",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWVSYXRpb/o9zMzN",
+   "parsed": {
+    "Ratio": 0.10000000149011612,
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-timestamps",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "o2RXaGVuAWROb3RlwftB1Xi+LCAAAGVDb3VudMH1",
+   "parsed": {
+    "Count": true,
+    "When": 1,
+    "Note": 1440938160.5,
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-timestamp-bad",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWRXaGVuwWFh",
+   "error": "Unable to parse datetime value: a"
+  },
+  {
+   "id": "output-tag-unsupported",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWRXaGVuwAE=",
+   "error": "Found CBOR tag not supported by botocore: 0"
+  },
+  {
+   "id": "output-indefinite",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "v2VJdGVtc59/YWFhYv9fQQH//2REYXRhX0EAQQH//w==",
+   "parsed": {
+    "Items": [
+     "ab",
+     {
+      "$blob": "AQ=="
+     }
+    ],
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-trailing",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWVDb3VudAH//w==",
+   "parsed": {
+    "Count": 1,
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-truncated",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "omVDb3VudAE=",
+   "error": "End of stream reached; this indicates a malformed CBOR response from the server or an issue in botocore"
+  },
+  {
+   "id": "output-bad-utf8",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWROb3RlYf8=",
+   "error": "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"
+  },
+  {
+   "id": "output-bad-simple",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWROb3Rl+A==",
+   "error": "Invalid additional info found for major type 7: 24.  This indicates an unsupported simple type or an indefinite float value"
+  },
+  {
+   "id": "output-unhashable",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oYAB",
+   "error": "unhashable type: 'list'"
+  },
+  {
+   "id": "output-int-key-ignored",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "ogEBZUNvdW50Ag==",
+   "parsed": {
+    "Count": 2,
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "output-error-shape-status",
+   "service": "zcbor",
+   "operation": "GetRecord",
+   "status": 300,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWROb3RlYW4=",
+   "parsed": {
+    "Note": "n",
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 300,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "fakes-zcborqc-send-metric",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "p2RFY2hv+j3MzM1mVmFsdWVzgvs/+AAAAAAAAPk8AGZTdGFtcHOCwRpV4vhAwftB1Xi+ECAAAGVJbmRleKFhYaJkTmFtZWFuZFdoZW7BAGdQYXlsb2FkQwABYmVUb3RhbBsAAAEAAAAAAGdFbmFibGVk9Q==",
+   "parsed": {
+    "Echo": 0.10000000149011612,
+    "Values": [
+     1.5,
+     1.0
+    ],
+    "Stamps": [
+     1440938048,
+     1440938048.5
+    ],
+    "Index": {
+     "a": {
+      "Name": "n",
+      "When": 0
+     }
+    },
+    "Payload": {
+     "$blob": "AAFi"
+    },
+    "Total": 1099511627776,
+    "Enabled": true,
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "fakes-zcborqc-send-metric-queue-missing",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "status": 400,
+   "headers": [
+    [
+     "x-amzn-query-error",
+     "AWS.Zcborqc.QueueMissing;Sender"
+    ],
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "o2ZfX3R5cGV4IGNvbS5leGFtcGxlLnpjYm9ycWMjUXVldWVNaXNzaW5nZ01lc3NhZ2VkZ29uZWVRdWV1ZWJxMQ==",
+   "parsed": {
+    "Error": {
+     "Message": "gone",
+     "Code": "AWS.Zcborqc.QueueMissing",
+     "QueryErrorCode": "QueueMissing",
+     "Type": "Sender"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 400,
+     "HTTPHeaders": {
+      "x-amzn-query-error": "AWS.Zcborqc.QueueMissing;Sender",
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    },
+    "Message": "gone",
+    "Queue": "q1"
+   }
+  },
+  {
+   "id": "fakes-zcborqc-send-metric-query-unmodeled",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "status": 400,
+   "headers": [
+    [
+     "x-amzn-query-error",
+     "AWS.Zcborqc.Other;Receiver"
+    ],
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "omZfX3R5cGV4GWNvbS5leGFtcGxlLnpjYm9ycWMjT3RoZXJnbWVzc2FnZWFt",
+   "parsed": {
+    "Error": {
+     "Message": "m",
+     "Code": "AWS.Zcborqc.Other",
+     "QueryErrorCode": "Other",
+     "Type": "Receiver"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 400,
+     "HTTPHeaders": {
+      "x-amzn-query-error": "AWS.Zcborqc.Other;Receiver",
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "query-error-malformed",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "status": 400,
+   "headers": [
+    [
+     "x-amzn-query-error",
+     "a;b;c"
+    ],
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oWZfX3R5cGVhWA==",
+   "parsed": {
+    "Error": {
+     "Message": "",
+     "Code": "X"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 400,
+     "HTTPHeaders": {
+      "x-amzn-query-error": "a;b;c",
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "query-error-empty-first",
+   "service": "zcborqc",
+   "operation": "SendMetric",
+   "status": 400,
+   "headers": [
+    [
+     "x-amzn-query-error",
+     ";Sender"
+    ],
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "oA==",
+   "parsed": {
+    "Error": {
+     "Message": "",
+     "Code": "400"
+    },
+    "ResponseMetadata": {
+     "RequestId": "fake-c",
+     "HTTPStatusCode": 400,
+     "HTTPHeaders": {
+      "x-amzn-query-error": ";Sender",
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  },
+  {
+   "id": "fakes-zcborqc-ping",
+   "service": "zcborqc",
+   "operation": "Ping",
+   "status": 200,
+   "headers": [
+    [
+     "Content-Type",
+     "application/cbor"
+    ],
+    [
+     "smithy-protocol",
+     "rpc-v2-cbor"
+    ],
+    [
+     "x-amzn-RequestId",
+     "fake-c"
+    ]
+   ],
+   "body_base64": "",
+   "parsed": {
+    "ResponseMetadata": {
+     "HTTPStatusCode": 200,
+     "HTTPHeaders": {
+      "content-type": "application/cbor",
+      "smithy-protocol": "rpc-v2-cbor",
+      "x-amzn-requestid": "fake-c"
+     }
+    }
+   }
+  }
+ ]
+}
